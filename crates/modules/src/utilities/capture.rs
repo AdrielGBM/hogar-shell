@@ -245,7 +245,7 @@ pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutEr
     let source = entries.read_only();
     let list_dir = dir.clone();
     let list_entries = entries.clone();
-    let rows = ReactiveList::with_gap(
+    let rows = ReactiveList::new(
         move || source.get(),
         |entry: &Entry| row_key(entry),
         {
@@ -388,7 +388,7 @@ fn row(
         },
         vec![icon, Box::new(labels), reveal],
     )?
-    .on_hover_style({
+    .hover_style({
         let is_armed = is_armed.clone();
         move |_| {
             let fill = if is_armed(&armed_hover) {
@@ -530,7 +530,7 @@ fn pill_live(
         },
         vec![glyph, box_item(text)],
     )?
-    .on_hover_style(move |_| {
+    .hover_style(move |_| {
         let fill = if !enabled {
             theme.overlay
         } else if hover_active() {

@@ -387,7 +387,7 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
         },
         vec![Box::new(column)],
     )?
-    .on_hover_style(move |_| {
+    .hover_style(move |_| {
         let state = hover_state.get();
         let fill = if !state.available {
             theme.base

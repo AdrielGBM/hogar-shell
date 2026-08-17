@@ -177,7 +177,7 @@ fn group_list(
     )?;
 
     let source = graph.read_only();
-    let rows = ReactiveList::with_gap(
+    let rows = ReactiveList::new(
         move || listed(&source.get(), group),
         |row: &Row| row.key(),
         {

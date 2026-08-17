@@ -128,9 +128,8 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new(),
         move || {
             let style = theme
-                .text_style(FontRole::Display, ink)
-                .with_weight(600)
-                .with_size(size);
+                .text_style_at(FontRole::Display, ink, size)
+                .with_weight(600);
             match shadow {
                 Some(shadow) => style.with_shadow(shadow),
                 None => style,
@@ -146,7 +145,7 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
             move || reading.get(),
             LayoutStyle::new(),
             move || {
-                let style = theme.text_style(FontRole::Title, ink).with_size(date_size);
+                let style = theme.text_style_at(FontRole::Title, ink, date_size);
                 match shadow {
                     Some(shadow) => style.with_shadow(shadow),
                     None => style,

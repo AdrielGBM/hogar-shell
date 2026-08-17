@@ -7,6 +7,7 @@ mod idle;
 mod interest;
 mod link;
 mod lock;
+mod placement;
 mod platform;
 mod power;
 mod toplevel_control;
@@ -30,6 +31,9 @@ pub use idle::{IdleHandle, idle_notification, idle_supported};
 pub use interest::Interest;
 pub use link::SurfaceUpdate;
 pub use lock::{LockHandle, lock_session, lock_supported, session_is_locked};
+pub use placement::{
+    KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
+};
 pub use platform::{
     EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken, detached,
     enumerate_outputs, interval, live_surfaces, on_close, on_outputs_changed, open_reservation,

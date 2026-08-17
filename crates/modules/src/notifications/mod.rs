@@ -415,7 +415,7 @@ fn close_button(id: u32, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layout
             move |_| RectStyle::filled(Color::TRANSPARENT, CLOSE_GLYPH / 2.0),
             vec![glyph],
         )?
-        .on_hover_style(move |_| RectStyle::filled(theme.overlay, CLOSE_GLYPH / 2.0))
+        .hover_style(move |_| RectStyle::filled(theme.overlay, CLOSE_GLYPH / 2.0))
         .on_press(move || notifications::close(id)),
     ))
 }
@@ -511,7 +511,7 @@ fn action_pill(
         paint::md(theme.overlay),
         vec![box_item(text)],
     )?
-    .on_hover_style(paint::md(theme.overlay.darken(0.12)))
+    .hover_style(paint::md(theme.overlay.darken(0.12)))
     .on_press(move || notifications::invoke_action(id, &key));
     Ok(Box::new(pill))
 }
@@ -832,7 +832,7 @@ fn history_list(
     };
     // Gap on the list itself (which lays the cards out); the wrapper only pins the full width so the
     // percent-width cards resolve against it.
-    let list = ReactiveList::with_gap(source, row_key, build, card_gap())?;
+    let list = ReactiveList::new(source, row_key, build, card_gap())?;
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
@@ -966,7 +966,7 @@ fn icon_button(
         |_| RectStyle::default(),
         vec![icon],
     )?
-    .on_hover_style(paint::xs(theme.overlay))
+    .hover_style(paint::xs(theme.overlay))
     .on_press(on_press);
     Ok(Box::new(button))
 }

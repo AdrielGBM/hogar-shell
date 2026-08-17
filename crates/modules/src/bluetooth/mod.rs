@@ -192,7 +192,7 @@ fn list(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source = state.read_only();
     let empty_state = state.read_only();
-    let rows = ReactiveList::with_gap(
+    let rows = ReactiveList::new(
         move || listed(&source.get(), config),
         // Keyed on what the row draws, not on the device's identity: a headset keeps its path while it
         // connects, gains a battery reading and changes its subtitle, and a row keyed on the path alone would
@@ -346,7 +346,7 @@ fn row(
         },
         vec![icon, Box::new(labels), box_item(trailing)],
     )?
-    .on_hover_style({
+    .hover_style({
         let is_armed = is_armed.clone();
         move |_| {
             let fill = if is_armed(&armed_hover) {
@@ -436,7 +436,7 @@ fn pill(
             },
             vec![box_item(text)],
         )?
-        .on_hover_style(move |_| {
+        .hover_style(move |_| {
             let fill = if hover_active() {
                 theme.accent.darken(0.08)
             } else {

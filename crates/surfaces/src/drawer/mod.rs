@@ -108,7 +108,7 @@ pub(crate) fn open_drawer(env: &SurfaceEnv, module_id: &str, chip: Option<Rect>)
 mod placement_tests {
     use super::*;
     use std::sync::Arc;
-    use telar::SurfaceAlign;
+    use platform_wayland::SurfaceAlign;
 
     fn env(edge: Edge, config: &str) -> SurfaceEnv {
         let config: config::Config = toml::from_str(config).expect("config parses");

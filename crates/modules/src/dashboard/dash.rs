@@ -112,7 +112,7 @@ fn calendar_card(
     )?;
 
     let source = anchor.read_only();
-    let grid = ReactiveList::with_gap(
+    let grid = ReactiveList::new(
         move || vec![source.get()],
         |month: &NaiveDate| month.format("%Y-%m").to_string(),
         move |month: NaiveDate| month_grid(month, today, first_weekday, theme),
@@ -145,7 +145,7 @@ fn step_button(
             paint::xs(Color::TRANSPARENT),
             vec![icon],
         )?
-        .on_hover_style(paint::xs(theme.overlay))
+        .hover_style(paint::xs(theme.overlay))
         .on_press(move || anchor.set(shift_months(anchor.peek(), months))),
     ))
 }
@@ -281,7 +281,7 @@ fn user_card(
             move |_r| RectStyle::filled(Color::TRANSPARENT, AVATAR / 2.0),
             vec![face],
         )?
-        .on_hover_style(move |_r| RectStyle::filled(theme.overlay, AVATAR / 2.0))
+        .hover_style(move |_r| RectStyle::filled(theme.overlay, AVATAR / 2.0))
         .on_press(move || open.set(!open.peek())),
     );
 
@@ -367,7 +367,7 @@ fn avatar_picker(
     // is *built* when it opens and torn down when it closes, so a card that is not picking an avatar costs
     // exactly what it did before this landed rather than carrying a hidden subtree.
     let open = picking.read_only();
-    Ok(Box::new(ReactiveList::with_gap(
+    Ok(Box::new(ReactiveList::new(
         move || vec![open.get()],
         |open: &bool| open.to_string(),
         move |open: bool| {
@@ -412,7 +412,7 @@ fn browser(
             16.0,
         )?],
     )?
-    .on_hover_style(paint::md(theme.overlay))
+    .hover_style(paint::md(theme.overlay))
     .on_press(move || {
         let here = up_folder.peek();
         if let Some(parent) = here.parent() {
@@ -538,7 +538,7 @@ fn choice_tile(
         paint::md(theme.base),
         vec![picture, box_item(label)],
     )?
-    .on_hover_style(paint::md(theme.overlay))
+    .hover_style(paint::md(theme.overlay))
     .on_press(move || {
         if choice.folder {
             folder.set(choice.path.clone());

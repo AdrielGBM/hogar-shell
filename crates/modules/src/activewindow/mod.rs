@@ -45,9 +45,9 @@ pub fn icon_slot(
     };
     let style = telar::LayoutStyle::new().flex_shrink(0.0);
     let style = if inverted {
-        style.margin_start(ui::scale::space::MD)
+        style.margin_inline_start(ui::scale::space::MD)
     } else {
-        style.margin_end(ui::scale::space::MD)
+        style.margin_inline_end(ui::scale::space::MD)
     };
     Ok(telar::box_item(telar::Container::new(style, vec![icon])?))
 }

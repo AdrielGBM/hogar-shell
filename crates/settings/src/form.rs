@@ -389,13 +389,29 @@ pub(crate) fn enum_field(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let picked = option_index(value.clone(), options);
-    let control = telar::select(telar::SelectProps {
-        selected: Some(picked),
-        options: options.to_vec(),
-        color: Box::new(move || theme.accent),
-        fill: true,
-        on_select: Some(Box::new(move |at| pick_option(&value, options, at))),
-    })?;
+    let control = telar::select(
+        telar::SelectProps {
+            selected: Some(picked),
+            color: Box::new(move || theme.accent),
+            stretch: true,
+            on_select: Some(Box::new(move |at| pick_option(&value, options, at))),
+        },
+        // The choices are rows now, not strings: one `item` per option, rebuilt whenever the list reopens.
+        telar::Children::new(move || {
+            let mut slots = telar::Slots::new();
+            for opt in options {
+                let row = telar::item(
+                    telar::ItemProps {
+                        label: Box::new(move || opt.to_string()),
+                        ..Default::default()
+                    },
+                    telar::Slots::new(),
+                )?;
+                slots.push(None, row);
+            }
+            Ok(slots)
+        }),
+    )?;
     labelled(label, control, theme)
 }
 

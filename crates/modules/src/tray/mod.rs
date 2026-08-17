@@ -174,8 +174,8 @@ pub fn tray_icon(
         .read_only();
     let alt_rect = rect.clone();
     let container = container
-        .on_hover_style(move |_r| RectStyle::filled(hover, radius))
-        .on_active_style(move |_r| RectStyle::filled(hover.darken(0.14), radius))
+        .hover_style(move |_r| RectStyle::filled(hover, radius))
+        .active_style(move |_r| RectStyle::filled(hover.darken(0.14), radius))
         .on_press(move || primary(&press_item, rect.clone()))
         .on_alt_press(move |button| match button {
             PointerButton::Secondary => open_menu(&alt_item, alt_rect.clone()),

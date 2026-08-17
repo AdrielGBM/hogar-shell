@@ -186,7 +186,7 @@ fn storage_card(
     let mounts = derive(machine.clone(), |r| {
         r.map(|r| r.disks.clone()).unwrap_or_default()
     });
-    let bars = ReactiveList::with_gap(
+    let bars = ReactiveList::new(
         move || mounts.get(),
         |disk: &resources::Disk| disk.mount.to_string_lossy().into_owned(),
         move |disk: resources::Disk| disk_row(disk, theme),

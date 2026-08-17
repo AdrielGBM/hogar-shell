@@ -62,7 +62,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
     let source_library = library.read_only();
     let source_query = query.read_only();
     let source_current = current.read_only();
-    let groups = ReactiveList::with_gap(
+    let groups = ReactiveList::new(
         move || {
             let entries = source_library.get();
             let query = source_query.get();
@@ -251,7 +251,7 @@ fn wallpaper_tile(
         },
         vec![picture, box_item(label)],
     )?
-    .on_hover_style(paint::md(theme.overlay))
+    .hover_style(paint::md(theme.overlay))
     .on_press(move || services::wallpaper::set(&chosen, None));
     Ok(Box::new(tile))
 }

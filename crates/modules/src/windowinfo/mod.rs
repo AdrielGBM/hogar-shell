@@ -418,7 +418,7 @@ fn pill(
             move |_| RectStyle::filled(theme.base, ROW_RADIUS),
             children,
         )?
-        .on_hover_style(move |_| RectStyle::filled(theme.overlay, ROW_RADIUS))
+        .hover_style(move |_| RectStyle::filled(theme.overlay, ROW_RADIUS))
         .on_press(press),
     ))
 }

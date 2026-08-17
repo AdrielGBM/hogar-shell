@@ -7,12 +7,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
+use crate::placement::{
+    KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
+};
 use telar::{
-    App, Color, Component, Event, EventHandler, Key, KeyboardMode, ModifiersState,
+    AlignItems, App, Color, Component, Edge, Event, EventHandler, Key, ModifiersState,
     MultiSurfacePlatform, NamedKey, PlatformError, PointerButton, PointerSource, ScrollDelta,
-    SurfaceAnchor, SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, SurfacePlacement,
-    SurfaceRole, SurfaceRoot, SurfaceScaffold, SurfaceSize, SurfaceToken, SurfaceTransition, Window,
-    WindowConfig,
+    SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, SurfaceRoot, SurfaceScaffold,
+    SurfaceToken, SurfaceTransition, Window, WindowConfig,
     begin_batch, build_surface_handler, end_batch, reset_layout_runtime, set_surface_host,
 };
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
@@ -978,7 +980,7 @@ where
         .map_err(|e| PlatformError(format!("ping source insert failed: {e}")))?;
 
     LOOP_HANDLE.with(|h| *h.borrow_mut() = Some(loop_handle.clone()));
-    set_surface_host(Box::new(LayerShellSurfaceHost));
+    set_surface_host(LayerShellSurfaceHost);
 
     // Prime the registry so outputs are known before matching `config.output` on surface creation.
     for _ in 0..3 {
@@ -1545,9 +1547,16 @@ impl App for HostedSurfaceApp {
                 Rc::new(move || link.request_close()) as Rc<dyn Fn()>
             });
             Box::new(
-                SurfaceScaffold::new(&self.placement, content, dismiss)
-                    .expect("surface scaffold build failed")
-                    .animate(transition),
+                SurfaceScaffold::new(
+                    scaffold_edge(self.placement.anchor),
+                    scaffold_align(self.placement.align),
+                    self.placement.margin,
+                    self.placement.scrim.then_some(telar::DEFAULT_SCRIM),
+                    dismiss,
+                    content,
+                )
+                .expect("surface scaffold build failed")
+                .animate(transition),
             )
         } else {
             Box::new(
@@ -1574,7 +1583,26 @@ impl App for HostedSurfaceApp {
 /// Installed once so the shell's rsx world can open drawers/OSDs/popups via `telar::open_surface`.
 struct LayerShellSurfaceHost;
 
-impl SurfaceHost for LayerShellSurfaceHost {
+/// Lowers this backend's own anchor/align onto what the framework scaffold takes.
+fn scaffold_edge(anchor: SurfaceAnchor) -> Edge {
+    match anchor {
+        SurfaceAnchor::Top => Edge::Top,
+        SurfaceAnchor::Bottom => Edge::Bottom,
+        SurfaceAnchor::Left => Edge::Left,
+        SurfaceAnchor::Right => Edge::Right,
+        SurfaceAnchor::Center => Edge::Center,
+    }
+}
+
+fn scaffold_align(align: SurfaceAlign) -> AlignItems {
+    match align {
+        SurfaceAlign::Start => AlignItems::START,
+        SurfaceAlign::Center => AlignItems::CENTER,
+        SurfaceAlign::End => AlignItems::END,
+    }
+}
+
+impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
     fn open(&self, placement: SurfacePlacement, content: SurfaceContent) -> SurfaceToken {
         let config = layer_config_for(&placement);
         let link = Arc::new(SurfaceLink::default());
@@ -1967,6 +1995,9 @@ impl PointerHandler for Driver {
                         x: -(horizontal.absolute as f32),
                         y: -(vertical.absolute as f32),
                     },
+                    // The wheel belongs to whatever is under it, so the scroll area needs where it happened.
+                    x,
+                    y,
                 },
             };
             match event.kind {

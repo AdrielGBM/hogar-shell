@@ -132,7 +132,7 @@ fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
         move |_| RectStyle::filled(theme.base, rounded),
         vec![glyph],
     )?
-    .on_hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
+    .hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
     // Through the registry rather than `request_close`, so `panel list` and a second `notifs center` agree with
     // what is on screen the moment the button is pressed.
     .on_press(close);

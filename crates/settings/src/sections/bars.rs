@@ -328,7 +328,7 @@ fn module_palette(
                 move |_r| RectStyle::filled(theme.base, PILL_RADIUS),
                 vec![box_item(text)],
             )?
-            .on_hover_style(move |_r| RectStyle::filled(theme.overlay, PILL_RADIUS))
+            .hover_style(move |_r| RectStyle::filled(theme.overlay, PILL_RADIUS))
             .on_press(move || {
                 let zone = editor.target.peek();
                 editor.append(zone, ModuleEntry::bare(id.clone()));

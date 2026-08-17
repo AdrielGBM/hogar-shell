@@ -38,11 +38,11 @@
 //! an entrance. Which of the two a surface needs is not a property of where it sits, so it is not decided
 //! here; see the surface reconciler.
 
-use platform_wayland::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
-use telar::{
-    AlignItems, JustifyContent, KeyboardMode, LayoutStyle, Rect, SizeDimension, SurfaceAlign,
-    SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
+use platform_wayland::{
+    Anchor, KeyboardInteractivity, KeyboardMode, Layer, LayerConfig, SurfaceAlign, SurfaceAnchor,
+    SurfacePlacement, SurfaceRole, SurfaceSize,
 };
+use telar::{AlignItems, JustifyContent, LayoutStyle, Rect, SizeDimension};
 
 use config::SurfaceEnv;
 use config::{Align, Edge};

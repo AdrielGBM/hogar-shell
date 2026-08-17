@@ -70,7 +70,7 @@ pub fn view(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let size = size();
-    let list = ReactiveList::with_gap(
+    let list = ReactiveList::new(
         move || vec![of(&source, size).get().ready().cloned()],
         |path: &Option<PathBuf>| {
             path.as_ref()

@@ -103,7 +103,7 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
             key,
             move |_index, row| build(row),
         )?,
-        None => ReactiveList::new(rows, key, build)?,
+        None => ReactiveList::new(rows, key, build, 0.0)?,
     };
 
     let count_apps = installed.read_only();
@@ -277,7 +277,7 @@ fn app_row(
             .padding_horizontal(space::LG)
             .padding_vertical(space::MD)
             .height(row_pitch(theme) - ROW_GAP)
-            .margin_bottom(ROW_GAP)
+            .margin_block_end(ROW_GAP)
             .width(SizeDimension::Percent(1.0)),
         paint::md(theme.base),
         vec![

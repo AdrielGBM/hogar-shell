@@ -98,7 +98,7 @@ fn note_list(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let notes = state.notes.read_only();
     let build_state = state.clone();
-    let list = ReactiveList::with_gap(
+    let list = ReactiveList::new(
         move || notes.get(),
         |n: &Note| n.id,
         move |note: Note| note_card(&build_state, note, theme, radius),
@@ -143,7 +143,7 @@ fn note_card(
         move |_| RectStyle::filled(theme.base, rounded),
         vec![icon_view(glyph, move || theme.text, 20.0)?],
     )?
-    .on_hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
+    .hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
     .on_press(toggle_picking);
     // The icon button anchors the picker overlay; its rect (filled in by layout) positions the popover.
     let trigger_node = icon_button.layout_node();
@@ -169,7 +169,7 @@ fn note_card(
         move |_| RectStyle::filled(theme.base, rounded),
         vec![icon_view(|| "x".to_string(), move || theme.muted, 16.0)?],
     )?
-    .on_hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
+    .hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
     .on_press(move || delete_note(&delete_state, id));
 
     let row = Container::new(
@@ -261,6 +261,7 @@ fn picker_overlay(
                 move || closing.set(false),
             )
         },
+        0.0,
     )?;
     Ok(Box::new(list))
 }
@@ -320,7 +321,7 @@ fn pill_button(
         move |_| RectStyle::filled(theme.base, rounded),
         vec![Box::new(text) as Box<dyn LayoutItem>],
     )?
-    .on_hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
+    .hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
     .on_press(on_press);
     Ok(Box::new(pill))
 }

@@ -30,6 +30,7 @@ pub(crate) fn dependencies_section() -> Result<Box<dyn LayoutItem>, LayoutError>
         move || read.get(),
         |status: &Status| deps::entry(status.dep).id,
         row,
+        0.0,
     )?;
 
     crate::form_section(

@@ -95,7 +95,7 @@ impl<T: Clone + 'static> TableList<T> {
         row: impl Fn(u64) -> Result<Box<dyn LayoutItem>, LayoutError> + 'static,
     ) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let order = self.order.read_only();
-        Ok(Box::new(ReactiveList::with_gap(
+        Ok(Box::new(ReactiveList::new(
             move || order.get(),
             |id: &u64| id.to_string(),
             move |id: u64| row(id),

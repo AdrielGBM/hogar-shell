@@ -320,9 +320,9 @@ mod tests {
         };
 
         for align in [
-            telar::SurfaceAlign::Start,
-            telar::SurfaceAlign::Center,
-            telar::SurfaceAlign::End,
+            platform_wayland::SurfaceAlign::Start,
+            platform_wayland::SurfaceAlign::Center,
+            platform_wayland::SurfaceAlign::End,
         ] {
             telar::reset_layout_runtime();
             telar::set_theme(NordTheme::new());
@@ -340,9 +340,16 @@ mod tests {
                 .hosted_placement()
                 .align(align);
             let mut scaffold = SurfaceScaffold::new(
-                &placement,
-                wrapped,
+                telar::Edge::Top,
+                match align {
+                    platform_wayland::SurfaceAlign::Start => telar::AlignItems::START,
+                    platform_wayland::SurfaceAlign::Center => telar::AlignItems::CENTER,
+                    platform_wayland::SurfaceAlign::End => telar::AlignItems::END,
+                },
+                placement.margin,
+                Some(telar::DEFAULT_SCRIM),
                 Some(Rc::new(move || sink.set(sink.get() + 1))),
+                wrapped,
             )
             .unwrap();
             compute_layout(

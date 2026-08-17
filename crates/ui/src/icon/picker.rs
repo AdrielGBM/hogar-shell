@@ -59,8 +59,8 @@ pub fn icon_picker_overlay(
             .flex_column()
             .width(PANEL_WIDTH)
             .padding_all(space::MD)
-            .margin_left(anchor.x)
-            .margin_top(anchor.y + anchor.height + 4.0),
+            .margin_from_left(anchor.x)
+            .margin_block_start(anchor.y + anchor.height + 4.0),
         paint::xl(theme.surface),
         vec![picker_body(theme, pick)?],
     )?
@@ -190,6 +190,7 @@ fn results_view(
             2 => message(|| telar::t!("icon_picker.no_match"), theme),
             _ => grid(vp.clone(), build_filtered.clone(), theme, pick.clone()),
         },
+        0.0,
     )?;
     Ok(Box::new(list))
 }
@@ -317,7 +318,7 @@ fn cell(
             ICON,
         )?],
     )?
-    .on_hover_style(paint::md(theme.overlay))
+    .hover_style(paint::md(theme.overlay))
     .on_press(move || pick(id.clone()));
     Ok(Box::new(button))
 }
@@ -545,6 +546,7 @@ mod tests {
                     Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?))
                 }
             },
+            0.0,
         )
         .expect("holder");
         let card = Container::new(
@@ -611,6 +613,7 @@ mod tests {
                     Overlay::new(LayoutStyle::new().flex_column(), vec![box_item(panel)])?;
                 Ok(box_item(overlay))
             },
+            0.0,
         )
         .expect("holder");
         let card =

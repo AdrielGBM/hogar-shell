@@ -186,7 +186,7 @@ pub fn icon_view(
                     LayoutStyle::new()
                         .width(side)
                         .height(side)
-                        .margin_all(inset),
+                        .margin(telar::Margin::all(inset)),
                     move |_| RectStyle::filled(tint().with_alpha(0.3), side * 0.25),
                     vec![],
                 )?))
@@ -197,7 +197,7 @@ pub fn icon_view(
             }),
         }
     };
-    Ok(Box::new(ReactiveList::new(source, key, build)?))
+    Ok(Box::new(ReactiveList::new(source, key, build, 0.0)?))
 }
 
 /// Whether `name` has been requested from the icon store yet — i.e. some widget read it via [`icon_view`].

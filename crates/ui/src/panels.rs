@@ -14,7 +14,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use telar::{KeyboardMode, LayoutError, LayoutItem};
+use platform_wayland::KeyboardMode;
+use telar::{LayoutError, LayoutItem};
 
 pub type PanelBuilder = fn() -> Result<Box<dyn LayoutItem>, LayoutError>;
 

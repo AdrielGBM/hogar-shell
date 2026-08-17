@@ -236,7 +236,7 @@ fn row(
     if item.is_actionable() {
         let (bus, path, id) = (bus.to_string(), path.to_string(), item.id);
         container = container
-            .on_hover_style(move |_| RectStyle::filled(theme.overlay, pill))
+            .hover_style(move |_| RectStyle::filled(theme.overlay, pill))
             .on_press(move || {
                 dbusmenu::activate(&bus, &path, id);
                 close();

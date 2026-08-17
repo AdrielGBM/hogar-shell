@@ -183,7 +183,7 @@ fn list(
     let source_asking = asking.read_only();
     let empty_state = state.read_only();
 
-    let rows = ReactiveList::with_gap(
+    let rows = ReactiveList::new(
         move || {
             let asking = source_asking.get();
             listed(&source.get(), config)
@@ -357,7 +357,7 @@ fn network_row(
         },
         vec![icon, Box::new(labels), box_item(trailing)],
     )?
-    .on_hover_style({
+    .hover_style({
         let is_armed = is_armed.clone();
         move |_| {
             let fill = if is_armed(&armed_hover) {
@@ -547,7 +547,7 @@ fn pill(
             },
             vec![box_item(text)],
         )?
-        .on_hover_style(move |_| {
+        .hover_style(move |_| {
             let fill = if hover_active() {
                 theme.accent.darken(0.08)
             } else {

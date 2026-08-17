@@ -701,8 +701,19 @@ impl NordTheme {
     /// keeps a deliberately bold heading bold when the body weight is lowered: that is emphasis relative to the
     /// role, not the role itself.
     pub fn text_style(&self, role: FontRole, paint: impl Into<telar::Paint>) -> TextStyle {
+        self.text_style_at(role, paint, self.font(role))
+    }
+
+    /// [`text_style`](Self::text_style) at a size the caller decides: the role still supplies weight and
+    /// slant, but not the size — a clock face scales with the surface it is drawn on, not with the body font.
+    pub fn text_style_at(
+        &self,
+        role: FontRole,
+        paint: impl Into<telar::Paint>,
+        size: f32,
+    ) -> TextStyle {
         let spec = self.font_spec(role);
-        let mut style = TextStyle::new(self.font(role), paint);
+        let mut style = TextStyle::new(size, paint);
         if let Some(weight) = spec.weight {
             style = style.with_weight(weight.clamp(100, 900));
         }

@@ -8,7 +8,7 @@
 //! most destructive entries are two presses away is exactly the one a user wants to reach without moving their
 //! hand to the mouse.
 
-use telar::KeyboardMode;
+use platform_wayland::KeyboardMode;
 use ui::panels::PanelRegistry;
 
 pub fn default_panels() -> PanelRegistry {

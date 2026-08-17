@@ -3,8 +3,9 @@
 use ui::scale::{corner, paint};
 use std::rc::Rc;
 
+use platform_wayland::KeyboardMode;
 use telar::{
-    AlignItems, Container, Input, KeyboardMode, LayoutError, LayoutItem, LayoutStyle, RectStyle,
+    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, RectStyle,
     SizeDimension, StyledContainer, SurfaceToken, Text, box_item, memo, signal, use_theme,
 };
 

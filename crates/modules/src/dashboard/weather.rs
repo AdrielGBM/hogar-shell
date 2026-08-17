@@ -154,7 +154,7 @@ fn unit_toggle(
             paint::xs(Color::TRANSPARENT),
             vec![box_item(text)],
         )?
-        .on_hover_style(paint::xs(theme.overlay))
+        .hover_style(paint::xs(theme.overlay))
         .on_press(move || unit.set(other_unit(unit.peek()))),
     ))
 }
@@ -174,7 +174,7 @@ fn forecast_card(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source = state.read_only();
     let unit_source = unit.read_only();
-    let days = ReactiveList::with_gap(
+    let days = ReactiveList::new(
         move || {
             let unit = unit_source.get();
             source

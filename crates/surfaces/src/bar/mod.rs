@@ -276,17 +276,17 @@ fn zone(
     let (style, clip) = if edge.is_horizontal() {
         let style = style.min_width(0.0);
         let style = if leading {
-            style.margin_end(spacing)
+            style.margin_inline_end(spacing)
         } else {
-            style.margin_start(spacing)
+            style.margin_inline_start(spacing)
         };
         (style, ClipAxis::Horizontal)
     } else {
         let style = style.min_height(0.0);
         let style = if leading {
-            style.margin_bottom(spacing)
+            style.margin_block_end(spacing)
         } else {
-            style.margin_top(spacing)
+            style.margin_block_start(spacing)
         };
         (style, ClipAxis::Vertical)
     };

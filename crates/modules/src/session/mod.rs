@@ -226,7 +226,7 @@ fn tile(
         },
         vec![icon, box_item(caption)],
     )?
-    .on_hover_style(move |_| {
+    .hover_style(move |_| {
         let fill = if !offered {
             theme.base
         } else if armed_hover.get() == id {

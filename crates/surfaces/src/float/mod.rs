@@ -4,7 +4,7 @@ use ui::scale::paint;
 use platform_wayland::request_close;
 use telar::{
     LayoutError, LayoutItem, LayoutStyle, StyledContainer, SurfaceFrameStyle, SurfaceToken,
-    box_item, surface_frame, use_theme,
+    box_item, window_frame, use_theme,
 };
 
 use crate::drawer::{content_radius, module_panel, panel_wants_keyboard};
@@ -13,7 +13,7 @@ use config::theme::{FontRole, NordTheme};
 use ui::panel::PanelSurface;
 use ui::placement::{Centred, Placement};
 
-/// Opens `module_id`'s panel as a centred, titled, closable window on the bar's own monitor, sized per its `[modules.<id>]` override or `[panels.float]`; the shell only declares the placement, the rsx surface host and `surface_frame` realize the window chrome. Toggle/close is the caller's job ([`crate::panel::toggle_panel`]) via the returned token.
+/// Opens `module_id`'s panel as a centred, titled, closable window on the bar's own monitor, sized per its `[modules.<id>]` override or `[panels.float]`; the shell only declares the placement, the rsx surface host and `window_frame` realize the window chrome. Toggle/close is the caller's job ([`crate::panel::toggle_panel`]) via the returned token.
 ///
 /// `[modules.<id>]` (or `[panels.float]`) is the size the window opens at, and for now the size it keeps.
 ///
@@ -47,7 +47,7 @@ pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
             font_size: theme.font(FontRole::Title),
         };
         let close: Rc<dyn Fn()> = Rc::new(request_close);
-        surface_frame(module.clone(), style, close, body, None).expect("surface frame build failed")
+        window_frame(module.clone(), style, close, body, None).expect("surface frame build failed")
     })
     .edge(env.edge)
     .open()
@@ -71,7 +71,7 @@ pub(crate) fn frame_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         radius: 14.0,
         font_size: theme.font(FontRole::Title),
     };
-    surface_frame("Clock", style, Rc::new(|| {}), body, None)
+    window_frame("Clock", style, Rc::new(|| {}), body, None)
 }
 
 #[cfg(test)]

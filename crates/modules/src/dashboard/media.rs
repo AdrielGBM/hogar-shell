@@ -341,7 +341,7 @@ fn cover_art(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source = derive(player, |p| p.art_url.clone());
-    let rows = ReactiveList::with_gap(
+    let rows = ReactiveList::new(
         move || vec![art_file(&source.get())],
         |path: &Option<String>| path.clone().unwrap_or_default(),
         move |path: Option<String>| match path.and_then(|p| picture::square(p.as_ref(), COVER, 8.0))
@@ -552,7 +552,7 @@ fn button(
             paint::md(Color::TRANSPARENT),
             vec![icon],
         )?
-        .on_hover_style(paint::md(theme.overlay))
+        .hover_style(paint::md(theme.overlay))
         .on_press(action),
     ))
 }

@@ -145,7 +145,7 @@ fn header(
             },
         )?)],
     )?
-    .on_hover_style(paint::md(theme.overlay))
+    .hover_style(paint::md(theme.overlay))
     .on_press(move || {
         revert_to_opened(path.as_path());
         // Straight away rather than waiting for the reload the write triggers: Revert is the one moment the
@@ -243,7 +243,7 @@ fn nav_row(
         },
         vec![glyph, Box::new(label)],
     )?
-    .on_hover_style(paint::md(theme.surface))
+    .hover_style(paint::md(theme.surface))
     .on_press(move || press.set(index));
     Ok(Box::new(row))
 }
@@ -441,6 +441,8 @@ mod tests {
                 });
                 tree.on_event(&Event::Scrolled {
                     delta: ScrollDelta::Pixels { x: 0.0, y: -120.0 },
+                    x: 600.0,
+                    y: 300.0,
                 });
                 telar::batch(|| {});
                 telar::relayout_if_dirty();
@@ -481,7 +483,7 @@ mod tests {
             let theme = NordTheme::new();
             set_theme(theme);
             let body = settings_panel().expect("the settings panel builds");
-            let frame = telar::surface_frame(
+            let frame = telar::window_frame(
                 MODULE.to_string(),
                 SurfaceFrameStyle {
                     background: theme.surface,
@@ -512,6 +514,8 @@ mod tests {
                 });
                 tree.on_event(&Event::Scrolled {
                     delta: ScrollDelta::Pixels { x: 0.0, y: -120.0 },
+                    x: 600.0,
+                    y: 300.0,
                 });
                 telar::batch(|| {});
                 telar::relayout_if_dirty();

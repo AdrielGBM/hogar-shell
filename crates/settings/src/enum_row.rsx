@@ -15,4 +15,6 @@ let label = props.label;
 
 [view]
 field_row label(move || label())
-    select selected:$picked options:options.to_vec() color:theme.accent fill:true on_select(|at| pick_option(&value, options, at))
+    select selected:$picked color:theme.accent stretch:true on_select(|at| pick_option(&value, options, at))
+        for opt in options
+            item label:opt.to_string()

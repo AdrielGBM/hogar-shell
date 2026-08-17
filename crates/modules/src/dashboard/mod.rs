@@ -89,7 +89,7 @@ pub fn dashboard_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let source = active.read_only();
     let page_config = Arc::clone(&config);
-    let body = ReactiveList::with_gap(
+    let body = ReactiveList::new(
         move || vec![source.get()],
         |tab: &DashboardTab| tab.id().to_string(),
         move |tab: DashboardTab| page(tab, &page_config, theme),
@@ -199,7 +199,7 @@ fn pill(
             },
             vec![icon, box_item(label)],
         )?
-        .on_hover_style(paint::md(theme.overlay))
+        .hover_style(paint::md(theme.overlay))
         // Through the store, not the local signal: a click and `hyprshell dashboard tab …` must land in the
         // same place, and the watch above is what brings the change back to this surface.
         .on_press(move || set_tab(tab)),
