@@ -33,7 +33,7 @@ use platform_wayland::SurfaceHandle;
 use util::state::kept;
 
 use crate::placement::Placement;
-use crate::surface_root::SurfaceRoot;
+use telar::WindowRoot;
 
 /// What a panel draws, given the environment this build resolved. `Fn` rather than `FnOnce`: a surface outlives
 /// the config it opened under, and a rebuild is how it follows an edit.
@@ -137,7 +137,7 @@ struct PanelApp {
 impl App for PanelApp {
     fn root(&self) -> Box<dyn Component> {
         reset_layout_runtime();
-        Box::new(SurfaceRoot::new(self.panel.build()).expect("panel surface root"))
+        Box::new(WindowRoot::wrapping(self.panel.build()).expect("panel surface root"))
     }
 
     fn clear_color(&self) -> Option<Color> {
@@ -177,6 +177,26 @@ pub fn content_radius() -> f32 {
     surface_env()
         .map(|env| env.config.panel_radius(env.edge))
         .unwrap_or(0.0)
+}
+
+/// The base distance content inside a panel is spaced by — the bar's `spacing`, so a card in a drawer breathes
+/// like the bar the drawer hangs off. The base of the [`crate::scale::space`] scale, exactly as
+/// [`content_radius`] is the base of [`crate::scale::corner`].
+///
+/// It falls back to the theme's own `spacing` rather than to zero, unlike the radius: a shell with no radius is
+/// square, and a shell with no spacing is illegible. Same three steps as [`card_gap`] — the surface's env, then
+/// the global config, then the token's default, which is what a preview and a headless test get.
+pub fn content_spacing() -> f32 {
+    if let Some(env) = surface_env() {
+        return env.config.resolved_spacing(env.edge);
+    }
+    config::config().map_or_else(
+        || config::theme::NordTheme::new().spacing,
+        |config| {
+            let edge = drawn_edge(&config);
+            config.resolved_spacing(edge)
+        },
+    )
 }
 
 /// The space between two stacked cards, from the panel's own environment — [`Config::card_gap`], the shell's

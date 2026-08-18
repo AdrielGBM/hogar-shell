@@ -173,7 +173,7 @@ fn lyrics_card(
                                 viewport.reveal(node, LYRIC_REVEAL_MARGIN);
                             }
                         });
-                        util::reactive::keeping(row, follow)
+                        Ok(Box::new(telar::Holding::new(row, vec![follow])))
                     }
                 }
             };

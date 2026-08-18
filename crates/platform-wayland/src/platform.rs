@@ -13,7 +13,7 @@ use crate::placement::{
 use telar::{
     AlignItems, App, Color, Component, Edge, Event, EventHandler, Key, ModifiersState,
     MultiSurfacePlatform, NamedKey, PlatformError, PointerButton, PointerSource, ScrollDelta,
-    SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, SurfaceRoot, SurfaceScaffold,
+    SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, WindowRoot, SurfaceScaffold,
     SurfaceToken, SurfaceTransition, Window, WindowConfig,
     begin_batch, build_surface_handler, end_batch, reset_layout_runtime, set_surface_host,
 };
@@ -1315,19 +1315,6 @@ fn update_input_region(
     true
 }
 
-pub(crate) struct NoPaths;
-impl telar::AppPathsProvider for NoPaths {
-    fn config_dir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-    fn data_dir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-    fn cache_dir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-}
-
 /// A live dynamically-opened surface. Dropping it — or calling [`close`](Self::close) — asks the driver to tear it down.
 pub struct SurfaceHandle {
     link: Arc<SurfaceLink>,
@@ -1404,7 +1391,11 @@ impl SurfaceControl for SurfaceHandle {
 /// driver to mount on its next loop turn — no new thread, so it shares the one reactive runtime (M3).
 pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandle {
     let link = Arc::new(SurfaceLink::default());
-    let handler = build_surface_handler::<LayerWindow, A>(app, Box::new(NoPaths), "hyprshell");
+    let handler = build_surface_handler::<LayerWindow, A>(
+        app,
+        std::sync::Arc::new(telar::NoPaths),
+        "hyprshell",
+    );
     DYN_QUEUE.with(|q| {
         q.borrow_mut().push(PendingSurface {
             config: spec,
@@ -1560,7 +1551,7 @@ impl App for HostedSurfaceApp {
             )
         } else {
             Box::new(
-                SurfaceRoot::new(content)
+                WindowRoot::wrapping(content)
                     .expect("surface root build failed")
                     .animate(transition),
             )
@@ -1613,7 +1604,11 @@ impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
             transition: RefCell::new(None),
             dismiss_armed: std::cell::Cell::new(false),
         };
-        let handler = build_surface_handler::<LayerWindow, _>(app, Box::new(NoPaths), "hyprshell");
+        let handler = build_surface_handler::<LayerWindow, _>(
+            app,
+            std::sync::Arc::new(telar::NoPaths),
+            "hyprshell",
+        );
         DYN_QUEUE.with(|q| {
             q.borrow_mut().push(PendingSurface {
                 config,

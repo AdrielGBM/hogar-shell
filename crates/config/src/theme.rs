@@ -1,6 +1,5 @@
-use std::any::Any;
 
-use telar::{Color, TextStyle, Theme, ThemeTokens};
+use telar::{Color, TextStyle, ThemeTokens};
 
 use crate::{FontSpec, FontsConfig};
 
@@ -17,7 +16,14 @@ pub enum FontRole {
     Display,
 }
 
-#[derive(Clone, Copy)]
+/// The metrics travel with the colours. Without them a catalogue component sizes itself from the trait's own
+/// defaults — 4px radius, 8px spacing, 14px text — which is a different design from the one the user
+/// configured, on the same screen as the bars that follow it.
+#[derive(Clone, Copy, ThemeTokens)]
+// Whichever of the theme's two foregrounds reads on the accent, rather than always the dark one: a light
+// accent takes `base`, a dark one takes `text`. A component that fills with `primary` and writes with
+// `on_primary` is otherwise unreadable on half the palettes this shell ships.
+#[theme(on_primary = self.accent.most_readable(&[self.text, self.base]))]
 pub struct NordTheme {
     /// Base corner radius the theme rounds panels and bars to (the design default; `[shape]`/per-bar can override).
     pub radius: f32,
@@ -33,10 +39,14 @@ pub struct NordTheme {
     pub fonts: FontsConfig,
     pub base: Color,
     pub surface: Color,
+    #[token(surface_alt)]
     pub overlay: Color,
+    #[token(scrollbar, border)]
     pub muted: Color,
     pub subtle: Color,
+    #[token(ink)]
     pub text: Color,
+    #[token(primary)]
     pub accent: Color,
     pub blue: Color,
     pub cyan: Color,
@@ -804,81 +814,6 @@ impl Default for NordTheme {
     }
 }
 
-impl Theme for NordTheme {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-impl ThemeTokens for NordTheme {
-    /// The metrics as well as the colours. Without these four a catalogue component sizes itself from the
-    /// trait's own defaults — 4px radius, 8px spacing, 14px text — which is a different design from the one the
-    /// user configured, on the same screen as the bars that follow it.
-    fn radius(&self) -> f32 {
-        self.radius
-    }
-    fn spacing(&self) -> f32 {
-        self.spacing
-    }
-    fn font_size(&self) -> f32 {
-        self.font_size
-    }
-    fn icon_size(&self) -> f32 {
-        self.icon_size
-    }
-
-    fn primary(&self) -> Color {
-        self.accent
-    }
-    /// Whichever of the theme's two foregrounds reads on the accent, rather than always the dark one: a light
-    /// accent takes `base`, a dark one takes `text`. A component that fills with `primary` and writes with
-    /// `on_primary` is otherwise unreadable on half the palettes this shell ships.
-    fn on_primary(&self) -> Color {
-        self.accent.most_readable(&[self.text, self.base])
-    }
-    fn muted(&self) -> Color {
-        self.muted
-    }
-    fn scrollbar(&self) -> Color {
-        self.muted
-    }
-    fn ink(&self) -> Color {
-        self.text
-    }
-    /// What a floating catalogue panel — a dropdown, a dialog, a drawer sheet — sits on. Unanswered it is the
-    /// trait's opaque white, which on this shell is a white slab in the middle of a dark panel.
-    fn surface(&self) -> Color {
-        self.surface
-    }
-    /// The quieter tone under a chip or a tag: the raised overlay, not the panel it is raised *on*.
-    fn surface_alt(&self) -> Color {
-        self.overlay
-    }
-    fn border(&self) -> Color {
-        self.muted
-    }
-    fn success(&self) -> Color {
-        self.success
-    }
-    fn warning(&self) -> Color {
-        self.warning
-    }
-    fn error(&self) -> Color {
-        self.error
-    }
-    fn info(&self) -> Color {
-        self.info
-    }
-    fn highlight_low(&self) -> Color {
-        self.highlight_low
-    }
-    fn highlight_med(&self) -> Color {
-        self.highlight_med
-    }
-    fn highlight_high(&self) -> Color {
-        self.highlight_high
-    }
-}
 
 #[cfg(test)]
 mod tests {

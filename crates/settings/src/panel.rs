@@ -293,7 +293,7 @@ fn page_stack(
                 }
             });
             let page_area = build_page_area(selected, query, reseed, config, path, theme)?;
-            util::reactive::keeping(page_area, follow_page)
+            Ok(Box::new(telar::Holding::new(page_area, vec![follow_page])))
         },
     )?;
     Ok(Box::new(scroll))
@@ -346,7 +346,7 @@ fn build_page_area(
 mod tests {
     use super::*;
     use telar::{reset_layout_runtime, set_theme};
-    use ui::surface_root::SurfaceRoot;
+    use telar::WindowRoot;
 
     // Switching the locale after the panel is built re-renders its labels live: the section titles are
     // reactive `t!` closures, so the rendered text changes from English to Spanish without a rebuild.
@@ -363,7 +363,7 @@ mod tests {
         reset_layout_runtime();
         set_theme(NordTheme::new());
         let panel = settings_panel().expect("settings panel");
-        let mut tree = ComponentList::new(SurfaceRoot::new(panel).expect("root"));
+        let mut tree = ComponentList::new(WindowRoot::wrapping(panel).expect("root"));
         tree.on_event(&Event::WindowResized {
             width: 380,
             height: 1200,
@@ -421,7 +421,7 @@ mod tests {
             reset_layout_runtime();
             set_theme(NordTheme::new());
             let panel = settings_panel().expect("settings panel");
-            let mut tree = ComponentList::new(SurfaceRoot::new(panel).expect("root"));
+            let mut tree = ComponentList::new(WindowRoot::wrapping(panel).expect("root"));
             tree.on_event(&Event::WindowResized {
                 width: 900,
                 height: 600,
@@ -485,6 +485,7 @@ mod tests {
             let body = settings_panel().expect("the settings panel builds");
             let frame = telar::window_frame(
                 MODULE.to_string(),
+                None,
                 SurfaceFrameStyle {
                     background: theme.surface,
                     title_bar: theme.overlay,
@@ -492,13 +493,17 @@ mod tests {
                     close: theme.muted,
                     radius: 12.0,
                     font_size: theme.font(FontRole::Title),
+                    controls: Default::default(),
+                    body_inset: 12.0,
+                    control_hover: telar::Color::TRANSPARENT,
+                    close_hover: telar::Color::TRANSPARENT,
                 },
                 std::rc::Rc::new(|| {}),
                 body,
                 None,
             )
             .expect("surface frame");
-            let mut tree = ComponentList::new(SurfaceRoot::new(frame).expect("root"));
+            let mut tree = ComponentList::new(WindowRoot::wrapping(frame).expect("root"));
             tree.on_event(&Event::WindowResized {
                 width: 920,
                 height: 680,

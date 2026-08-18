@@ -7,7 +7,7 @@ use telar::{
 
 use config::Edge;
 use config::geometry::{InnerEdges, frame_path};
-use ui::surface_root::SurfaceRoot;
+use telar::WindowRoot;
 
 /// Per-output frame: full-screen transparent surface drawing a continuous even-odd ring around content.
 pub struct FrameApp {
@@ -50,7 +50,7 @@ impl App for FrameApp {
             },
         )
         .expect("frame canvas build failed");
-        Box::new(SurfaceRoot::new(Box::new(canvas)).expect("frame layout failed"))
+        Box::new(WindowRoot::wrapping(Box::new(canvas)).expect("frame layout failed"))
     }
 
     fn clear_color(&self) -> Option<Color> {

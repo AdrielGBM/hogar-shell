@@ -19,19 +19,6 @@ use telar::{App, AppPathsProvider, run_multi_with_platform};
 
 use surfaces::reconcile::{Content, Surfaces};
 
-struct NullPaths;
-impl AppPathsProvider for NullPaths {
-    fn config_dir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-    fn data_dir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-    fn cache_dir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-}
-
 /// Every crate's `rsx_modules!` emits its own `telar_all_preview_entries`, so the list is per crate rather than
 /// per process and the app is the only place that has all eight.
 ///
@@ -128,7 +115,7 @@ pub fn run() {
     if let Err(e) = run_multi_with_platform(
         LayerShellPlatform::new(),
         Vec::new(),
-        |_| Box::new(NullPaths) as Box<dyn AppPathsProvider>,
+        |_| std::sync::Arc::new(util::paths::ShellPaths) as std::sync::Arc<dyn AppPathsProvider>,
         |_id| -> Box<dyn App> { unreachable!("hyprshell opens every surface dynamically") },
         "hyprshell",
     ) {
@@ -449,12 +436,12 @@ fn config_mtime(path: &Path) -> Option<SystemTime> {
 
 /// Logs whether a configured `[theme] font_family` resolves against the installed fonts. A wrong family name
 /// (e.g. `"Fira Code Nerd Font"` instead of the installed `"FiraCode Nerd Font"`) otherwise falls back to the
-/// default font silently; this turns that into a visible log line. The query mirrors the text shaper's own
-/// `FontSystem::new()` resolution, so a hit here means the shell will actually render in that family.
+/// default font silently; this turns that into a visible log line.
 ///
-/// Scanning the system fonts costs hundreds of ms, and every save from the settings panel triggers a config
-/// reload, so the database is loaded at most once and each family's verdict is remembered. The cost of that is
-/// a font installed while the shell runs isn't picked up until restart — worth it to keep reloads cheap.
+/// The verdict comes from the shaper's own database, so a hit here means the shell will actually render in that
+/// family — where the second `fontdb` this used to load could answer differently, and cost a full font scan to
+/// do it. Each family's verdict is still remembered, because every save from the settings panel reloads the
+/// config and asks again.
 fn warn_if_font_missing(family: Option<&str>) {
     let Some(family) = family else { return };
     thread_local! {
@@ -464,18 +451,7 @@ fn warn_if_font_missing(family: Option<&str>) {
     if CHECKED.with(|c| c.borrow().contains_key(family)) {
         return;
     }
-    static FONTS: std::sync::OnceLock<fontdb::Database> = std::sync::OnceLock::new();
-    let db = FONTS.get_or_init(|| {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
-        db
-    });
-    let found = db
-        .query(&fontdb::Query {
-            families: &[fontdb::Family::Name(family)],
-            ..fontdb::Query::default()
-        })
-        .is_some();
+    let found = telar::font_family_available(family);
     CHECKED.with(|c| c.borrow_mut().insert(family.to_string(), found));
     if found {
         tracing::info!("theme font_family '{family}' resolved");

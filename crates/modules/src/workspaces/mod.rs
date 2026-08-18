@@ -171,27 +171,19 @@ fn tracked_pill_view(
         .flex_shrink(0.0);
 
     let id = pill.id;
-    // The tracking subscription lives in the pill's own style closure, which the container holds for exactly
-    // its own lifetime — the span wanted, since the list rebuilds its rows and an effect outliving one would
-    // keep reporting a rect for a workspace that is no longer active. Not `reactive::keeping`: that wraps the
-    // item in a full-width in-flow box, which around a bar chip is a pill as wide as the whole row.
-    let held: Rc<RefCell<Vec<telar::Effect>>> = Rc::new(RefCell::new(Vec::new()));
-    let kept = Rc::clone(&held);
     let container = StyledContainer::new(
         inner,
-        move |_r| {
-            let _ = &kept;
-            RectStyle::filled(fill, style.radius)
-        },
+        move |_r| RectStyle::filled(fill, style.radius),
         content,
     )?;
 
     // Only the active pill is tracked. Every pill reporting its rect would be a signal write per pill per
     // layout pass, to answer a question about exactly one of them.
+    let mut tracking = Vec::new();
     if let Some(slot) = active_rect.filter(|_| pill.active)
         && let Some(rect) = track_layout(container.layout_node())
     {
-        held.borrow_mut().push(telar::effect(move || {
+        tracking.push(telar::effect(move || {
             let rect = rect.get();
             // A rebuilt pill's node is laid out at zero before its first pass; reporting that would send the
             // indicator to the corner and back on every workspace change.
@@ -201,7 +193,12 @@ fn tracked_pill_view(
         }));
     }
 
-    Ok(Box::new(container.on_press(move || on_press(id))))
+    // The subscription lives exactly as long as the pill: the list rebuilds its rows, and an effect outliving
+    // one would keep reporting a rect for a workspace that is no longer active.
+    Ok(Box::new(telar::Holding::new(
+        Box::new(container.on_press(move || on_press(id))),
+        tracking,
+    )))
 }
 
 /// The pills, with the active-workspace indicator sliding behind them.
@@ -331,17 +328,10 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
     let origin = signal(ZERO_RECT);
     let painted = origin.read_only();
 
-    // Effects the canvas has to outlive, parked where it can reach them: a handle that drops deregisters its
-    // effect, and neither of these belongs to a widget `reactive::keeping` could wrap — that helper adds an
-    // in-flow box, and this one has to stay `absolute_fill` over the row.
-    let held: Rc<RefCell<Vec<telar::Effect>>> = Rc::new(RefCell::new(vec![follow]));
-    let kept = Rc::clone(&held);
-
     let accent = style.theme.accent;
     let radius = style.radius;
     let wanted = slot.read_only();
     let canvas = Canvas::new(LayoutStyle::new().absolute_fill(), move |_local| {
-        let _ = &kept;
         // Both read unconditionally, before anything can return early. `motion` lives in a `RefCell`, not a
         // signal, so reading only *it* subscribes this canvas to nothing: while it was still `None` the
         // indicator had no reason to repaint when a pill finally reported its rect, and stayed invisible until
@@ -378,11 +368,12 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
         )
     })?;
 
+    // The canvas has to outlive both: a handle that drops deregisters its effect.
+    let mut held = vec![follow];
     if let Some(rect) = track_layout(canvas.layout_node()) {
-        held.borrow_mut()
-            .push(telar::effect(move || origin.set(rect.get())));
+        held.push(telar::effect(move || origin.set(rect.get())));
     }
-    Ok(Box::new(canvas))
+    Ok(Box::new(telar::Holding::new(Box::new(canvas), held)))
 }
 
 /// The pills to draw for a snapshot.

@@ -26,7 +26,7 @@ use telar::{
 
 use config::{Config, WallpaperTransition};
 use services::wallpaper;
-use ui::surface_root::SurfaceRoot;
+use telar::WindowRoot;
 
 /// How far a wipe travels when the compositor has not said how wide this screen is. Only reached before the
 /// output list has been read, and a wipe that starts slightly off-screen is invisible either way.
@@ -51,7 +51,7 @@ impl App for WallpaperApp {
         let config = self.config.get();
         set_theme(config.resolve_theme());
         services::locale::attach(config.language());
-        Box::new(SurfaceRoot::new(self.content(&config)).expect("wallpaper layout failed"))
+        Box::new(WindowRoot::wrapping(self.content(&config)).expect("wallpaper layout failed"))
     }
 
     fn clear_color(&self) -> Option<Color> {

@@ -24,7 +24,6 @@ use ui::scale::space;
 use ui::placement::{Centred, Placement};
 use ui::thumbnail;
 use util::calc;
-use util::reactive;
 use util::search::{self, Mode};
 use util::state::kept;
 
@@ -496,7 +495,7 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
     let keys_shown = shown.clone();
     let keys_columns = columns;
     // The shared list bindings, so the launcher and every other list surface agree on what a key means.
-    let nav = keynav::KeyNav::from_config(&config::config().map(|c| c.keynav).unwrap_or_default());
+    let nav = keynav::from_config(&config::config().map(|c| c.keynav).unwrap_or_default());
     let grid_nav = nav.grid();
     let keys_selected = selected;
     let keys_armed = armed;
@@ -790,7 +789,7 @@ fn result_list(
                         viewport.reveal(node, 4.0);
                     }
                 });
-                reactive::keeping(item, follow_selection)
+                Ok(Box::new(telar::Holding::new(item, vec![follow_selection])))
             };
             // `with_style` rather than `new`: the convenience constructors carry no width, so a grid line asking
             // for `100%` inside one resolves against nothing and lays its tiles out at their intrinsic size.
@@ -1982,9 +1981,9 @@ mod tests {
     #[test]
     fn typing_reaches_the_search_field_while_the_arrows_drive_the_list() {
         use telar::{Key, NamedKey};
-        use ui::keynav::{KeyNav, Move};
+        use ui::keynav::Move;
 
-        let nav = KeyNav::from_config(&config::KeyNavConfig::default());
+        let nav = keynav::from_config(&config::KeyNavConfig::default());
         for letter in ['j', 'k', 'g', 'G', 'q'] {
             assert_eq!(
                 nav.interpret(&Key::Char(letter)),

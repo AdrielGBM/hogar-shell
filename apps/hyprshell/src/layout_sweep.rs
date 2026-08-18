@@ -133,7 +133,19 @@ fn paints(command: &DrawCommand) -> bool {
     }
 }
 
+/// The world a sweep seeds is process-global — the config, the theme, the default font family, the icon
+/// store — so two sweeps running at once measure each other's edge and shape. Three `#[test]` functions call
+/// this, and cargo runs them in parallel: the reading that came back was `activewindow` drawing nothing on ten
+/// combinations, roughly every other run, because it had been laid out against a bar some other test had just
+/// moved to a different edge.
+///
+/// The guard lives here rather than in each test so a sweep added later inherits it. Poisoning is ignored on
+/// purpose: a panicking test leaves the world half-set, and the next sweep re-seeds it from scratch before it
+/// measures anything.
+static WORLD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn sweep(mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
+    let _world = WORLD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     for edge in Edge::ALL {
         for mode in MODES {
             // Seeded before the list is drawn up, not only before each entry is measured: an entry reads the world to declare its surface — a bar's is its thickness, on the axis it runs along — so a list enumerated first describes whichever combination happened to run before this one.

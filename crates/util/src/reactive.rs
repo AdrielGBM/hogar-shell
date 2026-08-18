@@ -14,9 +14,10 @@
 //! `Rc`-backed and lives as long as the closure reading it, so the widget that draws the value is what keeps
 //! the derivation alive, with nothing for a caller to remember.
 
+pub use telar::{Source, derive, derive_pair};
+
 use telar::{
-    Effect, LayoutError, LayoutItem, LayoutStyle, Memo, ReadSignal, RectStyle, RwSignal,
-    SizeDimension, StyledContainer, memo,
+    Memo, memo,
 };
 
 /// A value a surface reads and re-reads: derived from a service, or fixed for the life of the surface. One type
@@ -31,99 +32,6 @@ pub fn fixed<T: Clone + PartialEq + 'static>(value: T) -> Live<T> {
 /// [`fixed`] for a literal, saving the `.to_string()` at every call site that labels a row.
 pub fn fixed_text(text: impl Into<String>) -> Live<String> {
     fixed(text.into())
-}
-
-/// Anything a derivation can read: either handle on a signal, or another derivation.
-///
-/// One trait rather than a `derive`/`derive_from`/`map` family, because the difference between them was never
-/// about behaviour — a card reading a service, a read handle, or a value already derived once all want the same
-/// thing, and three spellings of it only meant picking the wrong one and chasing a type error.
-pub trait Source {
-    type Value;
-    fn read(&self) -> Self::Value;
-}
-
-impl<T: Clone + 'static> Source for RwSignal<T> {
-    type Value = T;
-    fn read(&self) -> T {
-        self.get()
-    }
-}
-
-impl<T: Clone + 'static> Source for ReadSignal<T> {
-    type Value = T;
-    fn read(&self) -> T {
-        self.get()
-    }
-}
-
-impl<T: Clone + 'static> Source for Live<T> {
-    type Value = T;
-    fn read(&self) -> T {
-        self.get()
-    }
-}
-
-pub fn derive<S, U>(source: S, map: impl Fn(S::Value) -> U + 'static) -> Live<U>
-where
-    S: Source + 'static,
-    U: PartialEq + 'static,
-{
-    memo(move || map(source.read()))
-}
-
-pub fn derive_pair<A, B, U>(
-    first: A,
-    second: B,
-    map: impl Fn(A::Value, B::Value) -> U + 'static,
-) -> Live<U>
-where
-    A: Source + 'static,
-    B: Source + 'static,
-    U: PartialEq + 'static,
-{
-    memo(move || map(first.read(), second.read()))
-}
-
-/// Ties `subscription` to `item`'s lifetime, for an effect that belongs to one widget.
-///
-/// Needed in both directions. Dropping the handle deregisters the effect, so it would run once and stop; but
-/// parking it somewhere longer-lived — a list that rebuilds its rows, say — leaves it firing against a node
-/// that is gone. A `StyledContainer` holds its style closure for exactly its own lifetime, which is the span
-/// wanted, so the closure is where the handle lives. The wrapper paints nothing.
-pub fn keeping(
-    item: Box<dyn LayoutItem>,
-    subscription: Effect,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    Ok(Box::new(StyledContainer::new(
-        LayoutStyle::new()
-            .flex_column()
-            .width(SizeDimension::Percent(1.0)),
-        move |_r| {
-            let _ = &subscription;
-            RectStyle::default()
-        },
-        vec![item],
-    )?))
-}
-
-/// [`keeping`] for a widget that owns several effects — a form row whose every field writes back into the
-/// list it belongs to. One wrapper rather than one per effect, because each `keeping` adds a container to the
-/// layout and a row wrapped five deep is five boxes the flexbox has to agree about.
-pub fn keeping_all(
-    item: Box<dyn LayoutItem>,
-    subscriptions: Vec<Effect>,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    Ok(Box::new(StyledContainer::new(
-        LayoutStyle::new()
-            .flex_column()
-            .width(SizeDimension::Percent(1.0)),
-        move |_r| {
-            let _ = &subscriptions;
-            RectStyle::default()
-        },
-        vec![item],
-    )?))
 }
 
 #[cfg(test)]

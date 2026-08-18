@@ -386,12 +386,7 @@ fn load_icon(id: &IconId, fetch: &FetchConfig, agent: &ureq::Agent) -> Option<Ar
 }
 
 fn cache_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(|| PathBuf::from(".cache"));
-    base.join("hyprshell").join("icons")
+    util::paths::cache_dir().join("icons")
 }
 
 /// The state of loading an icon set from Iconify's `/collection` endpoint. `Ready` carries the set's

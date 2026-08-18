@@ -426,7 +426,7 @@ impl Component for WithEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use telar::{SurfaceRoot, reset_layout_runtime, set_theme, track_layout};
+    use telar::{WindowRoot, reset_layout_runtime, set_theme, track_layout};
 
     #[test]
     fn filter_matches_the_name_part_case_insensitively_and_caps() {
@@ -559,7 +559,7 @@ mod tests {
             Box::new(card),
         )
         .expect("scroll");
-        let root = SurfaceRoot::new(Box::new(scroll)).expect("surface root");
+        let root = WindowRoot::wrapping(Box::new(scroll)).expect("surface root");
 
         let tree = ComponentList::new(root);
         let _ = tree.commands();
@@ -623,7 +623,7 @@ mod tests {
             Box::new(card),
         )
         .expect("scroll");
-        let root = SurfaceRoot::new(Box::new(scroll)).expect("surface root");
+        let root = WindowRoot::wrapping(Box::new(scroll)).expect("surface root");
 
         let tree = ComponentList::new(root);
         let _ = tree.commands();
@@ -663,7 +663,7 @@ mod tests {
         )
         .expect("root");
 
-        let tree = ComponentList::new(SurfaceRoot::new(Box::new(root)).expect("surface root"));
+        let tree = ComponentList::new(WindowRoot::wrapping(Box::new(root)).expect("surface root"));
         let _ = tree.commands();
         drop(tree);
     }

@@ -1,199 +1,117 @@
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+//! Where this shell's files go.
+//!
+//! The XDG rule, the `~` expansion, the `user-dirs.dirs` reading and the app-name scoping all live in
+//! `telar::paths`; what is left here is the part that is this shell's own — which directories it declares to
+//! the runtime through [`ShellPaths`], and the fallbacks it takes when the session provides none.
 
-/// The user's home directory, or `None` where `$HOME` names nothing — which is how a shell started without an
-/// environment presents, and a reason to fall back rather than to build a path rooted at `/`.
-pub fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-}
+use std::path::PathBuf;
 
-/// Expands a leading `~` (bare or `~/…`) to `$HOME`, leaving every other path untouched. User-authored config paths (e.g. a wallpaper) commonly use `~`, which the OS doesn't resolve on its own.
-pub fn expand_tilde(path: &Path) -> PathBuf {
-    let Ok(rest) = path.strip_prefix("~") else {
-        return path.to_path_buf();
-    };
-    match home_dir() {
-        Some(home) => home.join(rest),
-        None => path.to_path_buf(),
+use telar::{AppPathsProvider, paths};
+
+pub use telar::paths::{ensure_dir, expand_tilde, home as home_dir, user_dir};
+
+/// The name every app-scoped directory is nested under, and the one handed to the runner.
+pub const APP: &str = "hyprshell";
+
+/// The directories this shell declares to Telar, so `telar::paths::*` and every widget behind it resolve the
+/// same places the shell writes to. Handed to the runner in place of the three stubs that used to answer
+/// `None` and leave every caller to work it out again.
+pub struct ShellPaths;
+
+impl AppPathsProvider for ShellPaths {
+    fn config_dir(&self) -> Option<PathBuf> {
+        Some(xdg("XDG_CONFIG_HOME", ".config"))
+    }
+
+    fn data_dir(&self) -> Option<PathBuf> {
+        Some(xdg("XDG_DATA_HOME", ".local/share"))
+    }
+
+    fn cache_dir(&self) -> Option<PathBuf> {
+        Some(xdg("XDG_CACHE_HOME", ".cache"))
+    }
+
+    fn state_dir(&self) -> Option<PathBuf> {
+        Some(xdg("XDG_STATE_HOME", ".local/state"))
+    }
+
+    /// `$XDG_RUNTIME_DIR` when the session provides one (tmpfs, cleaned on logout — where a socket belongs),
+    /// else a `/tmp` path scoped to the user so two users on one machine never collide.
+    fn runtime_dir(&self) -> Option<PathBuf> {
+        Some(
+            std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| {
+                    let uid = std::env::var("UID").unwrap_or_else(|_| "user".to_string());
+                    PathBuf::from(format!("/tmp/hyprshell-{uid}"))
+                }),
+        )
     }
 }
 
-/// The XDG resolution rule, over values rather than the environment: the variable when it names a non-empty
-/// path, else `$HOME` joined with `fallback`, else `fallback` relative. Taking the values as arguments keeps
-/// this testable without mutating process-wide environment, which would race every other test in the binary.
-fn resolve_base(var: Option<OsString>, home: Option<OsString>, fallback: &str) -> PathBuf {
-    var.map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| home.map(|h| PathBuf::from(h).join(fallback)))
-        .unwrap_or_else(|| PathBuf::from(fallback))
+fn xdg(var: &str, fallback: &str) -> PathBuf {
+    paths::resolve_base(
+        std::env::var_os(var),
+        std::env::var_os("HOME"),
+        fallback,
+    )
 }
 
-/// `$VAR` when it names a non-empty path, else `$HOME` joined with `fallback`.
-fn xdg_base(var: &str, fallback: &str) -> PathBuf {
-    resolve_base(std::env::var_os(var), std::env::var_os("HOME"), fallback)
+/// Falls back to resolving the base directly, for the paths a surface asks for before the runner has installed
+/// anything — a bar builds its config path while the event loop is still being constructed.
+fn scoped(installed: Option<PathBuf>, var: &str, fallback: &str) -> PathBuf {
+    installed.unwrap_or_else(|| xdg(var, fallback).join(APP))
 }
 
-/// The app's data directory (`$XDG_DATA_HOME/hyprshell`, else `~/.local/share/hyprshell`), where persistent
-/// user state lives — notes and notification history.
+/// Persistent user state — notes and notification history.
 pub fn data_dir() -> PathBuf {
-    xdg_base("XDG_DATA_HOME", ".local/share").join("hyprshell")
+    scoped(paths::data(), "XDG_DATA_HOME", ".local/share")
 }
 
-/// The app's state directory (`$XDG_STATE_HOME/hyprshell`, else `~/.local/state/hyprshell`): machine-written
-/// state the user never edits — what the shell remembers across restarts, as opposed to the config they own.
+/// Machine-written state the user never edits: what the shell remembers across restarts, as opposed to the
+/// config they own.
 pub fn state_dir() -> PathBuf {
-    xdg_base("XDG_STATE_HOME", ".local/state").join("hyprshell")
+    scoped(paths::state(), "XDG_STATE_HOME", ".local/state")
 }
 
-/// The app's cache directory (`$XDG_CACHE_HOME/hyprshell`, else `~/.cache/hyprshell`): regenerable artefacts
-/// (icons, cover art, thumbnails) that are safe to delete.
+/// Regenerable artefacts — icons, cover art, thumbnails — that are safe to delete.
 pub fn cache_dir() -> PathBuf {
-    xdg_base("XDG_CACHE_HOME", ".cache").join("hyprshell")
+    scoped(paths::cache(), "XDG_CACHE_HOME", ".cache")
 }
 
-/// The app's runtime directory, where the IPC socket lives. `$XDG_RUNTIME_DIR/hyprshell` when the session
-/// provides one (tmpfs, cleaned on logout — where a socket belongs), else a `/tmp` path scoped to the user so
-/// two users on one machine never collide.
+/// Where the IPC socket lives.
 pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| {
-            let uid = std::env::var("UID").unwrap_or_else(|_| "user".to_string());
-            PathBuf::from(format!("/tmp/hyprshell-{uid}"))
-        })
-        .join("hyprshell")
-}
-
-/// A well-known user directory (`XDG_PICTURES_DIR`, `XDG_VIDEOS_DIR`, …), else `$HOME/<fallback>`.
-///
-/// These are not environment variables on most sessions: `xdg-user-dirs` writes them to
-/// `~/.config/user-dirs.dirs` as a shell fragment that a login script sources, so a shell started any other way
-/// never sees them. Reading the file directly is what makes a screenshot land in the user's own `Pictures` on
-/// a localised system, where the directory is called `Imágenes` and no fallback would find it.
-pub fn user_dir(name: &str, fallback: &str) -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let default = || match &home {
-        Some(home) => home.join(fallback),
-        None => PathBuf::from(fallback),
-    };
-    if let Some(value) = std::env::var_os(name).filter(|v| !v.is_empty()) {
-        return PathBuf::from(value);
-    }
-    let Some(home) = home.clone() else {
-        return default();
-    };
-    let config = xdg_base("XDG_CONFIG_HOME", ".config").join("user-dirs.dirs");
-    let Ok(text) = std::fs::read_to_string(config) else {
-        return default();
-    };
-    parse_user_dirs(&text, name)
-        .map(|value| PathBuf::from(value.replace("$HOME", &home.to_string_lossy())))
-        .unwrap_or_else(default)
-}
-
-/// Reads one `NAME="value"` assignment out of `user-dirs.dirs`, ignoring comments. `$HOME` is left in the
-/// value for the caller to expand, since only it knows what home is.
-fn parse_user_dirs(text: &str, name: &str) -> Option<String> {
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        if key.trim() != name {
-            continue;
-        }
-        let value = value.trim().trim_matches('"');
-        if !value.is_empty() {
-            return Some(value.to_string());
-        }
-    }
-    None
-}
-
-/// Creates `dir` (and its parents) and returns it, so a caller can chain straight into a file path.
-pub fn ensure_dir(dir: PathBuf) -> PathBuf {
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!("could not create {}: {e}", dir.display());
-    }
-    dir
+    paths::runtime()
+        .or_else(|| ShellPaths.runtime_dir().map(|base| base.join(APP)))
+        .unwrap_or_else(|| PathBuf::from("/tmp").join(APP))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn os(value: &str) -> Option<OsString> {
-        Some(OsString::from(value))
+    /// Every app directory is nested under the shell's own name, whether the runner installed a provider or the
+    /// fallback resolved it — a bar that builds its path early must not write somewhere else than one that
+    /// builds it late.
+    #[test]
+    fn every_app_directory_is_scoped_to_the_shell() {
+        for dir in [data_dir(), state_dir(), cache_dir(), runtime_dir()] {
+            assert!(
+                dir.ends_with(APP),
+                "{} is not scoped to {APP}",
+                dir.display()
+            );
+        }
     }
 
     #[test]
-    fn resolve_base_prefers_the_variable_then_home() {
-        assert_eq!(
-            resolve_base(os("/xdg/state"), os("/home/tester"), ".local/state"),
-            PathBuf::from("/xdg/state")
+    fn the_runtime_directory_is_user_scoped_when_the_session_offers_none() {
+        let dir = ShellPaths.runtime_dir().expect("always answers");
+        assert!(
+            dir.is_absolute(),
+            "a socket needs an absolute path: {}",
+            dir.display()
         );
-        assert_eq!(
-            resolve_base(os(""), os("/home/tester"), ".local/state"),
-            PathBuf::from("/home/tester/.local/state"),
-            "an empty variable falls back to $HOME, not to an empty path"
-        );
-        assert_eq!(
-            resolve_base(None, os("/home/tester"), ".cache"),
-            PathBuf::from("/home/tester/.cache")
-        );
-        assert_eq!(
-            resolve_base(None, None, ".cache"),
-            PathBuf::from(".cache"),
-            "no HOME at all still yields a usable relative path rather than panicking"
-        );
-    }
-
-    #[test]
-    fn user_dirs_are_read_out_of_the_file_the_session_writes() {
-        let text = "\
-# This file is written by xdg-user-dirs-update
-XDG_DESKTOP_DIR=\"$HOME/Escritorio\"
-XDG_PICTURES_DIR=\"$HOME/Imágenes\"
-#XDG_MUSIC_DIR=\"$HOME/Music\"
-XDG_VIDEOS_DIR=\"\"
-";
-        assert_eq!(
-            parse_user_dirs(text, "XDG_PICTURES_DIR"),
-            Some("$HOME/Imágenes".to_string()),
-            "a localised directory is exactly what a hardcoded 'Pictures' would miss"
-        );
-        assert_eq!(
-            parse_user_dirs(text, "XDG_MUSIC_DIR"),
-            None,
-            "a commented-out entry is not set"
-        );
-        assert_eq!(
-            parse_user_dirs(text, "XDG_VIDEOS_DIR"),
-            None,
-            "an empty value falls back rather than yielding the home directory itself"
-        );
-        assert_eq!(parse_user_dirs(text, "XDG_TEMPLATES_DIR"), None);
-    }
-
-    #[test]
-    fn expand_tilde_only_touches_a_leading_tilde() {
-        assert_eq!(
-            expand_tilde(Path::new("/etc/x~y")),
-            PathBuf::from("/etc/x~y"),
-            "a tilde mid-path is a literal character"
-        );
-        assert_eq!(
-            expand_tilde(Path::new("relative/path")),
-            PathBuf::from("relative/path")
-        );
-        // The `~/…` expansion itself depends on $HOME, which this binary's other tests also read; asserting on
-        // it would mean mutating process-wide state, so only the prefix rule is covered here.
-        assert!(expand_tilde(Path::new("~/Pictures")).ends_with("Pictures"));
     }
 }

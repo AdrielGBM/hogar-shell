@@ -30,7 +30,6 @@ settings = { workspace = true }
 util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-fontdb = "0.23"
 tracing-appender = "0.2.5"
 toml.workspace = true
 libc.workspace = true

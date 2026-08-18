@@ -21,7 +21,7 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use config::{Config, SurfaceEnv, set_surface_env};
 use services::lock::{self, LockState, Method};
-use ui::surface_root::SurfaceRoot;
+use telar::WindowRoot;
 
 const AVATAR: f32 = 96.0;
 const CARD_WIDTH: f32 = 380.0;
@@ -55,7 +55,7 @@ impl App for LockApp {
             config: Arc::clone(&config),
         });
         let content = screen(&config).expect("lock screen build failed");
-        Box::new(SurfaceRoot::new(content).expect("lock screen layout failed"))
+        Box::new(WindowRoot::wrapping(content).expect("lock screen layout failed"))
     }
 
     fn clear_color(&self) -> Option<Color> {

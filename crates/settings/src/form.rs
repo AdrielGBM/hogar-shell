@@ -437,7 +437,7 @@ pub(crate) fn save_button(
     if live.is_empty() {
         return Ok(button);
     }
-    util::reactive::keeping_all(button, live)
+    Ok(Box::new(telar::Holding::new(button, live)))
 }
 
 pub(crate) fn opt_num<T: ToString>(value: Option<T>) -> String {

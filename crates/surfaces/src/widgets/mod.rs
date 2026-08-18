@@ -19,7 +19,7 @@ use telar::{
 use config::theme::FontRole;
 use config::{Align, Config};
 use services::{clock, visualiser};
-use ui::surface_root::SurfaceRoot;
+use telar::WindowRoot;
 use util::reactive::{derive, fixed};
 
 /// Per-output widgets: a click-through surface over the free area of the screen, carrying whatever `[widgets]`
@@ -36,7 +36,7 @@ impl App for WidgetsApp {
         let config = self.config.get();
         set_theme(config.resolve_theme());
         services::locale::attach(config.language());
-        Box::new(SurfaceRoot::new(content(&config)).expect("widgets layout failed"))
+        Box::new(WindowRoot::wrapping(content(&config)).expect("widgets layout failed"))
     }
 
     fn clear_color(&self) -> Option<Color> {

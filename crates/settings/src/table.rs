@@ -174,7 +174,7 @@ pub(crate) fn entry_card<T: Clone + 'static>(
         paint::md(theme.surface),
         fields,
     )?;
-    util::reactive::keeping_all(Box::new(card), subscriptions)
+    Ok(Box::new(telar::Holding::new(Box::new(card), subscriptions)))
 }
 
 /// Adds `id` to a list or takes it out again — what both switches on an application row do.

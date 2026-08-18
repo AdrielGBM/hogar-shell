@@ -290,7 +290,7 @@ fn app_row(
     )?;
     // The wrapper is what holds the field's effect for exactly this row's lifetime; it paints nothing and is
     // full-width, which is what the row already is.
-    util::reactive::keeping(Box::new(row), sync)
+    Ok(Box::new(telar::Holding::new(Box::new(row), vec![sync])))
 }
 
 #[cfg(test)]

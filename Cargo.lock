@@ -1065,7 +1065,6 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 name = "hyprshell"
 version = "0.1.0"
 dependencies = [
- "fontdb 0.23.0",
  "hyprshell-config",
  "hyprshell-modules",
  "hyprshell-services",
@@ -2818,9 +2817,9 @@ dependencies = [
 
 [[package]]
 name = "telar"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d798fae4aa9bebba02e6e6cfd1297a290f55a8767b9801a1c4d31cbb5a7ea213"
+checksum = "7d0976d5e6401ad83d24392502bdc7fd4c4eef72d5d0c16866130466ce711eba"
 dependencies = [
  "image",
  "libc",
@@ -2850,24 +2849,25 @@ dependencies = [
 
 [[package]]
 name = "telar-geometry-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6993d4d11455305adcd1be1e62dad9b236ccbedc3b94c9f4e3698af77113228"
+checksum = "f2f4f2e36607acc02e0a7e00f74be90adb93e8adedcd9a8800b3b8883ac302b4"
 
 [[package]]
 name = "telar-i18n-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dcafe4521207376c702c973fa4ba78dbe858101c9da52bb83aea3e1f5909505"
+checksum = "4096b8561eaa2d18869cae2c077d31ea5a44d90e96476d7ad9f0715cd3d669d4"
 dependencies = [
  "telar-reactive-core",
+ "toml",
 ]
 
 [[package]]
 name = "telar-layout-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5b9147c58a881f23a6c4e5e808ef9d884fcf76d0f043872a8a3ab696fedf4f5"
+checksum = "7c4121fac00acacb2a09ad45f8b319a8417fa64a94ae8aed9965654c03e44492"
 dependencies = [
  "rustc-hash",
  "taffy",
@@ -2877,9 +2877,9 @@ dependencies = [
 
 [[package]]
 name = "telar-layout-reactive"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9aed1c9bb1291df7a7d297582bb6f0cc2ff94d0c659c3cb6e8f695c561dcf1a"
+checksum = "25e733a268b97a7bb6d7afe1475de8e862a8a9f20894cc5c395aab17d7f983bc"
 dependencies = [
  "rustc-hash",
  "telar-geometry-core",
@@ -2889,9 +2889,9 @@ dependencies = [
 
 [[package]]
 name = "telar-macros"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b858e8046e14c8ce39fb5f69096b64fbbd51669dc67c1117ae4373569a86aa1a"
+checksum = "6d109413e0f57e79d2c53f11cb3dd6a4f3dc9f5a17326d716dd816c0334248f2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2901,9 +2901,9 @@ dependencies = [
 
 [[package]]
 name = "telar-motion-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b52e39ab7f5d7d9a524a78283d3c054ee86b946cfb7c39d7db89b91342196f0"
+checksum = "86dc4b4fcfe0324b56fc35ac8f626dad1f52061a3a944aaa018213f85af8678e"
 dependencies = [
  "telar-geometry-core",
  "telar-reactive-core",
@@ -2911,18 +2911,18 @@ dependencies = [
 
 [[package]]
 name = "telar-parser"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8678a99a0ca677c171fa4428a9342781cd975784b3357b5c3422d8170d1c797"
+checksum = "334e00ba12194becded084562bf5ec89e7c3ac00ec70723553bfab3b4ffa3ed3"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "telar-platform-android"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1900cb658100905c638ab47eb467b4de569d38f01ccbac2e1cea12a88319bb24"
+checksum = "319a2a2622f141959fe225b544a347cb3de99521be6fa9bc52fade1ae9feec25"
 dependencies = [
  "android-activity",
  "libc",
@@ -2938,9 +2938,9 @@ dependencies = [
 
 [[package]]
 name = "telar-platform-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e3335a950785aa23f670b33706219949deceab809821eef7701ae3e82883b4e"
+checksum = "81b550eb9281bde90ee630dfaa0d532a5e7f2ab2bc533a3e2b94fdd8e61e1afa"
 dependencies = [
  "telar-geometry-core",
  "telar-reactive-local",
@@ -2949,9 +2949,9 @@ dependencies = [
 
 [[package]]
 name = "telar-platform-headless"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddf00e0d8c8234ec9d0691d4ee457176a31e060d5e348346b2b63256434f4478"
+checksum = "179180cd36d63cb32e0155c6b117beb460365547186edc574440712a057c8189"
 dependencies = [
  "raw-window-handle",
  "telar-platform-core",
@@ -2959,9 +2959,9 @@ dependencies = [
 
 [[package]]
 name = "telar-platform-winit"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af7ed2ac8d06ad7285e82d12750168bd3761d719f618b821b1f230826f86f1f2"
+checksum = "ea810d41ee6ac7f45b63a889493715873335ec42e1e7c321599f85cc33d21aed"
 dependencies = [
  "raw-window-handle",
  "telar-platform-core",
@@ -2970,9 +2970,9 @@ dependencies = [
 
 [[package]]
 name = "telar-reactive-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce458e56abda07b007ab766892b4c9869bc1473818edd77f0e15cf614087a7d5"
+checksum = "6e014a35a8a561c70259b2bde9280c83e88b3795e3f8ff9c4ba4149e3649b588"
 dependencies = [
  "rustc-hash",
  "slab",
@@ -2982,15 +2982,15 @@ dependencies = [
 
 [[package]]
 name = "telar-reactive-local"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0533403a37dd079e455f977af2ed3d48b99897060be9a9d6819bda56b7f457d3"
+checksum = "217a11c8617c8dcb59890ce45242f05f9f4c529f48fc92f55d9754613d9774c3"
 
 [[package]]
 name = "telar-renderer-assets"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fdf3d96394ed110530d9565007f15f0c8341e8c7653a6704093fb708c5b5a34"
+checksum = "06e0afd71530c1b2bd5b16ba44f68ad3c5140257cdbbee4df4c6910f68f3867f"
 dependencies = [
  "image",
  "resvg",
@@ -3003,9 +3003,9 @@ dependencies = [
 
 [[package]]
 name = "telar-renderer-cache"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eacac91822390696b0b7800532fdfa85003e6345d21b20741c2be533f4a6e5f"
+checksum = "674e02fd1d69e44144eb2ad59854e70361c44496eda3a00546f24cb669dc2602"
 dependencies = [
  "clru",
  "rustc-hash",
@@ -3013,9 +3013,9 @@ dependencies = [
 
 [[package]]
 name = "telar-renderer-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0957a44b67e25d730595bfff1f6d99161bbd81f938ba2583fd9f4317389acb69"
+checksum = "59afeb008e999d89785586711a8d1d526823963c19fd6b8c8955c9e4b48c5b9a"
 dependencies = [
  "bytemuck",
  "rustc-hash",
@@ -3029,9 +3029,9 @@ dependencies = [
 
 [[package]]
 name = "telar-renderer-software"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e74cd15cd9e210a05ec4afa9ff22a3c6753e7af0f7b1b01ea863abe1458df78"
+checksum = "18b6ebcf49550b20f6411f0dc6b209629a8b7b5b95f44d7850aecffc97646a89"
 dependencies = [
  "memmap2",
  "ndk",
@@ -3053,9 +3053,9 @@ dependencies = [
 
 [[package]]
 name = "telar-renderer-text"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dfe8a6112ddeb2b03ebee0c15c9be9bdfd2b437ea62d508cd9bfea1bf158b4d"
+checksum = "3f7b7cbd536275b8894ba5acdfd95573c2db8214c77873a990b1ded5b0117a0b"
 dependencies = [
  "cosmic-text",
  "etagere",
@@ -3070,20 +3070,21 @@ dependencies = [
 
 [[package]]
 name = "telar-services-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "547b76149753cd1a857485e46f6e056b1b1393a0ddda0e691ada08859cb4c8a5"
+checksum = "750f43b2047176be7c917fe2f22c09fe56906da19c4e495b9af57efea47e995f"
 dependencies = [
  "rustc-hash",
  "telar-reactive-local",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
 name = "telar-theme-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5705da929f369e453258fbf080141790f8c9c83f5cc7d2355540314f39c215e5"
+checksum = "373e61c676cee045453808590972d97fe8cbcf6c4cde4d39e9ee7aae1ee16b24"
 dependencies = [
  "telar-geometry-core",
  "telar-reactive-core",
@@ -3091,12 +3092,13 @@ dependencies = [
 
 [[package]]
 name = "telar-transpiler"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ea108eb6f664afa8c0957ff595af8d9895e5c17de99979ec8948a8a5f129029"
+checksum = "593b5d8795fa5189b4904bda1ceb32d7f96f78db8d137bb8b1ecbe64640624e5"
 dependencies = [
  "serde",
  "serde_json",
+ "telar-i18n-core",
  "telar-parser",
  "telar-renderer-assets",
  "thiserror 2.0.18",
@@ -3105,9 +3107,9 @@ dependencies = [
 
 [[package]]
 name = "telar-ui-components"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9acbd3fd297b779fcdba249f315c352e488f8ac37fa3e069012ce54e2053042d"
+checksum = "c930ab6c499c4f7f04353abf201c822a66a7c22d9308bb7744389004c6120ade"
 dependencies = [
  "telar-geometry-core",
  "telar-layout-core",
@@ -3121,9 +3123,9 @@ dependencies = [
 
 [[package]]
 name = "telar-ui-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1859c453d671c5a98d95ad24423c4297ca7f4046ca3d9900b8f07cf5afddd507"
+checksum = "a8e70aca170e3480c27854b28203549b4a292e00fbc6768e395c5d9a26ab22be"
 dependencies = [
  "rustc-hash",
  "telar-geometry-core",
@@ -3141,9 +3143,9 @@ dependencies = [
 
 [[package]]
 name = "telar-ui-tree"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82cdbf7abb59bc72c6ae2d4c221c7d348563e8ad273e154548d459adaab33cf0"
+checksum = "454f86cf0f4c4467e2fa49fe8ceaf9b2003394a80a2c9e47afcf6d5c833906f8"
 dependencies = [
  "telar-geometry-core",
  "telar-platform-core",

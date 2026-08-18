@@ -32,7 +32,7 @@ use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_output;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 
-use crate::platform::{BoxedHandler, Driver, NoPaths, Shell, SurfaceEntry, tear_down};
+use crate::platform::{BoxedHandler, Driver, Shell, SurfaceEntry, tear_down};
 use crate::window::LayerWindow;
 
 /// Builds the lock surface for one output, named as the compositor names it (`None` for an output with no
@@ -124,7 +124,11 @@ where
         unlock: AtomicBool::new(false),
     });
     let boxed: LockFactory = Box::new(move |output| {
-        build_surface_handler::<LayerWindow, A>(factory(output), Box::new(NoPaths), "hyprshell")
+        build_surface_handler::<LayerWindow, A>(
+            factory(output),
+            std::sync::Arc::new(telar::NoPaths),
+            "hyprshell",
+        )
     });
     LOCK_QUEUE.with(|queue| {
         let displaced = queue.borrow_mut().replace(PendingLock {

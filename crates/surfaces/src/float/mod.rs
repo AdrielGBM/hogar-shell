@@ -45,9 +45,15 @@ pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
             close: theme.muted,
             radius,
             font_size: theme.font(FontRole::Title),
+            // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the
+            // compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
+            controls: Default::default(),
+            body_inset: 12.0,
+            control_hover: telar::Color::TRANSPARENT,
+            close_hover: telar::Color::TRANSPARENT,
         };
         let close: Rc<dyn Fn()> = Rc::new(request_close);
-        window_frame(module.clone(), style, close, body, None).expect("surface frame build failed")
+        window_frame(module.clone(), None, style, close, body, None).expect("surface frame build failed")
     })
     .edge(env.edge)
     .open()
@@ -70,8 +76,14 @@ pub(crate) fn frame_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         close: theme.muted,
         radius: 14.0,
         font_size: theme.font(FontRole::Title),
+        // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the
+        // compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
+        controls: Default::default(),
+        body_inset: 12.0,
+        control_hover: telar::Color::TRANSPARENT,
+        close_hover: telar::Color::TRANSPARENT,
     };
-    window_frame("Clock", style, Rc::new(|| {}), body, None)
+    window_frame("Clock", None, style, Rc::new(|| {}), body, None)
 }
 
 #[cfg(test)]
@@ -80,24 +92,12 @@ mod tests {
 
     use platform_headless::{FrameSink, HeadlessPlatform};
     use telar::{
-        App, AppConfig, AppPathsProvider, Color, Component, SurfaceRoot, WindowConfig,
+        App, AppConfig, AppPathsProvider, Color, Component, WindowRoot, WindowConfig,
         reset_layout_runtime, run_with_platform, set_theme,
     };
 
     use config::theme::NordTheme;
 
-    struct NullPaths;
-    impl AppPathsProvider for NullPaths {
-        fn config_dir(&self) -> Option<std::path::PathBuf> {
-            None
-        }
-        fn data_dir(&self) -> Option<std::path::PathBuf> {
-            None
-        }
-        fn cache_dir(&self) -> Option<std::path::PathBuf> {
-            None
-        }
-    }
 
     /// The float's chrome under the enter animation, which is the one thing a `[preview]` cannot show: the
     /// preview page renders a tree, and this is about what the *surface root* does to it over several frames.
@@ -109,7 +109,7 @@ mod tests {
             set_theme(NordTheme::new());
             let frame = super::frame_preview().expect("float frame build failed");
             Box::new(
-                SurfaceRoot::new(frame)
+                WindowRoot::wrapping(frame)
                     .expect("float surface root failed")
                     .animate_in(),
             )
@@ -140,7 +140,7 @@ mod tests {
         run_with_platform::<_, _, ()>(
             platform,
             AppConfig::default(),
-            Box::new(NullPaths) as Box<dyn AppPathsProvider>,
+            std::sync::Arc::new(telar::NoPaths) as std::sync::Arc<dyn AppPathsProvider>,
             AnimatedFloat,
             "hyprshell-float-test",
         )

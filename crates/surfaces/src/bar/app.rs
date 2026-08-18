@@ -3,7 +3,7 @@ use std::sync::Arc;
 use telar::{App, Color, Component, LayoutItem, WindowConfig, reset_layout_runtime, set_theme};
 
 use config::{Edge, SurfaceEnv, set_surface_env};
-use ui::surface_root::SurfaceRoot;
+use telar::WindowRoot;
 
 use super::{AutoHide, build_bar};
 
@@ -47,7 +47,7 @@ impl App for BarApp {
                 config::bar_margin_for(&config, self.edge),
             ))
         };
-        Box::new(SurfaceRoot::new(bar).expect("bar layout failed"))
+        Box::new(WindowRoot::wrapping(bar).expect("bar layout failed"))
     }
 
     fn clear_color(&self) -> Option<Color> {

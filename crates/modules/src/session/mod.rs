@@ -102,7 +102,7 @@ fn navigation() -> keynav::KeyNav {
     let config = config::config().map(|c| c.keynav).unwrap_or_default();
     keynav::KeyNav {
         horizontal: true,
-        ..keynav::KeyNav::from_config(&config)
+        ..keynav::from_config(&config)
     }
 }
 
