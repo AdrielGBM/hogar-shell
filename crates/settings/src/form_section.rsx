@@ -9,6 +9,6 @@ pub struct Props {
 let title = props.title;
 
 [view]
-col gap(::ui::scale::space::MD) width:100%
+col gap(::ui::scale::space::md()) width:100%
     text "{title()}" color:text size:theme.font(FontRole::Body) weight:700
     children

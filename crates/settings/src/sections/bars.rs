@@ -207,7 +207,7 @@ fn zone_row(
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .flex_grow(1.0)
             .min_width(0.0),
         move || source.get().into_iter().enumerate().collect(),
@@ -225,8 +225,8 @@ fn zone_row(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
-            .padding_all(space::MD)
+            .gap(space::md())
+            .padding_all(space::md())
             .min_height(theme.font(FontRole::Body) * 2.4)
             .width(SizeDimension::Percent(1.0)),
         move |_r| {
@@ -279,9 +279,9 @@ fn module_pill(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::SM)
-            .padding_horizontal(space::MD)
-            .padding_vertical(space::SM)
+            .gap(space::sm())
+            .padding_horizontal(space::md())
+            .padding_vertical(space::sm())
             .flex_shrink(0.0),
         move |_r| RectStyle::filled(theme.surface, PILL_RADIUS),
         vec![box_item(label), remove],
@@ -322,8 +322,8 @@ fn module_palette(
         chips.push(Box::new(
             StyledContainer::new(
                 LayoutStyle::new()
-                    .padding_horizontal(space::MD)
-                    .padding_vertical(space::SM)
+                    .padding_horizontal(space::md())
+                    .padding_vertical(space::sm())
                     .flex_shrink(0.0),
                 move |_r| RectStyle::filled(theme.base, PILL_RADIUS),
                 vec![box_item(text)],
@@ -339,7 +339,7 @@ fn module_palette(
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .flex_grow(1.0)
             .min_width(0.0),
         chips,

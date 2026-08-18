@@ -101,7 +101,7 @@ pub fn frame(
         LayoutStyle::new()
             .flex_column()
             .gap(CARD_GAP)
-            .padding_all(space::XL)
+            .padding_all(space::xl())
             .width(SizeDimension::Percent(1.0)),
         move |_r| RectStyle::filled(theme.base, radius),
         children,
@@ -147,7 +147,7 @@ fn heading(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         row,
     )?))
@@ -167,7 +167,7 @@ pub fn page(cards: Vec<Box<dyn LayoutItem>>) -> Result<Box<dyn LayoutItem>, Layo
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         cards,
     )?))

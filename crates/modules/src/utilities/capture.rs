@@ -36,7 +36,7 @@ pub fn capture_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError
     let shots = Container::new(
         LayoutStyle::new()
             .flex_row()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![
             pill(
@@ -165,7 +165,7 @@ fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -350,7 +350,7 @@ fn row(
         move || theme.text_style(FontRole::Caption, theme.subtle),
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         vec![box_item(name), box_item(subtitle)],
     )?;
 
@@ -371,9 +371,9 @@ fn row(
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::SPACE_BETWEEN)
-            .gap(space::LG)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::lg())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         {
             let is_armed = is_armed.clone();
@@ -449,8 +449,8 @@ fn card(
     Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
-            .padding_all(space::LG)
+            .gap(space::md())
+            .padding_all(space::lg())
             .width(SizeDimension::Percent(1.0)),
         move |_| RectStyle::filled(theme.base, surfaces::drawer::content_radius()),
         children,
@@ -516,9 +516,9 @@ fn pill_live(
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER)
-            .gap(space::SM)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::sm())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .flex_shrink(0.0),
         move |_| {
             let fill = if fill_active() {

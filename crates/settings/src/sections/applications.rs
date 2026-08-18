@@ -208,7 +208,7 @@ fn app_row(
             .flex_column()
             .flex_grow(1.0)
             .min_width(0.0)
-            .gap(space::XS),
+            .gap(space::xs()),
         vec![box_item(name_text), box_item(id_text)],
     )?;
 
@@ -239,8 +239,8 @@ fn app_row(
         LayoutStyle::new()
             .width(150.0)
             .flex_shrink(0.0)
-            .padding_horizontal(space::MD)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::md())
+            .padding_vertical(space::sm()),
         paint::md(theme.base),
         vec![box_item(
             Input::new(
@@ -273,9 +273,9 @@ fn app_row(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::LG)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::lg())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .height(row_pitch(theme) - ROW_GAP)
             .margin_block_end(ROW_GAP)
             .width(SizeDimension::Percent(1.0)),

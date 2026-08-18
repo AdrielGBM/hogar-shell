@@ -46,7 +46,7 @@ let fg_icon = fg.clone();
 let show_text = memo(move || !vertical && !text_empty.get().is_empty());
 
 [view]
-row align:center gap(::ui::scale::space::MD)
+row align:center gap(::ui::scale::space::md())
     icon_glyph name(move || icon_view.get()) tint(move || fg_icon.get()) size:(ui::module::icon_px())
     if $show_text
         text "{$text_view}" size:theme.font(FontRole::Body) color:$fg lines:1 ellipsis:true

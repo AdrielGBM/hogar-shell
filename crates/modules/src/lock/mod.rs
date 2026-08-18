@@ -105,9 +105,9 @@ fn screen(config: &Arc<Config>) -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .flex_column()
             .align_items(AlignItems::CENTER)
-            .gap(space::XL)
+            .gap(space::xl())
             .width(CARD_WIDTH)
-            .padding_all(space::XXL),
+            .padding_all(space::xxl()),
         move |_| RectStyle::filled(theme.surface, card_radius()),
         column,
     )?;
@@ -168,7 +168,7 @@ fn clock(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layou
         move || theme.text_style(FontRole::Caption, theme.muted),
     )?;
     Ok(Box::new(Container::new(
-        LayoutStyle::new().flex_column().gap(space::XS),
+        LayoutStyle::new().flex_column().gap(space::xs()),
         vec![centred(box_item(hhmm))?, centred(box_item(day))?],
     )?))
 }
@@ -242,8 +242,8 @@ fn field(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .padding_horizontal(space::XL)
-            .padding_vertical(space::MD)
+            .padding_horizontal(space::xl())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         move |_| {
             // The field itself carries the verdict: a wrong password tints the box the user is already

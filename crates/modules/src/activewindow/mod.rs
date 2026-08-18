@@ -45,9 +45,9 @@ pub fn icon_slot(
     };
     let style = telar::LayoutStyle::new().flex_shrink(0.0);
     let style = if inverted {
-        style.margin_inline_start(ui::scale::space::MD)
+        style.margin_inline_start(ui::scale::space::md())
     } else {
-        style.margin_inline_end(ui::scale::space::MD)
+        style.margin_inline_end(ui::scale::space::md())
     };
     Ok(telar::box_item(telar::Container::new(style, vec![icon])?))
 }
@@ -102,12 +102,12 @@ mod tests {
 
         assert_eq!(
             slot_width(installed, false),
-            16.0 + ui::scale::space::MD,
+            16.0 + ui::scale::space::md(),
             "a leading icon has to hold the air between itself and the title"
         );
         assert_eq!(
             slot_width(installed, true),
-            16.0 + ui::scale::space::MD,
+            16.0 + ui::scale::space::md(),
             "and so does a trailing one, on its other side"
         );
         assert_eq!(

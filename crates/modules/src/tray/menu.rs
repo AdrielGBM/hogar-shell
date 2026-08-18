@@ -113,8 +113,8 @@ fn menu_view(
         LayoutStyle::new()
             .flex_column()
             .width(MENU_WIDTH)
-            .padding_all(space::MD)
-            .gap(space::XS),
+            .padding_all(space::md())
+            .gap(space::xs()),
         move |_| RectStyle::filled(panel_fill(), radius),
         rows,
     )?;
@@ -213,15 +213,15 @@ fn row(
 
     // The row's own half of the panel's inset, so a label lands exactly where a drawer's content does. A
     // submenu is expanded in place, so each level adds its indent on top of that.
-    let indent = space::MD + depth as f32 * 14.0;
+    let indent = space::md() + depth as f32 * 14.0;
     let style = LayoutStyle::new()
         .flex_row()
         .align_items(AlignItems::CENTER)
-        .gap(space::MD)
+        .gap(space::md())
         .width(SizeDimension::Percent(1.0))
         .height(ROW_HEIGHT)
         .padding_left(indent)
-        .padding_right(space::MD);
+        .padding_right(space::md());
 
     // Resolved here and captured, not read inside the closures: a style closure runs on every paint.
     let pill = corner::xs();

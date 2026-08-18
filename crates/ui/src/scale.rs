@@ -4,23 +4,29 @@
 //! on a row invites either a wrong name or a fresh literal, and the shell collected sixty of the second kind.
 //! A T-shirt size says only how big it is, which is the only thing a step on a scale knows about itself.
 //!
-//! **Radius has a source; space does not, and the difference is deliberate.** A corner radius is a theme token
-//! the user configures (`[shape] radius`, per bar, falling back to the palette's own), so the scale is
-//! *derived* from whatever this surface resolved — set it to `0` and the whole shell squares off together
-//! instead of only its panel corners. Nothing configures an inset, so those are plain constants until
-//! something does.
+//! **Both scales have a source, and it is the surface's own.** A corner radius and a base spacing are both
+//! configured (`[shape] radius` / `[shape] spacing`, per bar, each falling back to the palette's), so each
+//! scale is *derived* from whatever this surface resolved — set the radius to `0` and the whole shell squares
+//! off together instead of only its panel corners; raise the spacing and every inset and gap opens with it,
+//! not only the distance between two modules on a bar. That is why both are functions and neither is a
+//! constant.
 //!
 //! **Every inset and every gap is on the scale, including inside a widget.** They ran 1, 2, 3, 5, 7 as often
 //! as 4, 8, 16 across 84 padding literals and 110 gap literals, which looks at first like per-widget tuning
 //! and is not: nothing here was ever measured against anything else, so the spread is what a number picked
-//! afresh each time looks like. Six steps on a 4px grid, and a value that is not one of them is a bug.
+//! afresh each time looks like. Six steps, and a value that is not one of them is a bug.
 
 /// The corner radii, as fractions of the one this surface resolved.
 ///
 /// Three steps because the shell has three: a panel and its peers, the cards and rows inside them, and the
-/// small hover pills inside those. At the default palette's radius of 10 they come out 10 / 7.5 / 5, which is
-/// within a pixel of the literals they replace — the point is not a new look, it is that `[shape] radius` and
-/// a palette's own radius finally reach past the outermost corner.
+/// small hover pills inside those. At the default palette's radius of 10 they come out 10 / 8 / 6, within a
+/// pixel of the literals they replace — the point is not a new look, it is that `[shape] radius` and a
+/// palette's own radius finally reach past the outermost corner.
+///
+/// The ratios are `telar::ThemeTokens`' own (`radius_lg` / `radius_md` / `radius_sm`), so a catalogue widget
+/// dropped next to a card rounds by the same rule rather than by a second scale invented here. What stays the
+/// shell's is the *base*: these resolve against the surface's configured radius (per-bar override → `[shape]
+/// radius` → the theme), which a theme token cannot see.
 ///
 /// **Resolve these once per build and capture the number.** A style closure runs on every paint, and the
 /// lookup behind [`content_radius`](crate::panel::content_radius) is a context read, not a constant.
@@ -32,12 +38,12 @@ pub mod corner {
 
     /// What sits inside a panel — a card, a row, a button.
     pub fn md() -> f32 {
-        xl() * 0.75
+        xl() * 0.8
     }
 
     /// The small pressable things inside those: a hover pill on a menu row, an accent stripe.
     pub fn xs() -> f32 {
-        xl() * 0.5
+        xl() * 0.6
     }
 }
 
@@ -70,27 +76,54 @@ pub mod paint {
     }
 }
 
-/// Every distance the shell puts between two things: an inset from an edge, a gap between siblings.
+/// Every distance the shell puts between two things: an inset from an edge, a gap between siblings — as
+/// fractions of the base spacing this surface resolved.
 ///
-/// A 4px grid, doubling from [`MD`] in both directions, with [`XS`] below it for the hairline gaps a dense
-/// list wants. Six steps is few enough that picking one is a decision and not a guess, and wide enough to
-/// cover the whole shell — which the twelve distinct values it replaced did not do any better.
+/// Six steps, doubling from [`md`] in both directions, with [`xs`] below for the hairline gaps a dense list
+/// wants. Few enough that picking one is a decision and not a guess, and wide enough to cover the whole shell —
+/// which the twelve distinct values it replaced did not do any better.
 ///
-/// [`MD`] is the middle on purpose: it was already the most common number in the tree, so the shell settles
-/// where it mostly already was rather than everything shifting at once.
+/// [`md`] is the base on purpose, where the radius base is the *largest* step: "how round is the biggest thing"
+/// and "what is the default gap" are different questions. The four middle ratios are `telar::ThemeTokens`' own
+/// (`spacing_sm` / `spacing_md` / `spacing_lg` / `spacing_xl`), so a catalogue widget dropped next to a shell
+/// row is spaced by the same rule rather than by a second scale invented here; [`xs`] and [`xxl`] extend it
+/// past what the theme names. What stays the shell's is the *base*: these resolve against the surface's
+/// configured spacing (per-bar override → `[shape] spacing` → the theme), which a theme token cannot see.
+///
+/// **Resolve these once per build and capture the number**, the same rule the [`corner`] scale carries: the
+/// lookup behind [`content_spacing`](crate::panel::content_spacing) is a context read, not a constant.
 pub mod space {
+    use crate::panel::content_spacing;
+
     /// Hairline. Between rows of a dense list, where the point is separation rather than air.
-    pub const XS: f32 = 2.0;
+    pub fn xs() -> f32 {
+        content_spacing() * 0.25
+    }
+
     /// Tight. Inside a control — the space around a glyph in a small button.
-    pub const SM: f32 = 4.0;
+    pub fn sm() -> f32 {
+        content_spacing() * 0.5
+    }
+
     /// The default. Between two things that belong together; a panel's rows, a chip's icon and its label.
-    pub const MD: f32 = 8.0;
+    pub fn md() -> f32 {
+        content_spacing()
+    }
+
     /// Between two groups of things rather than two things.
-    pub const LG: f32 = 12.0;
+    pub fn lg() -> f32 {
+        content_spacing() * 1.5
+    }
+
     /// A panel's own inset, and the space between its major sections.
-    pub const XL: f32 = 16.0;
+    pub fn xl() -> f32 {
+        content_spacing() * 2.0
+    }
+
     /// The widest the shell goes: a card that is the only thing on its surface.
-    pub const XXL: f32 = 24.0;
+    pub fn xxl() -> f32 {
+        content_spacing() * 3.0
+    }
 }
 
 #[cfg(test)]

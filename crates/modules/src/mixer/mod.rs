@@ -106,7 +106,7 @@ pub fn mixer_view(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -190,7 +190,7 @@ fn group_list(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![box_item(heading), Box::new(rows)],
     )?))
@@ -278,7 +278,7 @@ fn node_row(
         )?
     };
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         vec![box_item(name), box_item(detail)],
     )?;
     // Only a device has a default to be made; wrapping a stream's labels in a press target would give a user
@@ -310,7 +310,7 @@ fn node_row(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(mute), labels, box_item(percent)],
     )?;
@@ -332,9 +332,9 @@ fn node_row(
     Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XS)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::xs())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         move |_r| RectStyle::filled(theme.base, ROW_RADIUS),
         vec![Box::new(head), bar],

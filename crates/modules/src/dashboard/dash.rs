@@ -64,7 +64,7 @@ fn clock_card(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutIte
         LayoutStyle::new()
             .flex_column()
             .align_items(AlignItems::CENTER)
-            .gap(space::XS)
+            .gap(space::xs())
             .width(SizeDimension::Percent(1.0)),
         vec![box_item(time_text), box_item(date_text)],
     )?;
@@ -92,7 +92,7 @@ fn calendar_card(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![
             step_button("chevron-left", anchor.clone(), -1, theme)?,
@@ -139,7 +139,7 @@ fn step_button(
     Ok(Box::new(
         StyledContainer::new(
             LayoutStyle::new()
-                .padding_all(space::SM)
+                .padding_all(space::sm())
                 .flex_shrink(0.0)
                 .align_items(AlignItems::CENTER),
             paint::xs(Color::TRANSPARENT),
@@ -201,7 +201,7 @@ fn month_grid(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XS)
+            .gap(space::xs())
             .width(SizeDimension::Percent(1.0)),
         rows,
     )?))
@@ -316,7 +316,7 @@ fn user_card(
     )?;
 
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         vec![
             box_item(name_text),
             box_item(host_text),
@@ -328,7 +328,7 @@ fn user_card(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::XL)
+            .gap(space::xl())
             .width(SizeDimension::Percent(1.0)),
         vec![avatar, Box::new(labels)],
     )?;
@@ -403,8 +403,8 @@ fn browser(
     let up = StyledContainer::new(
         LayoutStyle::new()
             .flex_shrink(0.0)
-            .padding_horizontal(space::MD)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::md())
+            .padding_vertical(space::sm()),
         paint::md(theme.base),
         vec![icon_view(
             || "corner-left-up".to_string(),
@@ -426,7 +426,7 @@ fn browser(
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         move || entries_in(&list_folder.get()),
         |choice: &Choice| choice.path.display().to_string(),
@@ -437,7 +437,7 @@ fn browser(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(up), box_item(path_label)],
     )?;
@@ -445,7 +445,7 @@ fn browser(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(header), Box::new(tiles)],
     )?))
@@ -530,9 +530,9 @@ fn choice_tile(
     let tile = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::SM)
+            .gap(space::sm())
             .width(PICKER_TILE + 12.0)
-            .padding_all(space::SM)
+            .padding_all(space::sm())
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER),
         paint::md(theme.base),
@@ -706,7 +706,7 @@ mod tests {
         let root = new_container(
             LayoutStyle::new()
                 .flex_column()
-                .padding_all(space::XL)
+                .padding_all(space::xl())
                 .width(380.0)
                 .height(900.0),
             &[card.layout_node()],

@@ -99,7 +99,7 @@ impl<T: Clone + 'static> TableList<T> {
             move || order.get(),
             |id: &u64| id.to_string(),
             move |id: u64| row(id),
-            space::LG,
+            space::lg(),
         )?))
     }
 }
@@ -168,8 +168,8 @@ pub(crate) fn entry_card<T: Clone + 'static>(
     let card = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
-            .padding_all(space::LG)
+            .gap(space::md())
+            .padding_all(space::lg())
             .width(SizeDimension::Percent(1.0)),
         paint::md(theme.surface),
         fields,
@@ -207,7 +207,7 @@ pub(crate) fn toggle_pill(
         StyledContainer::new(
             LayoutStyle::new()
                 .flex_shrink(0.0)
-                .padding_all(space::MD)
+                .padding_all(space::md())
                 .align_items(AlignItems::CENTER)
                 .justify_content(JustifyContent::CENTER),
             move |_r| {

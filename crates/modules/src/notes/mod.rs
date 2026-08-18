@@ -56,7 +56,7 @@ pub fn notes_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let panel = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         vec![header, list],
     )?;
@@ -84,7 +84,7 @@ fn header(state: &PanelState, theme: NordTheme) -> Result<Box<dyn LayoutItem>, L
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::SPACE_BETWEEN)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(title), add],
     )?;
@@ -102,12 +102,12 @@ fn note_list(
         move || notes.get(),
         |n: &Note| n.id,
         move |note: Note| note_card(&build_state, note, theme, radius),
-        space::MD,
+        space::md(),
     )?;
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(list) as Box<dyn LayoutItem>],
     )?;
@@ -176,7 +176,7 @@ fn note_card(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![
             Box::new(icon_button),
@@ -195,8 +195,8 @@ fn note_card(
     let card = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
-            .padding_all(space::LG)
+            .gap(space::md())
+            .padding_all(space::lg())
             .width(SizeDimension::Percent(1.0)),
         move |_| RectStyle::filled(theme.surface, radius),
         vec![
@@ -316,8 +316,8 @@ fn pill_button(
     let rounded = corner::md();
     let pill = StyledContainer::new(
         LayoutStyle::new()
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::sm()),
         move |_| RectStyle::filled(theme.base, rounded),
         vec![Box::new(text) as Box<dyn LayoutItem>],
     )?

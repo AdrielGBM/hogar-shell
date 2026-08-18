@@ -58,7 +58,7 @@ pub fn icon_picker_overlay(
         LayoutStyle::new()
             .flex_column()
             .width(PANEL_WIDTH)
-            .padding_all(space::MD)
+            .padding_all(space::md())
             .margin_from_left(anchor.x)
             .margin_block_start(anchor.y + anchor.height + 4.0),
         paint::xl(theme.surface),
@@ -103,7 +103,7 @@ fn picker_body(
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![search, Box::new(scroll)],
     )?;
@@ -339,8 +339,8 @@ fn search_box(
         LayoutStyle::new()
             .flex_row()
             .width(SizeDimension::Percent(1.0))
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD),
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md()),
         paint::md(theme.base),
         vec![box_item(input)],
     )?;
@@ -355,7 +355,7 @@ fn message(
         theme.text_style(FontRole::Caption, theme.muted)
     })?;
     let wrap = Container::new(
-        LayoutStyle::new().padding_all(space::LG),
+        LayoutStyle::new().padding_all(space::lg()),
         vec![Box::new(label) as Box<dyn LayoutItem>],
     )?;
     Ok(Box::new(wrap))
@@ -390,7 +390,7 @@ pub(crate) fn grid_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .flex_column()
             .width(PANEL_WIDTH)
-            .padding_all(space::MD),
+            .padding_all(space::md()),
         paint::xl(theme.surface),
         vec![Box::new(scroll)],
     )?))
@@ -604,7 +604,7 @@ mod tests {
                     LayoutStyle::new()
                         .flex_column()
                         .width(PANEL_WIDTH)
-                        .padding_all(space::MD),
+                        .padding_all(space::md()),
                     paint::xl(theme.surface),
                     vec![Box::new(scroll)],
                 )?

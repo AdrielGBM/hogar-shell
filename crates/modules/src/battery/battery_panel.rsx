@@ -95,7 +95,7 @@ let body = theme.font(FontRole::Body);
 let caption = theme.font(FontRole::Caption);
 
 [view]
-col align:center gap(::ui::scale::space::MD)
+col align:center gap(::ui::scale::space::md())
     icon_glyph name(move || glyph.get()) tint(move || level_color(level_tint.get(), charging_tint.get(), fg)) size:44
     text "{$pct}" size:display color:text align:center
     text "{$status_view}" size:body color:subtle align:center

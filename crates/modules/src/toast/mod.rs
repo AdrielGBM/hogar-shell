@@ -100,7 +100,7 @@ pub(crate) fn card(
     let text = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XS)
+            .gap(space::xs())
             .flex_grow(1.0)
             .width(SizeDimension::Percent(1.0)),
         column,
@@ -111,8 +111,8 @@ pub(crate) fn card(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::LG)
-            .padding_all(space::XL)
+            .gap(space::lg())
+            .padding_all(space::xl())
             .width(SizeDimension::Percent(1.0)),
         move |_| RectStyle::filled(panel_fill(), radius),
         vec![icon, Box::new(text)],

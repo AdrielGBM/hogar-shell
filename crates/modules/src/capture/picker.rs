@@ -364,8 +364,8 @@ fn readout(
     )?;
     let pill = StyledContainer::new(
         LayoutStyle::new()
-            .padding_horizontal(space::XL)
-            .padding_vertical(space::MD),
+            .padding_horizontal(space::xl())
+            .padding_vertical(space::md()),
         paint::xl(theme.surface),
         vec![box_item(text)],
     )?;
@@ -375,7 +375,7 @@ fn readout(
             .flex_row()
             .align_items(AlignItems::FLEX_START)
             .justify_content(JustifyContent::CENTER)
-            .padding_all(space::XXL),
+            .padding_all(space::xxl()),
         vec![Box::new(pill)],
     )?))
 }

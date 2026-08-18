@@ -127,7 +127,7 @@ pub fn label_value(
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::SPACE_BETWEEN)
             .width(SizeDimension::Percent(1.0))
-            .gap(space::LG),
+            .gap(space::lg()),
         vec![box_item(label), box_item(value)],
     )?))
 }
@@ -402,7 +402,7 @@ pub(crate) fn spectrum_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .flex_column()
             .align_items(AlignItems::CENTER)
-            .gap(space::XXL)
+            .gap(space::xxl())
             .width(SizeDimension::Percent(1.0)),
         vec![ring, row],
     )?))

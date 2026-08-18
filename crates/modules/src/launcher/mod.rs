@@ -136,7 +136,7 @@ impl QueryMode {
         if self != QueryMode::Wallpapers {
             return 1;
         }
-        let inner = (width - space::XL * 2.0).max(TILE_WIDTH);
+        let inner = (width - space::xl() * 2.0).max(TILE_WIDTH);
         (((inner + TILE_GAP) / (TILE_WIDTH + TILE_GAP)).floor() as usize).clamp(2, 8)
     }
 }
@@ -506,8 +506,8 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
     let panel = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
-            .padding_all(space::XL)
+            .gap(space::lg())
+            .padding_all(space::xl())
             .width(config.width as f32),
         move |_| RectStyle::filled(panel_fill(), content_radius()),
         vec![field, list],
@@ -637,8 +637,8 @@ fn search_field(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         paint::xl(theme.base),
         vec![box_item(input)],
@@ -711,7 +711,7 @@ pub(crate) fn wallpaper_grid_preview() -> Result<Box<dyn LayoutItem>, LayoutErro
     Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .padding_all(space::XL)
+            .padding_all(space::xl())
             .width(640.0),
         paint::xl(theme.surface),
         vec![list],
@@ -883,7 +883,7 @@ fn tile_row(
 /// The width one tile gets when `columns` of them share the panel, gaps included.
 fn tile_width(columns: usize, panel_width: f32) -> f32 {
     let columns = columns.max(1);
-    let inner = (panel_width - space::XL * 2.0).max(TILE_WIDTH);
+    let inner = (panel_width - space::xl() * 2.0).max(TILE_WIDTH);
     ((inner - TILE_GAP * (columns - 1) as f32) / columns as f32).max(48.0)
 }
 
@@ -1099,7 +1099,7 @@ fn row(
         lines.push(box_item(subtitle));
     }
     let text_column = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         lines,
     )?;
 
@@ -1118,9 +1118,9 @@ fn row(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::LG)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::lg())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         move |_| {
             let fill = if is_armed() {
@@ -1903,8 +1903,8 @@ mod tests {
         let panel = new_container(
             LayoutStyle::new()
                 .flex_column()
-                .gap(space::LG)
-                .padding_all(space::XL)
+                .gap(space::lg())
+                .padding_all(space::xl())
                 .width(640.0),
             &[list.layout_node()],
         )
@@ -1929,7 +1929,7 @@ mod tests {
         let rect = rect.get();
         assert_eq!(
             (rect.width, rect.height),
-            (640.0 - space::XL * 2.0, 260.0),
+            (640.0 - space::xl() * 2.0, 260.0),
             "the list measured {}x{} — a zero-height viewport clips every result",
             rect.width,
             rect.height

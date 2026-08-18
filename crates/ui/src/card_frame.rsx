@@ -18,7 +18,7 @@ let radius = props.radius;
 let on_hover = props.on_hover;
 
 [view]
-col width:width pad:crate::scale::space::XL shrink:0 fill:fill radius:radius on_hover(|hovered| on_hover(hovered))
+col width:width pad:crate::scale::space::xl() shrink:0 fill:fill radius:radius on_hover(|hovered| on_hover(hovered))
     children
 
 [preview "Popout frame"]

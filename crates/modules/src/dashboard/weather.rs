@@ -80,12 +80,12 @@ fn current_card(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::XL)
+            .gap(space::xl())
             .width(SizeDimension::Percent(1.0)),
         vec![
             icon,
             Box::new(Container::new(
-                LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+                LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
                 vec![
                     unit_toggle(reading, unit.clone(), theme)?,
                     box_item(Text::auto(
@@ -150,7 +150,7 @@ fn unit_toggle(
     )?;
     Ok(Box::new(
         StyledContainer::new(
-            LayoutStyle::new().padding_horizontal(space::SM),
+            LayoutStyle::new().padding_horizontal(space::sm()),
             paint::xs(Color::TRANSPARENT),
             vec![box_item(text)],
         )?
@@ -253,7 +253,7 @@ fn forecast_row(
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::SPACE_BETWEEN)
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         cells,
     )?))

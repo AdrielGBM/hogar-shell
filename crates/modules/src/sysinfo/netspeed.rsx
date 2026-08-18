@@ -21,11 +21,11 @@ let fg_up = fg.clone();
 let arrow_size = (ui::module::icon_px() * 0.55).round();
 
 [view]
-col justify:center gap(::ui::scale::space::XS)
-    row align:center gap(::ui::scale::space::SM)
+col justify:center gap(::ui::scale::space::xs())
+    row align:center gap(::ui::scale::space::sm())
         icon_glyph name(|| "arrow-down".to_string()) tint(move || fg_down.get()) size:(arrow_size)
         text "{$down_view}" size:theme.font(FontRole::Caption) color:$fg
-    row align:center gap(::ui::scale::space::SM)
+    row align:center gap(::ui::scale::space::sm())
         icon_glyph name(|| "arrow-up".to_string()) tint(move || fg_up.get()) size:(arrow_size)
         text "{$up_view}" size:theme.font(FontRole::Caption) color:$fg
 

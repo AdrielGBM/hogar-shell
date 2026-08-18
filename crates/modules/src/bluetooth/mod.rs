@@ -79,7 +79,7 @@ pub fn bluetooth_view(config: BluetoothConfig) -> Result<Box<dyn LayoutItem>, La
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -113,7 +113,7 @@ fn header(
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         vec![box_item(title), box_item(subtitle)],
     )?;
 
@@ -146,7 +146,7 @@ fn header(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(labels), power, scan],
     )?))
@@ -214,7 +214,7 @@ fn list(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(rows), box_item(empty)],
     )?))
@@ -307,7 +307,7 @@ fn row(
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         vec![box_item(name), box_item(status)],
     )?;
 
@@ -329,9 +329,9 @@ fn row(
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::SPACE_BETWEEN)
-            .gap(space::LG)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::lg())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         {
             let is_armed = is_armed.clone();
@@ -421,8 +421,8 @@ fn pill(
     Ok(Box::new(
         StyledContainer::new(
             LayoutStyle::new()
-                .padding_horizontal(space::LG)
-                .padding_vertical(space::SM)
+                .padding_horizontal(space::lg())
+                .padding_vertical(space::sm())
                 .flex_shrink(0.0)
                 .align_items(AlignItems::CENTER)
                 .justify_content(JustifyContent::CENTER),

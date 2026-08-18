@@ -23,7 +23,7 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-col gap(::ui::scale::space::MD) width:100%
+col gap(::ui::scale::space::md()) width:100%
     text "{telar::t!(\"settings.section.lyrics\")}" color:text size:theme.font(FontRole::Body) weight:700
     toggle_row label(|| telar::t!("settings.field.enabled")) value:$enabled
     toggle_row label(|| telar::t!("settings.field.lyrics_online")) value:$online

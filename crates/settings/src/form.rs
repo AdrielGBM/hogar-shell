@@ -289,7 +289,7 @@ pub(crate) fn section(
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?;
@@ -332,7 +332,7 @@ pub(crate) fn labelled(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(label_text), control],
     )?;
@@ -357,8 +357,8 @@ pub(crate) fn text_field(
     let boxed = StyledContainer::new(
         LayoutStyle::new()
             .flex_grow(1.0)
-            .padding_horizontal(space::MD)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::md())
+            .padding_vertical(space::sm()),
         paint::md(theme.base),
         vec![box_item(input)],
     )?;

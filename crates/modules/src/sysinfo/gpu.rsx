@@ -34,7 +34,7 @@ let fg_tint = fg.clone();
 let reading = memo(move || load_text(load_text_source.get()));
 
 [view]
-row align:center gap(::ui::scale::space::MD)
+row align:center gap(::ui::scale::space::md())
     icon_glyph name(|| glyph::gpu().to_string()) tint(move || load_color(load_tint.get(), fg_tint.get())) size:(ui::module::icon_px())
     text "{$reading}" size:theme.font(FontRole::Body) color:$fg
 

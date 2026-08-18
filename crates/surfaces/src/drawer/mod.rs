@@ -9,7 +9,9 @@ use ui::scale::space;
 /// The padding `drawer_panel.rsx` draws its module's panel inside. Named here because [`span_along`] has to add
 /// it back to reach the drawer's outside height, and two copies of that number is how a drawer on a left bar
 /// starts overrunning the screen the day the padding changes.
-pub(crate) const PANEL_PAD: f32 = space::XL;
+pub(crate) fn panel_pad() -> f32 {
+    space::xl()
+}
 
 /// Where a drawer opened without a chip aligns along its bar — IPC, a keybind. A chip's own rect is the answer
 /// whenever there is one ([`ui::module::from_chip`]), and this is all the config can say in its place: the zone
@@ -26,12 +28,12 @@ fn align_for(origin: Option<Zone>) -> Align {
 /// chip clear of the far end of the screen.
 ///
 /// Along a horizontal bar that is the configured width. Along a vertical one it is the height, which
-/// `drawer_panel.rsx` builds as the configured body plus [`PANEL_PAD`] on both sides — an upper bound for a
+/// `drawer_panel.rsx` builds as the configured body plus [`panel_pad`] on both sides — an upper bound for a
 /// drawer with less in it than the body allows, and the bound is the side to err on: overshooting slides a
 /// short drawer a little further up the bar, undershooting hangs a full one off the bottom of the screen.
 fn span_along(edge: Edge, drawer: DrawerConfig) -> f32 {
     if edge.is_vertical() {
-        drawer.max_height + PANEL_PAD * 2.0
+        drawer.max_height + panel_pad() * 2.0
     } else {
         drawer.width
     }
@@ -214,7 +216,7 @@ mod placement_tests {
         assert_eq!(span_along(Edge::Top, drawer), drawer.width);
         assert_eq!(
             span_along(Edge::Left, drawer),
-            drawer.max_height + PANEL_PAD * 2.0,
+            drawer.max_height + panel_pad() * 2.0,
             "`drawer_panel.rsx` sizes the body and pads around it, so the panel is taller than `max_height`"
         );
     }

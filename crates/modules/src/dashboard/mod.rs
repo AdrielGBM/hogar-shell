@@ -99,7 +99,7 @@ pub fn dashboard_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         vec![strip(&tabs, active, theme)?, Box::new(body)],
     )?))
@@ -139,7 +139,7 @@ fn strip(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_row()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         pills,
     )?))
@@ -186,9 +186,9 @@ fn pill(
                 .flex_basis(0.0)
                 .align_items(AlignItems::CENTER)
                 .justify_content(JustifyContent::CENTER)
-                .gap(space::MD)
-                .padding_vertical(space::MD)
-                .padding_horizontal(space::MD),
+                .gap(space::md())
+                .padding_vertical(space::md())
+                .padding_horizontal(space::md()),
             move |_r| {
                 let fill = if fill_state.get() == tab {
                     theme.accent

@@ -75,7 +75,7 @@ pub fn network_view(config: NetworkConfig) -> Result<Box<dyn LayoutItem>, Layout
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -106,7 +106,7 @@ fn header(state: RwSignal<Wifi>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         vec![box_item(title), box_item(subtitle)],
     )?;
 
@@ -139,7 +139,7 @@ fn header(state: RwSignal<Wifi>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(labels), radio, scan],
     )?))
@@ -220,7 +220,7 @@ fn list(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(rows), box_item(empty)],
     )?))
@@ -320,7 +320,7 @@ fn network_row(
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::XS),
+        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
         vec![box_item(name), box_item(status)],
     )?;
 
@@ -340,9 +340,9 @@ fn network_row(
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::SPACE_BETWEEN)
-            .gap(space::LG)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::lg())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         {
             let is_armed = is_armed.clone();
@@ -409,7 +409,7 @@ fn network_row(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(head), prompt(ssid, asking, password, theme)?],
     )?))
@@ -455,8 +455,8 @@ fn prompt(
     let boxed = StyledContainer::new(
         LayoutStyle::new()
             .flex_grow(1.0)
-            .padding_horizontal(space::MD)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::md())
+            .padding_vertical(space::sm()),
         move |_| RectStyle::filled(theme.base, ROW_RADIUS),
         vec![box_item(field)],
     )?;
@@ -473,8 +473,8 @@ fn prompt(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
-            .padding_horizontal(space::LG)
+            .gap(space::md())
+            .padding_horizontal(space::lg())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(boxed), join_button, cancel],
     )?))
@@ -532,8 +532,8 @@ fn pill(
     Ok(Box::new(
         StyledContainer::new(
             LayoutStyle::new()
-                .padding_horizontal(space::LG)
-                .padding_vertical(space::SM)
+                .padding_horizontal(space::lg())
+                .padding_vertical(space::sm())
                 .flex_shrink(0.0)
                 .align_items(AlignItems::CENTER)
                 .justify_content(JustifyContent::CENTER),

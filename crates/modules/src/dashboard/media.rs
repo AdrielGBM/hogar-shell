@@ -180,7 +180,7 @@ fn lyrics_card(
             Ok(Box::new(ReactiveList::with_style(
                 LayoutStyle::new()
                     .flex_column()
-                    .gap(space::XS)
+                    .gap(space::xs())
                     .width(SizeDimension::Percent(1.0)),
                 source,
                 |line: &LyricLine| line.key(),
@@ -259,12 +259,12 @@ fn now_playing(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::XL)
+            .gap(space::xl())
             .width(SizeDimension::Percent(1.0)),
         vec![
             cover(player.clone(), config, theme)?,
             Box::new(Container::new(
-                LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::SM),
+                LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::sm()),
                 vec![
                     text(title, theme.font(FontRole::Title), theme.text, true)?,
                     text(artist, theme.font(FontRole::Body), theme.subtle, false)?,
@@ -407,7 +407,7 @@ fn scrubber(
     let track = StyledContainer::new(
         LayoutStyle::new()
             .width(SizeDimension::Percent(1.0))
-            .padding_vertical(space::MD),
+            .padding_vertical(space::md()),
         move |_r| RectStyle::filled(Color::TRANSPARENT, 0.0),
         vec![bar],
     )?;
@@ -434,7 +434,7 @@ fn scrubber(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XS)
+            .gap(space::xs())
             .width(SizeDimension::Percent(1.0)),
         vec![
             Box::new(track),
@@ -523,7 +523,7 @@ fn transport(
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER)
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         buttons,
     )?))
@@ -546,7 +546,7 @@ fn button(
     Ok(Box::new(
         StyledContainer::new(
             LayoutStyle::new()
-                .padding_all(space::MD)
+                .padding_all(space::md())
                 .align_items(AlignItems::CENTER)
                 .justify_content(JustifyContent::CENTER),
             paint::md(Color::TRANSPARENT),

@@ -107,7 +107,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![
             section_label(|| telar::t!("settings.section.library"), theme)?,
@@ -182,7 +182,7 @@ fn wallpaper_group(
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         tiles,
     )?;
@@ -201,7 +201,7 @@ fn wallpaper_group(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![heading, Box::new(grid)],
     )?))
@@ -240,9 +240,9 @@ fn wallpaper_tile(
     let tile = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::SM)
+            .gap(space::sm())
             .width(WALL_TILE + 8.0)
-            .padding_all(space::SM)
+            .padding_all(space::sm())
             .align_items(AlignItems::CENTER),
         move |_r| {
             let is_current = current.get().as_deref() == Some(path.as_path());

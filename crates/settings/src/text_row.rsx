@@ -20,5 +20,5 @@ let rad = ::ui::scale::corner::md();
 
 [view]
 field_row label(move || label())
-    box grow:1 pad_x(::ui::scale::space::MD) pad_y(::ui::scale::space::SM) fill:base radius:rad
+    box grow:1 pad_x(::ui::scale::space::md()) pad_y(::ui::scale::space::sm()) fill:base radius:rad
         input value:$value placeholder:placeholder() color:text size:theme.font(FontRole::Body)

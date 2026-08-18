@@ -80,7 +80,7 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XL)
+            .gap(space::xl())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?;
@@ -97,7 +97,7 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .padding_all(space::XL)
+            .padding_all(space::xl())
             .width(SizeDimension::Percent(1.0))
             .height(SizeDimension::Percent(1.0)),
         move |_| RectStyle::filled(surfaces::drawer::panel_fill(), radius),
@@ -127,7 +127,7 @@ fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER)
-            .padding_all(space::MD)
+            .padding_all(space::md())
             .flex_shrink(0.0),
         move |_| RectStyle::filled(theme.base, rounded),
         vec![glyph],
@@ -141,7 +141,7 @@ fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![box_item(title), Box::new(close_button)],
     )?))

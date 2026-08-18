@@ -79,7 +79,7 @@ pub fn settings_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let panel = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XL)
+            .gap(space::xl())
             .width(SizeDimension::Percent(1.0)),
         vec![header(query, reseed, path, theme)?, Box::new(body)],
     )?;
@@ -120,8 +120,8 @@ fn header(
     let boxed = StyledContainer::new(
         LayoutStyle::new()
             .width(SEARCH_WIDTH)
-            .padding_horizontal(space::MD)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::md())
+            .padding_vertical(space::sm()),
         paint::md(theme.base),
         vec![box_item(input)],
     )?;
@@ -130,8 +130,8 @@ fn header(
     let revert_ink = theme.red;
     let revert = StyledContainer::new(
         LayoutStyle::new()
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .flex_shrink(0.0)
             .justify_content(JustifyContent::CENTER),
         paint::md(theme.base),
@@ -157,7 +157,7 @@ fn header(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(title), Box::new(boxed), Box::new(revert)],
     )?))
@@ -182,7 +182,7 @@ fn nav_pane(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XS)
+            .gap(space::xs())
             .width(NAV_WIDTH)
             .flex_shrink(0.0),
         rows,
@@ -230,9 +230,9 @@ fn nav_row(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::LG)
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::MD)
+            .gap(space::lg())
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         move |_| {
             if fill.get() == index {
@@ -329,7 +329,7 @@ fn build_page_area(
     Ok(Box::new(ReactiveList::with_style(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XXL)
+            .gap(space::xxl())
             .width(SizeDimension::Percent(1.0)),
         source,
         // Keyed on the query and the re-seed as well as the form: narrowing changes which forms are here, and

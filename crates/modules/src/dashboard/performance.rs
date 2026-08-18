@@ -190,7 +190,7 @@ fn storage_card(
         move || mounts.get(),
         |disk: &resources::Disk| disk.mount.to_string_lossy().into_owned(),
         move |disk: resources::Disk| disk_row(disk, theme),
-        space::MD,
+        space::md(),
     )?;
     let io = derive(machine, |r| match r {
         Some(r) => format!(
@@ -229,7 +229,7 @@ fn disk_row(disk: resources::Disk, theme: NordTheme) -> Result<Box<dyn LayoutIte
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::SM)
+            .gap(space::sm())
             .width(SizeDimension::Percent(1.0)),
         vec![
             widget::label_value(

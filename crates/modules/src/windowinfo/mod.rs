@@ -94,7 +94,7 @@ pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -240,7 +240,7 @@ fn details(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::SM)
+            .gap(space::sm())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -315,7 +315,7 @@ fn actions(
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_row()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -368,7 +368,7 @@ fn workspace_row(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         children,
     )?))
@@ -411,9 +411,9 @@ fn pill(
                 .flex_row()
                 .align_items(AlignItems::CENTER)
                 .justify_content(JustifyContent::CENTER)
-                .gap(space::SM)
-                .padding_horizontal(space::LG)
-                .padding_vertical(space::MD)
+                .gap(space::sm())
+                .padding_horizontal(space::lg())
+                .padding_vertical(space::md())
                 .flex_shrink(0.0),
             move |_| RectStyle::filled(theme.base, ROW_RADIUS),
             children,

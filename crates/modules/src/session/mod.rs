@@ -58,7 +58,7 @@ pub fn session_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .justify_content(JustifyContent::CENTER)
             .width(SizeDimension::Percent(1.0)),
         tiles,
@@ -67,7 +67,7 @@ pub fn session_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let panel = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         |_| RectStyle::default(),
         vec![box_item(title), box_item(grid)],
@@ -210,9 +210,9 @@ fn tile(
             .flex_column()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER)
-            .gap(space::MD)
+            .gap(space::md())
             .width(88.0)
-            .padding_vertical(space::LG),
+            .padding_vertical(space::lg()),
         move |_| {
             // Armed wins over selected: a tile one press from ending the session must not be mistaken for one the cursor is merely resting on.
             let fill = if armed_fill.get() == id {

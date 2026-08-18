@@ -360,7 +360,7 @@ fn notification_card(
     let text_column = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::XS)
+            .gap(space::xs())
             .flex_grow(1.0)
             .width(SizeDimension::Percent(1.0)),
         column,
@@ -376,8 +376,8 @@ fn notification_card(
     let mut card = StyledContainer::new(
         LayoutStyle::new()
             .flex_row()
-            .gap(space::LG)
-            .padding_all(space::XL)
+            .gap(space::lg())
+            .padding_all(space::xl())
             .width(width),
         move |_| RectStyle::filled(fill, radius),
         children,
@@ -411,7 +411,7 @@ fn close_button(id: u32, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layout
     let glyph = ui::icon::icon_view(|| "x".to_string(), move || theme.muted, CLOSE_GLYPH)?;
     Ok(box_item(
         StyledContainer::new(
-            LayoutStyle::new().align_self_start().padding_all(space::XS),
+            LayoutStyle::new().align_self_start().padding_all(space::xs()),
             move |_| RectStyle::filled(Color::TRANSPARENT, CLOSE_GLYPH / 2.0),
             vec![glyph],
         )?
@@ -486,7 +486,7 @@ fn action_buttons(
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         buttons,
     )?;
@@ -506,8 +506,8 @@ fn action_pill(
     )?;
     let pill = StyledContainer::new(
         LayoutStyle::new()
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::sm()),
         paint::md(theme.overlay),
         vec![box_item(text)],
     )?
@@ -582,7 +582,7 @@ pub fn bell_module() -> Result<Box<dyn LayoutItem>, LayoutError> {
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::SM),
+            .gap(space::sm()),
         vec![icon, Box::new(badge)],
     )?;
     Ok(Box::new(row))
@@ -620,7 +620,7 @@ pub fn bell_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let panel = Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
+            .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
         vec![header, list],
     )?;
@@ -662,7 +662,7 @@ fn panel_header(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD),
+            .gap(space::md()),
         vec![dnd, clear],
     )?;
     let header = Container::new(
@@ -670,7 +670,7 @@ fn panel_header(
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::SPACE_BETWEEN)
-            .gap(space::MD)
+            .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![Box::new(title), Box::new(actions)],
     )?;
@@ -687,8 +687,8 @@ fn pill_button(
     })?;
     let pill = StyledContainer::new(
         LayoutStyle::new()
-            .padding_horizontal(space::LG)
-            .padding_vertical(space::SM),
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::sm()),
         paint::md(theme.base),
         vec![Box::new(text) as Box<dyn LayoutItem>],
     )?
@@ -906,8 +906,8 @@ fn group_header(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::MD)
-            .padding_horizontal(space::SM)
+            .gap(space::md())
+            .padding_horizontal(space::sm())
             .width(SizeDimension::Percent(1.0)),
         |_| RectStyle::default(),
         vec![
@@ -943,7 +943,7 @@ fn expander_row(
         LayoutStyle::new()
             .flex_row()
             .justify_content(JustifyContent::CENTER)
-            .padding_vertical(space::XS)
+            .padding_vertical(space::xs())
             .width(SizeDimension::Percent(1.0)),
         |_| RectStyle::default(),
         vec![Box::new(text) as Box<dyn LayoutItem>],
@@ -962,7 +962,7 @@ fn icon_button(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let icon = ui::icon::icon_view(move || glyph.to_string(), move || tint, 14.0)?;
     let button = StyledContainer::new(
-        LayoutStyle::new().padding_all(space::SM),
+        LayoutStyle::new().padding_all(space::sm()),
         |_| RectStyle::default(),
         vec![icon],
     )?
@@ -1050,8 +1050,8 @@ pub(crate) fn panel_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(space::LG)
-            .padding_all(space::XL)
+            .gap(space::lg())
+            .padding_all(space::xl())
             .width(PANEL_CARD_WIDTH),
         vec![
             panel_header(read.clone(), theme)?,

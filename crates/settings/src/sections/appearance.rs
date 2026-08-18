@@ -95,7 +95,7 @@ fn palette_preview(palette: Palette, theme: NordTheme) -> Result<Box<dyn LayoutI
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .flex_grow(1.0)
             .min_width(0.0),
         swatches,
@@ -127,7 +127,7 @@ fn theme_swatches(
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .flex_grow(1.0)
             .min_width(0.0),
         tiles,
@@ -171,7 +171,7 @@ fn theme_tile(
         LayoutStyle::new()
             .flex_row()
             .align_items(AlignItems::CENTER)
-            .gap(space::SM),
+            .gap(space::sm()),
         vec![Box::new(dot), box_item(label)],
     )?;
 
@@ -181,7 +181,7 @@ fn theme_tile(
         LayoutStyle::new()
             .width(TILE_WIDTH)
             .height(TILE_HEIGHT)
-            .padding_horizontal(space::MD)
+            .padding_horizontal(space::md())
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER),
         move |_r| {
@@ -229,7 +229,7 @@ fn accent_swatches(
         LayoutStyle::new()
             .flex_row()
             .flex_wrap()
-            .gap(space::MD)
+            .gap(space::md())
             .flex_grow(1.0)
             .min_width(0.0),
         swatches,
