@@ -5,6 +5,7 @@
   pkg-config,
   makeWrapper,
   libxkbcommon,
+  wayland,
   pipewire,
   wireplumber,
   libqalculate,
@@ -28,13 +29,19 @@ rustPlatform.buildRustPackage {
     makeWrapper
   ];
 
-  buildInputs = [ libxkbcommon ];
+  buildInputs = [
+    libxkbcommon
+    wayland
+  ];
 
   # The check phase relinks every test target under the release profile's fat LTO, costing more than the build itself; CI runs the suite on every push instead.
   doCheck = false;
 
   postInstall = ''
     installManPage ${src}/man/hogar-shell.1 ${src}/man/hogar-shell.5
+
+    # wayland-sys dlopens libwayland-client instead of linking it, so nothing records the dependency and only an explicit rpath makes it findable.
+    patchelf --add-rpath ${lib.makeLibraryPath [ wayland ]} $out/bin/hogar-shell
 
     wrapProgram $out/bin/hogar-shell \
       --suffix PATH : ${
