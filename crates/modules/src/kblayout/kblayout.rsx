@@ -14,6 +14,11 @@ fn short_name(layout: &KeyboardLayout) -> String {
         .filter(|c| c.is_alphabetic())
         .take(2)
         .collect();
+    // An empty code would render an empty string, and a chip with no glyphs collapses to no area at all: the
+    // module does not read as absent, it disappears while still occupying a slot.
+    if code.is_empty() {
+        return "--".to_string();
+    }
     code.to_uppercase()
 }
 
