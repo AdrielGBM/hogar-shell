@@ -40,9 +40,6 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     installManPage ${src}/man/hogar-shell.1 ${src}/man/hogar-shell.5
 
-    # wayland-sys dlopens libwayland-client instead of linking it, so nothing records the dependency and only an explicit rpath makes it findable.
-    patchelf --add-rpath ${lib.makeLibraryPath [ wayland ]} $out/bin/hogar-shell
-
     wrapProgram $out/bin/hogar-shell \
       --suffix PATH : ${
         lib.makeBinPath [
@@ -54,6 +51,11 @@ rustPlatform.buildRustPackage {
           xdg-utils
         ]
       }
+  '';
+
+  # wayland-sys dlopens libwayland-client, so it never reaches DT_NEEDED and the fixup phase strips any rpath naming it: this has to run after that shrink, against the binary wrapProgram left behind.
+  postFixup = ''
+    patchelf --add-rpath ${lib.makeLibraryPath [ wayland ]} $out/bin/.hogar-shell-wrapped
   '';
 
   meta = {
