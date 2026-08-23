@@ -1147,7 +1147,7 @@ where
             let link = entry.link.clone();
             let sources = Rc::clone(&entry.sources);
             let exit = Rc::clone(&entry.exit);
-            let events: Vec<Event> = entry.events.drain(..).collect();
+            let events = std::mem::take(&mut entry.events);
             entry.timeout = with_current(&link, &sources, &exit, || {
                 let handler = entry
                     .handler
