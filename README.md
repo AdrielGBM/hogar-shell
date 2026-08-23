@@ -37,7 +37,7 @@ cd hogar-shell
 cargo build --release        # target/release/hogar-shell
 ```
 
-One clone is enough. Building needs Rust 1.89 or newer and `libxkbcommon` — the only library the binary links
+One clone is enough. Building needs Rust 1.95 or newer and `libxkbcommon` — the only library the binary links
 besides glibc, so its development files have to be present. Everything under [Dependencies](#dependencies) is
 reached at runtime and missing gracefully; `hogar-shell deps` reports which of them this machine actually has.
 
