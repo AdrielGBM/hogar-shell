@@ -16,9 +16,7 @@
 
 pub use telar::{Source, derive, derive_pair};
 
-use telar::{
-    Memo, memo,
-};
+use telar::{Memo, memo};
 
 /// A value a surface reads and re-reads: derived from a service, or fixed for the life of the surface. One type
 /// for both so a card takes one kind of argument rather than two.

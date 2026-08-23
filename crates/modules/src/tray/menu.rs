@@ -15,9 +15,9 @@ use config::SurfaceEnv;
 use config::theme::{FontRole, NordTheme};
 use services::dbusmenu::{self, MenuItem, Toggle};
 use services::tray::TrayItem;
-use ui::placement::{OffChip, Placement};
 use ui::icon::{app_icon_view, icon_view};
 use ui::panel::{PanelSurface, content_radius, panel_fill};
+use ui::placement::{OffChip, Placement};
 use ui::scale::{corner, space};
 
 /// The shell's id for the menu surface. One at a time: a second tray menu on screen would be two context

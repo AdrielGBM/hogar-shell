@@ -1,8 +1,6 @@
-use ui::scale::paint;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-
-
+use ui::scale::paint;
 
 use telar::{
     AlignItems, Color, Container, Image, ImageData, ImageFilter, JustifyContent, LayoutError,
@@ -314,7 +312,10 @@ fn notification_card(
     dismiss: Option<fn(u32)>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let CardStyle {
-        theme, radius, fill, ..
+        theme,
+        radius,
+        fill,
+        ..
     } = style;
     let accent = urgency_color(notification.urgency, &theme);
     let summary = notification.summary.clone();
@@ -411,7 +412,9 @@ fn close_button(id: u32, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layout
     let glyph = ui::icon::icon_view(|| "x".to_string(), move || theme.muted, CLOSE_GLYPH)?;
     Ok(box_item(
         StyledContainer::new(
-            LayoutStyle::new().align_self_start().padding_all(space::xs()),
+            LayoutStyle::new()
+                .align_self_start()
+                .padding_all(space::xs()),
             move |_| RectStyle::filled(Color::TRANSPARENT, CLOSE_GLYPH / 2.0),
             vec![glyph],
         )?

@@ -5,8 +5,8 @@
 //! shell several times a second for a number no bar chip shows. This page therefore owns the only ticker, at
 //! the rate `[dashboard] media_update_interval` sets, and it dies with the surface.
 
-use ui::scale::{paint, space};
 use std::time::Duration;
+use ui::scale::{paint, space};
 
 use telar::{
     AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
@@ -264,7 +264,10 @@ fn now_playing(
         vec![
             cover(player.clone(), config, theme)?,
             Box::new(Container::new(
-                LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::sm()),
+                LayoutStyle::new()
+                    .flex_column()
+                    .flex_grow(1.0)
+                    .gap(space::sm()),
                 vec![
                     text(title, theme.font(FontRole::Title), theme.text, true)?,
                     text(artist, theme.font(FontRole::Body), theme.subtle, false)?,

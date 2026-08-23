@@ -11,8 +11,8 @@
 
 use telar::Rect;
 
-use config::SurfaceEnv;
 use config::Edge;
+use config::SurfaceEnv;
 
 /// Stand-in for an output the compositor has not reported a logical size for yet. Only ever feeds the clamp
 /// arithmetic, which needs a finite screen to clamp against.
@@ -199,5 +199,4 @@ mod tests {
             "a surface whose height is known is kept clear of the bottom edge"
         );
     }
-
 }

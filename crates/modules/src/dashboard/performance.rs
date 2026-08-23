@@ -5,8 +5,8 @@
 //! the page owns is *how often it redraws*: `[dashboard] resource_update_interval` throttles the resource
 //! subscription, so a slower dashboard costs less without slowing down the bar chips reading the same service.
 
-use ui::scale::{space};
 use std::time::{Duration, Instant};
+use ui::scale::space;
 
 use telar::{
     Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, RwSignal, SizeDimension, signal,

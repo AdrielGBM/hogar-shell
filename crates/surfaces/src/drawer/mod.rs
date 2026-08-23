@@ -109,8 +109,8 @@ pub(crate) fn open_drawer(env: &SurfaceEnv, module_id: &str, chip: Option<Rect>)
 #[cfg(test)]
 mod placement_tests {
     use super::*;
-    use std::sync::Arc;
     use platform_wayland::SurfaceAlign;
+    use std::sync::Arc;
 
     fn env(edge: Edge, config: &str) -> SurfaceEnv {
         let config: config::Config = toml::from_str(config).expect("config parses");
@@ -148,8 +148,8 @@ mod placement_tests {
             let chip = chip(500.0, 500.0);
             let span = span_along(edge, env.config.panels.drawer);
             let drawer = placement_for(&env, "notifications", Some(chip)).hosted_placement();
-            let popout = Placement::off_chip(OffChip::Card, &env, Some(chip), Some(span))
-                .layer_config();
+            let popout =
+                Placement::off_chip(OffChip::Card, &env, Some(chip), Some(span)).layer_config();
             assert_eq!(
                 drawer.margin, popout.margin,
                 "{edge:?}: a click and a hover on one chip must open in the same place"
@@ -171,7 +171,10 @@ mod placement_tests {
             Edge::Top,
             "[bars.top]\nstart=[\"notifications\"]\nend=[\"notifications\"]\n",
         );
-        assert_eq!(env.config.zone_of(Edge::Top, "notifications"), Some(Zone::Start));
+        assert_eq!(
+            env.config.zone_of(Edge::Top, "notifications"),
+            Some(Zone::Start)
+        );
 
         let near = placement_for(&env, "notifications", Some(chip(40.0, 0.0))).hosted_placement();
         let far = placement_for(&env, "notifications", Some(chip(1500.0, 0.0))).hosted_placement();

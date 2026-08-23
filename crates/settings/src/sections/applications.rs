@@ -3,11 +3,11 @@
 //! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine
 //! decides the length of. The static-shape forms are `.rsx` components beside this file.
 
-use ui::scale::{paint, space};
 use telar::{
-    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, ReactiveList,
-    RwSignal, SizeDimension, StyledContainer, Text, VirtualList, box_item, signal,
+    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, ReactiveList, RwSignal,
+    SizeDimension, StyledContainer, Text, VirtualList, box_item, signal,
 };
+use ui::scale::{paint, space};
 
 use crate::form::*;
 use crate::table::*;

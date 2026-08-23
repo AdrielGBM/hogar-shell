@@ -4,12 +4,12 @@
 //! NetworkManager view layered on top. So a machine without NM keeps a working chip and gets a panel that says
 //! why it is empty, rather than the chip going blank because the panel's dependency is missing.
 
-use ui::scale::space;
 use telar::{
     AlignItems, Container, Input, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
     ReactiveList, RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal,
     use_theme,
 };
+use ui::scale::space;
 
 use config::NetworkConfig;
 use config::surface_env;
@@ -106,7 +106,10 @@ fn header(state: RwSignal<Wifi>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         vec![box_item(title), box_item(subtitle)],
     )?;
 
@@ -320,7 +323,10 @@ fn network_row(
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         vec![box_item(name), box_item(status)],
     )?;
 

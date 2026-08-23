@@ -1,8 +1,8 @@
 //! The widgets a form of repeating rows is built from — a table with an add button, a delete per row,
 //! and the pills a membership list is edited through.
 
-use ui::scale::{corner, paint, space};
 use std::rc::Rc;
+use ui::scale::{corner, paint, space};
 
 use telar::{
     AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,

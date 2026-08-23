@@ -474,7 +474,11 @@ mod tests {
             "the producer has been started and has not had a turn: this is the answer that lied"
         );
         assert_eq!(SLOW.awaited(Duration::from_secs(2)), Some(7));
-        assert_eq!(SLOW.current(), Some(7), "and it stands for every later read");
+        assert_eq!(
+            SLOW.current(),
+            Some(7),
+            "and it stands for every later read"
+        );
     }
 
     /// The wait is bounded: a service that genuinely has nothing to report still answers, rather than holding

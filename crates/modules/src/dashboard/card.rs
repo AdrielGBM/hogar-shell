@@ -8,11 +8,11 @@
 //! guarantees is distinct in both directions: an inset well on a dark palette, a raised one on a light palette,
 //! never a card that vanishes into its panel.
 
-use ui::scale::space;
 use telar::{
     AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension,
     StyledContainer, Text, box_item,
 };
+use ui::scale::space;
 
 use config::theme::{FontRole, NordTheme};
 use surfaces::drawer::content_radius;

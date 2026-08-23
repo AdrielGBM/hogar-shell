@@ -6,8 +6,8 @@
 //! notification body is the one thing on this surface that can be read by whoever is standing there, which is
 //! why `hide_notifs` counts them instead of showing them until the user says otherwise.
 
-use ui::scale::space;
 use std::sync::Arc;
+use ui::scale::space;
 
 use telar::{
     AlignItems, Container, LayoutError, LayoutItem, LayoutStyle, SizeDimension, Text, box_item,

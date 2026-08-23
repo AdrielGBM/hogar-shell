@@ -3,8 +3,8 @@
 //! The elapsed readout is the only thing here that ticks, and it ticks off the shared clock service rather than a
 //! timer of its own — the same second boundary the bar's clock uses, so nothing in the shell has two.
 
-use ui::scale::space;
 use std::path::{Path, PathBuf};
+use ui::scale::space;
 
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReactiveList,
@@ -350,7 +350,10 @@ fn row(
         move || theme.text_style(FontRole::Caption, theme.subtle),
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         vec![box_item(name), box_item(subtitle)],
     )?;
 

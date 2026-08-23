@@ -66,36 +66,35 @@ fn load() -> Option<Nvml> {
     unsafe {
         deps::open_library(Dep::Nvml, None, |library| {
             let init = *library.get::<unsafe extern "C" fn() -> c_int>(b"nvmlInit_v2\0")?;
-                let device_by_index = *library
-                    .get::<unsafe extern "C" fn(c_uint, *mut Device) -> c_int>(
-                        b"nvmlDeviceGetHandleByIndex_v2\0",
-                    )?;
-                let name = *library
-                    .get::<unsafe extern "C" fn(Device, *mut c_char, c_uint) -> c_int>(
-                        b"nvmlDeviceGetName\0",
-                    )?;
-                let utilization =
-                    *library.get::<unsafe extern "C" fn(Device, *mut Utilization) -> c_int>(
-                        b"nvmlDeviceGetUtilizationRates\0",
-                    )?;
-                let temperature =
-                    *library.get::<unsafe extern "C" fn(Device, c_uint, *mut c_uint) -> c_int>(
-                        b"nvmlDeviceGetTemperature\0",
-                    )?;
-                let memory = *library.get::<unsafe extern "C" fn(Device, *mut Memory) -> c_int>(
-                    b"nvmlDeviceGetMemoryInfo\0",
+            let device_by_index = *library
+                .get::<unsafe extern "C" fn(c_uint, *mut Device) -> c_int>(
+                    b"nvmlDeviceGetHandleByIndex_v2\0",
                 )?;
-                // Initialised once, here, and never shut down: the library outlives the shell's interest in
-                // it, and `nvmlShutdown` on a process that is exiting anyway buys nothing.
-                if init() != NVML_SUCCESS {
-                    return Err(libloading::Error::DlOpenUnknown);
-                }
-                Ok(Nvml {
-                    device_by_index,
-                    name,
-                    utilization,
-                    temperature,
-                    memory,
+            let name = *library.get::<unsafe extern "C" fn(Device, *mut c_char, c_uint) -> c_int>(
+                b"nvmlDeviceGetName\0",
+            )?;
+            let utilization = *library
+                .get::<unsafe extern "C" fn(Device, *mut Utilization) -> c_int>(
+                    b"nvmlDeviceGetUtilizationRates\0",
+                )?;
+            let temperature = *library
+                .get::<unsafe extern "C" fn(Device, c_uint, *mut c_uint) -> c_int>(
+                    b"nvmlDeviceGetTemperature\0",
+                )?;
+            let memory = *library.get::<unsafe extern "C" fn(Device, *mut Memory) -> c_int>(
+                b"nvmlDeviceGetMemoryInfo\0",
+            )?;
+            // Initialised once, here, and never shut down: the library outlives the shell's interest in
+            // it, and `nvmlShutdown` on a process that is exiting anyway buys nothing.
+            if init() != NVML_SUCCESS {
+                return Err(libloading::Error::DlOpenUnknown);
+            }
+            Ok(Nvml {
+                device_by_index,
+                name,
+                utilization,
+                temperature,
+                memory,
                 _library: library,
             })
         })

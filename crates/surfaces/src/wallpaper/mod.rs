@@ -303,7 +303,6 @@ fn blank() -> Arc<ImageData> {
     BLANK.with(Arc::clone)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

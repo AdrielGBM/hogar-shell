@@ -1,10 +1,10 @@
 //! The power chip and the menu it opens.
 
-use ui::scale::{corner, space};
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, RectStyle,
     SizeDimension, StyledContainer, Text, box_item, signal, use_theme,
 };
+use ui::scale::{corner, space};
 
 use ui::keynav::{self, Move};
 

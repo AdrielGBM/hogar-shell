@@ -3,8 +3,8 @@
 //! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine
 //! decides the length of. The static-shape forms are `.rsx` components beside this file.
 
-use ui::scale::{corner, paint, space};
 use std::path::{Path, PathBuf};
+use ui::scale::{corner, paint, space};
 
 use telar::{
     AlignItems, Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, RectStyle, RwSignal,

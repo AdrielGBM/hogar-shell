@@ -126,13 +126,7 @@ fn build_whole_bar(
             Color::TRANSPARENT,
             shape.chip_radius(),
         )?;
-        slots.push(zone(
-            edge,
-            *in_zone,
-            spacing,
-            AlignItems::STRETCH,
-            items,
-        )?);
+        slots.push(zone(edge, *in_zone, spacing, AlignItems::STRETCH, items)?);
     }
     let radius = shape.radius;
     let style = axis(
@@ -181,13 +175,7 @@ fn build_units(
             }
         };
         // STRETCH ensures height is parent-driven by bar size, not content-driven.
-        slots.push(zone(
-            edge,
-            *in_zone,
-            spacing,
-            AlignItems::STRETCH,
-            content,
-        )?);
+        slots.push(zone(edge, *in_zone, spacing, AlignItems::STRETCH, content)?);
     }
     // No gap between the zones here: there are only ever three of them, so the only two joins it could space are the two the sides already hold open with a margin of their own (see [`zone`]). Both applying left twice the air at exactly the place a side is cut — a hole where the rest of the bar has one chip's worth.
     let style = axis(
@@ -623,17 +611,16 @@ mod tests {
             inner,
         )
         .unwrap();
-        let mut wrapped =
-            chip_wrapper(
-                chip,
-                "volume",
-                None,
-                true,
-                AlignItems::STRETCH,
-                Edge::Top,
-                false,
-            )
-            .unwrap();
+        let mut wrapped = chip_wrapper(
+            chip,
+            "volume",
+            None,
+            true,
+            AlignItems::STRETCH,
+            Edge::Top,
+            false,
+        )
+        .unwrap();
 
         let node = wrapped.layout_node();
         compute_layout(
@@ -1078,9 +1065,10 @@ mod tests {
             .iter()
             .zip(commands.iter().skip(1))
             .find_map(|(clip, next)| match (clip, next) {
-                (telar::DrawCommand::PushClip { rect: clip, .. }, telar::DrawCommand::Rect { rect, .. }) => {
-                    Some((*clip, *rect))
-                }
+                (
+                    telar::DrawCommand::PushClip { rect: clip, .. },
+                    telar::DrawCommand::Rect { rect, .. },
+                ) => Some((*clip, *rect)),
                 _ => None,
             })
             .expect("the start zone drew its panel inside its clip");
@@ -1193,14 +1181,7 @@ mod tests {
             )
             .unwrap();
             // The zone the bar puts a chip in: along the bar, stretching its children across it.
-            let zone = zone(
-                edge,
-                Zone::Start,
-                0.0,
-                AlignItems::STRETCH,
-                vec![wrapped],
-            )
-            .unwrap();
+            let zone = zone(edge, Zone::Start, 0.0, AlignItems::STRETCH, vec![wrapped]).unwrap();
             let (w, h) = if edge.is_vertical() {
                 (side, 600.0)
             } else {

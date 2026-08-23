@@ -11,11 +11,11 @@
 
 mod capture;
 
-use ui::scale::{paint, space};
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, RectStyle,
     RwSignal, SizeDimension, StyledContainer, Text, box_item, signal, use_theme,
 };
+use ui::scale::{paint, space};
 
 use config::UtilitiesConfig;
 use config::theme::{FontRole, NordTheme};

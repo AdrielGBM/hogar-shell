@@ -5,11 +5,11 @@
 //! [`bluetooth`](services::bluetooth) service, so the chip, the cluster icon, the popout card
 //! and this panel are four views of one subscription rather than four readers of the bus.
 
-use ui::scale::space;
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReactiveList,
     RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal, use_theme,
 };
+use ui::scale::space;
 
 use config::BluetoothConfig;
 use config::theme::{FontRole, NordTheme};
@@ -113,7 +113,10 @@ fn header(
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         vec![box_item(title), box_item(subtitle)],
     )?;
 
@@ -307,7 +310,10 @@ fn row(
         },
     )?;
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         vec![box_item(name), box_item(status)],
     )?;
 

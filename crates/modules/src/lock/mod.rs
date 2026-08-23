@@ -9,8 +9,8 @@
 //! Everything it shows is a subscription to [`lock::LockState`], which is written from a worker thread. The
 //! screen never authenticates; it collects a password and hands it over.
 
-use ui::scale::{corner, space};
 use std::sync::Arc;
+use ui::scale::{corner, space};
 
 use telar::{
     AlignItems, App, Color, Component, Container, Input, JustifyContent, LayoutError, LayoutItem,

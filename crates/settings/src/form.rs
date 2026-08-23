@@ -4,14 +4,14 @@
 //! write-back to `config.toml`, and the recorder that tells a button whether anything under it moved — so the
 //! sections themselves are a description of *which* fields they have rather than of how a field behaves.
 
-use ui::scale::{paint, space};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use ui::scale::{paint, space};
 
 use serde::Serialize;
 use telar::{
-    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, RwSignal,
-    SizeDimension, StyledContainer, Text, box_item, signal,
+    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, RwSignal, SizeDimension,
+    StyledContainer, Text, box_item, signal,
 };
 
 use config::theme::{FontRole, NordTheme};

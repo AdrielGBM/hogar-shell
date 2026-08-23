@@ -7,13 +7,12 @@
 //! a preference, and writing `[temperature] unit` from a glance would change what the bar and the OSD show
 //! because someone looked at a number. The settings application is where that choice is made.
 
-use ui::scale::{paint, space};
 use chrono::NaiveDate;
 use telar::{
     AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
-    ReactiveList, RwSignal, SizeDimension, StyledContainer, Text, TextStyle, box_item,
-    signal,
+    ReactiveList, RwSignal, SizeDimension, StyledContainer, Text, TextStyle, box_item, signal,
 };
+use ui::scale::{paint, space};
 
 use super::card::{self, Card};
 use config::theme::{FontRole, NordTheme};
@@ -85,7 +84,10 @@ fn current_card(
         vec![
             icon,
             Box::new(Container::new(
-                LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+                LayoutStyle::new()
+                    .flex_column()
+                    .flex_grow(1.0)
+                    .gap(space::xs()),
                 vec![
                     unit_toggle(reading, unit.clone(), theme)?,
                     box_item(Text::auto(
