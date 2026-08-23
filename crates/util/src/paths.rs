@@ -11,7 +11,7 @@ use telar::{AppPathsProvider, paths};
 pub use telar::paths::{ensure_dir, expand_tilde, home as home_dir, user_dir};
 
 /// The name every app-scoped directory is nested under, and the one handed to the runner.
-pub const APP: &str = "hyprshell";
+pub const APP: &str = "hogar-shell";
 
 /// The directories this shell declares to Telar, so `telar::paths::*` and every widget behind it resolve the
 /// same places the shell writes to. Handed to the runner in place of the three stubs that used to answer
@@ -44,18 +44,14 @@ impl AppPathsProvider for ShellPaths {
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| {
                     let uid = std::env::var("UID").unwrap_or_else(|_| "user".to_string());
-                    PathBuf::from(format!("/tmp/hyprshell-{uid}"))
+                    PathBuf::from(format!("/tmp/hogar-shell-{uid}"))
                 }),
         )
     }
 }
 
 fn xdg(var: &str, fallback: &str) -> PathBuf {
-    paths::resolve_base(
-        std::env::var_os(var),
-        std::env::var_os("HOME"),
-        fallback,
-    )
+    paths::resolve_base(std::env::var_os(var), std::env::var_os("HOME"), fallback)
 }
 
 /// Falls back to resolving the base directly, for the paths a surface asks for before the runner has installed

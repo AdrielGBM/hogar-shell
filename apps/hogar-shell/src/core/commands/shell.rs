@@ -1,4 +1,4 @@
-//! `hyprshell shell`, `config`, `scheme` and `session` — the shell talking about itself.
+//! `hogar-shell shell`, `config`, `scheme` and `session` — the shell talking about itself.
 
 use std::time::Duration;
 
@@ -505,13 +505,13 @@ pub(crate) const MAN: Target = Target {
         Command {
             name: "commands",
             args: "",
-            help: "hyprshell(1) as roff, generated from this table",
+            help: "hogar-shell(1) as roff, generated from this table",
             run: |_| Ok(crate::core::man::commands_page()),
         },
         Command {
             name: "config",
             args: "",
-            help: "hyprshell(5) as roff, generated from the config schema",
+            help: "hogar-shell(5) as roff, generated from the config schema",
             run: |_| crate::core::man::config_page(),
         },
     ],

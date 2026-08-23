@@ -170,8 +170,7 @@ struct Pw {
         *const StreamEvents,
         *mut c_void,
     ) -> Stream,
-    stream_connect:
-        unsafe extern "C" fn(Stream, u32, u32, u32, *mut *const c_void, u32) -> c_int,
+    stream_connect: unsafe extern "C" fn(Stream, u32, u32, u32, *mut *const c_void, u32) -> c_int,
     stream_dequeue_buffer: unsafe extern "C" fn(Stream) -> *mut PwBuffer,
     stream_queue_buffer: unsafe extern "C" fn(Stream, *mut PwBuffer) -> c_int,
     stream_destroy: unsafe extern "C" fn(Stream),
@@ -229,7 +228,8 @@ pub fn monitor(
     hop: usize,
     on_hop: &mut dyn FnMut(&[f32]) -> ControlFlow<()>,
 ) -> std::io::Result<()> {
-    let pw = library().ok_or_else(|| std::io::Error::other("libpipewire is not on this machine"))?;
+    let pw =
+        library().ok_or_else(|| std::io::Error::other("libpipewire is not on this machine"))?;
     let main_loop = unsafe { (pw.main_loop_new)(std::ptr::null()) };
     if main_loop.is_null() {
         return Err(std::io::Error::other("PipeWire gave no main loop"));
@@ -379,7 +379,7 @@ fn run(
         },
         SpaDictItem {
             key: c"application.name".as_ptr(),
-            value: c"hyprshell".as_ptr(),
+            value: c"hogar-shell".as_ptr(),
         },
     ];
     let dict = SpaDict {
@@ -495,7 +495,11 @@ fn audio_format(rate: u32) -> FormatPod {
     for (index, (key, kind, value)) in [
         (SPA_FORMAT_MEDIA_TYPE, SPA_TYPE_ID, SPA_MEDIA_TYPE_AUDIO),
         (SPA_FORMAT_MEDIA_SUBTYPE, SPA_TYPE_ID, SPA_MEDIA_SUBTYPE_RAW),
-        (SPA_FORMAT_AUDIO_FORMAT, SPA_TYPE_ID, SPA_AUDIO_FORMAT_F32_LE),
+        (
+            SPA_FORMAT_AUDIO_FORMAT,
+            SPA_TYPE_ID,
+            SPA_AUDIO_FORMAT_F32_LE,
+        ),
         (SPA_FORMAT_AUDIO_RATE, SPA_TYPE_INT, rate),
         (SPA_FORMAT_AUDIO_CHANNELS, SPA_TYPE_INT, 1),
     ]

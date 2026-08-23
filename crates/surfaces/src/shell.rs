@@ -3,7 +3,7 @@
 //! Two things every entry point needs and no single bar owns. **The context** is the config the shell is
 //! currently running (kept in step with the reload watcher) plus the compositor's focused monitor, so code
 //! reached from outside a surface — an IPC call, a keybind — can still answer "which config? which screen?".
-//! **The registry** is what is open right now, so a panel toggled from a bar chip, from `hyprshell panel
+//! **The registry** is what is open right now, so a panel toggled from a bar chip, from `hogar-shell panel
 //! toggle`, and from a keybind are all the *same* surface rather than three stacked copies.
 //!
 //! What is in the registry is what the *user* opened. The surfaces the *config* describes — the bars, their
@@ -150,7 +150,7 @@ pub fn toggle_window(id: &str, open: impl FnOnce() -> SurfaceToken) {
 }
 
 /// Closes `id` whether it is the open drawer or an independent surface. A close of something already closed is
-/// a no-op, so `hyprshell panel close x` is safe to call blind.
+/// a no-op, so `hogar-shell panel close x` is safe to call blind.
 pub fn close(id: &str) {
     OPEN.with(|surfaces| {
         let mut surfaces = surfaces.borrow_mut();
@@ -161,7 +161,7 @@ pub fn close(id: &str) {
     });
 }
 
-/// Every surface currently up, for `hyprshell panel list`.
+/// Every surface currently up, for `hogar-shell panel list`.
 pub fn open_ids() -> Vec<String> {
     OPEN.with(|surfaces| {
         let surfaces = surfaces.borrow();
@@ -188,7 +188,7 @@ pub fn open_ids() -> Vec<String> {
 /// window is the case that matters: it applies a form a moment after the last keystroke, and rebuilding the
 /// field being typed into would put the caret back at the start of it — the whole reason live editing was
 /// unusable. Authorship rather than an exemption list, because "the surface that caused this" is the actual
-/// rule; a settings window that did *not* cause the edit (someone ran `hyprshell` or edited the file) is
+/// rule; a settings window that did *not* cause the edit (someone ran `hogar-shell` or edited the file) is
 /// rebuilt like everything else.
 ///
 /// Consumed by the next [`rebuild_all`], so it can never suppress more than the reload it was set for.

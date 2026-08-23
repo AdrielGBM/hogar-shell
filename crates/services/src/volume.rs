@@ -38,8 +38,8 @@ impl From<&Node> for Volume {
     }
 }
 
-static VOLUME: Service<Volume> = Service::new("hyprshell-volume", run);
-static MIC: Service<Volume> = Service::new("hyprshell-mic", run_mic);
+static VOLUME: Service<Volume> = Service::new("hogar-shell-volume", run);
+static MIC: Service<Volume> = Service::new("hogar-shell-mic", run_mic);
 
 /// Publishes one node's reading off every graph batch, skipping the batches that did not move it.
 ///
@@ -145,7 +145,7 @@ pub fn step_mic(delta: i32) {
 /// frame. Nothing is read back: the monitor reports what PipeWire actually did.
 fn apply(args: Vec<String>) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-volume-set".to_string())
+        .name("hogar-shell-volume-set".to_string())
         .spawn(move || {
             if let Some(mut wpctl) = deps::command(Dep::Wpctl) {
                 let _ = wpctl.args(&args).status();

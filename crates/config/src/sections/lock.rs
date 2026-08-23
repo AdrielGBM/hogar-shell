@@ -1,7 +1,7 @@
 //! `[lock]` and the `[idle]` stages that lead to it.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hyprshell config schema` prints for it, so it is written for a user reading the reference.
+//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,12 +14,12 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct LockConfig {
     /// The PAM service to authenticate against — a file under `/etc/pam.d`. Empty picks the first of
-    /// `hyprshell`, `swaylock`, `login` that exists, so a machine with no hyprshell-specific stack still
+    /// `hogar-shell`, `swaylock`, `login` that exists, so a machine with no hogar-shell-specific stack still
     /// unlocks instead of refusing every password.
     pub pam_service: String,
     /// Where `libpam` is. Empty tries `libpam.so.0`, `libpam.so` and NixOS's
     /// `/run/current-system/sw/lib/libpam.so.0`, which between them cover every machine met so far; set it only
-    /// if `hyprshell lock status` says the library could not be loaded.
+    /// if `hogar-shell lock status` says the library could not be loaded.
     pub pam_library: String,
     /// Attempts before the field locks itself out for `lockout_seconds`. `0` never locks out.
     pub max_tries: u32,
@@ -72,8 +72,8 @@ impl Default for LockConfig {
 /// One idle timeout, declared as an `[[idle.stages]]` table: what to run once the seat has been idle that long,
 /// and what to run when it stops being.
 ///
-/// Both actions are request lines the shell already answers — the same strings `hyprshell` takes on the command
-/// line — so a stage needs no new vocabulary and anything bindable to a key is bindable to a timeout. `hyprshell
+/// Both actions are request lines the shell already answers — the same strings `hogar-shell` takes on the command
+/// line — so a stage needs no new vocabulary and anything bindable to a key is bindable to a timeout. `hogar-shell
 /// --list` is the full menu; `lock on`, `shell dpms off` and `session do suspend` are the usual three.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]

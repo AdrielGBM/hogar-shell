@@ -50,7 +50,7 @@ Set it there once rather than dragging every time.
 
 ## What it needs
 
-`wlr-layer-shell`. A float is still a layer surface — hyprshell opens no `xdg-shell` toplevels at all — which
+`wlr-layer-shell`. A float is still a layer surface — hogar-shell opens no `xdg-shell` toplevels at all — which
 is why it can be placed exactly and why it is unaffected by your window rules.
 
 ## Related

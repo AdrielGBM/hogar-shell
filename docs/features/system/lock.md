@@ -19,9 +19,9 @@ An `ext-session-lock-v1` surface covering every output. The compositor keeps it 
 dies**, and it gives it the keyboard — there is no scrim, no dismiss, and no way out but authenticating.
 
 ```sh
-hyprshell lock on
-hyprshell lock toggle
-hyprshell lock status     # locked? and can this machine lock at all?
+hogar-shell lock on
+hogar-shell lock toggle
+hogar-shell lock status     # locked? and can this machine lock at all?
 ```
 
 ## What is on it
@@ -43,7 +43,7 @@ Never after:
 2. that **PAM** can be loaded.
 
 A lock this process cannot undo is the one failure with no way out, so it is refused with a message instead.
-`hyprshell lock status` gives you that answer without locking.
+`hogar-shell lock status` gives you that answer without locking.
 
 ## Asked to lock, and locked, are different questions
 
@@ -86,7 +86,7 @@ talk to a fingerprint reader or a network directory — on the UI thread that is
 
 ## Known limit
 
-`LockHandle::is_locked` reports only locks hyprshell performed. A lock taken by something else is not observed;
+`LockHandle::is_locked` reports only locks hogar-shell performed. A lock taken by something else is not observed;
 `hyprland-lock-notify-v1` is the protocol for that and is unbound.
 
 ## Related

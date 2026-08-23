@@ -256,7 +256,7 @@ fn read_state(conn: &Connection) -> Bluetooth {
     }
 }
 
-static BLUETOOTH: Service<Bluetooth> = Service::new("hyprshell-bluetooth", run);
+static BLUETOOTH: Service<Bluetooth> = Service::new("hogar-shell-bluetooth", run);
 
 fn run(out: &Arc<Broadcast<Bluetooth>>) {
     let Some(conn) = connection(READ_TIMEOUT) else {
@@ -295,7 +295,7 @@ fn watch_signals(ping: SyncSender<()>) -> Option<()> {
         .build();
     let signals = MessageIterator::for_match_rule(rule, &conn, None).ok()?;
     std::thread::Builder::new()
-        .name("hyprshell-bluetooth-signals".to_string())
+        .name("hogar-shell-bluetooth-signals".to_string())
         .spawn(move || {
             for _ in signals {
                 // A full channel already carries an unserviced ping, so dropping this one loses nothing.
@@ -346,7 +346,7 @@ fn control() -> Option<&'static Connection> {
 /// any other application takes.
 fn act(what: &'static str, job: impl FnOnce(&Connection) + Send + 'static) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-bluetooth-act".to_string())
+        .name("hogar-shell-bluetooth-act".to_string())
         .spawn(move || match control() {
             Some(conn) => job(conn),
             None => tracing::warn!("bluetooth: cannot reach the system bus to {what}"),
@@ -432,7 +432,7 @@ pub fn set_discovering(on: bool) {
         return;
     }
     let _ = std::thread::Builder::new()
-        .name("hyprshell-bluetooth-scan".to_string())
+        .name("hogar-shell-bluetooth-scan".to_string())
         .spawn(move || {
             std::thread::sleep(SCAN_WINDOW);
             // A later start or stop owns the scan now; this one has nothing left to end.

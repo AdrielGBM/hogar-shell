@@ -1,7 +1,7 @@
 //! The capture flows: what a keybind, a chip or an IPC call means by "take a screenshot" or "record this".
 //!
 //! The services below know how to capture pixels and drive a recorder; this is the layer that decides *which*
-//! pixels and what to do with them, so every entry point — a bar chip, `hyprshell screenshot region`, the
+//! pixels and what to do with them, so every entry point — a bar chip, `hogar-shell screenshot region`, the
 //! utilities panel — performs the same flow rather than each assembling its own request.
 
 mod picker;

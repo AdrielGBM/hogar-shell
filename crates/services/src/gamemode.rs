@@ -74,7 +74,7 @@ fn read(conn: &Connection) -> GameMode {
     }
 }
 
-static GAME_MODE: Service<GameMode> = Service::new("hyprshell-gamemode", run);
+static GAME_MODE: Service<GameMode> = Service::new("hogar-shell-gamemode", run);
 
 fn run(out: &Arc<Broadcast<GameMode>>) {
     let Some(conn) = connection() else {
@@ -120,8 +120,8 @@ fn watch_signals(ping: SyncSender<()>) -> Option<()> {
         .build();
     // A rule per thread, because a match rule cannot express "either of these": one iterator would have to be
     // broad enough to wake on every signal on the session bus, which on a desktop is a great many.
-    park_on(from_daemon, "hyprshell-gamemode-signals", ping.clone())?;
-    if park_on(ownership, "hyprshell-gamemode-owner", ping).is_none() {
+    park_on(from_daemon, "hogar-shell-gamemode-signals", ping.clone())?;
+    if park_on(ownership, "hogar-shell-gamemode-owner", ping).is_none() {
         tracing::warn!("gamemode: cannot watch for the daemon appearing or going away");
     }
     Some(())
@@ -171,7 +171,7 @@ pub fn set_held(held: bool) {
     };
     let pid = std::process::id() as i32;
     let _ = std::thread::Builder::new()
-        .name("hyprshell-gamemode-act".to_string())
+        .name("hogar-shell-gamemode-act".to_string())
         .spawn(move || {
             let Some(conn) = connection() else {
                 tracing::warn!("gamemode: cannot reach the session bus");

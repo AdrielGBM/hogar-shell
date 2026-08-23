@@ -18,11 +18,11 @@ The shell speaks the capture protocol itself — there is no `grim` in the loop.
 ## Taking one
 
 ```sh
-hyprshell screenshot screen         # every monitor, composed into one image
-hyprshell screenshot output [name]  # one monitor, focused by default
-hyprshell screenshot region         # pick with the pointer
-hyprshell screenshot cancel         # close the picker without capturing
-hyprshell screenshot last           # where the last one went, or why it failed
+hogar-shell screenshot screen         # every monitor, composed into one image
+hogar-shell screenshot output [name]  # one monitor, focused by default
+hogar-shell screenshot region         # pick with the pointer
+hogar-shell screenshot cancel         # close the picker without capturing
+hogar-shell screenshot last           # where the last one went, or why it failed
 ```
 
 ## Where it goes is config, not a flag

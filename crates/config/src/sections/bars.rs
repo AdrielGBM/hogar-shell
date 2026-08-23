@@ -1,7 +1,7 @@
 //! `[bars]`, `[panels]`, and every `[toml]` section a chip on a bar reads.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hyprshell config schema` prints for it, so it is written for a user reading the reference.
+//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -110,7 +110,7 @@ pub enum Zone {
 /// copy at once.
 ///
 /// Deliberately presentation-only. `open` stays under `[modules.<id>]` because a panel is toggled by module id
-/// from three places — a chip, `hyprshell panel toggle`, a keybind — and only one of them has an entry in hand;
+/// from three places — a chip, `hogar-shell panel toggle`, a keybind — and only one of them has an entry in hand;
 /// an entry-scoped answer would make the same panel open differently depending on how you asked for it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModuleEntry {

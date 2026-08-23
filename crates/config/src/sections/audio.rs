@@ -1,7 +1,7 @@
 //! `[audio]`, `[visualiser]`, `[media]` and `[lyrics]`.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hyprshell config schema` prints for it, so it is written for a user reading the reference.
+//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// Audio control (`[audio]`). `increment` is what one wheel notch over the volume or microphone chip moves and
-/// what `hyprshell volume up` steps by. `max_volume` is the ceiling the sink can be raised to: PipeWire lets a
+/// what `hogar-shell volume up` steps by. `max_volume` is the ceiling the sink can be raised to: PipeWire lets a
 /// sink boost past 100 %, which rescues a quiet laptop and wrecks a good speaker, so it belongs to the user
 /// rather than to a constant in the code.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]

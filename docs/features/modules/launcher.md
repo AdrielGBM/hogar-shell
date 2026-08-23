@@ -22,7 +22,7 @@ ranking, the actions — is on its own page: **[Launcher](../surfaces/launcher.m
 | --- | --- |
 | Click | toggles the launcher |
 
-Equivalent to `hyprshell launcher toggle`, which is what most people bind to a key instead of putting the chip
+Equivalent to `hogar-shell launcher toggle`, which is what most people bind to a key instead of putting the chip
 on a bar.
 
 ## Configuring

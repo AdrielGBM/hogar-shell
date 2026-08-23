@@ -30,8 +30,8 @@
 //! surface *is*, not where it goes.
 //!
 //! **The namespace belongs to the shape, not to the surface.** It is what a compositor rule matches
-//! (`layer_rule = blur, hyprshell-drawer`), so it is a public interface: the strings below are the ones
-//! hyprshell has always announced, and a primitive owns its own rather than each call site spelling it out.
+//! (`layer_rule = blur, hogar-shell-drawer`), so it is a public interface: the strings below are the ones
+//! hogar-shell has always announced, and a primitive owns its own rather than each call site spelling it out.
 //!
 //! A placement is lowered at the point of use: to a [`LayerConfig`] for a surface that owns its rendering, or
 //! to the surface host's [`SurfacePlacement`] for one that wants the scaffold — a scrim, a dismiss-on-outside,
@@ -78,8 +78,8 @@ pub enum OffChip {
 impl OffChip {
     fn namespace(self) -> &'static str {
         match self {
-            OffChip::Card => "hyprshell-popout",
-            OffChip::Panel => "hyprshell-drawer",
+            OffChip::Card => "hogar-shell-popout",
+            OffChip::Panel => "hogar-shell-drawer",
         }
     }
 }
@@ -107,8 +107,8 @@ impl Centred {
     /// this — the two disagreeing is what made the tray's menu announce a name nobody chose.
     fn namespace(self) -> &'static str {
         match self {
-            Centred::Float => "hyprshell-float",
-            Centred::Modal => "hyprshell-overlay",
+            Centred::Float => "hogar-shell-float",
+            Centred::Modal => "hogar-shell-overlay",
         }
     }
 
@@ -299,12 +299,18 @@ impl Placement {
     /// hosted surface out inside a full-screen scaffold where the margin is padding, so the distance that lines
     /// the panel up with its chip is measured from whichever end the panel packs against. Centre it and the
     /// same number pushes it half a screen the other way.
-    pub fn off_chip(kind: OffChip, env: &SurfaceEnv, chip: Option<Rect>, span: Option<f32>) -> Self {
+    pub fn off_chip(
+        kind: OffChip,
+        env: &SurfaceEnv,
+        chip: Option<Rect>,
+        span: Option<f32>,
+    ) -> Self {
         let mut placement = match kind {
             OffChip::Card => Self::new(kind.namespace(), beside_a_chip(env.edge), Layer::Overlay)
                 .input(Input::FromContent),
             OffChip::Panel => {
-                let mut panel = Self::hosted(SurfaceRole::Drawer, kind.namespace(), KeyboardMode::None);
+                let mut panel =
+                    Self::hosted(SurfaceRole::Drawer, kind.namespace(), KeyboardMode::None);
                 panel.anchor = edge_anchor(env.edge);
                 panel.dismiss_on_outside = true;
                 panel
@@ -472,19 +478,19 @@ const FULLSCREEN: Anchor = Anchor::TOP
 /// config matches, which is why it is spelled out rather than derived from a debug format.
 fn bar_namespace(edge: Edge) -> &'static str {
     match edge {
-        Edge::Top => "hyprshell-top",
-        Edge::Bottom => "hyprshell-bottom",
-        Edge::Left => "hyprshell-left",
-        Edge::Right => "hyprshell-right",
+        Edge::Top => "hogar-shell-top",
+        Edge::Bottom => "hogar-shell-bottom",
+        Edge::Left => "hogar-shell-left",
+        Edge::Right => "hogar-shell-right",
     }
 }
 
 fn reserve_namespace(edge: Edge) -> &'static str {
     match edge {
-        Edge::Top => "hyprshell-reserve-top",
-        Edge::Bottom => "hyprshell-reserve-bottom",
-        Edge::Left => "hyprshell-reserve-left",
-        Edge::Right => "hyprshell-reserve-right",
+        Edge::Top => "hogar-shell-reserve-top",
+        Edge::Bottom => "hogar-shell-reserve-bottom",
+        Edge::Left => "hogar-shell-reserve-left",
+        Edge::Right => "hogar-shell-reserve-right",
     }
 }
 
@@ -600,7 +606,7 @@ mod tests {
     /// this looked like before the column came from the placement instead of from a default.
     #[test]
     fn a_stack_packs_its_cards_against_the_edge_it_hangs_off() {
-        let stack = |edge, align| Placement::stack("hyprshell-toasts", edge, align).packing();
+        let stack = |edge, align| Placement::stack("hogar-shell-toasts", edge, align).packing();
         assert_eq!(stack(Edge::Bottom, Align::Center), JustifyContent::END);
         assert_eq!(stack(Edge::Top, Align::Center), JustifyContent::START);
         // The alignment decides only where the surface sits *along* a horizontal edge, never which way its
@@ -641,14 +647,14 @@ mod tests {
         let every = [
             ("bar", Placement::bar(Edge::Top, 34)),
             ("reservation", Placement::reservation(Edge::Top, 34)),
-            ("backdrop", Placement::backdrop("hyprshell-wallpaper")),
+            ("backdrop", Placement::backdrop("hogar-shell-wallpaper")),
             (
                 "dock",
-                Placement::dock("hyprshell-sidebar", Edge::Right, 380),
+                Placement::dock("hogar-shell-sidebar", Edge::Right, 380),
             ),
             (
                 "stack",
-                Placement::stack("hyprshell-toasts", Edge::Top, Align::End).size(320, 200),
+                Placement::stack("hogar-shell-toasts", Edge::Top, Align::End).size(320, 200),
             ),
             (
                 "off_chip card",
@@ -658,9 +664,12 @@ mod tests {
                 "off_chip panel",
                 Placement::off_chip(OffChip::Panel, &env, Some(chip), Some(260.0)),
             ),
-            ("centred float", Placement::centred(Centred::Float).size(920, 680)),
+            (
+                "centred float",
+                Placement::centred(Centred::Float).size(920, 680),
+            ),
             ("centred modal", Placement::centred(Centred::Modal)),
-            ("screen", Placement::screen("hyprshell-picker")),
+            ("screen", Placement::screen("hogar-shell-picker")),
         ];
 
         for (name, placement) in every {
@@ -689,7 +698,7 @@ mod tests {
     /// **And a hosted shape is asserted twice**, because it announces its namespace through a second path: the
     /// surface host derives it from the [`SurfaceRole`], which never sees the string this carries. The two are
     /// kept in step by hand, and while they were not, the tray's menu — a card that had been made dismissable —
-    /// went out as `hyprshell-popup`, a name no primitive claims and no `layer_rule` in anyone's config
+    /// went out as `hogar-shell-popup`, a name no primitive claims and no `layer_rule` in anyone's config
     /// mentions.
     #[test]
     fn every_primitive_announces_the_namespace_it_always_has() {
@@ -706,26 +715,26 @@ mod tests {
             height: 30.0,
         };
 
-        assert_eq!(Placement::bar(Edge::Top, 34).namespace, "hyprshell-top");
+        assert_eq!(Placement::bar(Edge::Top, 34).namespace, "hogar-shell-top");
         assert_eq!(
             Placement::reservation(Edge::Left, 40).namespace,
-            "hyprshell-reserve-left"
+            "hogar-shell-reserve-left"
         );
         assert_eq!(
             Placement::off_chip(OffChip::Card, &env, Some(chip), None).namespace,
-            "hyprshell-popout"
+            "hogar-shell-popout"
         );
         assert_eq!(
             Placement::off_chip(OffChip::Panel, &env, Some(chip), None).namespace,
-            "hyprshell-drawer"
+            "hogar-shell-drawer"
         );
         assert_eq!(
             Placement::centred(Centred::Float).namespace,
-            "hyprshell-float"
+            "hogar-shell-float"
         );
         assert_eq!(
             Placement::centred(Centred::Modal).namespace,
-            "hyprshell-overlay"
+            "hogar-shell-overlay"
         );
 
         // The role every hosted shape is realized as, which is what the host turns into the same string.
@@ -735,8 +744,14 @@ mod tests {
             SurfaceRole::Drawer,
             "the drawer's namespace and the tray menu's now come from one place, so they cannot disagree"
         );
-        assert_eq!(role_of(Placement::centred(Centred::Float)), SurfaceRole::Float);
-        assert_eq!(role_of(Placement::centred(Centred::Modal)), SurfaceRole::Overlay);
+        assert_eq!(
+            role_of(Placement::centred(Centred::Float)),
+            SurfaceRole::Float
+        );
+        assert_eq!(
+            role_of(Placement::centred(Centred::Modal)),
+            SurfaceRole::Overlay
+        );
     }
 
     #[test]
@@ -747,7 +762,7 @@ mod tests {
 
         for edge in Edge::ALL {
             assert!(
-                Placement::stack("hyprshell-toasts", edge, Align::Center)
+                Placement::stack("hogar-shell-toasts", edge, Align::Center)
                     .layer_config()
                     .anchor
                     .contains(edge_anchor(edge)),
@@ -755,7 +770,7 @@ mod tests {
             );
         }
 
-        let stack = Placement::stack("hyprshell-toasts", Edge::Top, Align::End).layer_config();
+        let stack = Placement::stack("hogar-shell-toasts", Edge::Top, Align::End).layer_config();
         assert!(
             stack.anchor.contains(Anchor::TOP) && stack.anchor.contains(Anchor::RIGHT),
             "an end-aligned stack on a horizontal edge pins to that edge's right"
@@ -765,7 +780,7 @@ mod tests {
             "and not to both, or it would stretch instead of pinning"
         );
         // The same word means a different anchor along a vertical edge, which is why this is not one arm.
-        let side = Placement::stack("hyprshell-toasts", Edge::Left, Align::End).layer_config();
+        let side = Placement::stack("hogar-shell-toasts", Edge::Left, Align::End).layer_config();
         assert!(
             side.anchor.contains(Anchor::BOTTOM) && !side.anchor.contains(Anchor::RIGHT),
             "along a vertical edge, the end is its bottom"
@@ -780,7 +795,7 @@ mod tests {
     #[test]
     fn what_takes_the_pointer_is_decided_once() {
         assert!(
-            Placement::backdrop("hyprshell-wallpaper")
+            Placement::backdrop("hogar-shell-wallpaper")
                 .layer_config()
                 .input_transparent
         );
@@ -789,7 +804,7 @@ mod tests {
                 .layer_config()
                 .input_transparent
         );
-        let dock = Placement::dock("hyprshell-sidebar", Edge::Right, 380).layer_config();
+        let dock = Placement::dock("hogar-shell-sidebar", Edge::Right, 380).layer_config();
         assert!(!dock.input_transparent && !dock.interactive_input_region);
     }
 
@@ -848,12 +863,12 @@ mod tests {
     #[test]
     fn nothing_but_the_region_picker_takes_the_pointer_from_the_rest_of_the_shell() {
         let grabs = |placement: &Placement| placement.keyboard == KeyboardMode::Exclusive;
-        assert!(grabs(&Placement::screen("hyprshell-picker")));
+        assert!(grabs(&Placement::screen("hogar-shell-picker")));
         for shared in [
             Placement::centred(Centred::Modal),
             Placement::centred(Centred::Float).keyboard(KeyboardMode::OnDemand),
             chip_panel(Edge::Top).keyboard(KeyboardMode::OnDemand),
-            Placement::dock("hyprshell-sidebar", Edge::Right, 380),
+            Placement::dock("hogar-shell-sidebar", Edge::Right, 380),
         ] {
             assert!(
                 !grabs(&shared),

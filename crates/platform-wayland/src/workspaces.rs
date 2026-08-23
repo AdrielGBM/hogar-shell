@@ -236,7 +236,7 @@ fn start() -> Option<Sender<Request>> {
         finished: false,
     };
     std::thread::Builder::new()
-        .name("hyprshell-ext-workspace".to_string())
+        .name("hogar-shell-ext-workspace".to_string())
         .spawn(move || run(watcher, connection, queue, channel))
         .ok()?;
     Some(requests)
@@ -561,12 +561,12 @@ mod tests {
     /// One test rather than several because they all move the same statics, and split across `cargo test`'s
     /// threads they would take turns wrecking each other's world.
     ///
-    /// Skipped under `HYPRSHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live
+    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live
     /// test below registers with a real watcher, so "nothing is registered" is false through no fault of the
     /// code, and emptying the registry to make it true would retire the watcher out from under it.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_ok() {
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
             eprintln!("a real watcher holds the registry in a live run; skipping");
             return;
         }
@@ -722,7 +722,7 @@ mod tests {
     /// protocol actually moves it.
     ///
     /// Needs a live session, so it is opt-in the way the clipboard and capture round-trips are:
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland workspaces -- --nocapture --test-threads=1`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland workspaces -- --nocapture --test-threads=1`
     ///
     /// **It switches workspace and switches back**, which is the only way to observe an activation: the protocol
     /// answers a request with a new state, not with a reply. The workspace that was active when the test started
@@ -733,8 +733,8 @@ mod tests {
         use std::sync::mpsc;
         use std::time::Duration;
 
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to watch the real compositor; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to watch the real compositor; skipping");
             return;
         }
 

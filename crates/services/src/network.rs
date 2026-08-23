@@ -490,7 +490,7 @@ fn read_wifi(conn: &Connection) -> Wifi {
     wifi
 }
 
-static WIFI: Service<Wifi> = Service::new("hyprshell-wifi", run_wifi);
+static WIFI: Service<Wifi> = Service::new("hogar-shell-wifi", run_wifi);
 
 /// The `[network]` settings, or the defaults outside a started shell. Read through the cross-thread snapshot:
 /// the rescan timer runs on the producer, which cannot see the driver thread's copy.
@@ -517,7 +517,7 @@ fn run_wifi(out: &Arc<Broadcast<Wifi>>) {
     // faster one than a desktop that never moves.
     let rescan = tx.clone();
     let _ = std::thread::Builder::new()
-        .name("hyprshell-wifi-rescan".to_string())
+        .name("hogar-shell-wifi-rescan".to_string())
         .spawn(move || {
             loop {
                 std::thread::sleep(settings().rescan());
@@ -546,7 +546,7 @@ fn watch_nm_signals(ping: SyncSender<()>) -> Option<()> {
         .build();
     let signals = MessageIterator::for_match_rule(rule, &conn, None).ok()?;
     std::thread::Builder::new()
-        .name("hyprshell-wifi-signals".to_string())
+        .name("hogar-shell-wifi-signals".to_string())
         .spawn(move || {
             for _ in signals {
                 let _ = ping.try_send(());
@@ -584,7 +584,7 @@ fn control() -> Option<&'static Connection> {
 
 fn act(what: &'static str, job: impl FnOnce(&Connection) + Send + 'static) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-wifi-act".to_string())
+        .name("hogar-shell-wifi-act".to_string())
         .spawn(move || match control() {
             Some(conn) => job(conn),
             None => tracing::warn!("wifi: cannot reach NetworkManager to {what}"),
@@ -793,7 +793,7 @@ pub fn disconnect() {
     });
 }
 
-static NETWORK: Service<Network> = Service::new("hyprshell-network", run);
+static NETWORK: Service<Network> = Service::new("hogar-shell-network", run);
 
 /// Registers `tx` for live network state, starting the single shared producer on first use. Called from a bar
 /// chip's `watch` producer.

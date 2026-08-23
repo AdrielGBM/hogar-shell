@@ -25,8 +25,8 @@ Opening it closes whatever drawer was up, which it would otherwise cover. A [flo
 [notification centre](notification-centre.md), toasts and notification popups are left where they are.
 
 ```sh
-hyprshell launcher toggle
-hyprshell launcher close
+hogar-shell launcher toggle
+hogar-shell launcher close
 ```
 
 ## Six modes, chosen by a prefix
@@ -58,8 +58,8 @@ Applications are ranked by **how often you have launched them**, which is state 
 `fuzzy` switches matching between fuzzy and substring. It is one global switch — there is no per-mode setting.
 
 ```sh
-hyprshell apps search firefox    # the same ranking, over IPC
-hyprshell apps reload            # re-scan, though a watcher usually does it for you
+hogar-shell apps search firefox    # the same ranking, over IPC
+hogar-shell apps reload            # re-scan, though a watcher usually does it for you
 ```
 
 Applications are scanned once and cached for the process — a few hundred entries, parsed in a few milliseconds

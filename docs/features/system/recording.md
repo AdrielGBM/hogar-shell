@@ -14,18 +14,18 @@ see_also: [screenshot, utilities]
 # Screen recording
 
 Unlike a screenshot, a recording is not something a shell can do itself: it is an encoder, a muxer and a frame
-pump, and every Wayland session already has one. So hyprshell owns the **session** — which backend, what it is
+pump, and every Wayland session already has one. So hogar-shell owns the **session** — which backend, what it is
 recording, since when — rather than the pixels.
 
 ## Recording
 
 ```sh
-hyprshell record start [screen|output|region]
-hyprshell record stop
-hyprshell record toggle          # stop, or start one of the whole screen
-hyprshell record pause           # on a backend that can
-hyprshell record status
-hyprshell record list            # newest first
+hogar-shell record start [screen|output|region]
+hogar-shell record stop
+hogar-shell record toggle          # stop, or start one of the whole screen
+hogar-shell record pause           # on a backend that can
+hogar-shell record status
+hogar-shell record list            # newest first
 ```
 
 A region opens the picker first, the same one screenshots use.

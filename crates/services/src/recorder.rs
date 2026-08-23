@@ -210,7 +210,7 @@ pub fn start(scope: Scope) {
     let where_to = telar::t!("recorder.started", file = file_label(&path));
     toast(&started, &where_to);
     if config.notify {
-        crate::notifications::notify_local("hyprshell", &started, &where_to);
+        crate::notifications::notify_local("hogar-shell", &started, &where_to);
     }
     reap(child, config.notify);
 }
@@ -220,7 +220,7 @@ pub fn start(scope: Scope) {
 fn reap(mut child: Child, notify: bool) {
     let stderr = child.stderr.take();
     let _ = std::thread::Builder::new()
-        .name("hyprshell-recorder-wait".to_string())
+        .name("hogar-shell-recorder-wait".to_string())
         .spawn(move || {
             let status = child.wait();
             let complaint = stderr.and_then(|mut pipe| {
@@ -252,7 +252,7 @@ fn reap(mut child: Child, notify: bool) {
             };
             toast(&title, &body);
             if notify {
-                crate::notifications::notify_local("hyprshell", &title, &body);
+                crate::notifications::notify_local("hogar-shell", &title, &body);
             }
         });
 }
@@ -328,7 +328,7 @@ fn fail(reason: String) {
         state.active = false;
         state.error = Some(reason.clone());
     });
-    crate::notifications::notify_local("hyprshell", &telar::t!("recorder.failed_title"), &reason);
+    crate::notifications::notify_local("hogar-shell", &telar::t!("recorder.failed_title"), &reason);
 }
 
 /// The backend's argument list. Split out and tested rather than built inline: this is the whole difference
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn the_index_lists_recordings_newest_first_and_leaves_the_rest_alone() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-rec-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-rec-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.mkv"), [0u8; 10]).unwrap();
         std::fs::write(dir.join("notes.txt"), b"not a recording").unwrap();

@@ -24,7 +24,7 @@ A square icon chip carrying a distribution mark. Clicking it opens the session m
 
 ## Configuring
 
-`[general] logo` names the glyph. `hyprshell config schema general` lists what it accepts.
+`[general] logo` names the glyph. `hogar-shell config schema general` lists what it accepts.
 
 ## What it needs
 

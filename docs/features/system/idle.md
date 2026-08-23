@@ -18,7 +18,7 @@ see_also: [lock, session-actions, battery]
 Each stage in `[idle]` becomes one `ext-idle-notify-v1` notification, and the compositor — the only thing that
 sees your input devices — says when it elapses.
 
-What a stage then *does* is a **request line the shell already answers**, so `hyprshell --list` is the whole
+What a stage then *does* is a **request line the shell already answers**, so `hogar-shell --list` is the whole
 vocabulary: anything bindable to a key is bindable to a timeout.
 
 ```toml
@@ -38,8 +38,8 @@ return_action = "shell dpms on"
 ## Inhibiting
 
 ```sh
-hyprshell idle status          # armed? what is holding it off?
-hyprshell idle inhibit toggle
+hogar-shell idle status          # armed? what is holding it off?
+hogar-shell idle inhibit toggle
 ```
 
 An inhibit is expressed by having **no notification at all** rather than by ignoring one that fires. An
@@ -60,7 +60,7 @@ once and uses the inhibitor-respecting request rather than silently reporting th
 **`ext-idle-notify`.** Without it idle timers never arm, so nothing locks or blanks on its own.
 
 Note what the shell *cannot* do: it can **observe** idleness and cannot **prevent** it.
-`idle-inhibit-unstable-v1` is unbound, so `idle inhibit on` silences hyprshell's own timers and leaves every
+`idle-inhibit-unstable-v1` is unbound, so `idle inhibit on` silences hogar-shell's own timers and leaves every
 other idle consumer — including the compositor's — untouched.
 
 ## Known limit

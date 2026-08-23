@@ -1,7 +1,7 @@
 //! The Dash page: what time it is, what month it is, and whose machine this is.
 
-use ui::scale::{paint, space};
 use std::path::{Path, PathBuf};
+use ui::scale::{paint, space};
 
 use chrono::{Datelike, Days, Local, Months, NaiveDate, Weekday};
 use telar::{
@@ -316,7 +316,10 @@ fn user_card(
     )?;
 
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         vec![
             box_item(name_text),
             box_item(host_text),
@@ -735,7 +738,7 @@ mod tests {
 
     #[test]
     fn the_avatar_browser_lists_folders_first_and_only_pictures() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-avatar-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-avatar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("zz-folder")).expect("a sub-folder");
         std::fs::create_dir_all(dir.join(".hidden-folder")).expect("a hidden sub-folder");

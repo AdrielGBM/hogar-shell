@@ -1046,32 +1046,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "http"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
-dependencies = [
- "bytes",
- "itoa",
-]
-
-[[package]]
-name = "httparse"
-version = "1.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
-
-[[package]]
-name = "hyprshell"
+name = "hogar-shell"
 version = "0.1.0"
 dependencies = [
- "hyprshell-config",
- "hyprshell-modules",
- "hyprshell-services",
- "hyprshell-settings",
- "hyprshell-surfaces",
- "hyprshell-ui",
- "hyprshell-util",
+ "hogar-shell-config",
+ "hogar-shell-modules",
+ "hogar-shell-services",
+ "hogar-shell-settings",
+ "hogar-shell-surfaces",
+ "hogar-shell-ui",
+ "hogar-shell-util",
  "libc",
  "platform-wayland",
  "telar",
@@ -1082,11 +1066,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprshell-config"
+name = "hogar-shell-config"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "hyprshell-util",
+ "hogar-shell-util",
  "image",
  "platform-wayland",
  "serde",
@@ -1098,15 +1082,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprshell-modules"
+name = "hogar-shell-modules"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "hyprshell-config",
- "hyprshell-services",
- "hyprshell-surfaces",
- "hyprshell-ui",
- "hyprshell-util",
+ "hogar-shell-config",
+ "hogar-shell-services",
+ "hogar-shell-surfaces",
+ "hogar-shell-ui",
+ "hogar-shell-util",
  "platform-wayland",
  "serde",
  "telar",
@@ -1115,12 +1099,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprshell-services"
+name = "hogar-shell-services"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "hyprshell-config",
- "hyprshell-util",
+ "hogar-shell-config",
+ "hogar-shell-util",
  "image",
  "libc",
  "libloading 0.9.0",
@@ -1137,14 +1121,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprshell-settings"
+name = "hogar-shell-settings"
 version = "0.1.0"
 dependencies = [
- "hyprshell-config",
- "hyprshell-services",
- "hyprshell-surfaces",
- "hyprshell-ui",
- "hyprshell-util",
+ "hogar-shell-config",
+ "hogar-shell-services",
+ "hogar-shell-surfaces",
+ "hogar-shell-ui",
+ "hogar-shell-util",
  "platform-wayland",
  "serde",
  "telar",
@@ -1153,14 +1137,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprshell-surfaces"
+name = "hogar-shell-surfaces"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "hyprshell-config",
- "hyprshell-services",
- "hyprshell-ui",
- "hyprshell-util",
+ "hogar-shell-config",
+ "hogar-shell-services",
+ "hogar-shell-ui",
+ "hogar-shell-util",
  "platform-wayland",
  "telar",
  "telar-platform-headless",
@@ -1169,12 +1153,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprshell-ui"
+name = "hogar-shell-ui"
 version = "0.1.0"
 dependencies = [
- "hyprshell-config",
- "hyprshell-services",
- "hyprshell-util",
+ "hogar-shell-config",
+ "hogar-shell-services",
+ "hogar-shell-util",
  "image",
  "platform-wayland",
  "serde",
@@ -1186,7 +1170,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprshell-util"
+name = "hogar-shell-util"
 version = "0.1.0"
 dependencies = [
  "image",
@@ -1197,6 +1181,22 @@ dependencies = [
  "tracing",
  "zbus",
 ]
+
+[[package]]
+name = "http"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
+dependencies = [
+ "bytes",
+ "itoa",
+]
+
+[[package]]
+name = "httparse"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "iana-time-zone"

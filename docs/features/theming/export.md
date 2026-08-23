@@ -17,7 +17,7 @@ see_also: [palettes, dynamic-scheme]
 shell can follow it.
 
 ```sh
-hyprshell scheme export     # write now, ignoring `enabled`
+hogar-shell scheme export     # write now, ignoring `enabled`
 ```
 
 ## What it writes
@@ -44,7 +44,7 @@ hooks = ["gsettings set org.gnome.desktop.interface gtk-theme adw-gtk3-dark"]
 ```
 
 This is one of the shell's two extension surfaces, alongside `[launcher] actions`. Both are scripts rather than
-loaded code, which is deliberate: there is no plugin runtime, and the answer to "hyprshell cannot do X" is meant
+loaded code, which is deliberate: there is no plugin runtime, and the answer to "hogar-shell cannot do X" is meant
 to be a command rather than a module.
 
 ## Known limit

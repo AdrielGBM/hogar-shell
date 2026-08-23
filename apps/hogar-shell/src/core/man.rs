@@ -1,4 +1,4 @@
-//! `hyprshell(1)` and `hyprshell(5)`, generated rather than written.
+//! `hogar-shell(1)` and `hogar-shell(5)`, generated rather than written.
 //!
 //! Same reason as `--list` and `config schema`, one step further out: the manual a distribution installs is the
 //! copy furthest from the source and the one nobody re-reads, so writing it by hand is writing something that
@@ -40,7 +40,7 @@ pub const FORMS: &[(&str, &str)] = &[
 /// reason that is not drift.
 fn header(section: u8, summary: &str) -> String {
     format!(
-        ".TH HYPRSHELL {section} \"\" \"hyprshell {}\" \"hyprshell\"\n.SH NAME\nhyprshell \\- {summary}\n",
+        ".TH HOGAR-SHELL {section} \"\" \"hogar-shell {}\" \"hogar-shell\"\n.SH NAME\nhogar-shell \\- {summary}\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -124,7 +124,7 @@ fn prose(doc: &str) -> String {
     out
 }
 
-/// `hyprshell(1)`: the invocation forms, then every target and command the shell answers.
+/// `hogar-shell(1)`: the invocation forms, then every target and command the shell answers.
 pub(crate) fn commands_page() -> String {
     let mut out = header(1, "a Wayland desktop shell for Hyprland");
 
@@ -133,12 +133,12 @@ pub(crate) fn commands_page() -> String {
         if index > 0 {
             out.push_str(".br\n");
         }
-        let _ = writeln!(out, ".B hyprshell\n{}", escape(form));
+        let _ = writeln!(out, ".B hogar-shell\n{}", escape(form));
     }
 
     out.push_str(
         ".SH DESCRIPTION\n\
-         hyprshell is a Wayland desktop shell: bars, panels, a launcher, a dashboard, a lock screen,\n\
+         hogar-shell is a Wayland desktop shell: bars, panels, a launcher, a dashboard, a lock screen,\n\
          notifications, screen capture and wallpaper\\-derived theming, configured in TOML.\n\
          .PP\n\
          Started with no arguments it runs the shell. With arguments it is a client: the request is sent to the\n\
@@ -174,7 +174,7 @@ pub(crate) fn commands_page() -> String {
     out.push_str(
         ".SH COMMANDS\n\
          A request is a target, a command and its arguments.\n\
-         .BR hyprshell (5)\n\
+         .BR hogar-shell (5)\n\
          documents the configuration file.\n",
     );
     for target in TARGETS {
@@ -196,21 +196,21 @@ pub(crate) fn commands_page() -> String {
     out.push_str(
         ".SH FILES\n\
          .TP\n\
-         .I ~/.config/hyprshell/config.toml\n\
+         .I ~/.config/hogar-shell/config.toml\n\
          Everything, hot\\-reloaded on save. Written annotated on first run.\n\
          .TP\n\
-         .I ~/.config/hyprshell/tokens.toml\n\
+         .I ~/.config/hogar-shell/tokens.toml\n\
          Design\\-token overrides. Deliberately unstable \\- the config's\n\
          .B [theme]\n\
          section is the supported surface.\n\
          .TP\n\
-         .I ~/.config/hyprshell/monitors/<output>/config.toml\n\
+         .I ~/.config/hogar-shell/monitors/<output>/config.toml\n\
          Per\\-monitor overrides, same shape as the global file.\n\
          .TP\n\
-         .I ~/.config/hyprshell/state.json\n\
+         .I ~/.config/hogar-shell/state.json\n\
          Runtime state the shell owns, such as the current wallpaper. Not settings.\n\
          .TP\n\
-         .I $XDG_RUNTIME_DIR/hyprshell/<instance>.sock\n\
+         .I $XDG_RUNTIME_DIR/hogar-shell/<instance>.sock\n\
          The command socket, one per compositor instance.\n",
     );
 
@@ -238,52 +238,52 @@ pub(crate) fn commands_page() -> String {
          Start the shell from the compositor:\n\
          .PP\n\
          .EX\n\
-         exec\\-once = hyprshell\n\
+         exec\\-once = hogar-shell\n\
          .EE\n\
          .PP\n\
          Bind an action to a key:\n\
          .PP\n\
          .EX\n\
-         bind = SUPER, SPACE, exec, hyprshell launcher\n\
-         bind = SUPER, N, exec, hyprshell panel toggle notifications\n\
-         bind = , XF86AudioRaiseVolume, exec, hyprshell volume up\n\
+         bind = SUPER, SPACE, exec, hogar-shell launcher\n\
+         bind = SUPER, N, exec, hogar-shell panel toggle notifications\n\
+         bind = , XF86AudioRaiseVolume, exec, hogar-shell volume up\n\
          .EE\n\
          .PP\n\
          Write a config with every key in it, then edit it down:\n\
          .PP\n\
          .EX\n\
-         hyprshell config schema > ~/.config/hyprshell/config.toml\n\
+         hogar-shell config schema > ~/.config/hogar-shell/config.toml\n\
          .EE\n",
     );
 
-    out.push_str(".SH SEE ALSO\n.BR hyprshell (5)\n");
+    out.push_str(".SH SEE ALSO\n.BR hogar-shell (5)\n");
     out
 }
 
-/// `hyprshell(5)`: every configuration section, from the same outline `config schema` prints as TOML.
+/// `hogar-shell(5)`: every configuration section, from the same outline `config schema` prints as TOML.
 pub(crate) fn config_page() -> Result<String, String> {
     let mut out = header(5, "configuration file format");
     out.push_str(
         ".SH SYNOPSIS\n\
-         .I ~/.config/hyprshell/config.toml\n\
+         .I ~/.config/hogar-shell/config.toml\n\
          .SH DESCRIPTION\n\
-         hyprshell is configured in TOML. Every key below is optional; the default shown is what the shell uses\n\
+         hogar-shell is configured in TOML. Every key below is optional; the default shown is what the shell uses\n\
          when the key is absent, so a working config is any subset of this page.\n\
          .PP\n\
          The file is watched and re\\-read on save, and the change applies without a restart. A file under\n\
-         .I ~/.config/hyprshell/monitors/<output>/\n\
+         .I ~/.config/hogar-shell/monitors/<output>/\n\
          has the same shape and overrides the global one for that monitor.\n\
          .PP\n\
-         .B hyprshell config schema\n\
+         .B hogar-shell config schema\n\
          prints this same reference as a complete, valid config file, and\n\
-         .B hyprshell config schema <section>\n\
+         .B hogar-shell config schema <section>\n\
          prints one section of it. Both come from the running build rather than from this page.\n\
          .SH SECTIONS\n",
     );
     for table in &config::schema::outline(None)? {
         render_table(table, &mut out);
     }
-    out.push_str(".SH SEE ALSO\n.BR hyprshell (1)\n");
+    out.push_str(".SH SEE ALSO\n.BR hogar-shell (1)\n");
     Ok(out)
 }
 
@@ -353,9 +353,9 @@ mod tests {
     /// Both pages, paired with the file each is committed as.
     fn pages() -> [(&'static str, String); 2] {
         [
-            ("hyprshell.1", commands_page()),
+            ("hogar-shell.1", commands_page()),
             (
-                "hyprshell.5",
+                "hogar-shell.5",
                 config_page().expect("the config page generates"),
             ),
         ]
@@ -364,7 +364,7 @@ mod tests {
     /// The check that makes a checked-in generated file safe to have: a key added to the config or a command
     /// added to the table without regenerating fails here, rather than shipping a manual that quietly lies.
     ///
-    /// `UPDATE_MAN=1 cargo test -p hyprshell --lib man` rewrites them.
+    /// `UPDATE_MAN=1 cargo test -p hogar-shell --lib man` rewrites them.
     #[test]
     fn the_committed_manual_matches_what_this_build_generates() {
         for (file, generated) in pages() {
@@ -377,7 +377,7 @@ mod tests {
             let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
             assert_eq!(
                 on_disk, generated,
-                "man/{file} is out of date; regenerate with `UPDATE_MAN=1 cargo test -p hyprshell --lib man`"
+                "man/{file} is out of date; regenerate with `UPDATE_MAN=1 cargo test -p hogar-shell --lib man`"
             );
         }
     }

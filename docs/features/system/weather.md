@@ -14,8 +14,8 @@ see_also: [dashboard, lock]
 # Weather
 
 ```sh
-hyprshell weather now         # place, temperature, sky
-hyprshell weather forecast    # one line per day
+hogar-shell weather now         # place, temperature, sky
+hogar-shell weather forecast    # one line per day
 ```
 
 ## Where it comes from

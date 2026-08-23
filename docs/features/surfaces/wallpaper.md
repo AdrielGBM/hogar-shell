@@ -20,11 +20,11 @@ cover-cropped over the theme's base colour, and nothing else — a clock or a vi
 ## Choosing an image
 
 ```sh
-hyprshell wallpaper set ~/pictures/x.jpg    # every screen
-hyprshell wallpaper set ~/pictures/x.jpg DP-2
-hyprshell wallpaper random [output]
-hyprshell wallpaper clear [output]          # back to what your config says
-hyprshell wallpaper list
+hogar-shell wallpaper set ~/pictures/x.jpg    # every screen
+hogar-shell wallpaper set ~/pictures/x.jpg DP-2
+hogar-shell wallpaper random [output]
+hogar-shell wallpaper clear [output]          # back to what your config says
+hogar-shell wallpaper list
 ```
 
 The launcher's `@` mode is the same library as a grid.

@@ -2,7 +2,7 @@
 //!
 //! Every stage in `[idle]` becomes one `ext-idle-notify-v1` notification, and the compositor — the only thing
 //! that sees the input devices — says when it elapses. What the stage then *does* is a request line the shell
-//! already answers, so `hyprshell --list` is the whole vocabulary and anything bindable to a key is bindable
+//! already answers, so `hogar-shell --list` is the whole vocabulary and anything bindable to a key is bindable
 //! to a timeout.
 //!
 //! An inhibit is expressed by having no notification at all rather than by ignoring one that fires. A stage
@@ -29,7 +29,7 @@ thread_local! {
 }
 
 /// Why the timers are currently held off, if they are. Named rather than boolean because it is what
-/// `hyprshell idle status` prints and what a quick toggle shows.
+/// `hogar-shell idle status` prints and what a quick toggle shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Inhibit {
     /// The user's own toggle.
@@ -156,7 +156,7 @@ fn arm(stage: &config::IdleStage, respect_inhibitors: bool) -> Option<IdleHandle
     }
     if !crate::command::resolves(&action) {
         tracing::warn!(
-            "[[idle.stages]] action '{action}' is not a command this shell answers; see `hyprshell --list`"
+            "[[idle.stages]] action '{action}' is not a command this shell answers; see `hogar-shell --list`"
         );
         return None;
     }

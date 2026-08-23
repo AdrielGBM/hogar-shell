@@ -38,7 +38,7 @@ them.
 `[battery]` — `enabled`, `critical_level`, `critical_action`, plus `[[battery.warn_levels]]`, a list of
 thresholds each with its own message.
 
-`critical_action` is a request line, so anything in `hyprshell --list` can be what happens at 5 %: suspend,
+`critical_action` is a request line, so anything in `hogar-shell --list` can be what happens at 5 %: suspend,
 lock, hibernate, a toast. See [Scripting](../../guides/scripting.md) for the vocabulary.
 
 ## What it needs

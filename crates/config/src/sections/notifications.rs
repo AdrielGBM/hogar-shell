@@ -1,7 +1,7 @@
 //! `[stack]`, `[notifications]`, `[toasts]` and `[sidebar]`.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hyprshell config schema` prints for it, so it is written for a user reading the reference.
+//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use serde::{Deserialize, Serialize};
 
@@ -264,7 +264,6 @@ impl ToastsConfig {
                 Event::Recording => self.events.recording,
             }
     }
-
 }
 
 /// The notification centre (`[sidebar]`): a full-height surface that is the home for the notification history and

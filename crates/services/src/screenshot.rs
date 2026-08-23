@@ -143,7 +143,7 @@ fn finish(request: Request, captured: Option<Image>) {
         .map(|c| c.screenshot_dir())
         .unwrap_or_else(|| util::paths::cache_dir().join("screenshots"));
     let _ = std::thread::Builder::new()
-        .name("hyprshell-screenshot".to_string())
+        .name("hogar-shell-screenshot".to_string())
         .spawn(move || {
             let outcome = perform(&request, captured, &config, &dir);
             if let Err(reason) = &outcome {
@@ -465,7 +465,7 @@ fn announce(outcome: &Result<Shot, String>, config: &ScreenshotConfig) {
         body.clone(),
     );
     if config.notify {
-        crate::notifications::notify_local("hyprshell", &title, &body);
+        crate::notifications::notify_local("hogar-shell", &title, &body);
     }
 }
 

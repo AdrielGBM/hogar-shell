@@ -8,7 +8,7 @@
 //!
 //! Resolution order for one screen, most specific first: the runtime per-output choice, the runtime global one,
 //! `[background.monitors]`, `[background] image`. A user who pinned an image in their config still sees it until
-//! something sets one at runtime, and `hyprshell wallpaper clear` puts them back.
+//! something sets one at runtime, and `hogar-shell wallpaper clear` puts them back.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -145,7 +145,7 @@ static WATCHER: OnceLock<()> = OnceLock::new();
 fn ensure_watching() {
     WATCHER.get_or_init(|| {
         let _ = std::thread::Builder::new()
-            .name("hyprshell-wallpapers".to_string())
+            .name("hogar-shell-wallpapers".to_string())
             .spawn(watch);
     });
 }
@@ -192,7 +192,7 @@ fn fingerprint(root: &Path, config: &WallpaperConfig) -> u64 {
 
 /// The image `output` should be painting, or `None` for the theme's base colour.
 ///
-/// The one resolution order, so the surface, the scheme extractor and `hyprshell wallpaper get` cannot disagree
+/// The one resolution order, so the surface, the scheme extractor and `hogar-shell wallpaper get` cannot disagree
 /// about which image is showing.
 pub fn current_image(config: &Config, output: Option<&str>) -> Option<PathBuf> {
     let state = state::get();
@@ -447,7 +447,7 @@ mod tests {
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "hyprshell-wall-{name}-{}-{:?}",
+            "hogar-shell-wall-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

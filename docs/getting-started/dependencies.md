@@ -30,10 +30,10 @@ A reading that cannot be taken reports *unknown*, never zero. A GPU with no coun
 ## Asking this machine
 
 ```sh
-hyprshell deps list       # every dependency, and whether this machine has it
-hyprshell deps missing    # only the absent ones, each with what its absence costs
-hyprshell deps check      # whether everything required is present
-hyprshell deps refresh    # probe again, after installing something
+hogar-shell deps list       # every dependency, and whether this machine has it
+hogar-shell deps missing    # only the absent ones, each with what its absence costs
+hogar-shell deps check      # whether everything required is present
+hogar-shell deps refresh    # probe again, after installing something
 ```
 
 All four are answered by the binary itself, not by a running shell — which is the case that matters, since

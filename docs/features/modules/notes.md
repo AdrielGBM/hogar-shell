@@ -26,7 +26,7 @@ that do, alongside the launcher and the session menu.
 | Click | opens the notes panel |
 
 ```sh
-hyprshell panel toggle notes
+hogar-shell panel toggle notes
 ```
 
 ## Configuring

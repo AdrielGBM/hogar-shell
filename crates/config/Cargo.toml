@@ -1,6 +1,6 @@
 [package]
-name = "hyprshell-config"
-description = "The hyprshell configuration model: TOML sections, the printed schema, colour schemes and non-destructive hot reload."
+name = "hogar-shell-config"
+description = "The hogar-shell configuration model: TOML sections, the printed schema, colour schemes and non-destructive hot reload."
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

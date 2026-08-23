@@ -56,7 +56,7 @@ use crate::osd::OsdKind;
 pub(crate) mod swipe;
 pub(crate) mod transition;
 
-const NAMESPACE: &str = "hyprshell-stack";
+const NAMESPACE: &str = "hogar-shell-stack";
 
 /// The least the surface will ask for, when the compositor has not reported its output's size yet — one card's
 /// worth, so a column that opens before the first `wl_output` event is small rather than absent.
@@ -359,18 +359,24 @@ struct Stack {
 /// Three subscriptions of its own, beside the ones the surface's content makes. They answer a different
 /// question — *is there anything to show* — and it has to be answered while there is no surface to ask it on.
 pub fn host() {
-    watch(services::notifications::subscribe, |snap: SharedSnapshot| {
-        LIVE.with(|live| live.borrow_mut().snapshot = snap);
-        reconcile();
-    });
+    watch(
+        services::notifications::subscribe,
+        |snap: SharedSnapshot| {
+            LIVE.with(|live| live.borrow_mut().snapshot = snap);
+            reconcile();
+        },
+    );
     watch(toaster::subscribe, |toasts: Vec<Toast>| {
         LIVE.with(|live| live.borrow_mut().toasts = toasts);
         reconcile();
     });
-    watch(|tx| OSD.subscribe(tx), |osd: Option<OsdKind>| {
-        LIVE.with(|live| live.borrow_mut().osd = osd);
-        reconcile();
-    });
+    watch(
+        |tx| OSD.subscribe(tx),
+        |osd: Option<OsdKind>| {
+            LIVE.with(|live| live.borrow_mut().osd = osd);
+            reconcile();
+        },
+    );
     follow_focus();
 }
 
@@ -399,8 +405,8 @@ fn open_stack(output: Option<String>, config: &Config) -> Stack {
     let placement = placement(&config.stack, output.as_deref())
         .margin(config.panel_margin(config.stack.edge))
         .output(output.clone());
-    let handle = PanelSurface::new(placement, |env| cards(env).expect("stack build failed"))
-    .open_handle();
+    let handle =
+        PanelSurface::new(placement, |env| cards(env).expect("stack build failed")).open_handle();
     Stack { output, handle }
 }
 
@@ -645,9 +651,15 @@ mod tests {
             shown.iter().any(|card| matches!(card, Card::Osd(_))),
             "the OSD is answering a keypress and cannot be queued behind a full column"
         );
-        assert_eq!(shown.len(), 4, "and it costs the oldest notification its slot");
+        assert_eq!(
+            shown.len(),
+            4,
+            "and it costs the oldest notification its slot"
+        );
         assert!(
-            !shown.iter().any(|card| matches!(card, Card::Notification(n) if n.id == 4)),
+            !shown
+                .iter()
+                .any(|card| matches!(card, Card::Notification(n) if n.id == 4)),
             "the notification that gives way is the last in, not the first"
         );
 
@@ -664,7 +676,11 @@ mod tests {
             toast(toaster::Event::Vpn, "VPN on"),
             Card::Osd(OsdKind::Volume),
         ];
-        assert_eq!(admit(all, 1).len(), PROVIDERS, "one card each, cap or no cap");
+        assert_eq!(
+            admit(all, 1).len(),
+            PROVIDERS,
+            "one card each, cap or no cap"
+        );
     }
 
     /// The column caps what it holds, and it is the only thing that does: a notification queue trimmed to

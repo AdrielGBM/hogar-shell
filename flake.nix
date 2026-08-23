@@ -14,12 +14,12 @@
     in
     {
       overlays.default = final: _prev: {
-        hyprshell = final.callPackage ./nix/package.nix { src = self; };
+        hogar-shell = final.callPackage ./nix/package.nix { src = self; };
       };
 
       packages = forAllSystems (system: rec {
-        hyprshell = nixpkgs.legacyPackages.${system}.callPackage ./nix/package.nix { src = self; };
-        default = hyprshell;
+        hogar-shell = nixpkgs.legacyPackages.${system}.callPackage ./nix/package.nix { src = self; };
+        default = hogar-shell;
       });
     };
 }

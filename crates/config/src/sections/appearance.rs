@@ -1,7 +1,7 @@
 //! `[theme]`, `[shape]`, `[icons]` and the rest of how the shell looks.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hyprshell config schema` prints for it, so it is written for a user reading the reference.
+//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -169,7 +169,7 @@ impl Default for IconsConfig {
     }
 }
 
-/// The design tokens themselves, overridable from `~/.config/hyprshell/tokens.toml`.
+/// The design tokens themselves, overridable from `~/.config/hogar-shell/tokens.toml`.
 ///
 /// **Unstable, and deliberately so.** `[theme]` is the supported surface: it names the handful of knobs a
 /// theme is *meant* to expose, and those keys will keep working. This file reaches past that into the token
@@ -451,7 +451,7 @@ pub struct ThemeConfig {
     /// hangs off does not share is not a look anybody chooses, it is two settings that drifted.
     ///
     /// **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job — a
-    /// `layer_rule = blur, ^hyprshell`, which needs no code here — and it shows nothing through a surface
+    /// `layer_rule = blur, ^hogar-shell`, which needs no code here — and it shows nothing through a surface
     /// painted opaque. Lowering this is what gives it something to blur.
     pub opacity: f32,
     pub scale: ScaleConfig,

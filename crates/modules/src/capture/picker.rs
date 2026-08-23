@@ -14,10 +14,10 @@
 //! **It covers the focused screen.** A selection is made on one monitor; the overlay opens on the focused one and
 //! reports its rectangle in the compositor's global logical coordinates, which is what every consumer wants.
 
-use ui::scale::{paint, space};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use ui::scale::{paint, space};
 
 use platform_wayland::{SurfaceHandle, request_close};
 use telar::{
@@ -100,7 +100,7 @@ pub fn pick(then: impl Fn(Picked) + 'static) {
     OPEN.with(|slot| *slot.borrow_mut() = Some(handle));
 }
 
-/// Closes whatever picker is up (`hyprshell screenshot cancel`, or a second request replacing the first).
+/// Closes whatever picker is up (`hogar-shell screenshot cancel`, or a second request replacing the first).
 pub fn close() {
     OPEN.with(|slot| *slot.borrow_mut() = None);
 }
@@ -109,7 +109,7 @@ pub fn close() {
 /// region of what they can *see* — and holding the keyboard, so Escape arrives without the overlay having to
 /// be clicked into first. Both are what [`Placement::screen`] means.
 fn placement(output: Option<String>) -> Placement {
-    Placement::screen("hyprshell-picker").output(output)
+    Placement::screen("hogar-shell-picker").output(output)
 }
 
 /// Where the picker's screen is and how big it is, in the compositor's logical coordinates. The origin is what

@@ -1,7 +1,7 @@
 //! The mixer: every device and every stream in the audio graph, each with its own level and mute.
 //!
 //! The shell has been able to *read* the whole graph since the PipeWire service replaced the `wpctl` poll, and
-//! `hyprshell audio` has been able to drive all of it — but with a pointer there was no way to reach anything
+//! `hogar-shell audio` has been able to drive all of it — but with a pointer there was no way to reach anything
 //! but the default sink. Choosing a different output meant a keybind or a script. This is that missing half:
 //! one surface per adjustable node, so the graph the service already carries is something a user can touch.
 //!
@@ -9,11 +9,11 @@
 //! by node id, which is what lets a row survive its own drag: a slider that rebuilt on every value it set
 //! would drop the gesture that was setting it (the same trap the network panel's signal strength documents).
 
-use ui::scale::space;
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReactiveList,
     RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal, use_theme,
 };
+use ui::scale::space;
 
 use config::AudioConfig;
 use config::surface_env;
@@ -278,7 +278,10 @@ fn node_row(
         )?
     };
     let labels = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         vec![box_item(name), box_item(detail)],
     )?;
     // Only a device has a default to be made; wrapping a stream's labels in a press target would give a user

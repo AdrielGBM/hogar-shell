@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn theme_search_order_follows_inherits_and_appends_hicolor() {
-        let root = std::env::temp_dir().join(format!("hyprshell-icons-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("hogar-shell-icons-{}", std::process::id()));
         let theme_dir = root.join("Papirus");
         fs::create_dir_all(&theme_dir).unwrap();
         fs::write(
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn lookup_prefers_size_match_and_scalable_then_falls_back() {
-        let root = std::env::temp_dir().join(format!("hyprshell-lookup-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("hogar-shell-lookup-{}", std::process::id()));
         let theme = root.join("Test");
         let fixed = theme.join("48x48/apps");
         let scalable = theme.join("scalable/apps");
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn locate_resolves_paths_and_file_uris() {
-        let root = std::env::temp_dir().join(format!("hyprshell-locate-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("hogar-shell-locate-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let file = root.join("icon.png");
         fs::write(&file, b"x").unwrap();

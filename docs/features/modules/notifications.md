@@ -28,10 +28,10 @@ A bell with the unread count, and do-not-disturb state when it is on.
 | Click | opens the history drawer |
 
 ```sh
-hyprshell panel toggle notifications   # the drawer
-hyprshell notifs center toggle         # the full-height centre instead
-hyprshell notifs dnd toggle
-hyprshell notifs clear [app]
+hogar-shell panel toggle notifications   # the drawer
+hogar-shell notifs center toggle         # the full-height centre instead
+hogar-shell notifs dnd toggle
+hogar-shell notifs clear [app]
 ```
 
 The drawer is a **glance**: it hangs off its chip, it is as tall as its content, and it closes when you look
@@ -45,7 +45,7 @@ edge, it scrolls, and it is where you work through a morning's notifications.
 
 ## What it needs
 
-Nothing. hyprshell **is** the notification daemon; it owns `org.freedesktop.Notifications` itself.
+Nothing. hogar-shell **is** the notification daemon; it owns `org.freedesktop.Notifications` itself.
 
 ## Related
 

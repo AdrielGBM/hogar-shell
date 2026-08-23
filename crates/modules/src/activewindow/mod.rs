@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn the_icon_carries_the_air_between_it_and_the_title_and_a_missing_one_carries_none() {
         // An absolute path is a reference `resolve_app_icon` takes as-is, so this needs no installed theme.
-        let path = std::env::temp_dir().join("hyprshell-activewindow-icon-slot.svg");
+        let path = std::env::temp_dir().join("hogar-shell-activewindow-icon-slot.svg");
         std::fs::write(
             &path,
             r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16"/></svg>"#,
@@ -111,7 +111,7 @@ mod tests {
             "and so does a trailing one, on its other side"
         );
         assert_eq!(
-            slot_width("hyprshell-no-such-application", false),
+            slot_width("hogar-shell-no-such-application", false),
             0.0,
             "a class the icon theme has never heard of must not indent the title it sits next to"
         );
@@ -142,7 +142,8 @@ mod tests {
     /// actually has, and a count of characters cutting it first would take the room away before then.
     #[test]
     fn a_long_title_is_handed_over_untouched() {
-        let long = "A very long window title that no bar has room for — hyprshell — Visual Studio Code";
+        let long =
+            "A very long window title that no bar has room for — hogar-shell — Visual Studio Code";
         assert_eq!(label(&window(long, "code")), long);
         assert_eq!(
             label(&window("日本語のタイトル", "x")),
@@ -153,6 +154,9 @@ mod tests {
 
     #[test]
     fn compact_mode_shows_the_app_not_the_document() {
-        assert_eq!(compact_label(&window("Docs — Firefox", "firefox")), "firefox");
+        assert_eq!(
+            compact_label(&window("Docs — Firefox", "firefox")),
+            "firefox"
+        );
     }
 }

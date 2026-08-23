@@ -28,9 +28,9 @@ something is currently using it. There is no privacy indicator yet.
 | Hover | a popout card with the level and the device name |
 
 ```sh
-hyprshell mic mute
-hyprshell mic set 60
-hyprshell mic step -5
+hogar-shell mic mute
+hogar-shell mic set 60
+hogar-shell mic step -5
 ```
 
 ## Configuring

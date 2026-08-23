@@ -30,9 +30,9 @@ The chip stays a level, a mute and a wheel on purpose — a chip that opened a p
 with the same press. The pointer route to a non-default device is [mixer](mixer.md).
 
 ```sh
-hyprshell volume up
-hyprshell volume set 40
-hyprshell volume mute
+hogar-shell volume up
+hogar-shell volume set 40
+hogar-shell volume mute
 ```
 
 ## Configuring

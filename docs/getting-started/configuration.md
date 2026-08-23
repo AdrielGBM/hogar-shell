@@ -16,12 +16,12 @@ see_also: [first-run, per-monitor, tokens]
 
 | Path | What it is |
 | --- | --- |
-| `~/.config/hyprshell/config.toml` | everything; hot-reloaded on save |
-| `~/.config/hyprshell/tokens.toml` | design-token overrides — see [Tokens](../features/theming/tokens.md) |
-| `~/.config/hyprshell/monitors/<output>/config.toml` | per-monitor overrides, same shape as the global file |
-| `$XDG_STATE_HOME/hyprshell/state.json` | runtime state the shell owns, not settings |
+| `~/.config/hogar-shell/config.toml` | everything; hot-reloaded on save |
+| `~/.config/hogar-shell/tokens.toml` | design-token overrides — see [Tokens](../features/theming/tokens.md) |
+| `~/.config/hogar-shell/monitors/<output>/config.toml` | per-monitor overrides, same shape as the global file |
+| `$XDG_STATE_HOME/hogar-shell/state.json` | runtime state the shell owns, not settings |
 
-`XDG_CONFIG_HOME` moves the first three; `hyprshell config path` prints where the shell is actually reading
+`XDG_CONFIG_HOME` moves the first three; `hogar-shell config path` prints where the shell is actually reading
 from.
 
 ## Settings versus state
@@ -31,7 +31,7 @@ writes it back through a form you used, preserving your comments and ordering. `
 which wallpaper is up, whether do-not-disturb is on, how often each application was launched. A wallpaper
 picked at random is not a preference you expressed, so it does not end up in your config file.
 
-That is why `hyprshell wallpaper clear` exists: it drops the runtime choice and puts `[background]` — the thing
+That is why `hogar-shell wallpaper clear` exists: it drops the runtime choice and puts `[background]` — the thing
 you *did* write — back in charge.
 
 ## Reloading
@@ -43,14 +43,14 @@ Saving `config.toml` reloads it. The reload is non-destructive in both direction
 - What the user opened stays open. Panels and drawers are tracked separately from the surfaces the config
   describes.
 
-`hyprshell shell reload` does the same thing on demand.
+`hogar-shell shell reload` does the same thing on demand.
 
 ## Every key, from the build
 
 ```sh
-hyprshell config schema              # every section
-hyprshell config schema launcher     # one section
-man ./man/hyprshell.5                # the same tree as a manual
+hogar-shell config schema              # every section
+hogar-shell config schema launcher     # one section
+man ./man/hogar-shell.5                # the same tree as a manual
 ```
 
 Both are generated from the same walk over the config structs, so a key cannot reach one and go missing from

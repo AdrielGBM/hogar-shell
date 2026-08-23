@@ -227,7 +227,7 @@ fn read(conn: Option<&Connection>) -> Vpn {
     }
 }
 
-static VPN: Service<Vpn> = Service::new("hyprshell-vpn", run);
+static VPN: Service<Vpn> = Service::new("hogar-shell-vpn", run);
 
 fn run(out: &Arc<Broadcast<Vpn>>) {
     let conn = connection(READ_TIMEOUT);
@@ -241,7 +241,7 @@ fn run(out: &Arc<Broadcast<Vpn>>) {
     // The kernel side has no event source, so a slow timer covers it — and doubles as the fallback that keeps
     // the list live on a machine with no NetworkManager at all.
     let _ = std::thread::Builder::new()
-        .name("hyprshell-vpn-poll".to_string())
+        .name("hogar-shell-vpn-poll".to_string())
         .spawn(move || {
             loop {
                 std::thread::sleep(KERNEL_POLL);
@@ -271,7 +271,7 @@ fn watch_signals(ping: SyncSender<()>) -> Option<()> {
         .build();
     let signals = MessageIterator::for_match_rule(rule, &conn, None).ok()?;
     std::thread::Builder::new()
-        .name("hyprshell-vpn-signals".to_string())
+        .name("hogar-shell-vpn-signals".to_string())
         .spawn(move || {
             for _ in signals {
                 let _ = ping.try_send(());
@@ -291,7 +291,7 @@ pub fn current() -> Option<Vpn> {
 
 fn act(what: &'static str, job: impl FnOnce() + Send + 'static) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-vpn-act".to_string())
+        .name("hogar-shell-vpn-act".to_string())
         .spawn(move || {
             tracing::debug!("vpn: {what}");
             job();

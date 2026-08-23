@@ -167,12 +167,12 @@ pub fn on_graph(mut handler: GraphHandler) {
     HANDLERS.lock().unwrap().push(handler);
     MONITOR_THREAD.get_or_init(|| {
         let _ = std::thread::Builder::new()
-            .name("hyprshell-pipewire".to_string())
+            .name("hogar-shell-pipewire".to_string())
             .spawn(run);
     });
 }
 
-static GRAPH: Service<Graph> = Service::new("hyprshell-pipewire-graph", run_graph);
+static GRAPH: Service<Graph> = Service::new("hogar-shell-pipewire-graph", run_graph);
 
 /// Mirrors the shared stream into a broadcast, so a surface can `watch` the graph like any other service. The
 /// producer registers and returns; the handler owns the `Arc`, so no thread parks here.
@@ -731,11 +731,11 @@ mod tests {
     /// is the only check that the shapes above still match what `pw-dump` emits, which is a contract PipeWire
     /// owns and can change under us.
     ///
-    /// `HYPRSHELL_PIPEWIRE_LIVE=1 cargo test -p hyprshell --lib live_graph -- --nocapture`
+    /// `HOGAR_SHELL_PIPEWIRE_LIVE=1 cargo test -p hogar-shell --lib live_graph -- --nocapture`
     #[test]
     fn live_graph_parses_on_this_machine() {
-        if std::env::var("HYPRSHELL_PIPEWIRE_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_PIPEWIRE_LIVE to parse the real graph; skipping");
+        if std::env::var("HOGAR_SHELL_PIPEWIRE_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_PIPEWIRE_LIVE to parse the real graph; skipping");
             return;
         }
         let out = deps::command(Dep::PwDump)

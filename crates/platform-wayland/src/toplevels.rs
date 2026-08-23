@@ -162,7 +162,7 @@ fn start() -> bool {
     }
 
     std::thread::Builder::new()
-        .name("hyprshell-ext-toplevels".to_string())
+        .name("hogar-shell-ext-toplevels".to_string())
         .spawn(move || run(Watcher::default(), connection, queue))
         .is_ok()
 }
@@ -334,13 +334,13 @@ mod tests {
     /// watcher has to *stop* when the last registration is retired, and say so again so the next [`watch`]
     /// starts a fresh one rather than registering with a thread on its way out.
     ///
-    /// Skipped under `HYPRSHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live
+    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live
     /// tests here and in `capture` register with a real watcher, so "nothing is registered" is false through no
     /// fault of the code, and emptying the registry to make it true would retire the watcher out from under
     /// them.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_ok() {
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
             eprintln!("a real watcher holds the registry in a live run; skipping");
             return;
         }
@@ -438,14 +438,16 @@ mod tests {
     /// The half no fixture can prove: that this reads a real compositor, and that what it reads agrees with
     /// what that compositor says about itself.
     ///
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevels -- --nocapture --test-threads=1`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevels -- --nocapture --test-threads=1`
     #[test]
     fn the_watcher_lists_the_windows_that_are_open() {
         use std::sync::mpsc;
         use std::time::Duration;
 
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to list the real compositor's windows; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!(
+                "set HOGAR_SHELL_WAYLAND_LIVE to list the real compositor's windows; skipping"
+            );
             return;
         }
 

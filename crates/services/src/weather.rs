@@ -350,7 +350,7 @@ fn save_cache(weather: &Weather) {
     }
 }
 
-static WEATHER: Service<Weather> = Service::new("hyprshell-weather", run);
+static WEATHER: Service<Weather> = Service::new("hogar-shell-weather", run);
 
 fn settings() -> WeatherConfig {
     config::shared_config()

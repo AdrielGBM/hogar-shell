@@ -26,13 +26,13 @@ The main keyboard's active layout.
 | Hover | a popout card naming the layout in full |
 
 ```sh
-hyprshell keyboard layout    # which one
-hyprshell keyboard next      # switch
+hogar-shell keyboard layout    # which one
+hogar-shell keyboard next      # switch
 ```
 
 ## Configuring
 
-The layouts themselves are the compositor's — hyprshell reads and cycles them, it does not define them.
+The layouts themselves are the compositor's — hogar-shell reads and cycles them, it does not define them.
 
 `[toasts.events] kb_layout` decides whether a switch also raises a [toast](../surfaces/toasts.md), which is
 the useful part when you switch with a keybind and the bar is on another screen.

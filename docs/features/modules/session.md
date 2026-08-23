@@ -28,9 +28,9 @@ Actions this machine cannot perform are **greyed out rather than offered**, beca
 | Click | opens the session menu |
 
 ```sh
-hyprshell session list                 # what this machine supports
-hyprshell session do suspend
-hyprshell lock on
+hogar-shell session list                 # what this machine supports
+hogar-shell session do suspend
+hogar-shell lock on
 ```
 
 ## Configuring

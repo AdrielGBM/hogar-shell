@@ -1,17 +1,17 @@
 //! Global shortcuts, registered on the desktop portal so the compositor can bind them by name.
 //!
-//! Keybinds already work without this — `bind = SUPER, N, exec, hyprshell panel toggle notifications` spawns the
+//! Keybinds already work without this — `bind = SUPER, N, exec, hogar-shell panel toggle notifications` spawns the
 //! client, which talks to the running shell over its socket. What that costs is a process launch per press: a fork,
 //! an exec, a dynamic link and a connect, to deliver one line the shell answers in microseconds. A portal shortcut
 //! is the same line delivered over a connection that is already open.
 //!
-//! The trade is that the *binding* moves out of the shell's hands. hyprshell says "I have an action called
+//! The trade is that the *binding* moves out of the shell's hands. hogar-shell says "I have an action called
 //! `launcher`"; the compositor decides which keys reach it, and the user writes `bind = SUPER, SPACE, global,
-//! hyprshell:launcher`. That is the point of the portal — one place that knows every application's shortcuts, so
+//! hogar-shell:launcher`. That is the point of the portal — one place that knows every application's shortcuts, so
 //! two applications cannot silently claim the same chord.
 //!
 //! **Entirely optional.** No portal, no session, a portal that refuses: the service logs once and retires, and
-//! every `exec, hyprshell …` bind keeps working exactly as before. Nothing else in the shell asks it anything.
+//! every `exec, hogar-shell …` bind keeps working exactly as before. Nothing else in the shell asks it anything.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -34,7 +34,7 @@ const PORTAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One action the compositor can bind, and the request line it runs.
 ///
-/// The ids are deliberately the *actions a user binds a key to*, not a mirror of the IPC table: `hyprshell
+/// The ids are deliberately the *actions a user binds a key to*, not a mirror of the IPC table: `hogar-shell
 /// audio set 40` is a scripting command, not a shortcut, and offering every command here would bury the six
 /// that anyone actually binds. `description` is what the compositor's own settings UI shows.
 pub struct Shortcut {
@@ -112,12 +112,12 @@ fn command_for(id: &str) -> Option<&'static str> {
 }
 
 /// The producer for `platform_wayland::watch`: registers the shortcuts, then turns every `Activated` signal
-/// into the same [`Request`] the socket would have delivered, so a shortcut and a `hyprshell …` invocation run
+/// into the same [`Request`] the socket would have delivered, so a shortcut and a `hogar-shell …` invocation run
 /// through one code path and cannot drift apart.
 pub fn serve(tx: EventSender<Request>) {
     let Some(conn) = Connection::session().ok() else {
         tracing::info!(
-            "global shortcuts: no session bus; keybinds still work through `exec, hyprshell …`"
+            "global shortcuts: no session bus; keybinds still work through `exec, hogar-shell …`"
         );
         return;
     };
@@ -189,9 +189,9 @@ fn activation(message: &zbus::Message) -> Option<(OwnedObjectPath, String)> {
 fn register(conn: &Connection) -> Option<OwnedObjectPath> {
     let proxy = Proxy::new(conn, PORTAL, PORTAL_PATH, SHORTCUTS).ok()?;
 
-    let session_token = "hyprshell_session";
+    let session_token = "hogar_shell_session";
     let mut options: HashMap<&str, Value> = HashMap::new();
-    options.insert("handle_token", Value::from("hyprshell_create"));
+    options.insert("handle_token", Value::from("hogar_shell_create"));
     options.insert("session_handle_token", Value::from(session_token));
     let results = call_and_wait(conn, &proxy, "CreateSession", &(options))?;
     let session: OwnedObjectPath = results
@@ -208,7 +208,7 @@ fn register(conn: &Connection) -> Option<OwnedObjectPath> {
         })
         .collect();
     let mut bind_options: HashMap<&str, Value> = HashMap::new();
-    bind_options.insert("handle_token", Value::from("hyprshell_bind"));
+    bind_options.insert("handle_token", Value::from("hogar_shell_bind"));
     // No parent window: the shell is not an application with one, and the portal treats an empty string as "no parent" rather than as a malformed handle.
     call_and_wait(
         conn,

@@ -52,7 +52,7 @@ const COLLAPSED: f32 = 0.5;
 const MODES: [Shape; 3] = [Shape::Bar, Shape::Sections, Shape::Chips];
 
 /// The world one combination builds against. Deliberately [`Config::starter`] rather than the user's file: a
-/// sweep that read `~/.config/hyprshell/config.toml` would measure a different shell on every machine.
+/// sweep that read `~/.config/hogar-shell/config.toml` would measure a different shell on every machine.
 fn seed_world(edge: Edge, mode: Shape) {
     let mut config = Config::starter();
     // `starter` puts its modules on the top bar and `drawn_edge` reports the first non-empty one, so moving them
@@ -145,7 +145,9 @@ fn paints(command: &DrawCommand) -> bool {
 static WORLD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn sweep(mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
-    let _world = WORLD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for edge in Edge::ALL {
         for mode in MODES {
             // Seeded before the list is drawn up, not only before each entry is measured: an entry reads the world to declare its surface — a bar's is its thickness, on the axis it runs along — so a list enumerated first describes whichever combination happened to run before this one.

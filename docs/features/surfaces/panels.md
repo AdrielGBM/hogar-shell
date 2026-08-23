@@ -18,13 +18,13 @@ see_also: [drawers, floats, popouts]
 The surface behind a module. Thirteen modules have one: clock, dashboard, battery, bluetooth, network, mixer,
 notifications, notes, settings, utilities, windowinfo, session and logo.
 
-A panel is reached three ways — a chip click, `hyprshell panel toggle <module>`, or a keybind — and all three
+A panel is reached three ways — a chip click, `hogar-shell panel toggle <module>`, or a keybind — and all three
 reach the **same** surface rather than stacking three copies of it.
 
 ```sh
-hyprshell panel toggle settings
-hyprshell panel open network
-hyprshell panel list            # what is open right now
+hogar-shell panel toggle settings
+hogar-shell panel open network
+hogar-shell panel list            # what is open right now
 ```
 
 ## Two presentations
@@ -64,7 +64,7 @@ focus because they have fields: **notes**, **settings** and **session**.
 
 ## What closes one
 
-Pressing the chip again, `hyprshell panel close <module>`, and — for a drawer — a press outside it.
+Pressing the chip again, `hogar-shell panel close <module>`, and — for a drawer — a press outside it.
 
 **A drawer is also closed by any window opening**: the [launcher](launcher.md), a float, the
 [notification centre](notification-centre.md). A drawer is a glance, and while it is up its surface covers the
@@ -73,7 +73,7 @@ is painted, unreachable, and dismissed rather than used by the first press that 
 
 **Nothing closes a float.** It is the presentation you choose when you want a panel to stay put, so opening a
 drawer, pressing a chip, opening the notification centre or opening a second float all leave it exactly where it
-is. It closes by its ✕, by its chip, or by `hyprshell panel close`.
+is. It closes by its ✕, by its chip, or by `hogar-shell panel close`.
 
 Toasts, notification popups and the OSD are pinned to an edge and say something you did not open a window to be
 told, so nothing closes them either. Neither does the region picker close a drawer: it is drawn over a still of

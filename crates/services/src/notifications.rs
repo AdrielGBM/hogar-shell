@@ -259,7 +259,7 @@ impl Inner {
             return;
         };
         let _ = std::thread::Builder::new()
-            .name("hyprshell-notif-expiry".to_string())
+            .name("hogar-shell-notif-expiry".to_string())
             .spawn(move || {
                 std::thread::sleep(after);
                 expire(id);
@@ -310,7 +310,7 @@ pub fn init(policy: Policy) {
         let next_id = restored.iter().map(|n| n.id).max().unwrap_or(0);
         let (saver, saver_rx) = channel::<Vec<Notification>>();
         let _ = std::thread::Builder::new()
-            .name("hyprshell-notif-save".to_string())
+            .name("hogar-shell-notif-save".to_string())
             .spawn(move || run_saver(saver_rx));
         let remembered = crate::state::get();
         let inner = Arc::new(Inner {
@@ -349,7 +349,7 @@ pub fn subscribe(tx: EventSender<SharedSnapshot>) {
     }
 }
 
-/// Raises a notification from inside the shell itself, without a D-Bus round-trip — how hyprshell reports its
+/// Raises a notification from inside the shell itself, without a D-Bus round-trip — how hogar-shell reports its
 /// own problems (a config that won't parse, a service that won't start) through the same surface every other
 /// app's notifications land on. `Critical` urgency, so with the default `critical_sticky` it waits to be read
 /// rather than timing out. Falls back to stderr before the daemon is up.
@@ -576,7 +576,7 @@ fn history_path() -> PathBuf {
 
 fn spawn_daemon(inner: Arc<Inner>) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-notifications".to_string())
+        .name("hogar-shell-notifications".to_string())
         .spawn(move || run_daemon(inner));
 }
 
@@ -661,8 +661,8 @@ impl NotificationsIface {
 
     fn get_server_information(&self) -> (String, String, String, String) {
         (
-            "hyprshell".to_string(),
-            "hyprshell".to_string(),
+            "hogar-shell".to_string(),
+            "hogar-shell".to_string(),
             env!("CARGO_PKG_VERSION").to_string(),
             "1.2".to_string(),
         )
@@ -1004,7 +1004,7 @@ mod tests {
     }
 
     // Live D-Bus round-trip. Run under a private bus so it never collides with the desktop's real daemon:
-    // `dbus-run-session -- cargo test -p hyprshell --lib notifications::tests::daemon -- --ignored --nocapture`
+    // `dbus-run-session -- cargo test -p hogar-shell --lib notifications::tests::daemon -- --ignored --nocapture`
     #[test]
     #[ignore = "needs a session bus; run under dbus-run-session"]
     fn daemon_receives_notify_over_dbus() {

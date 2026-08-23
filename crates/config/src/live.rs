@@ -18,7 +18,7 @@ thread_local! {
     // What each output's chrome is running, written by the reconciler as it plans that screen's surfaces.
     static RUNNING: RefCell<HashMap<String, Arc<Config>>> = RefCell::new(HashMap::new());
     // How to rebuild the shell. Owned by the startup path, which is the only place that knows how to reconcile
-    // surfaces; everything else — the config watcher, a monitor hotplug, `hyprshell shell reload` — asks here.
+    // surfaces; everything else — the config watcher, a monitor hotplug, `hogar-shell shell reload` — asks here.
     static RELOAD: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
     // Which image a dynamic palette is derived from. Installed by the startup path because answering it means
     // asking the compositor which screen is focused and the wallpaper service what it is showing — neither of

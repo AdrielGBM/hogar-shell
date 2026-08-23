@@ -15,7 +15,7 @@ see_also: [keybinds, ipc]
 
 ## What it is
 
-hyprshell registers its most-bound actions with `xdg-desktop-portal`, so the compositor can bind them by name
+hogar-shell registers its most-bound actions with `xdg-desktop-portal`, so the compositor can bind them by name
 rather than by spawning a process.
 
 ```sh
@@ -26,18 +26,18 @@ Registered ids: `launcher` `dashboard` `notifications` `session` `dnd` `volume-u
 `mic-mute` `brightness-up` `brightness-down`.
 
 The name is `<appid>:<id>`, and on a non-sandboxed install the app id is empty — so it is `:launcher`, not
-`hyprshell:launcher`.
+`hogar-shell:launcher`.
 
 ## Why it exists
 
-Keybinds already work without it: `bind = SUPER, N, exec, hyprshell panel toggle notifications` spawns the
+Keybinds already work without it: `bind = SUPER, N, exec, hogar-shell panel toggle notifications` spawns the
 client, which talks to the running shell over its socket. What that costs is a **process launch per press** — a
 fork, an exec, a dynamic link and a connect, to deliver one line the shell answers in microseconds. A portal
 shortcut is the same line over a connection that is already open.
 
 ## What you give up
 
-The *binding* moves out of the shell's hands. hyprshell says "I have an action called `launcher`"; the
+The *binding* moves out of the shell's hands. hogar-shell says "I have an action called `launcher`"; the
 compositor decides which keys reach it. **The portal registers actions, never keys** — it has no way to ask for
 a particular one — so you still write the bind either way.
 
@@ -46,7 +46,7 @@ cannot silently claim the same chord.
 
 ## Why the list is short
 
-Deliberately shorter than the IPC table. `hyprshell audio set 40` is a scripting command, not a shortcut, and
+Deliberately shorter than the IPC table. `hogar-shell audio set 40` is a scripting command, not a shortcut, and
 registering every command would bury the ten anyone binds.
 
 ## What it needs

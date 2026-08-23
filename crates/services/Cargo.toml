@@ -1,6 +1,6 @@
 [package]
-name = "hyprshell-services"
-description = "The hyprshell service layer: one producer per system reading — audio, network, Bluetooth, battery, notifications, tray and the rest."
+name = "hogar-shell-services"
+description = "The hogar-shell service layer: one producer per system reading — audio, network, Bluetooth, battery, notifications, tray and the rest."
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

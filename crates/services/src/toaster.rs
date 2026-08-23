@@ -118,7 +118,7 @@ fn queue() -> &'static Sender<Message> {
     QUEUE.get_or_init(|| {
         let (tx, rx) = channel::<Message>();
         let _ = std::thread::Builder::new()
-            .name("hyprshell-toaster".to_string())
+            .name("hogar-shell-toaster".to_string())
             .spawn(move || {
                 let mut live: Vec<Toast> = Vec::new();
                 loop {

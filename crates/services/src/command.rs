@@ -5,7 +5,7 @@
 //! the command table — it lives with the socket, above here — so both go through the hooks below, installed
 //! once at startup by whoever owns that table.
 //!
-//! [`Request`] lives here rather than beside the socket for the same reason: a shortcut and a `hyprshell …`
+//! [`Request`] lives here rather than beside the socket for the same reason: a shortcut and a `hogar-shell …`
 //! invocation must produce the *same* thing, and only one of the two can see the socket.
 
 use std::cell::RefCell;

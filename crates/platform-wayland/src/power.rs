@@ -254,11 +254,11 @@ mod tests {
     /// Reading the mode, which needs the protocol but disturbs nothing — so it runs where the blanking test
     /// below would be too rude, and tells a missing protocol apart from a broken one.
     ///
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland power_reads -- --nocapture`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland power_reads -- --nocapture`
     #[test]
     fn power_reads_back_from_the_compositor() {
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to ask the real compositor; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to ask the real compositor; skipping");
             return;
         }
         let advertised = output_power_supported();
@@ -275,14 +275,14 @@ mod tests {
 
     /// Blanking every screen and waking it again, against the real compositor.
     ///
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland power -- --nocapture`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland power -- --nocapture`
     ///
     /// **It turns the screen off and back on.** There is no gentler way to prove a screen blanked: the mode is
     /// exactly what this reads back, and reading it without setting it proves only that the protocol answers.
     #[test]
     fn a_screen_can_be_blanked_and_woken() {
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to blank the real screen; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to blank the real screen; skipping");
             return;
         }
         assert_eq!(output_power_supported(), Some(true));

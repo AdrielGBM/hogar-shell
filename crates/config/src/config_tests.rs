@@ -76,7 +76,7 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
         let launcher = LauncherConfig {
             actions: vec![LauncherAction {
                 name: "Reload".to_string(),
-                command: "hyprshell shell reload".to_string(),
+                command: "hogar-shell shell reload".to_string(),
                 ..LauncherAction::default()
             }],
             icons,
@@ -110,7 +110,7 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
 
     #[test]
     fn save_section_replaces_one_table_and_preserves_the_rest() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-save-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-save-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         std::fs::write(
@@ -150,7 +150,8 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
         // `[theme.fonts.title]` inside the bar definitions, and left `[theme]` itself *after* its own children.
         // For a function whose whole promise is "preserving every other section, key order, and comment", that
         // is the failure.
-        let dir = std::env::temp_dir().join(format!("hyprshell-save-order-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("hogar-shell-save-order-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         std::fs::write(
@@ -588,7 +589,7 @@ end = ["battery", "volume"]
         // `[[battery.warn_levels]]` is the first list-of-tables in the config, and TOML only accepts a table's
         // scalar keys *before* its arrays of tables — a naive serializer would emit `critical_level` inside the
         // last warning. Both the whole-file write and the format-preserving per-section save must get it right.
-        let dir = std::env::temp_dir().join(format!("hyprshell-aot-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-aot-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         std::fs::write(&path, "# kept\n[theme]\naccent = \"orange\"\n").unwrap();
@@ -739,7 +740,7 @@ end = ["battery", "volume"]
 
     #[test]
     fn a_parse_error_is_returned_rather_than_swallowed() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-load-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-load-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         std::fs::write(&path, "[bars.top\nstart = [\"clock\"]\n").unwrap();
@@ -764,7 +765,7 @@ end = ["battery", "volume"]
 
     #[test]
     fn a_missing_file_seeds_the_starter_config_on_disk() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-seed-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-seed-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
 
@@ -865,7 +866,7 @@ end = ["battery", "volume"]
 
     /// A config directory with a global file and, optionally, one monitor override.
     fn config_dir(name: &str, global: &str, monitor: Option<(&str, &str)>) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("hyprshell-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-{name}-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.toml"), global).unwrap();
@@ -1118,8 +1119,9 @@ accent = "orange"
     /// take the whole config down with it — an unknown key is ignored, so the shell comes up solid.
     #[test]
     fn a_config_still_naming_a_per_surface_opacity_still_loads() {
-        let old: Config = toml::from_str("[bars]\nopacity = 0.5\n[panels]\nopacity = 0.75\ngap = 4\n")
-            .expect("a removed key is ignored, not an error");
+        let old: Config =
+            toml::from_str("[bars]\nopacity = 0.5\n[panels]\nopacity = 0.75\ngap = 4\n")
+                .expect("a removed key is ignored, not an error");
         assert_eq!(old.opacity(), 1.0);
         assert_eq!(old.panel_fill().a, 1.0);
     }
@@ -1143,7 +1145,8 @@ accent = "orange"
             "a hugging bar at full opacity is the one case that may be cleared solid"
         );
 
-        let translucent = hugging("[shape]\nmode = \"bar\"\ngap = 0\nradius = 0\n[theme]\nopacity = 0.5\n");
+        let translucent =
+            hugging("[shape]\nmode = \"bar\"\ngap = 0\nradius = 0\n[theme]\nopacity = 0.5\n");
         assert!(!translucent.bar_surface_opaque(Edge::Left));
 
         let framed = hugging("[shape]\nmode = \"bar\"\ngap = 0\nradius = 0\nframe = true\n");

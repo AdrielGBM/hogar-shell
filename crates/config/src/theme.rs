@@ -1,4 +1,3 @@
-
 use telar::{Color, TextStyle, ThemeTokens};
 
 use crate::{FontSpec, FontsConfig};
@@ -194,7 +193,7 @@ impl NordTheme {
     }
 
     /// A name as [`BUILT_IN_THEMES`] spells it, so [`in_mode`](Self::in_mode) hands back something a user can
-    /// read and `hyprshell scheme set` accepts — not the separator-stripped form the lookup matches on. An
+    /// read and `hogar-shell scheme set` accepts — not the separator-stripped form the lookup matches on. An
     /// unknown name resolves to nord, which is where [`named`](Self::named) would send it anyway.
     fn canonical(name: &str) -> &'static str {
         let normalized = normalize(name);
@@ -813,7 +812,6 @@ impl Default for NordTheme {
         Self::new()
     }
 }
-
 
 #[cfg(test)]
 mod tests {

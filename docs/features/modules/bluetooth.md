@@ -33,8 +33,8 @@ subscription to the BlueZ object tree, not four readers of the bus.
 | Click | opens the device panel |
 | Hover | a popout card with the adapter state and what is connected |
 
-Everything the panel does is also an IPC command — `hyprshell bluetooth power on`, `scan`, `connect
-<device-path>`, `disconnect`, `forget`. `hyprshell bluetooth devices` prints the paths.
+Everything the panel does is also an IPC command — `hogar-shell bluetooth power on`, `scan`, `connect
+<device-path>`, `disconnect`, `forget`. `hogar-shell bluetooth devices` prints the paths.
 
 ## Configuring
 

@@ -22,7 +22,7 @@ pub fn copy(text: &str) {
 /// Copies `data` under `mime`.
 pub fn copy_bytes(mime: &'static str, data: Vec<u8>) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-clipboard".to_string())
+        .name("hogar-shell-clipboard".to_string())
         .spawn(move || {
             if let Err(reason) = platform_wayland::set_selection(mime, data) {
                 tracing::warn!("clipboard: {reason}");

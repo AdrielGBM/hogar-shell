@@ -12,30 +12,30 @@ see_also: [scripting, global-shortcuts]
 
 # Keybinds
 
-Every action the shell has is an IPC command, so a keybind is a bind to a shell command. `hyprshell --list` is
+Every action the shell has is an IPC command, so a keybind is a bind to a shell command. `hogar-shell --list` is
 the complete, authoritative menu — this page is a starting set, not a second copy of it.
 
 ## The commands worth binding
 
 | Command | What it does |
 | --- | --- |
-| `hyprshell launcher toggle` | the application launcher |
-| `hyprshell dashboard toggle` | the dashboard |
-| `hyprshell panel toggle notifications` | notification history |
-| `hyprshell notifs center toggle` | the full-height notification centre |
-| `hyprshell panel toggle session` | the session menu |
-| `hyprshell panel toggle settings` | the settings application |
-| `hyprshell panel toggle utilities` | the utilities panel |
-| `hyprshell lock on` | lock the session |
-| `hyprshell notifs dnd toggle` | do-not-disturb |
-| `hyprshell screenshot region` | pick a region and capture it |
-| `hyprshell screenshot screen` | every monitor, composed into one image |
-| `hyprshell record toggle` | start or stop a screen recording |
-| `hyprshell volume up` / `down` / `mute` | |
-| `hyprshell mic mute` | |
-| `hyprshell brightness up` / `down` | |
-| `hyprshell media play-pause` / `next` / `previous` | |
-| `hyprshell wallpaper random` | |
+| `hogar-shell launcher toggle` | the application launcher |
+| `hogar-shell dashboard toggle` | the dashboard |
+| `hogar-shell panel toggle notifications` | notification history |
+| `hogar-shell notifs center toggle` | the full-height notification centre |
+| `hogar-shell panel toggle session` | the session menu |
+| `hogar-shell panel toggle settings` | the settings application |
+| `hogar-shell panel toggle utilities` | the utilities panel |
+| `hogar-shell lock on` | lock the session |
+| `hogar-shell notifs dnd toggle` | do-not-disturb |
+| `hogar-shell screenshot region` | pick a region and capture it |
+| `hogar-shell screenshot screen` | every monitor, composed into one image |
+| `hogar-shell record toggle` | start or stop a screen recording |
+| `hogar-shell volume up` / `down` / `mute` | |
+| `hogar-shell mic mute` | |
+| `hogar-shell brightness up` / `down` | |
+| `hogar-shell media play-pause` / `next` / `previous` | |
+| `hogar-shell wallpaper random` | |
 
 Two things that are not obvious from the names:
 
@@ -57,7 +57,7 @@ option table (key repeat, release, locked) has moved between releases.
 ```lua
 -- ~/.config/hypr/hyprland.lua
 local function sh(cmd)
-  return function() hl.dsp.exec_cmd("hyprshell " .. cmd) end
+  return function() hl.dsp.exec_cmd("hogar-shell " .. cmd) end
 end
 
 hl.bind({ "SUPER" }, "space",  sh("launcher toggle"))
@@ -85,8 +85,8 @@ hl.bind({}, "XF86AudioPrev",         sh("media previous"))
 The deprecated equivalent, for reference:
 
 ```ini
-bind = SUPER, space, exec, hyprshell launcher toggle
-binde = , XF86AudioRaiseVolume, exec, hyprshell volume up
+bind = SUPER, space, exec, hogar-shell launcher toggle
+binde = , XF86AudioRaiseVolume, exec, hogar-shell volume up
 ```
 
 ## The portal route
@@ -100,12 +100,12 @@ hyprctl globalshortcuts   # what is registered, and under what name
 ```
 
 The name is `<appid>:<id>`, and on a non-sandboxed install the app id is empty — so it is `:launcher`, not
-`hyprshell:launcher`.
+`hogar-shell:launcher`.
 
 Registered ids: `launcher` `dashboard` `notifications` `session` `dnd` `volume-up` `volume-down` `volume-mute`
 `mic-mute` `brightness-up` `brightness-down`.
 
-That list is deliberately shorter than the IPC table. `hyprshell audio set 40` is a scripting command, not a
+That list is deliberately shorter than the IPC table. `hogar-shell audio set 40` is a scripting command, not a
 shortcut, and registering every command would bury the ten anyone binds.
 
 Binding the commands directly covers everything this route does and more, so use the portal only if you want

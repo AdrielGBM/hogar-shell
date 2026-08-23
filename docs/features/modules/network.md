@@ -34,11 +34,11 @@ it is empty, rather than the chip going blank because the panel's dependency is 
 | Hover | a popout card with the connection and its strength |
 
 ```sh
-hyprshell wifi list
-hyprshell wifi connect <ssid> [password]
-hyprshell wifi radio toggle
-hyprshell vpn list
-hyprshell vpn toggle
+hogar-shell wifi list
+hogar-shell wifi connect <ssid> [password]
+hogar-shell wifi radio toggle
+hogar-shell vpn list
+hogar-shell vpn toggle
 ```
 
 ## Configuring

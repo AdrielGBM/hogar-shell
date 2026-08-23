@@ -14,9 +14,9 @@ see_also: [palettes, wallpaper, export]
 # Dynamic scheme
 
 ```sh
-hyprshell scheme set dynamic
-hyprshell scheme variant vibrant
-hyprshell scheme refresh          # re-derive from the current wallpaper
+hogar-shell scheme set dynamic
+hogar-shell scheme variant vibrant
+hogar-shell scheme refresh          # re-derive from the current wallpaper
 ```
 
 Once it is on, changing the wallpaper changes the palette.
@@ -42,7 +42,7 @@ pick.
 ## Interaction with the wallpaper
 
 The wallpaper is state (`state.json`), not config, so a dynamic palette follows whatever is *showing* —
-including one picked at random. `hyprshell wallpaper clear` puts `[background]` back in charge and re-derives.
+including one picked at random. `hogar-shell wallpaper clear` puts `[background]` back in charge and re-derives.
 
 ## What it needs
 

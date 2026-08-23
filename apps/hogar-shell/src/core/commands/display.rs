@@ -240,7 +240,9 @@ fn temperature(value: &str) -> Result<u32, String> {
 /// compositor that has it and handed the gamma to something else.
 fn refused() -> String {
     match services::nightlight::supported() {
-        Some(true) => "the compositor refused gamma control; something else may already hold it".to_string(),
+        Some(true) => {
+            "the compositor refused gamma control; something else may already hold it".to_string()
+        }
         Some(false) => "this compositor does not implement wlr-gamma-control".to_string(),
         None => "no compositor could be reached".to_string(),
     }

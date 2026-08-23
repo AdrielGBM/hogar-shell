@@ -30,7 +30,7 @@ bytes on demand. The compositor's `cancelled` event ends that thread when someth
 
 One of those two protocols. Without either, `[screenshot] copy` does nothing and `save` still works.
 
-Neither has a row in `hyprshell deps list`, because neither is probed as a named dependency — the shell asks
+Neither has a row in `hogar-shell deps list`, because neither is probed as a named dependency — the shell asks
 the compositor for the manager it wants at the moment it copies.
 
 ## Known limit

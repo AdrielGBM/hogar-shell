@@ -265,7 +265,7 @@ mod tests {
             "no directory named, nothing to find"
         );
 
-        let dir = std::env::temp_dir().join(format!("hyprshell-tray-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-tray-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         item.icon_theme_path = dir.to_string_lossy().into_owned();
         assert_eq!(

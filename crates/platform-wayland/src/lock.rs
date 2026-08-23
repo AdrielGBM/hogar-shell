@@ -127,7 +127,7 @@ where
         build_surface_handler::<LayerWindow, A>(
             factory(output),
             std::sync::Arc::new(telar::NoPaths),
-            "hyprshell",
+            "hogar-shell",
         )
     });
     LOCK_QUEUE.with(|queue| {
@@ -271,7 +271,7 @@ fn create_surface(
         wl_id,
         Some(handler),
         None,
-        String::from("hyprshell-lock"),
+        String::from("hogar-shell-lock"),
         scale,
         logical,
     );

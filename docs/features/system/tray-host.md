@@ -2,7 +2,7 @@
 id: tray-host
 kind: system
 title: Tray host
-summary: hyprshell is the StatusNotifierWatcher, and a host besides.
+summary: hogar-shell is the StatusNotifierWatcher, and a host besides.
 status: stable
 compositor: any
 config: [tray]
@@ -22,7 +22,7 @@ see_also: [tray, notifications-daemon]
 
 ## Running alongside another shell
 
-If something else already owns the watcher, hyprshell **degrades to a plain client**: the item list is read off
+If something else already owns the watcher, hogar-shell **degrades to a plain client**: the item list is read off
 that watcher's property instead of the local registry, and everything downstream is identical. You do not have
 to pick one.
 

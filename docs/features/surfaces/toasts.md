@@ -35,8 +35,8 @@ So toasts have their own queue, their own surface and their own switches, and no
 ## From a script
 
 ```sh
-hyprshell toast show "backup finished"
-hyprshell toast clear
+hogar-shell toast show "backup finished"
+hogar-shell toast clear
 ```
 
 Which makes the shell's own feedback channel available to anything you write.

@@ -114,7 +114,7 @@ pub fn is_available(library: &str) -> bool {
 }
 
 /// The PAM service to authenticate against: the configured one, else the first stack that exists out of a
-/// hyprshell-specific one, another lock screen's, and finally `login`. Named services are files, so an absent
+/// hogar-shell-specific one, another lock screen's, and finally `login`. Named services are files, so an absent
 /// one is a silent "authentication failed" for every password — worth resolving to one that is there.
 pub fn service_name(configured: &str) -> String {
     let configured = configured.trim();
@@ -122,7 +122,7 @@ pub fn service_name(configured: &str) -> String {
         return configured.to_string();
     }
     let dir = Path::new("/etc/pam.d");
-    ["hyprshell", "swaylock", "hyprlock", "login"]
+    ["hogar-shell", "swaylock", "hyprlock", "login"]
         .into_iter()
         .find(|name| dir.join(name).exists())
         .unwrap_or("login")

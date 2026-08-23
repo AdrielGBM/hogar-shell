@@ -17,11 +17,11 @@ Warms every screen by setting its gamma ramp over `wlr-gamma-control`, which eve
 Nothing else has to be running: no `hyprsunset`, no `gammastep`, no `wlsunset`.
 
 ```sh
-hyprshell nightlight on          # 4000K, the default
-hyprshell nightlight on 3200     # or name a temperature
-hyprshell nightlight toggle      # what a keybind binds to
-hyprshell nightlight off
-hyprshell nightlight status
+hogar-shell nightlight on          # 4000K, the default
+hogar-shell nightlight on 3200     # or name a temperature
+hogar-shell nightlight toggle      # what a keybind binds to
+hogar-shell nightlight off
+hogar-shell nightlight status
 ```
 
 Temperatures run from 1000K to 10000K. A value outside that is refused by name rather than clamped: a caller
@@ -35,7 +35,7 @@ protocol keeping a crashed client from leaving a screen orange for ever, and it 
 knowing:
 
 - **Turning the night light off is dropping the control**, not sending a neutral ramp. So does the shell
-  exiting — quitting hyprshell gives every screen its own colour back.
+  exiting — quitting hogar-shell gives every screen its own colour back.
 - **The shell holds one control per output for as long as the tint lasts.** A monitor plugged in while the
   night light is on is warmed to match the others rather than staying blue.
 
@@ -51,4 +51,4 @@ what the gamma currently is, deliberately, since the ramp is per-client state.
 ## Not yet
 
 There is no schedule. Turning the night light on at sunset means a timer of your own for now — a systemd
-timer, or a `cron` line calling `hyprshell nightlight on`.
+timer, or a `cron` line calling `hogar-shell nightlight on`.

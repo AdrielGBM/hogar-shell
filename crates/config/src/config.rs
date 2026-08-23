@@ -579,10 +579,10 @@ impl Config {
     /// is not a preference anybody holds, it is two settings that drifted.
     ///
     /// This is also the half of "a blurred shell" that belongs here. The blur itself is the compositor's —
-    /// hyprshell names every surface it opens, so Hyprland can be told to blur them:
+    /// hogar-shell names every surface it opens, so Hyprland can be told to blur them:
     ///
     /// ```text
-    /// layer_rule = blur, ^hyprshell
+    /// layer_rule = blur, ^hogar-shell
     /// ```
     ///
     /// Drawing it here instead would mean copying the screen behind every surface each frame and blurring it
@@ -758,7 +758,7 @@ impl Config {
             .filter(|p| !p.as_os_str().is_empty())
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
             .unwrap_or_else(|| PathBuf::from(".config"));
-        base.join("hyprshell").join("config.toml")
+        base.join("hogar-shell").join("config.toml")
     }
 
     /// Persists a single `[name]` section back to `config.toml`, replacing just that table while preserving every other section, key order, and comment in the file (format-preserving via `toml_edit`). `value` is a section struct such as [`ThemeConfig`]. Creates the file and its parent directory if missing. The running shell's config watcher then hot-reloads the change, so a save applies live.

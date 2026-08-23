@@ -15,7 +15,7 @@ see_also: [palettes, shape]
 
 ## What it is
 
-`~/.config/hyprshell/tokens.toml` overrides the design tokens the UI is drawn from — the layer beneath every
+`~/.config/hogar-shell/tokens.toml` overrides the design tokens the UI is drawn from — the layer beneath every
 `[theme]` key.
 
 **It is deliberately unstable.** `[theme]` is the supported surface; a token name can change between builds

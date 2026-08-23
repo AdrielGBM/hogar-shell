@@ -131,14 +131,14 @@ mod toplevel_tests {
     /// Capturing one window by the identifier the *other* connection reported, which is the whole claim: a
     /// protocol object cannot be shared between connections, and it does not have to be.
     ///
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevel_capture -- --nocapture`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevel_capture -- --nocapture`
     #[test]
     fn toplevel_capture_names_a_window_across_two_connections() {
         use std::sync::mpsc;
         use std::time::Duration;
 
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to capture a real window; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to capture a real window; skipping");
             return;
         }
         assert!(toplevel_capture_supported());
@@ -1102,11 +1102,11 @@ mod tests {
     /// Everything above this line is arithmetic on buffers a test made up; none of it can say whether the
     /// session hand-shake is right, and a protocol implementation that has never spoken to a compositor is a
     /// guess. Needs a live one, so it is opt-in the same way the clipboard round trip is:
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland capture -- --nocapture`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland capture -- --nocapture`
     #[test]
     fn both_routes_read_the_same_screen_back_at_the_same_size() {
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to capture from the real compositor; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to capture from the real compositor; skipping");
             return;
         }
         const SELECTION: CaptureArea = CaptureArea::Region {

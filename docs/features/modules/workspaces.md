@@ -36,7 +36,7 @@ The module manages its own layout rather than sitting in a chip shell, since the
 `occupied_background`, `capitalize`, `indicator`, `indicator_trail`, `label`, `window_icons`,
 `max_window_icons`, plus `[workspaces.special_icons]`.
 
-`hyprshell config schema workspaces` is the annotated version.
+`hogar-shell config schema workspaces` is the annotated version.
 
 ## What it needs
 

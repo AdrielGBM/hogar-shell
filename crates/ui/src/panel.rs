@@ -442,7 +442,7 @@ mod tests {
             ("launcher", Placement::centred(Centred::Modal), None),
             (
                 "card column",
-                Placement::stack("hyprshell-stack", Edge::Bottom, Align::End).size(320, 200),
+                Placement::stack("hogar-shell-stack", Edge::Bottom, Align::End).size(320, 200),
                 None,
             ),
             (
@@ -452,10 +452,14 @@ mod tests {
             ),
             (
                 "notification centre",
-                Placement::dock("hyprshell-sidebar", Edge::Right, 380),
+                Placement::dock("hogar-shell-sidebar", Edge::Right, 380),
                 None,
             ),
-            ("region picker", Placement::screen("hyprshell-picker"), None),
+            (
+                "region picker",
+                Placement::screen("hogar-shell-picker"),
+                None,
+            ),
         ];
 
         for (name, placement, edge) in every {
@@ -541,7 +545,11 @@ mod tests {
                     }
                     continue;
                 }
-                let relative = path.strip_prefix(&root).unwrap_or(&path).display().to_string();
+                let relative = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
                 let is_source = path
                     .extension()
                     .and_then(|e| e.to_str())

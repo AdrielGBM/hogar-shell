@@ -40,11 +40,11 @@ for substituting an icon by glob pattern, most-specific-pattern-wins.
 
 ## What it needs
 
-Nothing to install: hyprshell **is** the tray host. It owns `org.kde.StatusNotifierWatcher` — the registry
+Nothing to install: hogar-shell **is** the tray host. It owns `org.kde.StatusNotifierWatcher` — the registry
 every tray application looks for before it will show itself — and registers as a host so applications that stay
 hidden until one exists come out.
 
-If another shell already owns the watcher, hyprshell degrades to a plain client and reads the item list off
+If another shell already owns the watcher, hogar-shell degrades to a plain client and reads the item list off
 that watcher instead. Everything downstream is identical.
 
 ## Related

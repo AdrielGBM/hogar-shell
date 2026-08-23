@@ -11,7 +11,7 @@ let rad = content_radius();
 let module = current_drawer_module();
 // The module's panel content, dispatched in Rust and embedded below with `widget`.
 let content = module_panel(&module)?;
-// The box below fills with `panel_fill()` rather than the `surface` token: it is that token at the configured `[theme] opacity`, so a compositor `layer_rule = blur, ^hyprshell` has something to show through.
+// The box below fills with `panel_fill()` rather than the `surface` token: it is that token at the configured `[theme] opacity`, so a compositor `layer_rule = blur, ^hogar-shell` has something to show through.
 
 [view]
 box width:dw pad:panel_pad() fill:panel_fill() radius:rad

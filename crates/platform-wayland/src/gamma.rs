@@ -191,7 +191,7 @@ fn start() -> Option<Sender<Request>> {
         wanted: None,
     };
     std::thread::Builder::new()
-        .name("hyprshell-wlr-gamma".to_string())
+        .name("hogar-shell-wlr-gamma".to_string())
         .spawn(move || run(gamma, connection, queue, channel))
         .ok()?;
     Some(requests)
@@ -577,7 +577,7 @@ mod tests {
 
     /// The half no fixture can prove: that the compositor accepts the table and holds the tint.
     ///
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland gamma -- --nocapture --test-threads=1`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland gamma -- --nocapture --test-threads=1`
     ///
     /// **It warms the screen for a second and puts it back.** There is no reading to check instead — the
     /// protocol has no "what is the gamma" request, by design, so the only evidence it worked is that the
@@ -586,8 +586,8 @@ mod tests {
     fn the_compositor_takes_a_ramp_and_gives_the_screen_back() {
         use std::time::Duration;
 
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to tint the real screen; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to tint the real screen; skipping");
             return;
         }
         assert_eq!(

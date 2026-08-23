@@ -2,7 +2,7 @@
 //!
 //! Distinct from `config.toml`, which the user owns and hand-edits: this is machine-written state — which
 //! wallpaper is up, whether do-not-disturb is on, how often each app was launched. It lives in
-//! `$XDG_STATE_HOME/hyprshell/state.json` so a reload, a restart or a re-login lands back where the user left
+//! `$XDG_STATE_HOME/hogar-shell/state.json` so a reload, a restart or a re-login lands back where the user left
 //! off, and so a toggle flipped from one surface is the same toggle every other surface reads.
 
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ static STATE: Store<ShellState> = Store::new(load);
 /// Written to a sibling temp file and renamed, so a crash mid-write can't leave a truncated file behind.
 fn persist(state: ShellState) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-state-write".to_string())
+        .name("hogar-shell-state-write".to_string())
         .spawn(move || {
             let Ok(text) = serde_json::to_string_pretty(&state) else {
                 return;
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn missing_and_corrupt_files_both_yield_defaults() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-state-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-state-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("state.json");
 

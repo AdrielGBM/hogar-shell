@@ -1,5 +1,5 @@
 [package]
-name = "hyprshell"
+name = "hogar-shell"
 description = "A Wayland desktop shell in Rust — bars, panels, launcher, dashboard, lock screen, notifications, capture and dynamic theming, configured in TOML."
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ repository.workspace = true
 [lib]
 
 [[bin]]
-name = "hyprshell"
+name = "hogar-shell"
 path = "src/main.rs"
 
 [dependencies]

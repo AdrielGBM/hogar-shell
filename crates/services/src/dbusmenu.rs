@@ -273,7 +273,7 @@ pub fn fetch_into(bus: String, path: String) -> impl FnOnce(EventSender<Option<M
 pub fn activate(bus: &str, path: &str, id: i32) {
     let (bus, path) = (bus.to_string(), path.to_string());
     let _ = std::thread::Builder::new()
-        .name("hyprshell-dbusmenu-event".to_string())
+        .name("hogar-shell-dbusmenu-event".to_string())
         .spawn(move || {
             let Some((conn, name)) = connect(&bus) else {
                 return;
@@ -322,12 +322,12 @@ mod tests {
     }
 
     // Reads a real menu off the session bus, gated behind an env var so it never runs in headless CI: run with
-    // `HYPRSHELL_TEST_DBUSMENU=<bus><path> cargo test -p hyprshell --lib dbusmenu_reads -- --nocapture`, e.g.
-    // `HYPRSHELL_TEST_DBUSMENU=":1.502/org/ayatana/NotificationItem/steam/Menu"`.
+    // `HOGAR_SHELL_TEST_DBUSMENU=<bus><path> cargo test -p hogar-shell --lib dbusmenu_reads -- --nocapture`, e.g.
+    // `HOGAR_SHELL_TEST_DBUSMENU=":1.502/org/ayatana/NotificationItem/steam/Menu"`.
     #[test]
     fn dbusmenu_reads_a_live_menu() {
-        let Ok(target) = std::env::var("HYPRSHELL_TEST_DBUSMENU") else {
-            eprintln!("set HYPRSHELL_TEST_DBUSMENU to read a live menu; skipping");
+        let Ok(target) = std::env::var("HOGAR_SHELL_TEST_DBUSMENU") else {
+            eprintln!("set HOGAR_SHELL_TEST_DBUSMENU to read a live menu; skipping");
             return;
         };
         let (bus, path) = target.split_once('/').expect("bus/path");

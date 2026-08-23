@@ -31,7 +31,7 @@ laptop's brightness keys mean.
 | Scroll | adjusts by `[brightness] increment`, with the OSD |
 | Hover | a popout card with the level |
 
-`hyprshell brightness up` with no display named means the primary panel, **not** every screen. It is the one
+`hogar-shell brightness up` with no display named means the primary panel, **not** every screen. It is the one
 mutation where an unnamed target is not "all of them", because it is overwhelmingly a laptop's function key.
 Name a connector (`brightness up DP-2`) or spell out `all` for the rest.
 
@@ -60,7 +60,7 @@ Without `/sys/class/backlight` the internal panel is unavailable and external mo
 An external monitor's level is read **once at detection** and then tracked optimistically. A `getvcp` costs
 tens to hundreds of milliseconds per monitor, so polling one would be a permanent background cost for a value
 that only changes when somebody changes it — which means a change made with the monitor's own buttons is not
-noticed. `hyprshell brightness refresh` re-detects, which is also what to run after plugging a monitor in.
+noticed. `hogar-shell brightness refresh` re-detects, which is also what to run after plugging a monitor in.
 
 ## Related
 

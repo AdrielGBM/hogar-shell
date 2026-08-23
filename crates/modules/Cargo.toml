@@ -1,6 +1,6 @@
 [package]
-name = "hyprshell-modules"
-description = "The hyprshell module set: every chip a bar can carry, and the panels behind them."
+name = "hogar-shell-modules"
+description = "The hogar-shell module set: every chip a bar can carry, and the panels behind them."
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

@@ -2,7 +2,7 @@
 id: notifications-daemon
 kind: system
 title: Notification daemon
-summary: hyprshell is the freedesktop notification daemon — nothing else to install.
+summary: hogar-shell is the freedesktop notification daemon — nothing else to install.
 status: stable
 compositor: any
 config: [stack, notifications]
@@ -13,7 +13,7 @@ see_also: [notifications, notification-centre, toasts]
 
 # Notification daemon
 
-hyprshell owns `org.freedesktop.Notifications` itself. There is no second daemon to install, and running one
+hogar-shell owns `org.freedesktop.Notifications` itself. There is no second daemon to install, and running one
 alongside means whichever claims the bus name first wins.
 
 ## What it does
@@ -22,11 +22,11 @@ Receives notifications, pops them, groups them by application, stores them, and 
 restart.
 
 ```sh
-hyprshell notifs dnd toggle
-hyprshell notifs mute <app> [on|off|toggle]
-hyprshell notifs muted
-hyprshell notifs clear [app]
-hyprshell notifs center toggle
+hogar-shell notifs dnd toggle
+hogar-shell notifs mute <app> [on|off|toggle]
+hogar-shell notifs muted
+hogar-shell notifs clear [app]
+hogar-shell notifs center toggle
 ```
 
 ## Do-not-disturb, and what it means

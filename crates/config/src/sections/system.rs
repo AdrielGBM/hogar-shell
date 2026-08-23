@@ -1,7 +1,7 @@
 //! The sections that describe the machine the shell runs on, and the helpers it shells out to.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hyprshell config schema` prints for it, so it is written for a user reading the reference.
+//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -71,7 +71,7 @@ impl HelperApp {
     }
 }
 
-/// Backlight control (`[brightness]`): the step a wheel notch or `hyprshell brightness up` moves. Its own
+/// Backlight control (`[brightness]`): the step a wheel notch or `hogar-shell brightness up` moves. Its own
 /// section rather than a key under `[audio]` so the per-output and DDC/CI settings that follow have a home.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]

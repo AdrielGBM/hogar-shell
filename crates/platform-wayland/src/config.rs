@@ -52,7 +52,7 @@ impl Default for LayerConfig {
             size: (0, 40),
             margin: (0, 0, 0, 0),
             keyboard_interactivity: KeyboardInteractivity::None,
-            namespace: String::from("hyprshell"),
+            namespace: String::from("hogar-shell"),
             reserve_only: false,
             input_transparent: false,
             interactive_input_region: false,

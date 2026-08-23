@@ -112,7 +112,7 @@ pub fn available() -> Vec<Action> {
 /// to do about a refused power action beyond what logind already told the user.
 pub fn perform(action: Action) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-session".to_string())
+        .name("hogar-shell-session".to_string())
         .spawn(move || {
             if let Err(e) = call(action) {
                 tracing::warn!("session action '{}' failed: {e}", action.id());
@@ -160,7 +160,7 @@ fn call(action: Action) -> Result<(), zbus::Error> {
 /// Off the UI thread, like every other logind call here: a hint is not worth a frame.
 pub fn set_locked_hint(locked: bool) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-locked-hint".to_string())
+        .name("hogar-shell-locked-hint".to_string())
         .spawn(move || {
             let Some(conn) = connection() else { return };
             if let Err(e) = conn.call_method(
@@ -297,7 +297,7 @@ fn take_sleep_inhibitor(conn: &Connection) -> Option<zbus::zvariant::OwnedFd> {
             "Inhibit",
             &(
                 "sleep",
-                "hyprshell",
+                "hogar-shell",
                 "Locking the session before sleep",
                 "delay",
             ),

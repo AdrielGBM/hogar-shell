@@ -254,11 +254,11 @@ mod tests {
     /// A copy is only real if something else can paste it.
     ///
     /// Needs a live compositor, so it is opt-in the same way the PipeWire graph test is:
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland clipboard -- --nocapture`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland clipboard -- --nocapture`
     #[test]
     fn a_selection_can_be_pasted_by_another_client() {
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to copy against the real compositor; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to copy against the real compositor; skipping");
             return;
         }
         const MIME: &str = "text/plain;charset=utf-8";

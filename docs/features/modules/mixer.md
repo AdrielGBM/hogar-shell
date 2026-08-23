@@ -15,7 +15,7 @@ see_also: [volume, mic, media]
 # Mixer
 
 The shell has been able to *read* the whole audio graph since the PipeWire service replaced the `wpctl` poll,
-and `hyprshell audio` has been able to drive all of it. With a pointer there was no way to reach anything but
+and `hogar-shell audio` has been able to drive all of it. With a pointer there was no way to reach anything but
 the default sink. This is that missing half.
 
 ## What it shows
@@ -33,10 +33,10 @@ Inside the panel, drag a row's slider to set its level, or click its icon to mut
 default is a click on its row.
 
 ```sh
-hyprshell audio sinks
-hyprshell audio streams
-hyprshell audio default <id>
-hyprshell audio set <id> 40
+hogar-shell audio sinks
+hogar-shell audio streams
+hogar-shell audio default <id>
+hogar-shell audio set <id> 40
 ```
 
 ## Configuring

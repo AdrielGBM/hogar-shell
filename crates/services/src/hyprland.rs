@@ -357,10 +357,10 @@ fn dispatch(dir: &Path, call: &str) {
     let cmd = format!("dispatch {call}");
     match request(dir, &cmd) {
         Ok(resp) if resp.to_ascii_lowercase().contains("error") => {
-            tracing::warn!("hyprshell: `{cmd}` -> {resp:?}")
+            tracing::warn!("hogar-shell: `{cmd}` -> {resp:?}")
         }
         Ok(_) => {}
-        Err(e) => tracing::warn!("hyprshell: `{cmd}` failed: {e}"),
+        Err(e) => tracing::warn!("hogar-shell: `{cmd}` failed: {e}"),
     }
 }
 
@@ -417,7 +417,7 @@ pub fn set_dpms(dir: &Path, on: bool) -> bool {
             return true;
         }
     }
-    tracing::warn!("hyprshell: no `hl.dsp.dpms` call shape turned the outputs {state}");
+    tracing::warn!("hogar-shell: no `hl.dsp.dpms` call shape turned the outputs {state}");
     false
 }
 
@@ -556,7 +556,7 @@ fn on_events(interest: &Interest, handler: EventHandler) {
     });
     if !*running {
         *running = std::thread::Builder::new()
-            .name("hyprshell-hypr-events".to_string())
+            .name("hogar-shell-hypr-events".to_string())
             .spawn(run_event_stream)
             .is_ok();
     }
@@ -768,7 +768,7 @@ fn merge_with(protocol: &[platform_wayland::Workspace], facts: Facts) -> Snapsho
     }
 }
 
-static WORKSPACES: Service<Snapshot> = Service::new("hyprshell-workspaces", run_workspaces);
+static WORKSPACES: Service<Snapshot> = Service::new("hogar-shell-workspaces", run_workspaces);
 
 /// The single shared workspaces source: publishes the current layout, then republishes on every event that
 /// could have changed it. Fanned out to every bar that subscribed, so N bars cost one parse per change (the M3
@@ -931,7 +931,7 @@ fn active_from(focused: platform_wayland::ManagedToplevel, address: String) -> A
 }
 
 static ACTIVE_WINDOW: Service<ActiveWindow> =
-    Service::new("hyprshell-active-window", run_active_window);
+    Service::new("hogar-shell-active-window", run_active_window);
 
 /// The focused window, published on every change and never twice for the same reading: a title changes on
 /// nearly every keystroke in a terminal or a browser, and most of those land on a window nobody is showing.
@@ -1110,7 +1110,7 @@ fn affects_clients(line: &str) -> bool {
     PREFIXES.iter().any(|prefix| line.starts_with(prefix))
 }
 
-static CLIENTS: Service<Vec<Client>> = Service::new("hyprshell-clients", run_clients);
+static CLIENTS: Service<Vec<Client>> = Service::new("hogar-shell-clients", run_clients);
 
 /// The window list, republished whenever the compositor reports something that could have changed it. Costs one
 /// `j/clients` round-trip per such event — the same one the workspace pills already pay — and nothing at rest.
@@ -1154,7 +1154,7 @@ fn affects_screens(line: &str) -> bool {
     PREFIXES.iter().any(|prefix| line.starts_with(prefix))
 }
 
-static SCREENS: Service<Vec<Screen>> = Service::new("hyprshell-screens", run_screens);
+static SCREENS: Service<Vec<Screen>> = Service::new("hogar-shell-screens", run_screens);
 
 /// The output list. Separate from the compositor-agnostic `platform_wayland::outputs()` the surface layer
 /// reconciles against, which knows a Wayland output's name and nothing else: mode, scale, make and model only
@@ -1200,7 +1200,7 @@ pub fn keyboard_layout(dir: &Path) -> Option<KeyboardLayout> {
     })
 }
 
-static KEYBOARD: Service<KeyboardLayout> = Service::new("hyprshell-keyboard", run_keyboard);
+static KEYBOARD: Service<KeyboardLayout> = Service::new("hogar-shell-keyboard", run_keyboard);
 
 fn run_keyboard(service: &Arc<Broadcast<KeyboardLayout>>) {
     let Some(dir) = socket_dir() else { return };
@@ -1245,8 +1245,8 @@ pub fn cycle_keyboard_layout(dir: &Path, device: &str) {
     let command = switch_layout_command(device, "next");
     match request(dir, &command) {
         Ok(reply) if reply.trim().eq_ignore_ascii_case("ok") => {}
-        Ok(reply) => tracing::warn!("hyprshell: `{command}` -> {reply:?}"),
-        Err(e) => tracing::warn!("hyprshell: `{command}` failed: {e}"),
+        Ok(reply) => tracing::warn!("hogar-shell: `{command}` -> {reply:?}"),
+        Err(e) => tracing::warn!("hogar-shell: `{command}` failed: {e}"),
     }
 }
 
@@ -1256,7 +1256,7 @@ pub fn cycle_keyboard_layout(dir: &Path, device: &str) {
 pub fn cycle_main_keyboard_layout() {
     let Some(dir) = socket_dir() else { return };
     let Some(layout) = keyboard_layout(&dir) else {
-        tracing::warn!("hyprshell: no keyboard to switch the layout of");
+        tracing::warn!("hogar-shell: no keyboard to switch the layout of");
         return;
     };
     cycle_keyboard_layout(&dir, &layout.device);
@@ -1480,7 +1480,11 @@ mod tests {
         );
     }
 
-    fn protocol_workspace(name: &str, coordinate: u32, active: bool) -> platform_wayland::Workspace {
+    fn protocol_workspace(
+        name: &str,
+        coordinate: u32,
+        active: bool,
+    ) -> platform_wayland::Workspace {
         platform_wayland::Workspace {
             name: name.to_string(),
             coordinates: vec![coordinate],
@@ -1550,7 +1554,10 @@ mod tests {
             "the compositor that can name the focused monitor owns that field"
         );
 
-        let special = snapshot.workspaces.last().expect("the scratchpad is listed");
+        let special = snapshot
+            .workspaces
+            .last()
+            .expect("the scratchpad is listed");
         assert_eq!(special.id, -99);
         assert!(
             special.is_special() && special.handle.is_none(),
@@ -1648,7 +1655,10 @@ mod tests {
     fn a_hidden_workspace_is_not_drawn() {
         let mut hidden = protocol_workspace("3", 3, false);
         hidden.hidden = true;
-        let snapshot = merge_with(&[protocol_workspace("1", 1, true), hidden], Facts::default());
+        let snapshot = merge_with(
+            &[protocol_workspace("1", 1, true), hidden],
+            Facts::default(),
+        );
         assert_eq!(snapshot.workspaces.len(), 1);
     }
 

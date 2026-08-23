@@ -1,4 +1,4 @@
-//! Lifts the doc comments off the config types so `hyprshell config schema` can annotate the defaults it
+//! Lifts the doc comments off the config types so `hogar-shell config schema` can annotate the defaults it
 //! prints.
 //!
 //! Generated rather than hand-maintained because a hand-written reference is a second copy of the truth, and the

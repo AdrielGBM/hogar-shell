@@ -316,7 +316,7 @@ where
             receiver: Arc::downgrade(&receiver),
         };
         let _ = std::thread::Builder::new()
-            .name("hyprshell-watch".to_string())
+            .name("hogar-shell-watch".to_string())
             .spawn(move || producer(sender));
         let registered = handle.insert_source(rx, move |event, _meta, _state: &mut Driver| {
             // Owned by this callback so it dies with the source: that is what `EventSender::alive` reads.
@@ -1394,7 +1394,7 @@ pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandl
     let handler = build_surface_handler::<LayerWindow, A>(
         app,
         std::sync::Arc::new(telar::NoPaths),
-        "hyprshell",
+        "hogar-shell",
     );
     DYN_QUEUE.with(|q| {
         q.borrow_mut().push(PendingSurface {
@@ -1438,11 +1438,11 @@ fn anchor_flags(anchor: SurfaceAnchor) -> Anchor {
 /// within; a directly-anchored one is sized and anchored by the compositor.
 fn layer_config_for(placement: &SurfacePlacement) -> LayerConfig {
     let namespace = match placement.role {
-        SurfaceRole::Drawer => "hyprshell-drawer",
-        SurfaceRole::Popup => "hyprshell-popup",
-        SurfaceRole::Osd => "hyprshell-osd",
-        SurfaceRole::Float => "hyprshell-float",
-        SurfaceRole::Overlay => "hyprshell-overlay",
+        SurfaceRole::Drawer => "hogar-shell-drawer",
+        SurfaceRole::Popup => "hogar-shell-popup",
+        SurfaceRole::Osd => "hogar-shell-osd",
+        SurfaceRole::Float => "hogar-shell-float",
+        SurfaceRole::Overlay => "hogar-shell-overlay",
     }
     .to_string();
     // `exclusive` is an input grab, not merely a keyboard one: while such a surface is up the compositor stops
@@ -1607,7 +1607,7 @@ impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
         let handler = build_surface_handler::<LayerWindow, _>(
             app,
             std::sync::Arc::new(telar::NoPaths),
-            "hyprshell",
+            "hogar-shell",
         );
         DYN_QUEUE.with(|q| {
             q.borrow_mut().push(PendingSurface {
@@ -2161,11 +2161,11 @@ mod tests {
 
     /// Whether this compositor can be asked for a fractional scale at all — the one half of this a unit test
     /// cannot answer, since the fallback is silent by design and looks like success from inside.
-    /// `HYPRSHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_fractional -- --nocapture`
+    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_fractional -- --nocapture`
     #[test]
     fn advertises_fractional_scaling() {
-        if std::env::var("HYPRSHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HYPRSHELL_WAYLAND_LIVE to ask the real compositor; skipping");
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to ask the real compositor; skipping");
             return;
         }
         let interfaces = ["wp_fractional_scale_manager_v1", "wp_viewporter"];

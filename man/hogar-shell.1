@@ -1,32 +1,32 @@
-.TH HYPRSHELL 1 "" "hyprshell 0.1.0" "hyprshell"
+.TH HOGAR-SHELL 1 "" "hogar-shell 0.1.0" "hogar-shell"
 .SH NAME
-hyprshell \- a Wayland desktop shell for Hyprland
+hogar-shell \- a Wayland desktop shell for Hyprland
 .SH SYNOPSIS
-.B hyprshell
+.B hogar-shell
 [run]
 .br
-.B hyprshell
+.B hogar-shell
 <target> <cmd> [args]
 .br
-.B hyprshell
+.B hogar-shell
 toggle <module>
 .br
-.B hyprshell
+.B hogar-shell
 launcher
 .br
-.B hyprshell
+.B hogar-shell
 \-\-list
 .br
-.B hyprshell
+.B hogar-shell
 config schema [name]
 .br
-.B hyprshell
+.B hogar-shell
 man commands|config
 .br
-.B hyprshell
+.B hogar-shell
 \-\-help | \-\-version
 .SH DESCRIPTION
-hyprshell is a Wayland desktop shell: bars, panels, a launcher, a dashboard, a lock screen,
+hogar-shell is a Wayland desktop shell: bars, panels, a launcher, a dashboard, a lock screen,
 notifications, screen capture and wallpaper\-derived theming, configured in TOML.
 .PP
 Started with no arguments it runs the shell. With arguments it is a client: the request is sent to the
@@ -55,7 +55,7 @@ are answered by the binary rather than sent to the shell: each is a function of 
 machine, and the case a dependency report is for is the one where nothing started.
 .SH COMMANDS
 A request is a target, a command and its arguments.
-.BR hyprshell (5)
+.BR hogar-shell (5)
 documents the configuration file.
 .SS shell
 .TP
@@ -484,27 +484,27 @@ probe again, for something installed since the shell started
 .SS man
 .TP
 \fBcommands\fR
-hyprshell(1) as roff, generated from this table
+hogar\-shell(1) as roff, generated from this table
 .TP
 \fBconfig\fR
-hyprshell(5) as roff, generated from the config schema
+hogar\-shell(5) as roff, generated from the config schema
 .SH FILES
 .TP
-.I ~/.config/hyprshell/config.toml
+.I ~/.config/hogar-shell/config.toml
 Everything, hot\-reloaded on save. Written annotated on first run.
 .TP
-.I ~/.config/hyprshell/tokens.toml
+.I ~/.config/hogar-shell/tokens.toml
 Design\-token overrides. Deliberately unstable \- the config's
 .B [theme]
 section is the supported surface.
 .TP
-.I ~/.config/hyprshell/monitors/<output>/config.toml
+.I ~/.config/hogar-shell/monitors/<output>/config.toml
 Per\-monitor overrides, same shape as the global file.
 .TP
-.I ~/.config/hyprshell/state.json
+.I ~/.config/hogar-shell/state.json
 Runtime state the shell owns, such as the current wallpaper. Not settings.
 .TP
-.I $XDG_RUNTIME_DIR/hyprshell/<instance>.sock
+.I $XDG_RUNTIME_DIR/hogar-shell/<instance>.sock
 The command socket, one per compositor instance.
 .SH ENVIRONMENT
 .TP
@@ -526,21 +526,21 @@ Log filter; defaults to
 Start the shell from the compositor:
 .PP
 .EX
-exec\-once = hyprshell
+exec\-once = hogar-shell
 .EE
 .PP
 Bind an action to a key:
 .PP
 .EX
-bind = SUPER, SPACE, exec, hyprshell launcher
-bind = SUPER, N, exec, hyprshell panel toggle notifications
-bind = , XF86AudioRaiseVolume, exec, hyprshell volume up
+bind = SUPER, SPACE, exec, hogar-shell launcher
+bind = SUPER, N, exec, hogar-shell panel toggle notifications
+bind = , XF86AudioRaiseVolume, exec, hogar-shell volume up
 .EE
 .PP
 Write a config with every key in it, then edit it down:
 .PP
 .EX
-hyprshell config schema > ~/.config/hyprshell/config.toml
+hogar-shell config schema > ~/.config/hogar-shell/config.toml
 .EE
 .SH SEE ALSO
-.BR hyprshell (5)
+.BR hogar-shell (5)

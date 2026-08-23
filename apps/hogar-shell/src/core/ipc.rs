@@ -4,7 +4,7 @@
 //! here. Commands run on the driver thread, the same thread every surface lives on, so a handler can open a
 //! panel or publish to a service exactly as a click handler would.
 //!
-//! The protocol is one request line in and one reply out, so `hyprshell panel toggle clock` is also
+//! The protocol is one request line in and one reply out, so `hogar-shell panel toggle clock` is also
 //! `printf 'panel toggle clock\n' | socat - UNIX-CONNECT:$sock`. Replies are prefixed `ok` or `err` so a script
 //! can branch without parsing prose. A reply is usually one line but need not be — a census, a palette or a list
 //! of monitors is a table — so its end is marked by the shell closing its side, not by a newline.
@@ -32,7 +32,7 @@ fn socket_name(instance: Option<String>) -> String {
     format!("{}.sock", instance.as_deref().unwrap_or("default"))
 }
 
-/// The IPC socket: `$XDG_RUNTIME_DIR/hyprshell/<instance>.sock`.
+/// The IPC socket: `$XDG_RUNTIME_DIR/hogar-shell/<instance>.sock`.
 pub fn socket_path() -> PathBuf {
     paths::runtime_dir().join(socket_name(
         std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok(),
@@ -48,14 +48,14 @@ pub(crate) fn request_quit() {
     tracing::info!("shutting down on request");
     // A detached exit lets the in-flight IPC reply reach the client before the process goes away.
     let _ = std::thread::Builder::new()
-        .name("hyprshell-quit".to_string())
+        .name("hogar-shell-quit".to_string())
         .spawn(|| {
             std::thread::sleep(std::time::Duration::from_millis(100));
             std::process::exit(0);
         });
 }
 
-/// A shortcut and a `hyprshell …` invocation must produce the same thing, and only one of the two can see this
+/// A shortcut and a `hogar-shell …` invocation must produce the same thing, and only one of the two can see this
 /// socket, so the type they share is defined below the pair of them.
 pub use services::command::Request;
 
@@ -191,7 +191,7 @@ mod tests {
     /// have seen it.
     #[test]
     fn a_reply_spanning_several_lines_survives_the_socket() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-ipc-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-ipc-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("multiline.sock");
         let _ = std::fs::remove_file(&path);
@@ -211,6 +211,10 @@ mod tests {
 
         server.join().unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(reply.trim_end(), body, "every line of the reply must arrive");
+        assert_eq!(
+            reply.trim_end(),
+            body,
+            "every line of the reply must arrive"
+        );
     }
 }

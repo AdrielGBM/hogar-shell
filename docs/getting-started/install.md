@@ -2,7 +2,7 @@
 id: install
 kind: guide
 title: Install
-summary: Build hyprshell and start it from your compositor.
+summary: Build hogar-shell and start it from your compositor.
 status: stable
 compositor: any
 deps: [wlr-layer-shell]
@@ -14,17 +14,17 @@ see_also: [first-run, configuration, dependencies]
 ## What you need to build
 
 A Rust toolchain, `fontconfig`, and a checkout of [`telar`](https://github.com/AdrielGBM/telar) **next to**
-this one. hyprshell depends on telar by path — the two are developed together, and a fix that is agnostic to
+this one. hogar-shell depends on telar by path — the two are developed together, and a fix that is agnostic to
 this shell belongs upstream.
 
 ```
 somewhere/
-├── hyprshell/
+├── hogar-shell/
 └── telar/
 ```
 
 ```sh
-cargo build --release     # target/release/hyprshell
+cargo build --release     # target/release/hogar-shell
 ```
 
 ## What you need to run
@@ -34,7 +34,7 @@ process from starting — everything else degrades, and
 [Dependencies](dependencies.md) explains what each absence costs.
 
 ```sh
-hyprshell deps check      # answers before you start the shell
+hogar-shell deps check      # answers before you start the shell
 ```
 
 `deps check` is answered by the binary rather than by a running shell, which is the point: the case a
@@ -44,18 +44,18 @@ dependency report exists for is the one where nothing came up.
 
 ```ini
 # ~/.config/hypr/hyprland.conf
-exec-once = hyprshell
+exec-once = hogar-shell
 ```
 
 The shell runs in the foreground and owns its own socket, one per compositor instance
-(`$XDG_RUNTIME_DIR/hyprshell/<instance>.sock`), so two compositors on one login session get one each.
+(`$XDG_RUNTIME_DIR/hogar-shell/<instance>.sock`), so two compositors on one login session get one each.
 
 Started with arguments the same binary is a *client*: it sends the request to the running shell and prints the
 reply. That is what makes every action bindable — see [Keybinds](../guides/keybinds.md).
 
 ```sh
-hyprshell ping            # is it up
-hyprshell version         # what build
+hogar-shell ping            # is it up
+hogar-shell version         # what build
 ```
 
 ## Non-Hyprland compositors

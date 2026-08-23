@@ -14,7 +14,7 @@ use util::broadcast::{Broadcast, Service};
 
 pub type Now = DateTime<Local>;
 
-static CLOCK: Service<Now> = Service::new("hyprshell-clock", run);
+static CLOCK: Service<Now> = Service::new("hogar-shell-clock", run);
 
 /// Registers `tx` for a value on every second boundary, starting the single shared ticker on first use. Called
 /// from a clock surface's `watch` producer.

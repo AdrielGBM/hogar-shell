@@ -10,9 +10,9 @@
 //! a shape and checks whether the compositor's own client list moved. Closing is the exception: it gets one
 //! attempt, because trying a second spelling of a close is how the wrong window gets closed twice.
 
-use ui::scale::space;
 use std::sync::Arc;
 use std::time::Duration;
+use ui::scale::space;
 
 use platform_wayland::EventSender;
 use telar::{
@@ -378,7 +378,7 @@ fn workspace_row(
 /// socket round trip — cheap, but not something to do inside a press handler on the frame.
 fn act(action: impl FnOnce(&std::path::Path) + Send + 'static) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-window-act".to_string())
+        .name("hogar-shell-window-act".to_string())
         .spawn(move || {
             let Some(dir) = hyprland::socket_dir() else {
                 return;

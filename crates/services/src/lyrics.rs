@@ -23,7 +23,7 @@ use util::paths;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// LRCLIB asks callers to identify themselves, which is the whole of its rate-limiting policy.
-const USER_AGENT: &str = concat!("hyprshell/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("hogar-shell/", env!("CARGO_PKG_VERSION"));
 
 /// One line, and when it is sung. `at` is microseconds from the start of the track, which is the unit MPRIS
 /// reports its position in — so the comparison the view makes every tick needs no conversion.
@@ -513,7 +513,7 @@ mod tests {
             "a path the player named but that is not there"
         );
 
-        let dir = std::env::temp_dir().join(format!("hyprshell-lyrics-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-lyrics-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let track = dir.join("My Track.flac");
         std::fs::write(&track, b"audio").unwrap();
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn a_hand_kept_library_is_searched_by_name_whatever_its_case() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-lyrlib-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-lyrlib-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("miles davis - so what.LRC"), "[00:01.00]x").unwrap();
 

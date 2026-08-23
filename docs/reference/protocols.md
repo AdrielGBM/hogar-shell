@@ -15,7 +15,7 @@ see_also: [dependencies, install]
 
 **[`crates/platform-wayland/README.md`](../../crates/platform-wayland/README.md)** is the survey: every
 protocol, what it unlocks, and whether the backend speaks it — grouped by that state and kept next to the code,
-so it cannot drift. This page is the short version for a reader deciding whether hyprshell will work for them.
+so it cannot drift. This page is the short version for a reader deciding whether hogar-shell will work for them.
 
 ## What is bound
 
@@ -58,7 +58,7 @@ matter, and the [feature index](../features/README.md) marks them.
 ## Asking your compositor
 
 ```sh
-hyprshell deps list      # the protocols with a dependency row, probed against your session
+hogar-shell deps list      # the protocols with a dependency row, probed against your session
 ```
 
 A protocol can only be asked of a compositor, so from a process with no session the answer is **unknown**

@@ -15,7 +15,7 @@
 }:
 
 rustPlatform.buildRustPackage {
-  pname = "hyprshell";
+  pname = "hogar-shell";
   version = (lib.importTOML ../Cargo.toml).workspace.package.version;
 
   inherit src;
@@ -34,9 +34,9 @@ rustPlatform.buildRustPackage {
   doCheck = false;
 
   postInstall = ''
-    installManPage ${src}/man/hyprshell.1 ${src}/man/hyprshell.5
+    installManPage ${src}/man/hogar-shell.1 ${src}/man/hogar-shell.5
 
-    wrapProgram $out/bin/hyprshell \
+    wrapProgram $out/bin/hogar-shell \
       --suffix PATH : ${
         lib.makeBinPath [
           pipewire
@@ -51,12 +51,12 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "Wayland desktop shell in Rust — bars, panels, launcher, lock screen and notifications";
-    homepage = "https://github.com/AdrielGBM/hyprshell";
+    homepage = "https://github.com/AdrielGBM/hogar-shell";
     license = with lib.licenses; [
       mit
       asl20
     ];
-    mainProgram = "hyprshell";
+    mainProgram = "hogar-shell";
     platforms = lib.platforms.linux;
   };
 }

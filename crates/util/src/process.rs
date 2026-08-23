@@ -37,7 +37,7 @@ pub fn command(program: &str) -> Command {
 /// to init.
 pub fn run_detached(line: String) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-launch".to_string())
+        .name("hogar-shell-launch".to_string())
         .spawn(move || {
             let mut child = command("sh");
             child
@@ -124,14 +124,14 @@ mod tests {
     fn a_program_that_is_not_there_answers_none_rather_than_waiting() {
         assert_eq!(
             output(
-                "hyprshell-no-such-program-9e3f",
+                "hogar-shell-no-such-program-9e3f",
                 &[],
                 Duration::from_secs(1)
             ),
             None
         );
         assert!(!available(
-            "hyprshell-no-such-program-9e3f",
+            "hogar-shell-no-such-program-9e3f",
             &["--version"],
             Duration::from_secs(1)
         ));

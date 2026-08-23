@@ -88,7 +88,7 @@ pub fn read() -> Option<Battery> {
     Some(Battery { level, charging })
 }
 
-static BATTERY: Service<Battery> = Service::new("hyprshell-battery", run_battery);
+static BATTERY: Service<Battery> = Service::new("hogar-shell-battery", run_battery);
 
 fn run_battery(service: &Arc<Broadcast<Battery>>) {
     // Push the current value immediately so bars don't wait for the first change.
@@ -289,7 +289,7 @@ pub fn on_reading(reading: Battery) {
             crate::notifications::Urgency::Normal
         };
         crate::notifications::notify_shell(
-            "hyprshell",
+            "hogar-shell",
             &warning.title(reading.level),
             &warning.message(reading.level),
             &warning.icon,
@@ -411,10 +411,10 @@ mod tests {
         assert_eq!(custom.message(17), "Plug in");
     }
 
-    // Live UPower DBus check, gated behind an env var so it never runs in headless CI: run with `HYPRSHELL_TEST_UPOWER=1 cargo test -p hyprshell --lib upower -- --nocapture`.
+    // Live UPower DBus check, gated behind an env var so it never runs in headless CI: run with `HOGAR_SHELL_TEST_UPOWER=1 cargo test -p hogar-shell --lib upower -- --nocapture`.
     #[test]
     fn upower_connection_reads_percentage() {
-        if std::env::var("HYPRSHELL_TEST_UPOWER").is_err() {
+        if std::env::var("HOGAR_SHELL_TEST_UPOWER").is_err() {
             return;
         }
         let conn = zbus::blocking::Connection::system().expect("system bus");

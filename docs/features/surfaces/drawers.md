@@ -24,7 +24,7 @@ bar no longer opens its panel at an end of it. Along a horizontal bar the drawer
 vertical one it lines up with the chip's top. Either way it is kept clear of the far end of the screen, so a
 drawer never opens off the side.
 
-Opened with no chip in hand — `hyprshell panel toggle`, a keybind — there is nothing to follow, and the drawer
+Opened with no chip in hand — `hogar-shell panel toggle`, a keybind — there is nothing to follow, and the drawer
 falls back to the zone the module is configured in (`start`, `end`, or centred for a module the config cannot
 place).
 

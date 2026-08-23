@@ -15,10 +15,10 @@ see_also: [dependencies, configuration]
 ## Start here
 
 ```sh
-hyprshell deps missing     # what is absent, and what each absence costs
-hyprshell shell ping       # is the shell even up
-hyprshell config path      # which config is being read
-RUST_LOG=debug hyprshell   # the warnings, including dropped ids
+hogar-shell deps missing     # what is absent, and what each absence costs
+hogar-shell shell ping       # is the shell even up
+hogar-shell config path      # which config is being read
+RUST_LOG=debug hogar-shell   # the warnings, including dropped ids
 ```
 
 `deps missing` answers most of this page in one line each, and it is answered by the binary — so it works when
@@ -36,7 +36,7 @@ Three causes, in order of likelihood:
 
 ## A chip is there but empty, or reads unknown
 
-Its source is missing, and the module's rule is "degrade" rather than "hide". `hyprshell deps missing` names
+Its source is missing, and the module's rule is "degrade" rather than "hide". `hogar-shell deps missing` names
 which. The common ones:
 
 | Empty | Install |
@@ -52,7 +52,7 @@ A reading that cannot be taken reports **unknown**, never zero — so an unknown
 ## The shell will not start
 
 ```sh
-hyprshell deps check
+hogar-shell deps check
 ```
 
 Exactly one thing can cause it: no `wlr-layer-shell`. Everything else degrades.
@@ -61,26 +61,26 @@ Exactly one thing can cause it: no `wlr-layer-shell`. Everything else degrades.
 
 The reply begins with `err` and says why. Two common ones:
 
-- **`unknown target` / `unknown command`** — `hyprshell --list` is the authoritative menu.
+- **`unknown target` / `unknown command`** — `hogar-shell --list` is the authoritative menu.
 - **`the session cannot be locked`** — either `ext-session-lock` is missing or libpam could not be loaded. That
-  is checked *before* the screen is covered, on purpose. `hyprshell lock status` gives the same answer without
+  is checked *before* the screen is covered, on purpose. `hogar-shell lock status` gives the same answer without
   locking.
 
 ## A keybind does nothing
 
-Check the command by hand first — `hyprshell launcher toggle` in a terminal. If that works, the bind is the
+Check the command by hand first — `hogar-shell launcher toggle` in a terminal. If that works, the bind is the
 problem, not the shell. If you bound it through the portal, remember the name is `:launcher`, not
-`hyprshell:launcher`, on a non-sandboxed install.
+`hogar-shell:launcher`, on a non-sandboxed install.
 
 ## The config changed and nothing happened
 
 Saving `config.toml` reloads it. If it did not:
 
-- **Check the file being read** — `hyprshell config path`. A per-monitor file at
+- **Check the file being read** — `hogar-shell config path`. A per-monitor file at
   `monitors/<output>/config.toml` overrides the global one for that screen.
-- **Check the key exists** — `hyprshell config schema <section>` prints every real key. An unknown key is
+- **Check the key exists** — `hogar-shell config schema <section>` prints every real key. An unknown key is
   ignored silently.
-- **Force it** — `hyprshell shell reload`.
+- **Force it** — `hogar-shell shell reload`.
 
 There is no validation report yet, so a wrong key is a log line rather than an error on screen.
 
@@ -90,13 +90,13 @@ Levels are read once at detection and tracked optimistically, because a `getvcp`
 milliseconds per monitor. A change made with the monitor's own buttons is not noticed.
 
 ```sh
-hyprshell brightness refresh
+hogar-shell brightness refresh
 ```
 
 ## The tray is empty
 
-hyprshell is the tray host. An empty tray usually means no application has published an item yet — or that
-another shell already owns `org.kde.StatusNotifierWatcher`, in which case hyprshell reads that watcher's list
+hogar-shell is the tray host. An empty tray usually means no application has published an item yet — or that
+another shell already owns `org.kde.StatusNotifierWatcher`, in which case hogar-shell reads that watcher's list
 instead and the two are consistent.
 
 ## Bluetooth will not pair
@@ -107,7 +107,7 @@ complete pairing here. Pair it once with `bluetoothctl`; everything afterwards w
 ## Something is slow, or the shell is warm at idle
 
 ```sh
-TELAR_PERF=1 hyprshell     # per-phase frame timing
+TELAR_PERF=1 hogar-shell     # per-phase frame timing
 ```
 
 An idle shell should sit at 0 % CPU. The one service that publishes at a frame rate is the visualiser, and it

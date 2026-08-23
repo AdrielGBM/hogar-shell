@@ -6,7 +6,7 @@
 //! forty-item `Vec`.
 //!
 //! **Search is answered from the schema, not from the widgets.** Every field a form draws is a key on a config
-//! struct, and `build.rs` already lifts the doc comment off each one for `hyprshell config schema`. Matching a
+//! struct, and `build.rs` already lifts the doc comment off each one for `hogar-shell config schema`. Matching a
 //! query against *that* means the search finds `beat_sensitivity` — a key whose label says "Beat sensitivity"
 //! and whose explanation says "how far above its recent average the bass has to jump" — without every field
 //! having to register itself twice, and without the index going stale when a form gains a row.
@@ -235,11 +235,7 @@ pub const PAGES: &[Page] = &[
             ),
             section!("wallpaper", ["wallpaper"], crate::wallpaper),
             section!("desktop_clock", ["widgets"], crate::desktop_clock),
-            section!(
-                "desktop_visualiser",
-                ["widgets"],
-                crate::desktop_visualiser
-            ),
+            section!("desktop_visualiser", ["widgets"], crate::desktop_visualiser),
         ],
     },
     Page {

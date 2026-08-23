@@ -1,19 +1,19 @@
-.TH HYPRSHELL 5 "" "hyprshell 0.1.0" "hyprshell"
+.TH HOGAR-SHELL 5 "" "hogar-shell 0.1.0" "hogar-shell"
 .SH NAME
-hyprshell \- configuration file format
+hogar-shell \- configuration file format
 .SH SYNOPSIS
-.I ~/.config/hyprshell/config.toml
+.I ~/.config/hogar-shell/config.toml
 .SH DESCRIPTION
-hyprshell is configured in TOML. Every key below is optional; the default shown is what the shell uses
+hogar-shell is configured in TOML. Every key below is optional; the default shown is what the shell uses
 when the key is absent, so a working config is any subset of this page.
 .PP
 The file is watched and re\-read on save, and the change applies without a restart. A file under
-.I ~/.config/hyprshell/monitors/<output>/
+.I ~/.config/hogar-shell/monitors/<output>/
 has the same shape and overrides the global one for that monitor.
 .PP
-.B hyprshell config schema
+.B hogar-shell config schema
 prints this same reference as a complete, valid config file, and
-.B hyprshell config schema <section>
+.B hogar-shell config schema <section>
 prints one section of it. Both come from the running build rather than from this page.
 .SH SECTIONS
 .SS [active_window]
@@ -71,7 +71,7 @@ How long a panel takes to enter or leave, before `duration_scale`.
 Default: \fB180\fR
 .SS [audio]
 Audio control (`[audio]`). `increment` is what one wheel notch over the volume or microphone chip moves and
-what `hyprshell volume up` steps by. `max_volume` is the ceiling the sink can be raised to: PipeWire lets a
+what `hogar\-shell volume up` steps by. `max_volume` is the ceiling the sink can be raised to: PipeWire lets a
 sink boost past 100 %, which rescues a quiet laptop and wrecks a good speaker, so it belongs to the user
 rather than to a constant in the code.
 .TP
@@ -81,7 +81,7 @@ Default: \fB5\fR
 .B max_volume
 Default: \fB150\fR
 .SS [background]
-Full\-screen wallpaper behind everything, one surface per monitor. Off by default so the compositor's own background shows through; setting an `image` \(em or `enabled = true` for a plain themed background \(em turns it on. `[background.monitors]` maps output names to per\-monitor images, each falling back to the global `image`, and `hyprshell wallpaper set` overrides both at runtime. Paths may use `~`.
+Full\-screen wallpaper behind everything, one surface per monitor. Off by default so the compositor's own background shows through; setting an `image` \(em or `enabled = true` for a plain themed background \(em turns it on. `[background.monitors]` maps output names to per\-monitor images, each falling back to the global `image`, and `hogar\-shell wallpaper set` overrides both at runtime. Paths may use `~`.
 .TP
 .B enabled
 Default: \fBfalse\fR
@@ -359,7 +359,7 @@ Default: \fBtrue\fR
 .B show_unnamed
 Default: \fBfalse\fR
 .SS [brightness]
-Backlight control (`[brightness]`): the step a wheel notch or `hyprshell brightness up` moves. Its own
+Backlight control (`[brightness]`): the step a wheel notch or `hogar\-shell brightness up` moves. Its own
 section rather than a key under `[audio]` so the per\-output and DDC/CI settings that follow have a home.
 .TP
 .B external
@@ -531,8 +531,8 @@ Default: \fBtrue\fR
 One idle timeout, declared as an `[[idle.stages]]` table: what to run once the seat has been idle that long,
 and what to run when it stops being.
 .sp
-Both actions are request lines the shell already answers \(em the same strings `hyprshell` takes on the command
-line \(em so a stage needs no new vocabulary and anything bindable to a key is bindable to a timeout. `hyprshell
+Both actions are request lines the shell already answers \(em the same strings `hogar\-shell` takes on the command
+line \(em so a stage needs no new vocabulary and anything bindable to a key is bindable to a timeout. `hogar\-shell
 \-\-list` is the full menu; `lock on`, `shell dpms off` and `session do suspend` are the usual three.
 .PP
 The entries a fresh install starts with:
@@ -651,13 +651,13 @@ Default: \fB5\fR
 .B pam_library
 Where `libpam` is. Empty tries `libpam.so.0`, `libpam.so` and NixOS's
 `/run/current\-system/sw/lib/libpam.so.0`, which between them cover every machine met so far; set it only
-if `hyprshell lock status` says the library could not be loaded.
+if `hogar\-shell lock status` says the library could not be loaded.
 .sp
 Default: \fB""\fR
 .TP
 .B pam_service
 The PAM service to authenticate against \(em a file under `/etc/pam.d`. Empty picks the first of
-`hyprshell`, `swaylock`, `login` that exists, so a machine with no hyprshell\-specific stack still
+`hogar\-shell`, `swaylock`, `login` that exists, so a machine with no hogar\-shell\-specific stack still
 unlocks instead of refusing every password.
 .sp
 Default: \fB""\fR
@@ -1132,7 +1132,7 @@ alike. One key for the whole shell and no way to break it apart: a drawer at an 
 hangs off does not share is not a look anybody chooses, it is two settings that drifted.
 .sp
 **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job \(em a
-`layer_rule = blur, ^hyprshell`, which needs no code here \(em and it shows nothing through a surface
+`layer_rule = blur, ^hogar\-shell`, which needs no code here \(em and it shows nothing through a surface
 painted opaque. Lowering this is what gives it something to blur.
 .sp
 Default: \fB1.0\fR
@@ -1625,4 +1625,4 @@ Draw an app icon per window inside each pill, capped at `max_window_icons`.
 Default: \fBfalse\fR
 .SS [workspaces.special_icons]
 .SH SEE ALSO
-.BR hyprshell (1)
+.BR hogar-shell (1)

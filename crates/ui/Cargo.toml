@@ -1,6 +1,6 @@
 [package]
-name = "hyprshell-ui"
-description = "Shared UI vocabulary for hyprshell: cards, chips, icons, anchoring, placement and keyboard navigation."
+name = "hogar-shell-ui"
+description = "Shared UI vocabulary for hogar-shell: cards, chips, icons, anchoring, placement and keyboard navigation."
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

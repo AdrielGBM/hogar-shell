@@ -15,19 +15,19 @@ see_also: [scripting, keybinds, global-shortcuts]
 
 ## What it is
 
-Started with no arguments, `hyprshell` runs the shell. With arguments it is a **client**: the request goes to
+Started with no arguments, `hogar-shell` runs the shell. With arguments it is a **client**: the request goes to
 the running shell over a Unix socket and the reply is printed.
 
 That is why a keybind is just a shell command, and why anything the UI does is scriptable.
 
 ```sh
-hyprshell ping
-hyprshell --list        # every target, command and argument
+hogar-shell ping
+hogar-shell --list        # every target, command and argument
 ```
 
 ## The socket
 
-`$XDG_RUNTIME_DIR/hyprshell/<instance>.sock`, one per compositor instance. `HYPRLAND_INSTANCE_SIGNATURE` names
+`$XDG_RUNTIME_DIR/hogar-shell/<instance>.sock`, one per compositor instance. `HYPRLAND_INSTANCE_SIGNATURE` names
 it, so two compositors on one login session get one socket each; outside Hyprland the name is still stable and
 the client still finds the shell.
 
@@ -37,8 +37,8 @@ Every reply starts with `ok` or `err`, and the payload follows on the same line.
 outcome **without parsing prose**, and the exit status mirrors the reply.
 
 ```sh
-hyprshell lock status        # ok ...
-hyprshell wifi connect x     # err ...
+hogar-shell lock status        # ok ...
+hogar-shell wifi connect x     # err ...
 ```
 
 Most replies are a single line, but a few are tables — `shell status`, `shell caches`, `shell screens`,
@@ -59,7 +59,7 @@ ask.
 
 ## One table
 
-The same table backs `--list`, `hyprshell(1)` and what actually dispatches, so they cannot drift from one
+The same table backs `--list`, `hogar-shell(1)` and what actually dispatches, so they cannot drift from one
 another. Looking a command up and running it are separate steps, which is what lets the shell check whether a
 request line is valid — for a global shortcut, or for an `[idle]` stage — **without performing it**.
 

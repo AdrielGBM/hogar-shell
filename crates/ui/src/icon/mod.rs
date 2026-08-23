@@ -531,7 +531,7 @@ mod tests {
     fn icon_state_is_loading_without_a_surface_a_network_or_a_cached_copy() {
         assert!(
             matches!(
-                icon_state("hyprshell-test:nothing-was-ever-cached-here"),
+                icon_state("hogar-shell-test:nothing-was-ever-cached-here"),
                 AssetState::Loading
             ),
             "with no event loop and nothing on disk the icon has nothing to resolve from, so it stays on its spinner"
@@ -542,7 +542,7 @@ mod tests {
     /// is what makes a `[preview]` — where `watch` starts none — draw real icons instead of a page of spinners.
     #[test]
     fn a_cached_glyph_resolves_with_no_worker_to_ask() {
-        let root = std::env::temp_dir().join(format!("hyprshell-icon-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("hogar-shell-icon-{}", std::process::id()));
         let id = IconId::parse("mdi:home", "lucide");
         let path = id.cache_path(&root);
         fs::create_dir_all(path.parent().expect("the cache path has a set directory")).unwrap();

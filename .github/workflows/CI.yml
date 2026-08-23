@@ -38,7 +38,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
-      # There is no compositor on this runner: everything that needs one is behind HYPRSHELL_WAYLAND_LIVE or TELAR_LIVE_*.
+      # There is no compositor on this runner: everything that needs one is behind HOGAR_SHELL_WAYLAND_LIVE or TELAR_LIVE_*.
       - run: cargo test --workspace
 
   msrv:

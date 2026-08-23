@@ -2,20 +2,20 @@ use std::process::ExitCode;
 
 const EXAMPLES: &str = "
 Examples:
-  hyprshell panel toggle clock
-  hyprshell volume step -5
-  hyprshell notifs dnd toggle
+  hogar-shell panel toggle clock
+  hogar-shell volume step -5
+  hogar-shell notifs dnd toggle
 
 Bind them in hyprland.conf:
-  bind = SUPER, N, exec, hyprshell panel toggle notifications
+  bind = SUPER, N, exec, hogar-shell panel toggle notifications
 ";
 
 /// The usage block, from the same invocation forms the manual's synopsis is built from — a new way to call the
 /// binary appears in both or in neither.
 fn usage() -> String {
-    let mut out = String::from("hyprshell — a Wayland shell for Hyprland\n\nUsage:\n");
-    for (form, help) in hyprshell::USAGE_FORMS {
-        out.push_str(format!("  hyprshell {form:22}{help}").trim_end());
+    let mut out = String::from("hogar-shell — a Wayland shell for Hyprland\n\nUsage:\n");
+    for (form, help) in hogar_shell::USAGE_FORMS {
+        out.push_str(format!("  hogar-shell {form:22}{help}").trim_end());
         out.push('\n');
     }
     out.push_str(EXAMPLES);
@@ -40,7 +40,7 @@ fn main() -> ExitCode {
             cap_malloc_arenas();
             // Held for the whole run: dropping the guard stops the writer thread and flushes what it has.
             let _logging = init_tracing();
-            hyprshell::run();
+            hogar_shell::run();
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") => {
@@ -48,22 +48,22 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--version" | "-V") => {
-            println!("hyprshell {}", env!("CARGO_PKG_VERSION"));
+            println!("hogar-shell {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Some("--list" | "-s") => {
-            print!("{}", hyprshell::ipc_describe());
+            print!("{}", hogar_shell::ipc_describe());
             ExitCode::SUCCESS
         }
         // Answered here rather than over the socket: the schema is a function of the binary, not of a running shell, and generating the docs on a build machine must not need one started first.
         Some("config") if args.get(1).map(String::as_str) == Some("schema") => {
-            match hyprshell::config_schema(args.get(2).map(String::as_str)) {
+            match hogar_shell::config_schema(args.get(2).map(String::as_str)) {
                 Ok(text) => {
                     print!("{text}");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("hyprshell: {e}");
+                    eprintln!("hogar-shell: {e}");
                     ExitCode::FAILURE
                 }
             }
@@ -71,13 +71,13 @@ fn main() -> ExitCode {
         // Same reason as the schema, and one more for `deps`: what a dependency panel is *for* is the machine
         // where something is missing, and "the shell will not start" is exactly the case where there is no
         // shell to ask. Probing is a function of the machine, not of a running process.
-        Some("deps" | "man") => match hyprshell::dispatch_locally(&args.join(" ")) {
+        Some("deps" | "man") => match hogar_shell::dispatch_locally(&args.join(" ")) {
             Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("hyprshell: {e}");
+                eprintln!("hogar-shell: {e}");
                 ExitCode::FAILURE
             }
         },
@@ -88,7 +88,7 @@ fn main() -> ExitCode {
 /// Forwards a command to the running shell and mirrors its verdict into the exit code, so a keybind or script
 /// can tell a refused command from one that worked without parsing the reply.
 fn send(args: &[String]) -> ExitCode {
-    // `hyprshell toggle x` is the one shorthand worth having: opening a panel is what a keybind almost always
+    // `hogar-shell toggle x` is the one shorthand worth having: opening a panel is what a keybind almost always
     // wants, and `panel toggle x` in every hyprland.conf line is noise.
     let request = match args.first().map(String::as_str) {
         Some("toggle") => format!("panel {}", args.join(" ")),
@@ -96,7 +96,7 @@ fn send(args: &[String]) -> ExitCode {
         Some("launcher") if args.len() == 1 => "launcher toggle".to_string(),
         _ => args.join(" "),
     };
-    match hyprshell::ipc_call(&request) {
+    match hogar_shell::ipc_call(&request) {
         Ok(reply) => match reply.strip_prefix("ok") {
             Some(payload) => {
                 let payload = payload.trim();
@@ -107,14 +107,14 @@ fn send(args: &[String]) -> ExitCode {
             }
             None => {
                 eprintln!(
-                    "hyprshell: {}",
+                    "hogar-shell: {}",
                     reply.strip_prefix("err ").unwrap_or(&reply)
                 );
                 ExitCode::FAILURE
             }
         },
         Err(e) => {
-            eprintln!("hyprshell: no running shell to talk to ({e})");
+            eprintln!("hogar-shell: no running shell to talk to ({e})");
             ExitCode::FAILURE
         }
     }

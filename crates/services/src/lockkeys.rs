@@ -91,7 +91,7 @@ pub fn read() -> LockKeys {
     read_from(Path::new(LEDS_DIR))
 }
 
-static LOCK_KEYS: Service<LockKeys> = Service::new("hyprshell-lock-keys", run);
+static LOCK_KEYS: Service<LockKeys> = Service::new("hogar-shell-lock-keys", run);
 
 fn run(out: &Arc<Broadcast<LockKeys>>) {
     let leds = Path::new(LEDS_DIR);
@@ -126,7 +126,8 @@ mod tests {
     use super::*;
 
     fn fixture(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("hyprshell-leds-{}-{tag}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("hogar-shell-leds-{}-{tag}", std::process::id()));
         fs::create_dir_all(dir.join("input3::capslock")).unwrap();
         fs::create_dir_all(dir.join("input3::numlock")).unwrap();
         fs::create_dir_all(dir.join("input3::scrolllock")).unwrap();
@@ -181,7 +182,8 @@ mod tests {
         assert!(!has_leds(missing));
         assert_eq!(read_from(missing), LockKeys::default());
 
-        let dir = std::env::temp_dir().join(format!("hyprshell-leds-{}-bare", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("hogar-shell-leds-{}-bare", std::process::id()));
         fs::create_dir_all(dir.join("phy0-led")).unwrap();
         assert!(!has_leds(&dir), "a wifi LED is not a keyboard lock LED");
         fs::remove_dir_all(&dir).ok();

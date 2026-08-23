@@ -1,6 +1,6 @@
 telar::rsx_modules!(::config::theme::NordTheme);
 
-// What the `hyprshell` binary reaches for; everything else now belongs to the crate that owns it.
+// What the `hogar-shell` binary reaches for; everything else now belongs to the crate that owns it.
 pub use crate::core::commands::describe as ipc_describe;
 pub use crate::core::commands::dispatch_locally;
 pub use crate::core::ipc::call as ipc_call;
@@ -91,7 +91,7 @@ pub fn run() {
     // clean message rather than a half-started shell.
     if crate::core::ipc::another_instance_is_running() {
         eprintln!(
-            "hyprshell: already running (IPC socket {} is live). Use `hyprshell shell quit` to stop it.",
+            "hogar-shell: already running (IPC socket {} is live). Use `hogar-shell shell quit` to stop it.",
             crate::core::ipc::socket_path().display()
         );
         std::process::exit(1);
@@ -116,10 +116,10 @@ pub fn run() {
         LayerShellPlatform::new(),
         Vec::new(),
         |_| std::sync::Arc::new(util::paths::ShellPaths) as std::sync::Arc<dyn AppPathsProvider>,
-        |_id| -> Box<dyn App> { unreachable!("hyprshell opens every surface dynamically") },
-        "hyprshell",
+        |_id| -> Box<dyn App> { unreachable!("hogar-shell opens every surface dynamically") },
+        "hogar-shell",
     ) {
-        eprintln!("hyprshell exited with error: {e}");
+        eprintln!("hogar-shell exited with error: {e}");
         std::process::exit(1);
     }
 }
@@ -132,7 +132,7 @@ fn setup_shell(config_path: PathBuf) {
     let config = Arc::new(Config::load_or_default(&config_path));
     apply_config(&config);
     if platform_wayland::outputs().is_empty() {
-        eprintln!("hyprshell: no Wayland outputs found (is a compositor running?)");
+        eprintln!("hogar-shell: no Wayland outputs found (is a compositor running?)");
         std::process::exit(1);
     }
 
@@ -148,7 +148,7 @@ fn setup_shell(config_path: PathBuf) {
     let live = Rc::new(RefCell::new(Arc::clone(&config)));
 
     // One reconciliation, shared by every trigger: re-read the config and bring the surfaces in line with it.
-    // Driven by a config edit, by a monitor being plugged in or unplugged, and by `hyprshell shell reload` —
+    // Driven by a config edit, by a monitor being plugged in or unplugged, and by `hogar-shell shell reload` —
     // and it is the *same* pass at startup, so there is one description of what should be on screen rather
     // than an opening path and a reloading path that can disagree.
     let reconcile = {
@@ -195,7 +195,7 @@ fn setup_shell(config_path: PathBuf) {
         Content::Rebuild,
     );
 
-    // The config having changed, whoever noticed: the file watcher, `hyprshell shell reload`, a keybind. The
+    // The config having changed, whoever noticed: the file watcher, `hogar-shell shell reload`, a keybind. The
     // toast belongs here rather than in the reconcile, which also runs at startup — a toast saying the config
     // was reloaded is only true of a reload.
     let on_config_change: Rc<dyn Fn()> = {
@@ -257,7 +257,7 @@ fn eager_subscriptions(config_path: PathBuf, on_config_change: Rc<dyn Fn()>) -> 
         },
         Eager {
             name: "shortcuts",
-            reason: "the same request path fed by the desktop portal, so a bound key runs what `hyprshell …` \
+            reason: "the same request path fed by the desktop portal, so a bound key runs what `hogar-shell …` \
                      would without a process launch per keypress; silently absent with no portal",
             subscribe: Box::new(|| {
                 platform_wayland::watch(services::shortcuts::serve, crate::core::ipc::handle);
@@ -388,7 +388,11 @@ fn notification_policy(config: &Config) -> services::notifications::Policy {
 fn report_config_error(error: &config::LoadError) {
     let message = error.to_string();
     tracing::warn!("{message}; keeping the last working config");
-    services::notifications::notify_local("hyprshell", &telar::t!("config.error_title"), &message);
+    services::notifications::notify_local(
+        "hogar-shell",
+        &telar::t!("config.error_title"),
+        &message,
+    );
 }
 
 /// The config-watch producer for `watch`: polls the config's mtimes (dependency-free, naturally debounced) and

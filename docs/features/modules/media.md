@@ -30,10 +30,10 @@ are both alive.
 | Hover | a popout card with the track, the artist and the player |
 
 ```sh
-hyprshell media play-pause
-hyprshell media get title
-hyprshell media seek -10
-hyprshell media loop cycle
+hogar-shell media play-pause
+hogar-shell media get title
+hogar-shell media seek -10
+hogar-shell media loop cycle
 ```
 
 ## Configuring

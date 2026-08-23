@@ -309,7 +309,7 @@ fn alias_for(player: &Player) -> String {
 /// Poll interval for the fallback path, used only when the session bus can't be watched at all.
 const RESCAN: Duration = Duration::from_secs(3);
 
-static MPRIS: Service<Player> = Service::new("hyprshell-mpris", run);
+static MPRIS: Service<Player> = Service::new("hogar-shell-mpris", run);
 
 fn run(out: &Arc<Broadcast<Player>>) {
     let Some(conn) = crate::bus::session(None) else {
@@ -412,7 +412,7 @@ pub fn current() -> Option<Player> {
 fn control(method: &'static str) {
     let Some(player) = current() else { return };
     let _ = std::thread::Builder::new()
-        .name("hyprshell-mpris-call".to_string())
+        .name("hogar-shell-mpris-call".to_string())
         .spawn(move || {
             let Some(conn) = crate::bus::session(None) else {
                 return;
@@ -451,7 +451,7 @@ where
 {
     let Some(player) = current() else { return };
     let _ = std::thread::Builder::new()
-        .name("hyprshell-mpris-call".to_string())
+        .name("hogar-shell-mpris-call".to_string())
         .spawn(move || {
             let Some(conn) = crate::bus::session(None) else {
                 return;
@@ -472,7 +472,7 @@ where
 fn set_property(name: &'static str, value: Value<'static>) {
     let Some(player) = current() else { return };
     let _ = std::thread::Builder::new()
-        .name("hyprshell-mpris-set".to_string())
+        .name("hogar-shell-mpris-set".to_string())
         .spawn(move || {
             let Some(conn) = crate::bus::session(None) else {
                 return;

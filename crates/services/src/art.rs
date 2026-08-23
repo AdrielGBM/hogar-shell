@@ -35,7 +35,7 @@ pub enum ArtState {
     Missing,
 }
 
-/// `$XDG_CACHE_HOME/hyprshell/art`.
+/// `$XDG_CACHE_HOME/hogar-shell/art`.
 pub fn cache_dir() -> PathBuf {
     paths::cache_dir().join("art")
 }

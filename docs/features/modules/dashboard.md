@@ -34,9 +34,9 @@ chip.
 | Click | opens the dashboard where you left it |
 
 ```sh
-hyprshell dashboard toggle
-hyprshell dashboard open weather     # straight to a page
-hyprshell dashboard tab              # which page is showing
+hogar-shell dashboard toggle
+hogar-shell dashboard open weather     # straight to a page
+hogar-shell dashboard tab              # which page is showing
 ```
 
 Which page is showing survives closing the dashboard, and `dashboard tab weather` reaches the same state a

@@ -210,7 +210,7 @@ static WATCHER: OnceLock<()> = OnceLock::new();
 fn ensure_watching() {
     WATCHER.get_or_init(|| {
         let _ = std::thread::Builder::new()
-            .name("hyprshell-apps-watch".to_string())
+            .name("hogar-shell-apps-watch".to_string())
             .spawn(watch);
     });
 }
@@ -366,7 +366,7 @@ Exec=firefox --new-window
 
     #[test]
     fn a_user_entry_shadows_the_system_one_of_the_same_id() {
-        let root = std::env::temp_dir().join(format!("hyprshell-apps-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("hogar-shell-apps-{}", std::process::id()));
         let user = root.join("user");
         let system = root.join("system");
         std::fs::create_dir_all(&user).unwrap();
@@ -400,7 +400,7 @@ Exec=firefox --new-window
 
     #[test]
     fn the_fingerprint_moves_when_an_entry_is_installed_or_edited() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-watch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-watch-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let dirs = [dir.clone()];
         let empty = fingerprint(&dirs);

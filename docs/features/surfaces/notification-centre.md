@@ -19,8 +19,8 @@ The full-height counterpart to the bell drawer. It takes a whole screen edge, it
 work through a morning's notifications.
 
 ```sh
-hyprshell notifs center toggle
-hyprshell notifs center open
+hogar-shell notifs center toggle
+hogar-shell notifs center open
 ```
 
 ## Drawer or centre?

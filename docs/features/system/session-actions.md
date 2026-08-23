@@ -14,10 +14,10 @@ see_also: [session, lock, idle]
 # Session actions
 
 ```sh
-hyprshell session list                # what this machine supports
-hyprshell session do suspend
-hyprshell session do hibernate
-hyprshell shell quit                  # shut the shell down, not the session
+hogar-shell session list                # what this machine supports
+hogar-shell session do suspend
+hogar-shell session do hibernate
+hogar-shell shell quit                  # shut the shell down, not the session
 ```
 
 ## Through logind, not systemctl

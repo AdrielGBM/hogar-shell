@@ -12,7 +12,7 @@ see_also: [install, configuration]
 
 # First run
 
-The first start writes an annotated `~/.config/hyprshell/config.toml` and puts a bar on screen. Nothing else is
+The first start writes an annotated `~/.config/hogar-shell/config.toml` and puts a bar on screen. Nothing else is
 created until something needs it.
 
 ## What is on screen
@@ -41,8 +41,8 @@ per module. Every module works in all three; see [Bars](../features/surfaces/bar
 **3. Pick a palette.**
 
 ```sh
-hyprshell scheme list           # what `scheme set` accepts
-hyprshell scheme set dynamic    # derive one from the current wallpaper
+hogar-shell scheme list           # what `scheme set` accepts
+hogar-shell scheme set dynamic    # derive one from the current wallpaper
 ```
 
 See [Palettes](../features/theming/palettes.md) and [Dynamic scheme](../features/theming/dynamic-scheme.md).
@@ -52,7 +52,7 @@ See [Palettes](../features/theming/palettes.md) and [Dynamic scheme](../features
 The annotated starter is deliberately short. To edit down from the full set instead:
 
 ```sh
-hyprshell config schema > ~/.config/hyprshell/config.toml
+hogar-shell config schema > ~/.config/hogar-shell/config.toml
 ```
 
 `config schema` prints a complete, valid config with every key, its default and its explanation — generated
@@ -61,7 +61,7 @@ from the source, so it is never out of date with the build you are running.
 ## Or use the settings application
 
 ```sh
-hyprshell panel toggle settings
+hogar-shell panel toggle settings
 ```
 
 Twelve pages, a nav pane and a search box over every key — including the ones no form displays. It writes back

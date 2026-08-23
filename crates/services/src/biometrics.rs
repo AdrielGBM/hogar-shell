@@ -41,13 +41,13 @@ pub fn start() {
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     RUNNING.store(true, Ordering::Relaxed);
     if config.fingerprint && config.max_fprint_tries > 0 {
-        spawn("hyprshell-fprint", move || {
+        spawn("hogar-shell-fprint", move || {
             run_fingerprint(generation, config.max_fprint_tries)
         });
     }
     let howdy = config.howdy_command.trim().to_string();
     if config.trigger_on_wake && !howdy.is_empty() && config.max_howdy_tries > 0 {
-        spawn("hyprshell-howdy", move || {
+        spawn("hogar-shell-howdy", move || {
             run_face(generation, &howdy, config.max_howdy_tries)
         });
     }
@@ -71,7 +71,7 @@ pub fn retry_face() {
         return;
     }
     let generation = GENERATION.load(Ordering::Relaxed);
-    spawn("hyprshell-howdy", move || run_face(generation, &howdy, 1));
+    spawn("hogar-shell-howdy", move || run_face(generation, &howdy, 1));
 }
 
 /// Whether either method is configured at all, so the screen can offer them rather than showing a control

@@ -1,6 +1,6 @@
-use ui::scale::{corner, paint, space};
 use std::path::PathBuf;
 use std::sync::Arc;
+use ui::scale::{corner, paint, space};
 
 use telar::{
     AlignItems, Container, Input, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
@@ -345,8 +345,8 @@ fn build_page_area(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use telar::{reset_layout_runtime, set_theme};
     use telar::WindowRoot;
+    use telar::{reset_layout_runtime, set_theme};
 
     // Switching the locale after the panel is built re-renders its labels live: the section titles are
     // reactive `t!` closures, so the rendered text changes from English to Spanish without a rebuild.
@@ -393,7 +393,9 @@ mod tests {
     fn every_section_on_every_page_builds() {
         // A path that does not exist, so every form seeds from `Config::default` rather than from whatever
         // config the machine running the test happens to have.
-        crate::form::set_source(std::path::PathBuf::from("/nonexistent/hyprshell-test.toml"));
+        crate::form::set_source(std::path::PathBuf::from(
+            "/nonexistent/hogar-shell-test.toml",
+        ));
         for page in crate::pages::PAGES {
             for section in page.sections {
                 reset_layout_runtime();

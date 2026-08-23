@@ -420,7 +420,7 @@ impl WatcherIface {
     }
 }
 
-static TRAY: Service<Vec<TrayItem>> = Service::new("hyprshell-tray", run);
+static TRAY: Service<Vec<TrayItem>> = Service::new("hogar-shell-tray", run);
 
 fn run(out: &Arc<Broadcast<Vec<TrayItem>>>) {
     let Some(conn) = session() else {
@@ -474,7 +474,7 @@ fn own_watcher(registry: Arc<Registry>, ping: SyncSender<()>) -> bool {
     match built {
         Ok(conn) => {
             let _ = std::thread::Builder::new()
-                .name("hyprshell-tray-watcher".to_string())
+                .name("hogar-shell-tray-watcher".to_string())
                 .spawn(move || {
                     // The object server runs on the connection's own executor; this thread exists only to keep
                     // the connection — and therefore the name — alive for the process.
@@ -504,7 +504,7 @@ fn register_as_host(conn: &Connection) {
     };
     let Ok(host) = host.build() else { return };
     let _ = std::thread::Builder::new()
-        .name("hyprshell-tray-host".to_string())
+        .name("hogar-shell-tray-host".to_string())
         .spawn(move || {
             let _host = host;
             loop {
@@ -526,7 +526,7 @@ fn register_as_host(conn: &Connection) {
 /// watcher's registration signals (ours or another shell's), and a bus name vanishing.
 fn spawn_signal_reader(ping: SyncSender<()>) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-tray-signals".to_string())
+        .name("hogar-shell-tray-signals".to_string())
         .spawn(move || {
             let Some(conn) = session() else {
                 return;
@@ -653,7 +653,7 @@ fn invoke(item: &TrayItem, method: &'static str, args: (i32, i32)) {
     let bus = item.bus.clone();
     let path = item.path.clone();
     let _ = std::thread::Builder::new()
-        .name("hyprshell-tray-call".to_string())
+        .name("hogar-shell-tray-call".to_string())
         .spawn(move || {
             let Some(conn) = session() else { return };
             let Ok(name) = BusName::try_from(bus.clone()) else {
@@ -688,7 +688,7 @@ pub fn scroll(item: &TrayItem, delta: i32, horizontal: bool) {
     let path = item.path.clone();
     let orientation = if horizontal { "horizontal" } else { "vertical" };
     let _ = std::thread::Builder::new()
-        .name("hyprshell-tray-call".to_string())
+        .name("hogar-shell-tray-call".to_string())
         .spawn(move || {
             let Some(conn) = session() else { return };
             let Ok(name) = BusName::try_from(bus.clone()) else {

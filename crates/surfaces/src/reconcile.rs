@@ -155,7 +155,7 @@ impl Surfaces {
         );
     }
 
-    /// How many surfaces are up. `hyprshell` logs it at startup and the tests read it.
+    /// How many surfaces are up. `hogar-shell` logs it at startup and the tests read it.
     pub fn len(&self) -> usize {
         self.live.len()
     }
@@ -374,7 +374,7 @@ fn reservation_placement(config: &Config, edge: Edge, output: Option<&str>) -> P
 
 /// The picture behind the desktop: the whole screen, under every window, click-through.
 fn wallpaper_placement(output: Option<&str>) -> Placement {
-    Placement::backdrop("hyprshell-wallpaper").output(output.map(str::to_string))
+    Placement::backdrop("hogar-shell-wallpaper").output(output.map(str::to_string))
 }
 
 /// The desktop's widgets: the area the bars left free, over the wallpaper and under every window.
@@ -386,7 +386,7 @@ fn wallpaper_placement(output: Option<&str>) -> Placement {
 /// application's window would.
 fn widgets_placement(config: &Config, output: Option<&str>) -> Placement {
     let gap = |edge| config.panel_gap(edge) as i32;
-    Placement::desktop("hyprshell-widgets")
+    Placement::desktop("hogar-shell-widgets")
         .margin((
             gap(Edge::Top),
             gap(Edge::Right),
@@ -402,7 +402,7 @@ fn widgets_placement(config: &Config, output: Option<&str>) -> Placement {
 /// all and the ring draws that strip instead — so a ring on the background layer is a bar that disappears
 /// behind whatever window is under it. Click-through, so sharing the bars' layer costs the bars nothing.
 fn frame_placement(config: &Config, output: Option<&str>) -> Placement {
-    Placement::backdrop("hyprshell-frame")
+    Placement::backdrop("hogar-shell-frame")
         .layer(chrome_layer(config))
         .output(output.map(str::to_string))
 }
@@ -494,10 +494,15 @@ mod tests {
     /// the hole the bars leave instead of this file working that out by hand.
     #[test]
     fn the_widgets_surface_is_asked_for_on_its_own_and_measures_what_the_bars_left() {
-        let widgets_only = config("[widgets.clock]\nenabled=true\n[bars.top]\ncenter=[\"clock\"]\n");
+        let widgets_only =
+            config("[widgets.clock]\nenabled=true\n[bars.top]\ncenter=[\"clock\"]\n");
         assert_eq!(
             roles(&widgets_only),
-            vec![Role::Widgets, Role::Bar(Edge::Top), Role::Reserve(Edge::Top)],
+            vec![
+                Role::Widgets,
+                Role::Bar(Edge::Top),
+                Role::Reserve(Edge::Top)
+            ],
             "a widget asks for its own surface and for no wallpaper behind it"
         );
 
@@ -517,7 +522,10 @@ mod tests {
         };
         let widgets = planned(&both, Role::Widgets);
         assert_eq!(widgets.layer, Layer::Background);
-        assert!(widgets.input_transparent, "click-through, like the wallpaper");
+        assert!(
+            widgets.input_transparent,
+            "click-through, like the wallpaper"
+        );
         assert_eq!(
             widgets.exclusive_zone, 0,
             "zero respects the bars' strips where the wallpaper's -1 ignores them"
@@ -529,7 +537,9 @@ mod tests {
         );
 
         // The gap off each edge is the one every panel keeps there, so a widget lines up with the applications.
-        let floating = config("[shape]\ngap=14\n[widgets.clock]\nenabled=true\n[bars.top]\ncenter=[\"clock\"]\n");
+        let floating = config(
+            "[shape]\ngap=14\n[widgets.clock]\nenabled=true\n[bars.top]\ncenter=[\"clock\"]\n",
+        );
         assert_eq!(planned(&floating, Role::Widgets).margin, (14, 14, 14, 14));
     }
 
@@ -684,7 +694,7 @@ mod tests {
         // A real path, unlike the relative one the other tests hand over: a *named* output sends the reconcile
         // through `Config::for_output`, which falls back to `Config::load` — and loading a config that is not
         // there writes a starter one, next to whatever the path pointed at.
-        let dir = std::env::temp_dir().join(format!("hyprshell-outputs-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-outputs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let path = dir.join("config.toml");
         let toml = "[bars.top]\nsize=34\ncenter=[\"clock\"]\n";

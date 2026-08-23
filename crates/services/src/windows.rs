@@ -12,7 +12,7 @@ use platform_wayland::{EventSender, Interest, ManagedToplevel, ManagedToplevelId
 
 use util::broadcast::{Broadcast, Service};
 
-static WINDOWS: Service<Vec<ManagedToplevel>> = Service::new("hyprshell-windows", run);
+static WINDOWS: Service<Vec<ManagedToplevel>> = Service::new("hogar-shell-windows", run);
 
 fn run(service: &Arc<Broadcast<Vec<ManagedToplevel>>>) {
     let published = Arc::clone(service);

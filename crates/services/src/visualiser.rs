@@ -81,7 +81,7 @@ impl Spectrum {
     }
 }
 
-static SPECTRUM: Service<Spectrum> = Service::new("hyprshell-visualiser", run);
+static SPECTRUM: Service<Spectrum> = Service::new("hogar-shell-visualiser", run);
 
 pub fn subscribe(tx: EventSender<Spectrum>) {
     SPECTRUM.subscribe(tx);
@@ -515,7 +515,7 @@ mod live {
     /// cannot: that the format negotiates at all, that `stream.capture.sink` really turns the stream around
     /// onto the sink's monitor rather than onto a microphone, and that a buffer read as `f32` is one. Play
     /// something, then:
-    /// `TELAR_LIVE_VISUALISER=1 cargo test -p hyprshell --lib live_capture -- --nocapture`
+    /// `TELAR_LIVE_VISUALISER=1 cargo test -p hogar-shell --lib live_capture -- --nocapture`
     #[test]
     fn live_capture() {
         if std::env::var("TELAR_LIVE_VISUALISER").is_err() {

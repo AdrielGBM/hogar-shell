@@ -1,6 +1,6 @@
 [package]
-name = "hyprshell-settings"
-description = "The hyprshell settings application: the form vocabulary, the pages built from it and the panel that hosts them."
+name = "hogar-shell-settings"
+description = "The hogar-shell settings application: the form vocabulary, the pages built from it and the panel that hosts them."
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

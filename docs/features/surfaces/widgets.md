@@ -43,7 +43,7 @@ second is a surface that repaints every second.
 
 **`background_blur` feathers the plate's own edge — it does not sample what is behind it.** No client-side
 renderer can; asking the compositor is the route, through `ext-background-effect-v1` or a Hyprland
-`layer_rule = blur, hyprshell-widgets`, and neither is wired up yet.
+`layer_rule = blur, hogar-shell-widgets`, and neither is wired up yet.
 
 ## Visualiser
 

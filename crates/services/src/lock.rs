@@ -1,6 +1,6 @@
 //! Whether the session is locked, and everything that decides it.
 //!
-//! One state, three writers and one performer. The **writers** are the session menu, `hyprshell lock`, logind's
+//! One state, three writers and one performer. The **writers** are the session menu, `hogar-shell lock`, logind's
 //! `Lock`/`Unlock` signals and the idle timers — all of which do nothing but change [`LockState`]. The
 //! **performer** is [`on_state`], which runs on the driver thread and is the only place that takes or releases
 //! the compositor's session lock. Splitting them that way is what makes a lock requested from a keybind, from
@@ -93,7 +93,7 @@ pub fn subscribe(tx: EventSender<LockState>) {
     STATE.subscribe(tx);
 }
 
-/// Whether the session is locked *and the compositor has confirmed it* — what `hyprshell lock status` reports
+/// Whether the session is locked *and the compositor has confirmed it* — what `hogar-shell lock status` reports
 /// and what a `lockstatus`-style indicator reads.
 pub fn is_locked() -> bool {
     STATE.get().locked
@@ -114,7 +114,7 @@ pub fn lock() {
 }
 
 /// Asks for the session to be unlocked. Only reached after a successful authentication, or from
-/// `hyprshell lock off` — which is a deliberate escape hatch for a shell that has locked a machine its user
+/// `hogar-shell lock off` — which is a deliberate escape hatch for a shell that has locked a machine its user
 /// cannot authenticate to, and is exactly as privileged as the process already is.
 pub fn unlock() {
     if !STATE.get().wanted {
@@ -280,7 +280,7 @@ pub fn submit(password: String) {
         state.message = None;
     });
     let _ = std::thread::Builder::new()
-        .name("hyprshell-pam".to_string())
+        .name("hogar-shell-pam".to_string())
         .spawn(move || {
             let verdict = pam::authenticate(&service, &user, &password, &config.pam_library);
             drop(password);
@@ -330,7 +330,7 @@ pub fn fail(error: AuthError, max_tries: u32, lockout_seconds: u64) {
 fn clear_lockout_when_elapsed(deadline: Instant) {
     let remaining = deadline.saturating_duration_since(Instant::now());
     let _ = std::thread::Builder::new()
-        .name("hyprshell-lockout".to_string())
+        .name("hogar-shell-lockout".to_string())
         .spawn(move || {
             std::thread::sleep(remaining + Duration::from_millis(50));
             STATE.update(|state| {

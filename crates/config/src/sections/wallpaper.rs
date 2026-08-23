@@ -3,7 +3,7 @@
 //! What is *drawn over* it is `[widgets]`, on a surface of its own — see [`crate::sections::widgets`].
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hyprshell config schema` prints for it, so it is written for a user reading the reference.
+//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,7 +48,7 @@ impl WallpaperTransition {
     }
 }
 
-/// Full-screen wallpaper behind everything, one surface per monitor. Off by default so the compositor's own background shows through; setting an `image` — or `enabled = true` for a plain themed background — turns it on. `[background.monitors]` maps output names to per-monitor images, each falling back to the global `image`, and `hyprshell wallpaper set` overrides both at runtime. Paths may use `~`.
+/// Full-screen wallpaper behind everything, one surface per monitor. Off by default so the compositor's own background shows through; setting an `image` — or `enabled = true` for a plain themed background — turns it on. `[background.monitors]` maps output names to per-monitor images, each falling back to the global `image`, and `hogar-shell wallpaper set` overrides both at runtime. Paths may use `~`.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct BackgroundConfig {
@@ -74,7 +74,7 @@ impl Default for BackgroundConfig {
 }
 
 impl BackgroundConfig {
-    /// Whether hyprshell paints a background surface at all; opt-in so it never clobbers the compositor's wallpaper unless asked (an image or a per-monitor entry implies it).
+    /// Whether hogar-shell paints a background surface at all; opt-in so it never clobbers the compositor's wallpaper unless asked (an image or a per-monitor entry implies it).
     pub fn is_enabled(&self) -> bool {
         self.enabled || self.image.is_some() || !self.monitors.is_empty()
     }

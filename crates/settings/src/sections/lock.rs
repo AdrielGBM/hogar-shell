@@ -12,7 +12,7 @@ use crate::table::*;
 use config::theme::NordTheme;
 use config::{IdleConfig, IdleStage};
 
-/// The `[[idle.stages]]` editor. `hyprshell --list` is what the action fields accept; the placeholders name
+/// The `[[idle.stages]]` editor. `hogar-shell --list` is what the action fields accept; the placeholders name
 /// the three a user reaches for.
 pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let (config, path) = crate::form::source();

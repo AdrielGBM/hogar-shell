@@ -64,7 +64,7 @@ fn rate(previous: u64, now: u64, elapsed: Duration) -> f64 {
     now.saturating_sub(previous) as f64 / seconds
 }
 
-static NETSPEED: Service<NetSpeed> = Service::new("hyprshell-netspeed", run);
+static NETSPEED: Service<NetSpeed> = Service::new("hogar-shell-netspeed", run);
 
 fn run(out: &Arc<Broadcast<NetSpeed>>) {
     let dir = Path::new(NET_DIR);
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn totals_skip_virtual_interfaces() {
-        let dir = std::env::temp_dir().join(format!("hyprshell-net-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hogar-shell-net-{}", std::process::id()));
         let physical = dir.join("eth0");
         let virt = dir.join("docker0");
         fs::create_dir_all(physical.join("statistics")).unwrap();

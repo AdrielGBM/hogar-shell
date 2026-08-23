@@ -1,6 +1,6 @@
 [package]
-name = "hyprshell-util"
-description = "Shared utilities for hyprshell: process spawning, clipboard, search, reactive helpers and the external-dependency registry."
+name = "hogar-shell-util"
+description = "Shared utilities for hogar-shell: process spawning, clipboard, search, reactive helpers and the external-dependency registry."
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

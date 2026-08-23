@@ -1,12 +1,12 @@
 //! The application launcher: a modal that owns the keyboard while it is up.
 
-use ui::scale::{corner, paint};
 use std::rc::Rc;
+use ui::scale::{corner, paint};
 
 use platform_wayland::KeyboardMode;
 use telar::{
-    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, RectStyle,
-    SizeDimension, StyledContainer, SurfaceToken, Text, box_item, memo, signal, use_theme,
+    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension,
+    StyledContainer, SurfaceToken, Text, box_item, memo, signal, use_theme,
 };
 
 use platform_wayland::ManagedToplevel;
@@ -20,8 +20,8 @@ use services::wallpaper;
 use surfaces::shell;
 use ui::keynav::{self, Move};
 use ui::panel::{PanelSurface, content_radius, panel_fill};
-use ui::scale::space;
 use ui::placement::{Centred, Placement};
+use ui::scale::space;
 use ui::thumbnail;
 use util::calc;
 use util::search::{self, Mode};
@@ -56,7 +56,6 @@ const TILE_ASPECT: f32 = 9.0 / 16.0;
 
 const TILE_GAP: f32 = 8.0;
 
-
 /// The width to lay a grid out for when there is no config to read one from — a headless render, or a preview.
 const DEFAULT_PANEL_WIDTH: f32 = 640.0;
 
@@ -81,7 +80,7 @@ pub enum Entry {
         result: String,
     },
     /// A palette, a light/dark mode or a dynamic-scheme variant. Choosing one writes it to `[theme]`, which the
-    /// config watcher then reloads — the same route the settings panel and `hyprshell scheme` take.
+    /// config watcher then reloads — the same route the settings panel and `hogar-shell scheme` take.
     Scheme {
         choice: scheme::Choice,
         value: String,
@@ -297,11 +296,7 @@ pub fn wallpapers(
 ///
 /// Both the title and the application id are in the haystack, so `/fire` finds a browser window whose title
 /// says nothing about the browser, and `/docs` finds it by what is on screen.
-pub fn windows(
-    open: Vec<ManagedToplevel>,
-    query: &str,
-    config: &LauncherConfig,
-) -> Vec<Entry> {
+pub fn windows(open: Vec<ManagedToplevel>, query: &str, config: &LauncherConfig) -> Vec<Entry> {
     search::rank(
         open,
         query,
@@ -403,7 +398,7 @@ fn choose(entry: &Entry) {
             }
         }
         // Every screen, not the focused one: a choice made with no monitor named is a choice about the desktop,
-        // which is the same rule `hyprshell wallpaper set` follows — including re-deriving a dynamic palette from
+        // which is the same rule `hogar-shell wallpaper set` follows — including re-deriving a dynamic palette from
         // the new picture, which is the other half of "the wallpaper changed" and is easy to ship without.
         Entry::Wallpaper(entry) => {
             wallpaper::set(&entry.path, None);
@@ -1099,7 +1094,10 @@ fn row(
         lines.push(box_item(subtitle));
     }
     let text_column = Container::new(
-        LayoutStyle::new().flex_column().flex_grow(1.0).gap(space::xs()),
+        LayoutStyle::new()
+            .flex_column()
+            .flex_grow(1.0)
+            .gap(space::xs()),
         lines,
     )?;
 
@@ -1301,16 +1299,20 @@ mod tests {
     /// Two windows of one application plus a third, which is the case a switcher exists for: telling apart
     /// rows an application-keyed list would have collapsed into one.
     fn open() -> Vec<ManagedToplevel> {
-        [("kitty", "nvim"), ("kitty", "cargo test"), ("code", "README.md")]
-            .into_iter()
-            .enumerate()
-            .map(|(index, (app_id, title))| ManagedToplevel {
-                id: platform_wayland::ManagedToplevelId::from_raw(index as u32 + 1),
-                app_id: app_id.to_string(),
-                title: title.to_string(),
-                ..ManagedToplevel::default()
-            })
-            .collect()
+        [
+            ("kitty", "nvim"),
+            ("kitty", "cargo test"),
+            ("code", "README.md"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (app_id, title))| ManagedToplevel {
+            id: platform_wayland::ManagedToplevelId::from_raw(index as u32 + 1),
+            app_id: app_id.to_string(),
+            title: title.to_string(),
+            ..ManagedToplevel::default()
+        })
+        .collect()
     }
 
     fn library() -> Vec<wallpaper::Entry> {
@@ -1376,7 +1378,13 @@ mod tests {
         let mut twins = open();
         twins[1].title = twins[0].title.clone();
 
-        let rows = entries(catalog(), Vec::new(), twins, "/", &LauncherConfig::default());
+        let rows = entries(
+            catalog(),
+            Vec::new(),
+            twins,
+            "/",
+            &LauncherConfig::default(),
+        );
         assert_eq!(rows.len(), 3);
         let keys: std::collections::HashSet<String> = rows.iter().map(Entry::key).collect();
         assert_eq!(
@@ -1418,7 +1426,13 @@ mod tests {
 
     #[test]
     fn the_calculator_answers_above_the_apps_without_hiding_them() {
-        let found = entries(catalog(), Vec::new(), Vec::new(), "2+2", &LauncherConfig::default());
+        let found = entries(
+            catalog(),
+            Vec::new(),
+            Vec::new(),
+            "2+2",
+            &LauncherConfig::default(),
+        );
         assert!(
             matches!(found.first(), Some(Entry::Calculation { result, .. }) if result == "4"),
             "the answer leads: {:?}",
@@ -1426,14 +1440,26 @@ mod tests {
         );
 
         // A query that happens to parse as arithmetic must not hide the app search underneath it.
-        let mixed = entries(catalog(), Vec::new(), Vec::new(), "2+2", &LauncherConfig::default());
+        let mixed = entries(
+            catalog(),
+            Vec::new(),
+            Vec::new(),
+            "2+2",
+            &LauncherConfig::default(),
+        );
         assert!(
             mixed.len() > 1 || mixed.iter().all(|e| matches!(e, Entry::Calculation { .. })),
             "app matches still follow when there are any"
         );
 
         // And a plain name never grows a calculation row.
-        let plain = entries(catalog(), Vec::new(), Vec::new(), "firefox", &LauncherConfig::default());
+        let plain = entries(
+            catalog(),
+            Vec::new(),
+            Vec::new(),
+            "firefox",
+            &LauncherConfig::default(),
+        );
         assert!(!plain.iter().any(|e| matches!(e, Entry::Calculation { .. })));
     }
 
@@ -1527,7 +1553,13 @@ mod tests {
             names(&found)
         );
         assert_eq!(
-            names(&entries(catalog(), Vec::new(), Vec::new(), "=100 c in f", &config)),
+            names(&entries(
+                catalog(),
+                Vec::new(),
+                Vec::new(),
+                "=100 c in f",
+                &config
+            )),
             vec!["212 °F".to_string()],
             "the explicit prefix works the same way"
         );
@@ -1589,7 +1621,13 @@ mod tests {
             2
         );
         assert_eq!(
-            names(&entries(catalog(), Vec::new(), Vec::new(), ">lock", &config)),
+            names(&entries(
+                catalog(),
+                Vec::new(),
+                Vec::new(),
+                ">lock",
+                &config
+            )),
             vec!["lock".to_string()]
         );
         // Action mode is exclusive: apps do not leak into it.
@@ -1660,11 +1698,23 @@ mod tests {
         );
 
         assert_eq!(
-            names(&entries(catalog(), library(), Vec::new(), "@sunset", &config)),
+            names(&entries(
+                catalog(),
+                library(),
+                Vec::new(),
+                "@sunset",
+                &config
+            )),
             vec!["sunset".to_string()]
         );
         // The folder is searchable, so a whole collection is reachable without remembering one file's name.
-        let folder = names(&entries(catalog(), library(), Vec::new(), "@nature", &config));
+        let folder = names(&entries(
+            catalog(),
+            library(),
+            Vec::new(),
+            "@nature",
+            &config,
+        ));
         assert_eq!(
             folder.len(),
             2,
@@ -1684,7 +1734,10 @@ mod tests {
             max_results: 2,
             ..LauncherConfig::default()
         };
-        assert_eq!(entries(catalog(), library(), Vec::new(), "@", &config).len(), 3);
+        assert_eq!(
+            entries(catalog(), library(), Vec::new(), "@", &config).len(),
+            3
+        );
         assert_eq!(
             entries(catalog(), Vec::new(), Vec::new(), "", &config).len(),
             2,

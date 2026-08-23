@@ -1,4 +1,4 @@
-//! Every external thing hyprshell needs, in one list.
+//! Every external thing hogar-shell needs, in one list.
 //!
 //! The shell reaches outside itself in five different ways — it runs programs, calls D-Bus peers, reads kernel
 //! interfaces, `dlopen`s libraries and binds Wayland protocols — and until this file existed each of those was
@@ -547,7 +547,7 @@ pub fn snapshot() -> Vec<Status> {
 /// composing the frame.
 pub fn report(tx: platform_wayland::EventSender<Vec<Status>>) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-deps".to_string())
+        .name("hogar-shell-deps".to_string())
         .spawn(move || {
             refresh();
             tx.send(snapshot());
@@ -778,7 +778,7 @@ mod tests {
     fn an_empty_kernel_directory_reads_as_absent() {
         let absent = Entry {
             kind: Kind::Kernel {
-                path: "/sys/class/hyprshell-no-such-class-9e3f",
+                path: "/sys/class/hogar-shell-no-such-class-9e3f",
             },
             ..*entry(Dep::Backlight)
         };

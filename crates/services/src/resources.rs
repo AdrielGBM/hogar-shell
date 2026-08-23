@@ -382,7 +382,7 @@ const DISK_EVERY: u32 = 30;
 const CPUINFO: &str = "/proc/cpuinfo";
 const DISKSTATS: &str = "/proc/diskstats";
 
-static RESOURCES: Service<Resources> = Service::new("hyprshell-resources", run);
+static RESOURCES: Service<Resources> = Service::new("hogar-shell-resources", run);
 
 fn run(out: &Arc<Broadcast<Resources>>) {
     let mut previous = read_cpu_times(&fs::read_to_string("/proc/stat").unwrap_or_default());
@@ -603,7 +603,7 @@ SwapFree:        3000000 kB
     /// A scratch hwmon tree: one chip with a labelled sensor, an unlabelled one, and an implausible reading.
     fn hwmon_fixture(tag: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("hyprshell-hwmon-{}-{tag}", std::process::id()));
+            std::env::temp_dir().join(format!("hogar-shell-hwmon-{}-{tag}", std::process::id()));
         let device = dir.join("hwmon0");
         fs::create_dir_all(&device).unwrap();
         fs::write(device.join("name"), "coretemp").unwrap();

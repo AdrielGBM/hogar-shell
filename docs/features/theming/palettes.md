@@ -14,11 +14,11 @@ see_also: [dynamic-scheme, export, tokens]
 # Palettes
 
 ```sh
-hyprshell scheme list             # what `scheme set` accepts
-hyprshell scheme set nord
-hyprshell scheme mode toggle
-hyprshell scheme status           # theme, mode, variant, and the wallpaper it came from
-hyprshell scheme colors           # every token now on screen, as name and hex
+hogar-shell scheme list             # what `scheme set` accepts
+hogar-shell scheme set nord
+hogar-shell scheme mode toggle
+hogar-shell scheme status           # theme, mode, variant, and the wallpaper it came from
+hogar-shell scheme colors           # every token now on screen, as name and hex
 ```
 
 ## The built-ins

@@ -37,7 +37,7 @@ room is actually made of.
 ## Configuring
 
 `[active_window]` — `compact`, `inverted`, `show_icon`. Run
-`hyprshell config schema active_window` for what each does.
+`hogar-shell config schema active_window` for what each does.
 
 ## What it needs
 
@@ -50,4 +50,4 @@ Nothing else: no external program, no D-Bus peer.
 ## Related
 
 - [windowinfo](windowinfo.md) — the panel with the preview and the four actions on the same window.
-- `hyprshell shell clients` — every open window, over IPC.
+- `hogar-shell shell clients` — every open window, over IPC.

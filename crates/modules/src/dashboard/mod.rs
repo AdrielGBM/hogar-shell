@@ -5,7 +5,7 @@
 //! nothing here is a second way to put a surface on screen.
 //!
 //! Which page is showing lives in a [`Store`] rather than in the panel, for two reasons. Reopening the
-//! dashboard should land where it was left, and `hyprshell dashboard tab weather` has to reach the tab a click
+//! dashboard should land where it was left, and `hogar-shell dashboard tab weather` has to reach the tab a click
 //! would set; a signal owned by the surface could do neither, since the surface is rebuilt on every open and
 //! does not exist between them.
 
@@ -15,8 +15,8 @@ mod media;
 mod performance;
 mod weather;
 
-use ui::scale::{corner, paint, space};
 use std::sync::Arc;
+use ui::scale::{corner, paint, space};
 
 use platform_wayland::EventSender;
 use telar::{
@@ -200,7 +200,7 @@ fn pill(
             vec![icon, box_item(label)],
         )?
         .hover_style(paint::md(theme.overlay))
-        // Through the store, not the local signal: a click and `hyprshell dashboard tab …` must land in the
+        // Through the store, not the local signal: a click and `hogar-shell dashboard tab …` must land in the
         // same place, and the watch above is what brings the change back to this surface.
         .on_press(move || set_tab(tab)),
     ))

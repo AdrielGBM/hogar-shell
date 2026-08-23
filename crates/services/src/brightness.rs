@@ -235,7 +235,7 @@ fn resolve_output(monitor: &ddc::Monitor, screens: &[hyprland::Screen]) -> Strin
     format!("i2c-{}", monitor.bus)
 }
 
-static BRIGHTNESS: Service<Snapshot> = Service::new("hyprshell-brightness", run);
+static BRIGHTNESS: Service<Snapshot> = Service::new("hogar-shell-brightness", run);
 
 /// Registers `tx` for live brightness readings, starting the single shared producer on first use. Called from a
 /// bar chip's `watch` producer.
@@ -412,7 +412,7 @@ fn poll_fallback(out: &Broadcast<Snapshot>) {
 }
 
 /// Sets the primary display to `percent` — the internal panel on a laptop, the first monitor on a desk. What the
-/// brightness keys, the chip's wheel and `hyprshell brightness set` with no monitor named all mean.
+/// brightness keys, the chip's wheel and `hogar-shell brightness set` with no monitor named all mean.
 pub fn set(percent: i32) {
     let Some(output) = snapshot().primary().map(|display| display.output.clone()) else {
         // Nothing detected yet: on a laptop the panel is still the right guess, and the sysfs path answers without
@@ -450,7 +450,7 @@ static LAST_SET: Mutex<Option<String>> = Mutex::new(None);
 
 /// The level an OSD should show: the display that was last changed, else the primary one.
 ///
-/// An OSD is a report of what just happened, so `hyprshell brightness up DP-2` on a desk must draw DP-2's level and
+/// An OSD is a report of what just happened, so `hogar-shell brightness up DP-2` on a desk must draw DP-2's level and
 /// not the first monitor's. The chip is the opposite question — it stands for the machine — and stays on `current`.
 pub fn osd_level() -> Option<i32> {
     let last = LAST_SET.lock().unwrap().clone();
@@ -461,7 +461,7 @@ pub fn osd_level() -> Option<i32> {
 
 fn apply(kind: Kind, percent: i32) {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-brightness-set".to_string())
+        .name("hogar-shell-brightness-set".to_string())
         .spawn(move || match kind {
             Kind::Internal { device } => {
                 let Some(absolute) = absolute_for(&device, percent) else {
@@ -524,10 +524,10 @@ pub fn snapshot() -> Snapshot {
 ///
 /// Asked for rather than guessed: DDC/CI has no hotplug signal to subscribe to, a kernel `drm` uevent says nothing
 /// about whether the new monitor answers DDC, and detection is far too slow to repeat on a timer. So the shell
-/// detects once at startup and `hyprshell brightness refresh` is how a desk that changed says so.
+/// detects once at startup and `hogar-shell brightness refresh` is how a desk that changed says so.
 pub fn refresh() {
     let _ = std::thread::Builder::new()
-        .name("hyprshell-brightness-detect".to_string())
+        .name("hogar-shell-brightness-detect".to_string())
         .spawn(|| {
             let mut displays = internal_displays();
             displays.extend(external_displays());

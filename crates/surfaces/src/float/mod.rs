@@ -4,7 +4,7 @@ use ui::scale::paint;
 use platform_wayland::request_close;
 use telar::{
     LayoutError, LayoutItem, LayoutStyle, StyledContainer, SurfaceFrameStyle, SurfaceToken,
-    box_item, window_frame, use_theme,
+    box_item, use_theme, window_frame,
 };
 
 use crate::drawer::{content_radius, module_panel, panel_wants_keyboard};
@@ -53,7 +53,8 @@ pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
             close_hover: telar::Color::TRANSPARENT,
         };
         let close: Rc<dyn Fn()> = Rc::new(request_close);
-        window_frame(module.clone(), None, style, close, body, None).expect("surface frame build failed")
+        window_frame(module.clone(), None, style, close, body, None)
+            .expect("surface frame build failed")
     })
     .edge(env.edge)
     .open()
@@ -92,12 +93,11 @@ mod tests {
 
     use platform_headless::{FrameSink, HeadlessPlatform};
     use telar::{
-        App, AppConfig, AppPathsProvider, Color, Component, WindowRoot, WindowConfig,
+        App, AppConfig, AppPathsProvider, Color, Component, WindowConfig, WindowRoot,
         reset_layout_runtime, run_with_platform, set_theme,
     };
 
     use config::theme::NordTheme;
-
 
     /// The float's chrome under the enter animation, which is the one thing a `[preview]` cannot show: the
     /// preview page renders a tree, and this is about what the *surface root* does to it over several frames.
@@ -142,7 +142,7 @@ mod tests {
             AppConfig::default(),
             std::sync::Arc::new(telar::NoPaths) as std::sync::Arc<dyn AppPathsProvider>,
             AnimatedFloat,
-            "hyprshell-float-test",
+            "hogar-shell-float-test",
         )
         .expect("headless run");
 

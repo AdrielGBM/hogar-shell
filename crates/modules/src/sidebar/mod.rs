@@ -15,14 +15,14 @@ use telar::{
 
 use config::Config;
 use config::theme::{FontRole, NordTheme};
-use ui::panel::{PanelSurface};
-use ui::scale::{corner, space};
+use ui::panel::PanelSurface;
 use ui::placement::Placement;
+use ui::scale::{corner, space};
 
 pub const ID: &str = "sidebar";
 
 /// Opens the centre, or closes it if it is up. Registered with the shell's surface registry under [`ID`], so a
-/// press on the bell, `hyprshell notifs center` and a keybind all reach the same surface rather than stacking
+/// press on the bell, `hogar-shell notifs center` and a keybind all reach the same surface rather than stacking
 /// copies of it.
 ///
 /// A standing window, not a glance: opening it takes the screen from whatever drawer was up — including the
@@ -60,7 +60,7 @@ fn open_sidebar() -> SurfaceToken {
 /// panel of any kind puts between itself and them.
 fn placement(config: &Config, output: Option<String>) -> Placement {
     let sidebar = &config.sidebar;
-    Placement::dock("hyprshell-sidebar", sidebar.edge, sidebar.thickness())
+    Placement::dock("hogar-shell-sidebar", sidebar.edge, sidebar.thickness())
         .margin(config.panel_margin(sidebar.edge))
         .output(output)
 }

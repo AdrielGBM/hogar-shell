@@ -43,7 +43,7 @@ The search box searches keys, not page titles, which is what makes the twelfth p
 | Click | opens the settings panel |
 
 ```sh
-hyprshell panel toggle settings
+hogar-shell panel toggle settings
 ```
 
 The panel takes keyboard focus, since it has text fields.
@@ -62,4 +62,4 @@ owns any given key, so two pages can never disagree about what is set.
 ## Related
 
 - [Configuration](../../getting-started/configuration.md) — the files, and how a reload behaves.
-- `hyprshell config schema` — the same key set as text.
+- `hogar-shell config schema` — the same key set as text.

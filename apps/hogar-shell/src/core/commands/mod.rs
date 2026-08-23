@@ -1,6 +1,6 @@
 //! The command table, one file per area of the shell.
 //!
-//! Split by what a command acts on rather than by what it needs: `hyprshell volume up` and `hyprshell mic mute`
+//! Split by what a command acts on rather than by what it needs: `hogar-shell volume up` and `hogar-shell mic mute`
 //! are one thing to a user reading `--list`, and were one thing to whoever is adding the next one.
 
 pub mod args;
@@ -22,7 +22,7 @@ pub(crate) struct Target {
     pub(crate) commands: &'static [Command],
 }
 
-/// Every command the shell answers. One table, so `--list`, `hyprshell(1)` and what actually dispatches cannot
+/// Every command the shell answers. One table, so `--list`, `hogar-shell(1)` and what actually dispatches cannot
 /// drift from one another.
 pub(crate) static TARGETS: &[Target] = &[
     shell::SHELL,
@@ -121,7 +121,7 @@ pub fn dispatch_locally(line: &str) -> Result<String, String> {
 /// The column the help text starts at in `--list`.
 const HELP_COLUMN: usize = 28;
 
-/// Every target and command, one per line, for `hyprshell --list`.
+/// Every target and command, one per line, for `hogar-shell --list`.
 pub fn describe() -> String {
     let mut out = String::new();
     for target in TARGETS {

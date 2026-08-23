@@ -1,6 +1,6 @@
 //! Wallpaper thumbnails on screen, without a full-resolution decode on the frame that asks for one.
 //!
-//! The cache itself belongs to the wallpaper service, which is where `hyprshell wallpaper` reaches it from. What
+//! The cache itself belongs to the wallpaper service, which is where `hogar-shell wallpaper` reaches it from. What
 //! lives here is the *surface* half: a grid asks for a picture and gets a signal, a worker generates the ones
 //! that are not cached yet, and each tile swaps its glyph for the real thing as it lands. A grid of two hundred
 //! images therefore opens immediately and fills in, rather than freezing the shell for the length of two hundred

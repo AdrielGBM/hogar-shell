@@ -230,7 +230,7 @@ pub fn read(config: &GpuConfig) -> Option<Gpu> {
     card.map(|card| read_sysfs(&card))
 }
 
-static GPU: Service<Gpu> = Service::new("hyprshell-gpu", run);
+static GPU: Service<Gpu> = Service::new("hogar-shell-gpu", run);
 
 /// The `[gpu]` settings, or the defaults outside a started shell. Read through the cross-thread snapshot: the
 /// only caller is the producer, and the driver thread's own copy is invisible from there.
