@@ -309,16 +309,26 @@ fn alias_for(player: &Player) -> String {
 /// Poll interval for the fallback path, used only when the session bus can't be watched at all.
 const RESCAN: Duration = Duration::from_secs(3);
 
+/// A player that stops answering must not park a shell thread for the life of the process. Generous, because this bounds a browser's reply to a property read, not a user-facing wait.
+const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The connection every read and every control call goes through.
+fn session() -> Option<Connection> {
+    crate::bus::session(Some(METHOD_TIMEOUT))
+}
+
 static MPRIS: Service<Player> = Service::new("hogar-shell-mpris", run);
 
 fn run(out: &Arc<Broadcast<Player>>) {
-    let Some(conn) = crate::bus::session(None) else {
+    let Some(reads) = session() else {
         tracing::info!("no session bus; media control is unavailable");
         return;
     };
-    out.publish(read_active(&conn));
-    if watch_bus(out, &conn).is_none() {
-        poll_fallback(out, &conn);
+    out.publish(read_active(&reads));
+    let watched = crate::bus::private_session(Some(METHOD_TIMEOUT))
+        .and_then(|watch| watch_bus(out, &watch, &reads));
+    if watched.is_none() {
+        poll_fallback(out, &reads);
     }
 }
 
@@ -329,7 +339,11 @@ fn run(out: &Arc<Broadcast<Player>>) {
 /// starting produces nothing to wake it, and the chip keeps showing the old one until the old one happens to
 /// change something. `NameOwnerChanged` over the `org.mpris.MediaPlayer2` namespace is the event for "a player
 /// appeared or went away", so both are matched here and either one triggers a re-read.
-fn watch_bus(out: &Broadcast<Player>, conn: &Connection) -> Option<()> {
+///
+/// `watch` is only drained, never called on — the reads go to `reads`. Both on one connection deadlocks: zbus queues every message for the stream and its socket reader stops once that queue is full, so a blocking call waits on a reply sitting behind a queue only this loop drains, from inside the call. That froze the chip on whatever was playing, controls included, until the shell was restarted.
+///
+/// Returns `None` when the watch cannot be set up and again once the stream ends, so a connection that dies under the loop falls through to polling rather than freezing the chip by another route.
+fn watch_bus(out: &Broadcast<Player>, watch: &Connection, reads: &Connection) -> Option<()> {
     let properties = zbus::MatchRule::builder()
         .msg_type(MessageType::Signal)
         .interface("org.freedesktop.DBus.Properties")
@@ -352,40 +366,33 @@ fn watch_bus(out: &Broadcast<Player>, conn: &Connection) -> Option<()> {
         .ok()?
         .build();
 
-    let dbus = DBusProxy::new(conn).ok()?;
+    let dbus = DBusProxy::new(watch).ok()?;
     dbus.add_match_rule(properties).ok()?;
     dbus.add_match_rule(ownership).ok()?;
     // Every message this connection receives, rather than one rule's: `for_match_rule` builds an iterator that
     // *filters* to its own rule, so the ownership signals reached the socket and were then dropped on the floor —
     // which is why a player quitting went unnoticed and its track stayed on the bar and the dashboard until
     // something else happened to change.
-    let signals = MessageIterator::from(conn);
+    let signals = MessageIterator::from(watch);
 
-    let mut last = read_active(conn);
+    let mut last = read_active(reads);
     for message in signals.flatten() {
-        // **Only signals.** Re-reading on *any* message is a loop that feeds itself: `read_active` calls
-        // `ListNames` and three property gets over this same connection, each reply arrives here as a message,
-        // and each message asks for another read. It ran at a third of a core from startup to shutdown with
-        // nothing playing, and it took a wedged shell and a live `/proc` to notice — the cost is invisible from
-        // inside, because the shell stays correct the whole time.
-        //
-        // A reply is a `MethodReturn` and an error is an `Error`, so this is the whole of the fix: the two rules
-        // registered above only ever deliver signals, which nothing here produces.
+        // The `AddMatch` replies above arrive here too, and re-reading on a reply to a call this loop made is work for nothing. The two rules registered above only ever deliver signals.
         if message.message_type() != MessageType::Signal {
             continue;
         }
         // A player's position and metadata churn while a track runs; only a reading that actually differs is
         // worth waking every subscribed surface for.
-        let current = read_active(conn);
+        let current = read_active(reads);
         if current != last {
             last = current.clone();
             out.publish(current);
         }
     }
-    Some(())
+    None
 }
 
-/// Belt-and-suspenders when the bus refuses the match rules: a plain re-scan.
+/// Belt-and-suspenders when the bus cannot be watched, or stops being watchable: a plain re-scan.
 fn poll_fallback(out: &Broadcast<Player>, conn: &Connection) {
     let mut last = read_active(conn);
     while out.wanted() {
@@ -414,7 +421,7 @@ fn control(method: &'static str) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-mpris-call".to_string())
         .spawn(move || {
-            let Some(conn) = crate::bus::session(None) else {
+            let Some(conn) = session() else {
                 return;
             };
             let Ok(name) = BusName::try_from(player.bus.clone()) else {
@@ -453,7 +460,7 @@ where
     let _ = std::thread::Builder::new()
         .name("hogar-shell-mpris-call".to_string())
         .spawn(move || {
-            let Some(conn) = crate::bus::session(None) else {
+            let Some(conn) = session() else {
                 return;
             };
             let Ok(name) = BusName::try_from(player.bus.clone()) else {
@@ -474,7 +481,7 @@ fn set_property(name: &'static str, value: Value<'static>) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-mpris-set".to_string())
         .spawn(move || {
-            let Some(conn) = crate::bus::session(None) else {
+            let Some(conn) = session() else {
                 return;
             };
             let Ok(bus) = BusName::try_from(player.bus.clone()) else {
@@ -529,7 +536,7 @@ pub fn cycle_loop() {
 /// continuously, and publishing it would wake every subscriber many times a second.
 pub fn position() -> Option<i64> {
     let player = current()?;
-    let conn = crate::bus::session(None)?;
+    let conn = session()?;
     let props = props_for(&conn, &player.bus)?;
     let value = props.get(PLAYER_IFACE.try_into().ok()?, "Position").ok()?;
     i64::try_from(value).ok()

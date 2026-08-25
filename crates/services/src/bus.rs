@@ -42,6 +42,13 @@ pub fn session(timeout: Option<Duration>) -> Option<Connection> {
     shared(Kind::Session, timeout)
 }
 
+/// A session connection of its own, outside the shared pool.
+///
+/// For a caller that drains a connection's message stream: a blocking call made on the connection being drained deadlocks, because zbus queues every incoming message for the stream and its socket reader stops reading once that queue is full — with the awaited reply behind it.
+pub fn private_session(timeout: Option<Duration>) -> Option<Connection> {
+    build(Kind::Session, timeout)
+}
+
 fn shared(kind: Kind, timeout: Option<Duration>) -> Option<Connection> {
     let slot = slots()
         .lock()
