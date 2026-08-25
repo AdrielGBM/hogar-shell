@@ -1,5 +1,4 @@
-//! Turning a command line into what it acts on: the arguments, the monitor it names, and the readings a
-//! reply prints.
+//! Turning a command line into what it acts on: the arguments, the monitor it names, and the readings a reply prints.
 use services::pipewire::NodeKind;
 use surfaces::shell;
 
@@ -19,8 +18,7 @@ pub(crate) fn number(args: &[&str], index: usize, name: &str) -> Result<i32, Str
         .map_err(|_| format!("<{name}> must be a whole number, got '{raw}'"))
 }
 
-/// One row per node, tab-separated so a script can cut columns: id, level, mute, whether it is the default,
-/// and the label last because it is the only field that can contain spaces.
+/// One row per node, tab-separated so a script can cut columns: id, level, mute, whether it is the default, and the label last because it is the only field that can contain spaces.
 pub(crate) fn list_nodes(kind: NodeKind) -> String {
     use services::pipewire;
     let Some(graph) = pipewire::current() else {
@@ -58,25 +56,16 @@ pub(crate) fn node_id(args: &[&str]) -> Result<u32, String> {
 
 /// Which screen a wallpaper command means: the one named, else the focused one.
 ///
-/// Resolved to a name rather than left as `None`, because `None` means "every screen" to the service and
-/// "wherever the user is looking" to a keybind — and a `wallpaper random` bound to a key should change the
-/// screen in front of them, not all of them.
+/// Resolved to a name rather than left as `None`, because `None` means "every screen" to the service and "wherever the user is looking" to a keybind — and a `wallpaper random` bound to a key should change the screen in front of them, not all of them.
 ///
-/// A name that is not a monitor is refused. Accepting one writes an entry into the persisted assignment that
-/// no surface will ever read, and answers `ok` while changing nothing — which is how a stray `--features` from
-/// a dev harness ended up saved as a screen. It costs one lookup to make a typo say so.
-/// Which screen a wallpaper command changes: the one named, or every screen when none is.
+/// A name that is not a monitor is refused. Accepting one writes an entry into the persisted assignment that no surface will ever read, and answers `ok` while changing nothing — which is how a stray `--features` from a dev harness ended up saved as a screen. It costs one lookup to make a typo say so. Which screen a wallpaper command changes: the one named, or every screen when none is.
 ///
-/// "Every screen" and not "the focused one", because that is what each command's own help says it does, and
-/// because the focused-screen reading made `wallpaper clear` unable to do the one thing it exists for: it
-/// removed the focused monitor's entry, answered `cleared`, and left every other entry — including one written
-/// under a name no monitor has — sitting in the state file with no way left to reach it.
+/// "Every screen" and not "the focused one", because that is what each command's own help says it does, and because the focused-screen reading made `wallpaper clear` unable to do the one thing it exists for: it removed the focused monitor's entry, answered `cleared`, and left every other entry — including one written under a name no monitor has — sitting in the state file with no way left to reach it.
 pub(crate) fn target_output(named: Option<&str>) -> Result<Option<String>, String> {
     named.map(validated).transpose()
 }
 
-/// Which screen a wallpaper command *reads*: the one named, else the focused one. A reading has to be about
-/// some screen, so here the focused one is the only sensible default.
+/// Which screen a wallpaper command *reads*: the one named, else the focused one. A reading has to be about some screen, so here the focused one is the only sensible default.
 pub(crate) fn reading_output(named: Option<&str>) -> Result<Option<String>, String> {
     match named {
         Some(name) => validated(name).map(Some),
@@ -84,12 +73,9 @@ pub(crate) fn reading_output(named: Option<&str>) -> Result<Option<String>, Stri
     }
 }
 
-/// Which displays a brightness *mutation* means: the one named, `all` of them, or — with nothing named — the
-/// primary one.
+/// Which displays a brightness *mutation* means: the one named, `all` of them, or — with nothing named — the primary one.
 ///
-/// Deliberately not the wallpaper rule, where an unnamed mutation means every screen. A wallpaper is one desktop
-/// look; brightness is per-panel hardware, and `brightness up` is overwhelmingly a laptop's function key, which
-/// means *this* panel. `all` is there for the desk, and both are in the command's help so neither is a surprise.
+/// Deliberately not the wallpaper rule, where an unnamed mutation means every screen. A wallpaper is one desktop look; brightness is per-panel hardware, and `brightness up` is overwhelmingly a laptop's function key, which means *this* panel. `all` is there for the desk, and both are in the command's help so neither is a surprise.
 pub(crate) fn dimmable_targets(named: Option<&str>) -> Result<Vec<String>, String> {
     use services::brightness;
     let snapshot = brightness::snapshot();
@@ -115,9 +101,7 @@ pub(crate) fn dimmable_targets(named: Option<&str>) -> Result<Vec<String>, Strin
 
 /// `name` if a display on it can be dimmed, else an error naming the ones that can.
 ///
-/// Checked against the brightness snapshot rather than against the compositor's outputs: those are two different
-/// sets. A monitor with no DDC support is an output that cannot be dimmed, and a DDC monitor whose connector could
-/// not be resolved answers to `i2c-6` — a name no compositor has ever heard of.
+/// Checked against the brightness snapshot rather than against the compositor's outputs: those are two different sets. A monitor with no DDC support is an output that cannot be dimmed, and a DDC monitor whose connector could not be resolved answers to `i2c-6` — a name no compositor has ever heard of.
 pub(crate) fn dimmable_output(name: &str) -> Result<String, String> {
     use services::brightness;
     let snapshot = brightness::snapshot();
@@ -162,8 +146,7 @@ pub(crate) fn known_screen(name: &str, screens: &[String]) -> Result<String, Str
     ))
 }
 
-/// Re-derives the dynamic palette after a wallpaper change, once the transition to the new image has finished.
-/// A no-op unless `[theme] name = "dynamic"`, so every wallpaper command can call it blind.
+/// Re-derives the dynamic palette after a wallpaper change, once the transition to the new image has finished. A no-op unless `[theme] name = "dynamic"`, so every wallpaper command can call it blind.
 pub(crate) fn refresh_scheme() {
     config::scheme::refresh_current();
 }
@@ -177,8 +160,7 @@ pub(crate) fn palette_rows(theme: &config::theme::NordTheme) -> String {
         .join("\n")
 }
 
-/// Switches the dashboard's page by its config id, refusing an unknown one by name — a keybind bound to a page
-/// that was renamed should say so rather than silently leaving the dashboard where it was.
+/// Switches the dashboard's page by its config id, refusing an unknown one by name — a keybind bound to a page that was renamed should say so rather than silently leaving the dashboard where it was.
 pub(crate) fn set_dashboard_tab(name: &str) -> Result<(), String> {
     use config::DashboardTab;
     let tab = DashboardTab::from_id(name).ok_or_else(|| {

@@ -11,8 +11,7 @@ pub enum OsdKind {
 }
 
 impl OsdKind {
-    /// What the column keys an OSD card on. One slot per kind rather than one for every OSD, so a wheel spun ten
-    /// notches redraws one card instead of pushing ten.
+    /// What the column keys an OSD card on. One slot per kind rather than one for every OSD, so a wheel spun ten notches redraws one card instead of pushing ten.
     pub(crate) fn id(self) -> &'static str {
         match self {
             OsdKind::Volume => "volume",
@@ -22,8 +21,7 @@ impl OsdKind {
     }
 }
 
-/// Which state the OSD being built reflects, provided into its surface's scope so `osd.rsx` reads it via
-/// `inject` — scoped to the surface, not a global thread-local.
+/// Which state the OSD being built reflects, provided into its surface's scope so `osd.rsx` reads it via `inject` — scoped to the surface, not a global thread-local.
 #[derive(Clone, Copy)]
 struct OsdCtx {
     kind: OsdKind,
@@ -41,8 +39,7 @@ pub fn current_osd_radius() -> f32 {
     ui::panel::content_radius()
 }
 
-/// Builds the OSD's content tree for `kind`/`theme` (declared in `osd.rsx`), putting both in scope for it
-/// first — which is why the surface calls this rather than the component directly.
+/// Builds the OSD's content tree for `kind`/`theme` (declared in `osd.rsx`), putting both in scope for it first — which is why the surface calls this rather than the component directly.
 pub(crate) fn osd_content(kind: OsdKind, theme: NordTheme) -> Box<dyn LayoutItem> {
     set_theme(theme);
     util::state::set_context(OsdCtx { kind });
@@ -67,15 +64,12 @@ pub(crate) fn osd_content(kind: OsdKind, theme: NordTheme) -> Box<dyn LayoutItem
 
 /// Shows (or replaces) the single-slot OSD for `kind`.
 ///
-/// It has no surface of its own any more: an OSD is a card in the shell's one column, so this posts it there
-/// and [`crate::stack`] decides where it goes, how long it stays and that it never takes the pointer.
+/// It has no surface of its own any more: an OSD is a card in the shell's one column, so this posts it there and [`crate::stack`] decides where it goes, how long it stays and that it never takes the pointer.
 pub fn show(kind: OsdKind) {
     crate::stack::show_osd(kind);
 }
 
-/// Percentage points to move for a scroll delta: one configured `increment` per notch, in the scrolled
-/// direction. `dy` is positive scrolling up (the platform already flips Wayland's axis), which is the direction
-/// that raises the level.
+/// Percentage points to move for a scroll delta: one configured `increment` per notch, in the scrolled direction. `dy` is positive scrolling up (the platform already flips Wayland's axis), which is the direction that raises the level.
 fn scroll_step(increment: i32, dy: f32) -> i32 {
     if dy > 0.0 { increment } else { -increment }
 }
@@ -90,8 +84,7 @@ fn brightness_step(dy: f32) -> i32 {
     scroll_step(services::brightness::settings().step(), dy)
 }
 
-/// Flashes the volume OSD without changing anything — for callers that already moved the level (a keybind
-/// routed through IPC) and only want the feedback.
+/// Flashes the volume OSD without changing anything — for callers that already moved the level (a keybind routed through IPC) and only want the feedback.
 pub fn show_volume() {
     show(OsdKind::Volume);
 }

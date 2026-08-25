@@ -1,14 +1,8 @@
 //! `hogar-shell(1)` and `hogar-shell(5)`, generated rather than written.
 //!
-//! Same reason as `--list` and `config schema`, one step further out: the manual a distribution installs is the
-//! copy furthest from the source and the one nobody re-reads, so writing it by hand is writing something that
-//! will be wrong by the next release. The command page walks [`TARGETS`] and the config page walks
-//! [`config::schema::outline`] — the two tables that already cannot drift from what the shell does — so a
-//! command or a key reaches the manual by existing.
+//! Same reason as `--list` and `config schema`, one step further out: the manual a distribution installs is the copy furthest from the source and the one nobody re-reads, so writing it by hand is writing something that will be wrong by the next release. The command page walks [`TARGETS`] and the config page walks [`config::schema::outline`] — the two tables that already cannot drift from what the shell does — so a command or a key reaches the manual by existing.
 //!
-//! Roff by hand rather than through scdoc or mandoc: the output is a few hundred lines of a format that has not
-//! moved in decades, and a generator that needs a tool installed to produce documentation is a build dependency
-//! a packager pays for nothing.
+//! Roff by hand rather than through scdoc or mandoc: the output is a few hundred lines of a format that has not moved in decades, and a generator that needs a tool installed to produce documentation is a build dependency a packager pays for nothing.
 
 use std::fmt::Write;
 
@@ -16,8 +10,7 @@ use config::schema::{Entry, Table};
 
 use super::commands::TARGETS;
 
-/// Every way the binary can be invoked, in one place: `--help` prints these as a usage block and the manual as
-/// its synopsis, so a form cannot appear in one and be missing from the other.
+/// Every way the binary can be invoked, in one place: `--help` prints these as a usage block and the manual as its synopsis, so a form cannot appear in one and be missing from the other.
 pub const FORMS: &[(&str, &str)] = &[
     ("[run]", "start the shell"),
     (
@@ -35,9 +28,7 @@ pub const FORMS: &[(&str, &str)] = &[
     ("--help | --version", ""),
 ];
 
-/// The page header. The date field is deliberately empty: a manual stamped with the day it was generated
-/// differs from the committed copy every day, and the check that keeps the two identical would fail for a
-/// reason that is not drift.
+/// The page header. The date field is deliberately empty: a manual stamped with the day it was generated differs from the committed copy every day, and the check that keeps the two identical would fail for a reason that is not drift.
 fn header(section: u8, summary: &str) -> String {
     format!(
         ".TH HOGAR-SHELL {section} \"\" \"hogar-shell {}\" \"hogar-shell\"\n.SH NAME\nhogar-shell \\- {summary}\n",
@@ -47,11 +38,7 @@ fn header(section: u8, summary: &str) -> String {
 
 /// The typographic characters the source's prose actually uses, as roff escapes.
 ///
-/// A manual has to survive being read by an `nroff` that treats its input as Latin-1 unless something thought
-/// to pipe it through `preconv`, which is where an em dash becomes three bytes of noise. Escaping is the only
-/// spelling that renders the same everywhere. Anything not in this table fails
-/// `the_manual_is_ascii_whatever_the_locale`, and that is the point: a character earns a place here by someone
-/// deciding what it should look like, rather than by turning into a question mark on a stranger's terminal.
+/// A manual has to survive being read by an `nroff` that treats its input as Latin-1 unless something thought to pipe it through `preconv`, which is where an em dash becomes three bytes of noise. Escaping is the only spelling that renders the same everywhere. Anything not in this table fails `the_manual_is_ascii_whatever_the_locale`, and that is the point: a character earns a place here by someone deciding what it should look like, rather than by turning into a question mark on a stranger's terminal.
 const TYPOGRAPHY: &[(char, &str)] = &[
     ('—', "\\(em"),
     ('–', "\\(en"),
@@ -79,10 +66,7 @@ const TYPOGRAPHY: &[(char, &str)] = &[
 
 /// Text as roff.
 ///
-/// A backslash opens an escape; a line opening with `.` or `'` is a request, so a doc comment whose wrapping
-/// happens to start a line with one would silently become a formatting command; a bare hyphen sets as a
-/// typographic dash in a page whose whole purpose is names a reader copies into a terminal; and everything
-/// above ASCII goes through [`TYPOGRAPHY`].
+/// A backslash opens an escape; a line opening with `.` or `'` is a request, so a doc comment whose wrapping happens to start a line with one would silently become a formatting command; a bare hyphen sets as a typographic dash in a page whose whole purpose is names a reader copies into a terminal; and everything above ASCII goes through [`TYPOGRAPHY`].
 fn escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
@@ -108,9 +92,7 @@ fn escape(text: &str) -> String {
         .join("\n")
 }
 
-/// A doc comment as manual prose. Its blank lines become explicit vertical space rather than roff's own
-/// paragraph break, which inside a `.TP` body would end the tagged paragraph and drop the indent for
-/// everything after it.
+/// A doc comment as manual prose. Its blank lines become explicit vertical space rather than roff's own paragraph break, which inside a `.TP` body would end the tagged paragraph and drop the indent for everything after it.
 fn prose(doc: &str) -> String {
     let mut out = String::new();
     for line in escape(doc).lines() {
@@ -287,21 +269,18 @@ pub(crate) fn config_page() -> Result<String, String> {
     Ok(out)
 }
 
-/// One table and everything under it. Sub-tables become headings of their own rather than nesting, which is
-/// what the file itself does: `[theme.scale]` is a header a reader types, not an indent.
+/// One table and everything under it. Sub-tables become headings of their own rather than nesting, which is what the file itself does: `[theme.scale]` is a header a reader types, not an indent.
 fn render_table(table: &Table, out: &mut String) {
     let _ = writeln!(out, ".SS [{}]", escape(&table.path));
     if let Some(doc) = table.doc {
         out.push_str(&prose(doc));
     }
-    // The outline orders a table's own keys before its sub-tables and lists, so one pass emits each heading
-    // after the keys that belong to it rather than before them.
+    // The outline orders a table's own keys before its sub-tables and lists, so one pass emits each heading after the keys that belong to it rather than before them.
     for entry in &table.entries {
         match entry {
             Entry::Key { name, default, doc } => {
                 let _ = writeln!(out, ".TP\n.B {}", escape(name));
-                // The break belongs between prose and its default, not under a bare key name — most of these
-                // are one line, and a blank line above every one of them reads as a page of gaps.
+                // The break belongs between prose and its default, not under a bare key name — most of these are one line, and a blank line above every one of them reads as a page of gaps.
                 if let Some(doc) = doc {
                     out.push_str(&prose(doc));
                     out.push_str(".sp\n");
@@ -361,8 +340,7 @@ mod tests {
         ]
     }
 
-    /// The check that makes a checked-in generated file safe to have: a key added to the config or a command
-    /// added to the table without regenerating fails here, rather than shipping a manual that quietly lies.
+    /// The check that makes a checked-in generated file safe to have: a key added to the config or a command added to the table without regenerating fails here, rather than shipping a manual that quietly lies.
     ///
     /// `UPDATE_MAN=1 cargo test -p hogar-shell --lib man` rewrites them.
     #[test]
@@ -432,8 +410,7 @@ mod tests {
         assert_eq!(escape("dark → light"), "dark \\(-> light");
     }
 
-    /// A page containing one raw em dash renders as three bytes of noise under an `nroff` that reads its input
-    /// as Latin-1, and a reader has no way to tell that from the shell's own text.
+    /// A page containing one raw em dash renders as three bytes of noise under an `nroff` that reads its input as Latin-1, and a reader has no way to tell that from the shell's own text.
     #[test]
     fn the_manual_is_ascii_whatever_the_locale() {
         for (file, page) in pages() {

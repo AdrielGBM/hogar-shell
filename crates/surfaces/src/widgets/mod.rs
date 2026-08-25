@@ -1,14 +1,8 @@
 //! The widgets surface: what the shell draws on the desktop itself — a clock face, an audio visualiser.
 //!
-//! One surface per monitor, over the wallpaper and under every window. It is deliberately *not* the wallpaper's
-//! surface, and the reason is what a repaint costs. A layer that changes forces its whole surface to be redrawn,
-//! and the visualiser changes with the music: sharing the wallpaper's surface meant rasterizing a full screen of
-//! photograph sixty times a second on the CPU, which on a laptop is a core pinned and forty degrees.
+//! One surface per monitor, over the wallpaper and under every window. It is deliberately *not* the wallpaper's surface, and the reason is what a repaint costs. A layer that changes forces its whole surface to be redrawn, and the visualiser changes with the music: sharing the wallpaper's surface meant rasterizing a full screen of photograph sixty times a second on the CPU, which on a laptop is a core pinned and forty degrees.
 //!
-//! **It measures the free area, not the screen.** The wallpaper opts out of every exclusive zone; this one
-//! respects them, so the compositor hands it exactly what the bars left over, and a gap off that keeps it clear
-//! of them. So `position = "center"` is the centre of the space applications get, which is also the centre a
-//! user looking at their desktop sees.
+//! **It measures the free area, not the screen.** The wallpaper opts out of every exclusive zone; this one respects them, so the compositor hands it exactly what the bars left over, and a gap off that keeps it clear of them. So `position = "center"` is the centre of the space applications get, which is also the centre a user looking at their desktop sees.
 
 use telar::{
     AlignItems, App, Color, Component, Container, JustifyContent, LayoutError, LayoutItem,
@@ -22,11 +16,9 @@ use services::{clock, visualiser};
 use telar::WindowRoot;
 use util::reactive::{derive, fixed};
 
-/// Per-output widgets: a click-through surface over the free area of the screen, carrying whatever `[widgets]`
-/// asks for.
+/// Per-output widgets: a click-through surface over the free area of the screen, carrying whatever `[widgets]` asks for.
 pub struct WidgetsApp {
-    /// Read at every build rather than held: the surface outlives the config it was first drawn from, and a
-    /// reload rebuilds it in place from whatever is in here now.
+    /// Read at every build rather than held: the surface outlives the config it was first drawn from, and a reload rebuilds it in place from whatever is in here now.
     pub config: config::LiveConfig,
 }
 
@@ -52,8 +44,7 @@ impl App for WidgetsApp {
     }
 }
 
-/// The desktop's widgets as this surface draws them, for [`crate::preview`]. The clock is forced on because it
-/// is the widget that has something to look at with no music playing and no wallpaper set.
+/// The desktop's widgets as this surface draws them, for [`crate::preview`]. The clock is forced on because it is the widget that has something to look at with no music playing and no wallpaper set.
 pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut config = config::config()
         .map(|live| (*live).clone())
@@ -64,8 +55,7 @@ pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// Every widget `[widgets]` asks for, stacked over the same area.
 ///
-/// A widget that fails to lay out costs its own layer and a log line, never the surface: a clock with an
-/// impossible scale must not take the visualiser down with it.
+/// A widget that fails to lay out costs its own layer and a log line, never the surface: a clock with an impossible scale must not take the visualiser down with it.
 fn content(config: &Config) -> Box<dyn LayoutItem> {
     let mut layers: Vec<Box<dyn LayoutItem>> = Vec::new();
     if config.widgets.clock.enabled {
@@ -94,10 +84,7 @@ fn fill() -> LayoutStyle {
 
 /// The clock face (`[widgets.clock]`).
 ///
-/// It lives here rather than in the `clock` module because it is not that module: the bar chip is a chip in a
-/// row of chips, and this is a face placed on a screen. What they do share — the tick and the `strftime`
-/// patterns — they share through the clock *service* and `[clock]`, which is the part that would actually be
-/// wrong to duplicate.
+/// It lives here rather than in the `clock` module because it is not that module: the bar chip is a chip in a row of chips, and this is a face placed on a screen. What they do share — the tick and the `strftime` patterns — they share through the clock *service* and `[clock]`, which is the part that would actually be wrong to duplicate.
 fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = config.resolve_theme();
     let settings = config.widgets.clock.clone();
@@ -155,8 +142,7 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
         lines.push(box_item(date));
     }
 
-    // Every reading is centred inside its own row, since a `Text` in a column takes the column's width and
-    // draws its glyphs from the left — the same rule the lock screen's `centred` exists for.
+    // Every reading is centred inside its own row, since a `Text` in a column takes the column's width and draws its glyphs from the left — the same rule the lock screen's `centred` exists for.
     let mut rows: Vec<Box<dyn LayoutItem>> = Vec::new();
     for line in lines {
         rows.push(Box::new(Container::new(
@@ -173,8 +159,7 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let plate_radius = theme.radius.max(12.0);
     let opacity = settings.plate_opacity();
     let feather = settings.background_blur.max(0.0);
-    // The raised surface, not the base: a plate painted in the colour behind it is invisible on a screen with
-    // no image, which is exactly the state a user switching it on for the first time is looking at.
+    // The raised surface, not the base: a plate painted in the colour behind it is invisible on a screen with no image, which is exactly the state a user switching it on for the first time is looking at.
     let plate_fill = if settings.invert {
         theme.text
     } else {
@@ -191,9 +176,7 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
             }
             let mut style = RectStyle::filled(plate_fill.with_alpha(opacity), plate_radius);
             if feather > 0.0 {
-                // A feathered plate is drawn as its own shadow: same colour, spread to the plate's size, blurred
-                // by `background_blur`. That is what "the plate's edge fades into the wallpaper" means with the
-                // primitives the renderer has — there is no backdrop blur to sample the image through.
+                // A feathered plate is drawn as its own shadow: same colour, spread to the plate's size, blurred by `background_blur`. That is what "the plate's edge fades into the wallpaper" means with the primitives the renderer has — there is no backdrop blur to sample the image through.
                 style.shadow = Some(
                     Shadow::new(0.0, 0.0, feather, plate_fill.with_alpha(opacity))
                         .with_spread(feather * 0.5),
@@ -220,10 +203,7 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// The audio visualiser (`[widgets.visualiser]`).
 ///
-/// **The row hides itself by opacity, never by leaving the tree.** Rebuilding a surface's children on a value
-/// that changes with the music is a re-layout per frame; and the spectrum service stops publishing entirely
-/// once the sound does, so the last frame it sends is the all-zero one that starts the fade — the row costs
-/// exactly one animation after the music stops and nothing at all thereafter.
+/// **The row hides itself by opacity, never by leaving the tree.** Rebuilding a surface's children on a value that changes with the music is a re-layout per frame; and the spectrum service stops publishing entirely once the sound does, so the last frame it sends is the all-zero one that starts the fade — the row costs exactly one animation after the music stops and nothing at all thereafter.
 fn visualiser_row(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let settings = config.widgets.visualiser;
     let theme = config.resolve_theme();
@@ -295,8 +275,7 @@ fn thickness(edge: config::Edge, reach: f32) -> LayoutStyle {
 
 /// How opaque the row is: one when there is sound, zero when `hide_when_silent` and there is not.
 ///
-/// Two shapes rather than one, because with animation off an `Animated` would be a tween with no duration to
-/// divide by.
+/// Two shapes rather than one, because with animation off an `Animated` would be a tween with no duration to divide by.
 fn visualiser_fade(config: &Config, silent: telar::ReadSignal<bool>) -> Box<dyn Fn() -> f32> {
     if !config.widgets.visualiser.hide_when_silent {
         return Box::new(|| 1.0);
@@ -307,8 +286,7 @@ fn visualiser_fade(config: &Config, silent: telar::ReadSignal<bool>) -> Box<dyn 
     let fade = Animated::new(0.0f32, config.animation.tween_ms(400, 5_000));
     let target = fade.clone();
     Box::new(move || {
-        // Read out first: the retarget is what makes the row appear, and it has to be registered as a
-        // dependency on the frame that draws nothing too.
+        // Read out first: the retarget is what makes the row appear, and it has to be registered as a dependency on the frame that draws nothing too.
         let quiet = silent.get();
         target.retarget(if quiet { 0.0 } else { 1.0 });
         fade.get()
@@ -375,8 +353,7 @@ mod tests {
 
     #[test]
     fn the_visualiser_builds_on_every_edge_and_with_the_fade_both_ways() {
-        // The build is what runs the closures: the opacity closure retargets an animation, and the row's own
-        // box swaps its axis per edge, neither of which any other test reaches.
+        // The build is what runs the closures: the opacity closure retargets an animation, and the row's own box swaps its axis per edge, neither of which any other test reaches.
         for edge in config::Edge::ALL {
             for hide in [true, false] {
                 for animated in [true, false] {
@@ -405,8 +382,7 @@ mod tests {
             "a face that repainted every second would be a surface animating"
         );
 
-        // A user who set `[clock] format` has said what a clock looks like; the face follows rather than
-        // second-guessing them.
+        // A user who set `[clock] format` has said what a clock looks like; the face follows rather than second-guessing them.
         let explicit = config::ClockConfig {
             format: Some("%H.%M".to_string()),
             ..config::ClockConfig::default()

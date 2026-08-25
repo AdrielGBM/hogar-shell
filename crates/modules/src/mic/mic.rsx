@@ -2,9 +2,7 @@
 use ::services::volume::{self, Volume};
 use ::ui::glyph;
 
-// `None` until the graph has answered, never a stand-in reading: the chip used to seed itself `muted: true`,
-// so a live microphone drew mic-off for as long as the PipeWire listener took to publish its first batch.
-// Of the two ways to be wrong, claiming muted is the one that gets someone to speak freely into a live mic.
+// `None` until the graph has answered, never a stand-in reading: the chip used to seed itself `muted: true`, so a live microphone drew mic-off for as long as the PipeWire listener took to publish its first batch. Of the two ways to be wrong, claiming muted is the one that gets someone to speak freely into a live mic.
 let state = signal(volume::current_mic());
 let read = state.read_only();
 let fg = ui::module::module_fg();

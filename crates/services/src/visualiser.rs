@@ -1,15 +1,8 @@
 //! The sound coming out of the speakers, as a row of bars.
 //!
-//! One PipeWire stream on the default sink's *monitor* — what is being played, not what a microphone hears —
-//! feeds a windowed FFT, and each transform is folded into the handful of log-spaced bands a visualiser draws.
-//! The shell's usual rule applies: one capture for the whole process, however many surfaces subscribe.
+//! One PipeWire stream on the default sink's *monitor* — what is being played, not what a microphone hears — feeds a windowed FFT, and each transform is folded into the handful of log-spaced bands a visualiser draws. The shell's usual rule applies: one capture for the whole process, however many surfaces subscribe.
 //!
-//! **A visualiser is the one service that can undo the idle budget**, because its data source never stops: a
-//! monitor stream delivers silence at exactly the same rate it delivers music, so a naive producer would wake
-//! every surface sixty times a second in front of a paused player. Two things prevent that. Nothing starts
-//! until something subscribes — `Service` is lazy — and a frame identical to the one before it is not
-//! published, so silence costs one final all-zero frame and then nothing at all until sound returns. That is
-//! also what gives every consumer its auto-hide for free: [`Spectrum::silent`] is a reading, not a timer.
+//! **A visualiser is the one service that can undo the idle budget**, because its data source never stops: a monitor stream delivers silence at exactly the same rate it delivers music, so a naive producer would wake every surface sixty times a second in front of a paused player. Two things prevent that. Nothing starts until something subscribes — `Service` is lazy — and a frame identical to the one before it is not published, so silence costs one final all-zero frame and then nothing at all until sound returns. That is also what gives every consumer its auto-hide for free: [`Spectrum::silent`] is a reading, not a timer.
 
 use std::collections::VecDeque;
 use std::ops::ControlFlow;
@@ -23,32 +16,26 @@ use crate::pwstream;
 use config::VisualiserConfig;
 use util::broadcast::{Broadcast, Service};
 
-/// Samples per second asked of the capture. Chosen over 48 kHz so the top band sits near the limit of what a
-/// person hears rather than a couple of empty bins above it; PipeWire resamples either way.
+/// Samples per second asked of the capture. Chosen over 48 kHz so the top band sits near the limit of what a person hears rather than a couple of empty bins above it; PipeWire resamples either way.
 const RATE: u32 = 44_100;
 
-/// Samples per transform. 2048 at 44.1 kHz is a 21.5 Hz bin and a 46 ms window — fine enough to separate a
-/// bass line from a kick, short enough that a bar follows the note rather than trailing it.
+/// Samples per transform. 2048 at 44.1 kHz is a 21.5 Hz bin and a 46 ms window — fine enough to separate a bass line from a kick, short enough that a bar follows the note rather than trailing it.
 const WINDOW: usize = 2048;
 
-/// The band edges, in hertz. Below 40 Hz is rumble no speaker reproduces and above 16 kHz is bin noise; both
-/// only ever contribute a bar that never moves.
+/// The band edges, in hertz. Below 40 Hz is rumble no speaker reproduces and above 16 kHz is bin noise; both only ever contribute a bar that never moves.
 const LOW_HZ: f32 = 40.0;
 const HIGH_HZ: f32 = 16_000.0;
 
 /// Bands under this are "the bass" for beat detection — a kick drum and the low end of a bass guitar.
 const BEAT_HZ: f32 = 150.0;
 
-/// How much history the beat detector compares against. Long enough to average over a bar of music, short
-/// enough to follow a track getting louder rather than calling every beat of it.
+/// How much history the beat detector compares against. Long enough to average over a bar of music, short enough to follow a track getting louder rather than calling every beat of it.
 const BEAT_HISTORY: Duration = Duration::from_millis(1500);
 
-/// The shortest gap between two beats, as a fraction of the frame rate — about 8 per second, which is past any
-/// tempo a person taps to and still stops one kick from registering as three.
+/// The shortest gap between two beats, as a fraction of the frame rate — about 8 per second, which is past any tempo a person taps to and still stops one kick from registering as three.
 const BEAT_REFRACTORY_HZ: f32 = 8.0;
 
-/// A band quieter than this reads as nothing. Snapping it to zero is what lets an unchanged frame be *equal* to
-/// the one before it, which is what stops a silent room waking the compositor sixty times a second.
+/// A band quieter than this reads as nothing. Snapping it to zero is what lets an unchanged frame be *equal* to the one before it, which is what stops a silent room waking the compositor sixty times a second.
 const EPSILON: f32 = 0.001;
 
 /// How long to wait before re-attaching after the capture exits. Only reached when PipeWire restarted.
@@ -63,14 +50,12 @@ pub struct Spectrum {
     pub level: f32,
     /// A transient landed in the bass on this frame. Momentary: true for one frame, not for the beat's length.
     pub beat: bool,
-    /// Nothing is playing. A consumer hides on this rather than on `level == 0.0`, because it is also what the
-    /// producer stops publishing on — the last frame before the quiet always carries it.
+    /// Nothing is playing. A consumer hides on this rather than on `level == 0.0`, because it is also what the producer stops publishing on — the last frame before the quiet always carries it.
     pub silent: bool,
 }
 
 impl Spectrum {
-    /// A spectrum with `bars` bands, all silent. What a surface draws before the first frame arrives, and what
-    /// the producer publishes once when the sound stops.
+    /// A spectrum with `bars` bands, all silent. What a surface draws before the first frame arrives, and what the producer publishes once when the sound stops.
     pub fn quiet(bars: usize) -> Self {
         Self {
             bars: vec![0.0; bars].into(),
@@ -110,8 +95,7 @@ fn run(out: &Arc<Broadcast<Spectrum>>) {
                 attached = true;
                 tracing::warn!("the audio capture exited; re-attaching");
             }
-            // The same retirement `pipewire` makes: a machine with no PipeWire does not grow one while the
-            // shell runs, so retrying forever would fork a doomed process all day.
+            // The same retirement `pipewire` makes: a machine with no PipeWire does not grow one while the shell runs, so retrying forever would fork a doomed process all day.
             Err(e) if !attached => {
                 tracing::info!("no audio capture ({e}); the visualiser will stay silent");
                 return;
@@ -134,9 +118,7 @@ enum Wanted {
 
 /// Runs one capture to completion, publishing a spectrum per hop that differs from the one before it.
 ///
-/// This is the one service that publishes at a frame rate, so it is also the one that must notice soonest that
-/// nobody is watching: the check runs per hop and breaks the stream itself rather than waiting for a reattach,
-/// which is what stops an idle machine paying for an FFT nothing draws.
+/// This is the one service that publishes at a frame rate, so it is also the one that must notice soonest that nobody is watching: the check runs per hop and breaks the stream itself rather than waiting for a reattach, which is what stops an idle machine paying for an FFT nothing draws.
 fn capture(out: &Arc<Broadcast<Spectrum>>, config: &VisualiserConfig) -> std::io::Result<Wanted> {
     let hop = (RATE as f32 / config.rate() as f32).round().max(64.0) as usize;
     let mut analyser = Analyser::new(config, hop);
@@ -145,8 +127,7 @@ fn capture(out: &Arc<Broadcast<Spectrum>>, config: &VisualiserConfig) -> std::io
 
     let captured = pwstream::monitor(RATE, hop, &mut |samples| {
         let next = analyser.push(samples);
-        // Silence is a state, not a stream of frames: publishing the same all-zero spectrum sixty times a
-        // second is exactly the idle cost this service exists to avoid.
+        // Silence is a state, not a stream of frames: publishing the same all-zero spectrum sixty times a second is exactly the idle cost this service exists to avoid.
         if next != last {
             last = next.clone();
             out.publish(next);
@@ -172,11 +153,7 @@ struct Analyser {
     scratch: Vec<Complex32>,
     /// Working space the transform needs beside its buffer, held rather than asked for each hop.
     ///
-    /// `Fft::process` allocates this itself on every call — `vec![Complex::zero(); get_inplace_scratch_len()]`,
-    /// straight from its source — and the visualiser runs one per audio hop for as long as anything is
-    /// listening. It was the single largest source of transient allocation in the shell: 66,571 of the 66,839
-    /// allocations at that call site were freed almost immediately, 99.6%, and that churn is what keeps glibc's
-    /// arenas fragmented and RSS above the heap that is actually live.
+    /// `Fft::process` allocates this itself on every call — `vec![Complex::zero(); get_inplace_scratch_len()]`, straight from its source — and the visualiser runs one per audio hop for as long as anything is listening. It was the single largest source of transient allocation in the shell: 66,571 of the 66,839 allocations at that call site were freed almost immediately, 99.6%, and that churn is what keeps glibc's arenas fragmented and RSS above the heap that is actually live.
     fft_scratch: Vec<Complex32>,
     /// The first and last FFT bin of each band, inclusive.
     bands: Vec<(usize, usize)>,
@@ -252,14 +229,12 @@ impl Analyser {
         self.plan
             .process_with_scratch(&mut self.scratch, &mut self.fft_scratch);
 
-        // A full-scale sine puts half its energy in each of two mirrored bins and the Hann window halves the
-        // amplitude again, so this is the factor that makes such a tone read as exactly 1.0.
+        // A full-scale sine puts half its energy in each of two mirrored bins and the Hann window halves the amplitude again, so this is the factor that makes such a tone read as exactly 1.0.
         let normalise = 4.0 / WINDOW as f32;
         let bars: Vec<f32> = (0..self.bands.len())
             .map(|band| {
                 let (start, end) = self.bands[band];
-                // The loudest bin in the band, not their mean: a band spanning an octave of the top end is
-                // mostly empty, and averaging it flattens every cymbal into the noise floor beside it.
+                // The loudest bin in the band, not their mean: a band spanning an octave of the top end is mostly empty, and averaging it flattens every cymbal into the noise floor beside it.
                 let peak = self.scratch[start..=end]
                     .iter()
                     .map(|bin| bin.norm())
@@ -297,8 +272,7 @@ impl Analyser {
 
     /// An amplitude on the 0–1 curve the bars are drawn against: decibels, floored, then rescaled.
     ///
-    /// Linear amplitude is the wrong axis for a visualiser for the same reason it is the wrong axis for a
-    /// volume slider — a bar drawn from it spends its life within a few pixels of the bottom.
+    /// Linear amplitude is the wrong axis for a visualiser for the same reason it is the wrong axis for a volume slider — a bar drawn from it spends its life within a few pixels of the bottom.
     fn normalise(&self, amplitude: f32) -> f32 {
         let amplitude = amplitude * self.gain;
         if amplitude <= 0.0 {
@@ -310,9 +284,7 @@ impl Analyser {
 
     /// Whether the bass just jumped clear of where it has recently been.
     ///
-    /// A ratio against a moving average rather than an absolute threshold: any fixed number is either deaf to a
-    /// quiet track or triggered continuously by a loud one, and the thing a beat *is* is a transient relative to
-    /// the music around it.
+    /// A ratio against a moving average rather than an absolute threshold: any fixed number is either deaf to a quiet track or triggered continuously by a loud one, and the thing a beat *is* is a transient relative to the music around it.
     fn beat(&mut self, energy: f32) -> bool {
         let average = if self.history_energy.is_empty() {
             0.0
@@ -328,8 +300,7 @@ impl Analyser {
             self.refractory -= 1;
             return false;
         }
-        // The floor is what stops the ratio finding beats in silence, where any sample at all is infinitely
-        // louder than an average of nothing.
+        // The floor is what stops the ratio finding beats in silence, where any sample at all is infinitely louder than an average of nothing.
         let struck = energy > EPSILON * 20.0 && energy > average * self.sensitivity;
         if struck {
             self.refractory = self.refractory_frames;
@@ -340,8 +311,7 @@ impl Analyser {
 
 /// The FFT bins each band covers, log-spaced from [`LOW_HZ`] to [`HIGH_HZ`].
 ///
-/// Every band gets at least one bin, and no bin is shared: at the bottom the log spacing asks for bands
-/// narrower than one bin, and letting them overlap draws four identical bass bars instead of a slope.
+/// Every band gets at least one bin, and no bin is shared: at the bottom the log spacing asks for bands narrower than one bin, and letting them overlap draws four identical bass bars instead of a slope.
 fn band_bins(bars: usize) -> Vec<(usize, usize)> {
     let bin_hz = RATE as f32 / WINDOW as f32;
     let top = WINDOW / 2 - 1;
@@ -405,16 +375,14 @@ mod tests {
 
     #[test]
     fn a_band_count_of_one_still_produces_one_band() {
-        // The config clamps, but the geometry has to survive the edge on its own — `bars.windows(2)` above
-        // never runs for a single band, so nothing else would catch a panic here.
+        // The config clamps, but the geometry has to survive the edge on its own — `bars.windows(2)` above never runs for a single band, so nothing else would catch a panic here.
         assert_eq!(band_bins(1).len(), 1);
         let _ = analyser(1).push(&tone(440.0, 735));
     }
 
     #[test]
     fn silence_reads_as_silent_rather_than_as_a_frame_of_zeroes() {
-        // The distinction the whole idle budget rests on: a consumer hides on `silent`, and the producer
-        // publishes nothing more once it is true.
+        // The distinction the whole idle budget rests on: a consumer hides on `silent`, and the producer publishes nothing more once it is true.
         let mut analyser = analyser(24);
         let mut spectrum = analyser.push(&vec![0.0; 735]);
         for _ in 0..64 {
@@ -427,8 +395,7 @@ mod tests {
 
     #[test]
     fn a_silent_frame_equals_the_one_before_it() {
-        // `capture` publishes on inequality, so this equality *is* the mechanism — a spectrum carrying a
-        // decaying tail of 1e-9s would compare unequal for ever and wake every surface sixty times a second.
+        // `capture` publishes on inequality, so this equality *is* the mechanism — a spectrum carrying a decaying tail of 1e-9s would compare unequal for ever and wake every surface sixty times a second.
         let mut analyser = analyser(24);
         for _ in 0..64 {
             analyser.push(&vec![0.0; 735]);
@@ -468,8 +435,7 @@ mod tests {
 
     #[test]
     fn a_full_scale_tone_reaches_the_top_of_the_scale() {
-        // The normalisation is the one number in here with an absolute right answer, and getting it wrong is
-        // invisible — every bar simply sits low, which reads as "quiet music" rather than as a bug.
+        // The normalisation is the one number in here with an absolute right answer, and getting it wrong is invisible — every bar simply sits low, which reads as "quiet music" rather than as a bug.
         let mut analyser = analyser(24);
         let mut spectrum = Spectrum::default();
         for _ in 0..40 {
@@ -484,8 +450,7 @@ mod tests {
 
     #[test]
     fn a_beat_is_reported_once_rather_than_for_its_whole_length() {
-        // A kick held for a tenth of a second is one beat. Without the refractory it is six, and anything
-        // pulsing on `beat` flickers instead of pulsing.
+        // A kick held for a tenth of a second is one beat. Without the refractory it is six, and anything pulsing on `beat` flickers instead of pulsing.
         let mut analyser = analyser(24);
         for _ in 0..40 {
             analyser.push(&vec![0.0; 735]);
@@ -500,8 +465,7 @@ mod tests {
 
     #[test]
     fn a_quiet_spectrum_has_the_band_count_it_was_asked_for() {
-        // What a surface draws before the first frame: the row has to be the right width immediately, or the
-        // bars visibly reflow the moment sound starts.
+        // What a surface draws before the first frame: the row has to be the right width immediately, or the bars visibly reflow the moment sound starts.
         assert_eq!(Spectrum::quiet(32).bars.len(), 32);
         assert!(Spectrum::quiet(32).silent);
     }
@@ -511,11 +475,7 @@ mod tests {
 mod live {
     use super::*;
 
-    /// Captures whatever the speakers are playing and prints the bars, to check the three things a unit test
-    /// cannot: that the format negotiates at all, that `stream.capture.sink` really turns the stream around
-    /// onto the sink's monitor rather than onto a microphone, and that a buffer read as `f32` is one. Play
-    /// something, then:
-    /// `TELAR_LIVE_VISUALISER=1 cargo test -p hogar-shell --lib live_capture -- --nocapture`
+    /// Captures whatever the speakers are playing and prints the bars, to check the three things a unit test cannot: that the format negotiates at all, that `stream.capture.sink` really turns the stream around onto the sink's monitor rather than onto a microphone, and that a buffer read as `f32` is one. Play something, then: `TELAR_LIVE_VISUALISER=1 cargo test -p hogar-shell --lib live_capture -- --nocapture`
     #[test]
     fn live_capture() {
         if std::env::var("TELAR_LIVE_VISUALISER").is_err() {

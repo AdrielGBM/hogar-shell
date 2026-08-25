@@ -1,9 +1,6 @@
 //! The Bluetooth chip and the device list it opens.
 //!
-//! One panel does the whole job a user has with Bluetooth: turn the radio on, look for something new, connect
-//! or disconnect what is listed, and forget what they are done with. Everything it shows comes from the shared
-//! [`bluetooth`](services::bluetooth) service, so the chip, the cluster icon, the popout card
-//! and this panel are four views of one subscription rather than four readers of the bus.
+//! One panel does the whole job a user has with Bluetooth: turn the radio on, look for something new, connect or disconnect what is listed, and forget what they are done with. Everything it shows comes from the shared [`bluetooth`](services::bluetooth) service, so the chip, the cluster icon, the popout card and this panel are four views of one subscription rather than four readers of the bus.
 
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReactiveList,
@@ -25,8 +22,7 @@ const ROW_RADIUS: f32 = 8.0;
 pub fn chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let accent = theme.accent;
-    // The `Copy` summary, not the whole state: the tint closure also reads the foreground signal, and a
-    // `with` over the state would still be holding the reactive runtime's borrow when it did.
+    // The `Copy` summary, not the whole state: the tint closure also reads the foreground signal, and a `with` over the state would still be holding the reactive runtime's borrow when it did.
     let state = signal(
         bluetooth::current()
             .map(|bt| bt.status())
@@ -56,8 +52,7 @@ pub fn bluetooth_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     bluetooth_view(config)
 }
 
-/// The panel's whole content, taking its config rather than reading the surface's, so a caller that already
-/// resolved one — a drawer, a float — does not have to be a surface for this to build.
+/// The panel's whole content, taking its config rather than reading the surface's, so a caller that already resolved one — a drawer, a float — does not have to be a surface for this to build.
 pub fn bluetooth_view(config: BluetoothConfig) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
 
@@ -65,8 +60,7 @@ pub fn bluetooth_view(config: BluetoothConfig) -> Result<Box<dyn LayoutItem>, La
     let sink = state.clone();
     platform_wayland::watch(bluetooth::subscribe, move |bt| sink.set(bt));
 
-    // Opening the panel is the gesture that means "find me a device", so it is also what starts looking. The
-    // scan stops itself; see `bluetooth::set_discovering`.
+    // Opening the panel is the gesture that means "find me a device", so it is also what starts looking. The scan stops itself; see `bluetooth::set_discovering`.
     if config.scan_on_open && state.peek().powered {
         bluetooth::set_discovering(true);
     }
@@ -96,8 +90,7 @@ fn header(
     let scan_label = state.read_only();
     let scan_active = state.read_only();
 
-    // Read out, then translate: `adapter_line` calls `t!`, and a `with` here would still hold the reactive
-    // runtime's borrow when it read the locale signal.
+    // Read out, then translate: `adapter_line` calls `t!`, and a `with` here would still hold the reactive runtime's borrow when it read the locale signal.
     let subtitle = Text::auto(
         move || adapter_line(&subtitle_state.get()),
         LayoutStyle::new(),
@@ -155,8 +148,7 @@ fn header(
     )?))
 }
 
-/// What the adapter itself is doing, under the title: its name, whether it is scanning, and how much is
-/// connected — the three facts that decide what the list below means.
+/// What the adapter itself is doing, under the title: its name, whether it is scanning, and how much is connected — the three facts that decide what the list below means.
 fn adapter_line(bt: &Bluetooth) -> String {
     if !bt.available {
         return telar::t!("bluetooth.no_adapter");
@@ -176,8 +168,7 @@ fn adapter_line(bt: &Bluetooth) -> String {
     }
 }
 
-/// The devices worth listing, in the service's order: unnamed ones are dropped unless asked for (a scan in a
-/// public place turns up dozens of bare addresses), and the rest are capped.
+/// The devices worth listing, in the service's order: unnamed ones are dropped unless asked for (a scan in a public place turns up dozens of bare addresses), and the rest are capped.
 fn listed(bt: &Bluetooth, config: BluetoothConfig) -> Vec<Device> {
     bt.devices
         .iter()
@@ -197,9 +188,7 @@ fn list(
     let empty_state = state.read_only();
     let rows = ReactiveList::new(
         move || listed(&source.get(), config),
-        // Keyed on what the row draws, not on the device's identity: a headset keeps its path while it
-        // connects, gains a battery reading and changes its subtitle, and a row keyed on the path alone would
-        // still be showing "Paired" long after it came up.
+        // Keyed on what the row draws, not on the device's identity: a headset keeps its path while it connects, gains a battery reading and changes its subtitle, and a row keyed on the path alone would still be showing "Paired" long after it came up.
         |d: &Device| row_key(d),
         {
             let armed = armed.clone();
@@ -249,9 +238,7 @@ fn empty_line(bt: &Bluetooth, config: BluetoothConfig) -> String {
 
 /// One device: press to connect or disconnect, right-click to forget.
 ///
-/// Forgetting arms first, like the session menu's destructive tiles. A pairing is a key exchange the other
-/// device also has to be told about — undoing a mis-click means putting the headset back in pairing mode — so
-/// it is not something a stray right-click should be able to do.
+/// Forgetting arms first, like the session menu's destructive tiles. A pairing is a key exchange the other device also has to be told about — undoing a mis-click means putting the headset back in pairing mode — so it is not something a stray right-click should be able to do.
 fn row(
     device: Device,
     armed: RwSignal<String>,
@@ -518,11 +505,7 @@ mod tests {
         assert_eq!(row_key(&idle), row_key(&idle.clone()));
     }
 
-    /// Regression: the chip's tint closure read the foreground signal from *inside* a `with` over the state
-    /// signal, and the panel's subtitle called `t!` — which reads the locale signal — from inside another. Both
-    /// hold the reactive runtime's borrow across the inner read, which panics with "RefCell already borrowed"
-    /// the moment the surface is built. Nothing catches it at compile time, and it only fires when the closures
-    /// actually run, which is here.
+    /// Regression: the chip's tint closure read the foreground signal from *inside* a `with` over the state signal, and the panel's subtitle called `t!` — which reads the locale signal — from inside another. Both hold the reactive runtime's borrow across the inner read, which panics with "RefCell already borrowed" the moment the surface is built. Nothing catches it at compile time, and it only fires when the closures actually run, which is here.
     #[test]
     fn the_chip_and_the_panel_build_without_a_re_entrant_borrow() {
         telar::reset_layout_runtime();

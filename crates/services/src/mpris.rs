@@ -1,13 +1,8 @@
 //! Whatever is playing, and the controls for it.
 //!
-//! MPRIS is a per-application interface — every player owns a `org.mpris.MediaPlayer2.<app>` bus name — so the
-//! shell's job is to pick one and present it as "the" player. Selection is: the user's configured preference if
-//! it is running, else the first one actually playing, else the first that exists. That ordering is what makes
-//! a media chip feel right when a browser tab and a music player are both alive.
+//! MPRIS is a per-application interface — every player owns a `org.mpris.MediaPlayer2.<app>` bus name — so the shell's job is to pick one and present it as "the" player. Selection is: the user's configured preference if it is running, else the first one actually playing, else the first that exists. That ordering is what makes a media chip feel right when a browser tab and a music player are both alive.
 //!
-//! Position is deliberately *not* tracked here. It advances continuously, so publishing it would wake every
-//! subscribed surface many times a second for a value only a progress bar cares about; a consumer that wants it
-//! calls [`position`] on its own cadence.
+//! Position is deliberately *not* tracked here. It advances continuously, so publishing it would wake every subscribed surface many times a second for a value only a progress bar cares about; a consumer that wants it calls [`position`] on its own cadence.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,8 +43,7 @@ impl Playback {
     }
 }
 
-/// What the shell shows and controls. `bus` identifies the player for the control calls; everything else is
-/// display.
+/// What the shell shows and controls. `bus` identifies the player for the control calls; everything else is display.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Player {
     pub bus: String,
@@ -60,23 +54,20 @@ pub struct Player {
     pub album: String,
     /// Cover art URL as the player gave it — usually `file://` or `https://`.
     pub art_url: String,
-    /// The track's own URL (`xesam:url`), which for a local file is where its `.lrc` lives next to it. Empty for a
-    /// stream, and for the players that simply do not report one.
+    /// The track's own URL (`xesam:url`), which for a local file is where its `.lrc` lives next to it. Empty for a stream, and for the players that simply do not report one.
     pub url: String,
     /// Track length in microseconds; 0 when the player doesn't report one (a live stream).
     pub length: i64,
     pub playback: Playback,
     pub can_go_next: bool,
     pub can_go_previous: bool,
-    /// Whether the player accepts `Seek` at all. A live stream and most browser tabs do not, and offering a
-    /// scrub that silently does nothing is worse than not offering one.
+    /// Whether the player accepts `Seek` at all. A live stream and most browser tabs do not, and offering a scrub that silently does nothing is worse than not offering one.
     pub can_seek: bool,
     pub shuffle: bool,
     pub loop_status: LoopStatus,
 }
 
-/// MPRIS's `LoopStatus`. The variant is `Off` rather than `None` so it never reads as an absent value at a
-/// call site — this is a state the player is in, not a missing one.
+/// MPRIS's `LoopStatus`. The variant is `Off` rather than `None` so it never reads as an absent value at a call site — this is a state the player is in, not a missing one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LoopStatus {
     #[default]
@@ -103,8 +94,7 @@ impl LoopStatus {
         }
     }
 
-    /// What pressing a single loop button does: off → the whole playlist → this track → off. That order is
-    /// what every player's own button does, so the shell's matches muscle memory.
+    /// What pressing a single loop button does: off → the whole playlist → this track → off. That order is what every player's own button does, so the shell's matches muscle memory.
     pub fn next(self) -> Self {
         match self {
             Self::Off => Self::Playlist,
@@ -144,10 +134,7 @@ fn short_name(bus: &str) -> &str {
 
 /// The stable key config matches on, with the volatile part of the bus name removed.
 ///
-/// The MPRIS spec lets a player that can run more than once append `.instanceNNNN`, so a browser shows up as
-/// `org.mpris.MediaPlayer2.chromium.instance4489` — with a PID that changes every launch. Keying config on the
-/// raw suffix would mean `preferred_player` and `[media.aliases]` silently stop matching after a restart, so
-/// both use this instead.
+/// The MPRIS spec lets a player that can run more than once append `.instanceNNNN`, so a browser shows up as `org.mpris.MediaPlayer2.chromium.instance4489` — with a PID that changes every launch. Keying config on the raw suffix would mean `preferred_player` and `[media.aliases]` silently stop matching after a restart, so both use this instead.
 fn config_key(bus: &str) -> &str {
     let short = short_name(bus);
     match short.split_once(".instance") {
@@ -158,9 +145,7 @@ fn config_key(bus: &str) -> &str {
 
 /// Picks the player to present, given every running one.
 ///
-/// A preference only wins if that player is actually running, so configuring `Spotify` doesn't leave the chip
-/// blank when Spotify is closed. Otherwise something playing beats something paused — the thing making noise is
-/// the thing the user means — and a stable fallback keeps the chip from flickering between two idle players.
+/// A preference only wins if that player is actually running, so configuring `Spotify` doesn't leave the chip blank when Spotify is closed. Otherwise something playing beats something paused — the thing making noise is the thing the user means — and a stable fallback keeps the chip from flickering between two idle players.
 fn choose<'a>(players: &'a [Player], preferred: &str) -> Option<&'a Player> {
     let preferred = preferred.trim();
     if !preferred.is_empty()
@@ -205,8 +190,7 @@ fn props_for(conn: &Connection, bus: &str) -> Option<PropertiesProxy<'static>> {
         .ok()
 }
 
-/// Pulls a string out of the `Metadata` dictionary. `xesam:artist` is a list; the first entry is the one a
-/// one-line chip has room for.
+/// Pulls a string out of the `Metadata` dictionary. `xesam:artist` is a list; the first entry is the one a one-line chip has room for.
 fn meta_string(metadata: &HashMap<String, Value<'_>>, key: &str) -> String {
     let Some(value) = metadata.get(key) else {
         return String::new();
@@ -233,8 +217,7 @@ fn meta_i64(metadata: &HashMap<String, Value<'_>>, key: &str) -> i64 {
 
 fn read_player(conn: &Connection, bus: &str) -> Option<Player> {
     let props = props_for(conn, bus)?;
-    // The interface name is rebuilt per call rather than captured: `InterfaceName` is not `Copy`, and a closure
-    // holding one is `FnOnce`, which a multi-property read cannot use.
+    // The interface name is rebuilt per call rather than captured: `InterfaceName` is not `Copy`, and a closure holding one is `FnOnce`, which a multi-property read cannot use.
     let get = |name: &str| props.get(PLAYER_IFACE.try_into().ok()?, name).ok();
 
     let metadata: HashMap<String, Value> = get("Metadata")
@@ -268,8 +251,7 @@ fn read_player(conn: &Connection, bus: &str) -> Option<Player> {
         can_seek: get("CanSeek")
             .and_then(|v| bool::try_from(v).ok())
             .unwrap_or(false),
-        // Both are optional in the spec, and a player that implements neither reports the defaults rather than
-        // failing the whole read.
+        // Both are optional in the spec, and a player that implements neither reports the defaults rather than failing the whole read.
         shuffle: get("Shuffle")
             .and_then(|v| bool::try_from(v).ok())
             .unwrap_or(false),
@@ -294,9 +276,7 @@ fn read_active(conn: &Connection) -> Player {
     chosen
 }
 
-/// The display name for a player: its `[media.aliases]` entry keyed by bus suffix, else its own `Identity`.
-/// Players name themselves badly often enough (`com.github.th_ch.youtube_music`) that overriding is worth a
-/// config key.
+/// The display name for a player: its `[media.aliases]` entry keyed by bus suffix, else its own `Identity`. Players name themselves badly often enough (`com.github.th_ch.youtube_music`) that overriding is worth a config key.
 fn alias_for(player: &Player) -> String {
     if player.is_empty() {
         return String::new();
@@ -334,11 +314,7 @@ fn run(out: &Arc<Broadcast<Player>>) {
 
 /// Wakes on either signal that can change what the chip should show, from **one** iterator.
 ///
-/// Watching only the active player's `PropertiesChanged` is not enough, and getting that wrong is what made a
-/// newly-opened player go unnoticed: the loop parks on the *current* player's signals, so a second player
-/// starting produces nothing to wake it, and the chip keeps showing the old one until the old one happens to
-/// change something. `NameOwnerChanged` over the `org.mpris.MediaPlayer2` namespace is the event for "a player
-/// appeared or went away", so both are matched here and either one triggers a re-read.
+/// Watching only the active player's `PropertiesChanged` is not enough, and getting that wrong is what made a newly-opened player go unnoticed: the loop parks on the *current* player's signals, so a second player starting produces nothing to wake it, and the chip keeps showing the old one until the old one happens to change something. `NameOwnerChanged` over the `org.mpris.MediaPlayer2` namespace is the event for "a player appeared or went away", so both are matched here and either one triggers a re-read.
 ///
 /// `watch` is only drained, never called on — the reads go to `reads`. Both on one connection deadlocks: zbus queues every message for the stream and its socket reader stops once that queue is full, so a blocking call waits on a reply sitting behind a queue only this loop drains, from inside the call. That froze the chip on whatever was playing, controls included, until the shell was restarted.
 ///
@@ -369,10 +345,7 @@ fn watch_bus(out: &Broadcast<Player>, watch: &Connection, reads: &Connection) ->
     let dbus = DBusProxy::new(watch).ok()?;
     dbus.add_match_rule(properties).ok()?;
     dbus.add_match_rule(ownership).ok()?;
-    // Every message this connection receives, rather than one rule's: `for_match_rule` builds an iterator that
-    // *filters* to its own rule, so the ownership signals reached the socket and were then dropped on the floor —
-    // which is why a player quitting went unnoticed and its track stayed on the bar and the dashboard until
-    // something else happened to change.
+    // Every message this connection receives, rather than one rule's: `for_match_rule` builds an iterator that *filters* to its own rule, so the ownership signals reached the socket and were then dropped on the floor — which is why a player quitting went unnoticed and its track stayed on the bar and the dashboard until something else happened to change.
     let signals = MessageIterator::from(watch);
 
     let mut last = read_active(reads);
@@ -381,8 +354,7 @@ fn watch_bus(out: &Broadcast<Player>, watch: &Connection, reads: &Connection) ->
         if message.message_type() != MessageType::Signal {
             continue;
         }
-        // A player's position and metadata churn while a track runs; only a reading that actually differs is
-        // worth waking every subscribed surface for.
+        // A player's position and metadata churn while a track runs; only a reading that actually differs is worth waking every subscribed surface for.
         let current = read_active(reads);
         if current != last {
             last = current.clone();
@@ -414,8 +386,7 @@ pub fn current() -> Option<Player> {
     MPRIS.current().filter(|p| !p.is_empty())
 }
 
-/// Calls a `Player` method on the active player, off the UI thread: a D-Bus round-trip in a click handler
-/// would stall the frame. The reading that follows arrives through the producer's own watch.
+/// Calls a `Player` method on the active player, off the UI thread: a D-Bus round-trip in a click handler would stall the frame. The reading that follows arrives through the producer's own watch.
 fn control(method: &'static str) {
     let Some(player) = current() else { return };
     let _ = std::thread::Builder::new()
@@ -474,8 +445,7 @@ where
         });
 }
 
-/// Sets a `Player` property, off the UI thread. Shuffle and loop are properties, not methods — MPRIS models
-/// them as state you assign rather than as verbs.
+/// Sets a `Player` property, off the UI thread. Shuffle and loop are properties, not methods — MPRIS models them as state you assign rather than as verbs.
 fn set_property(name: &'static str, value: Value<'static>) {
     let Some(player) = current() else { return };
     let _ = std::thread::Builder::new()
@@ -501,9 +471,7 @@ fn set_property(name: &'static str, value: Value<'static>) {
 
 /// Moves the playhead by `offset` microseconds, forward or back.
 ///
-/// Relative `Seek` rather than absolute `SetPosition`, because the absolute form takes the track id from the
-/// metadata and refuses the call when it does not match — which is exactly the race a scrub hits when the
-/// track changes underneath it. Relative seeking clamps at both ends in every player.
+/// Relative `Seek` rather than absolute `SetPosition`, because the absolute form takes the track id from the metadata and refuses the call when it does not match — which is exactly the race a scrub hits when the track changes underneath it. Relative seeking clamps at both ends in every player.
 pub fn seek(offset_micros: i64) {
     if current().is_some_and(|p| !p.can_seek) {
         return;
@@ -532,8 +500,7 @@ pub fn cycle_loop() {
     }
 }
 
-/// The active player's position in microseconds. Read on demand rather than broadcast: it advances
-/// continuously, and publishing it would wake every subscriber many times a second.
+/// The active player's position in microseconds. Read on demand rather than broadcast: it advances continuously, and publishing it would wake every subscriber many times a second.
 pub fn position() -> Option<i64> {
     let player = current()?;
     let conn = session()?;
@@ -563,8 +530,7 @@ mod tests {
 
     #[test]
     fn the_config_key_drops_the_volatile_instance_suffix() {
-        // A browser's bus name carries its PID, which changes every launch; keying config on the raw suffix
-        // would make `preferred_player` and the aliases stop matching after a restart.
+        // A browser's bus name carries its PID, which changes every launch; keying config on the raw suffix would make `preferred_player` and the aliases stop matching after a restart.
         assert_eq!(
             config_key("org.mpris.MediaPlayer2.chromium.instance4489"),
             "chromium"

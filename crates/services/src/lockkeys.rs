@@ -1,10 +1,6 @@
 //! Caps Lock and Num Lock, read off the keyboard LEDs in sysfs.
 //!
-//! This is the one service in the shell with no event source to subscribe to. Wayland reports locked modifiers
-//! only to a surface holding keyboard focus, which a bar deliberately does not take, and Hyprland's event
-//! stream carries no lock state. So it polls — two small sysfs reads on a lazily-started thread, so a shell
-//! without the `lockstatus` module never runs it at all, and the poller retires the moment the last indicator
-//! goes away rather than reading sysfs for nobody.
+//! This is the one service in the shell with no event source to subscribe to. Wayland reports locked modifiers only to a surface holding keyboard focus, which a bar deliberately does not take, and Hyprland's event stream carries no lock state. So it polls — two small sysfs reads on a lazily-started thread, so a shell without the `lockstatus` module never runs it at all, and the poller retires the moment the last indicator goes away rather than reading sysfs for nobody.
 
 use std::fs;
 use std::path::Path;
@@ -17,8 +13,7 @@ use util::broadcast::{Broadcast, Service};
 
 const LEDS_DIR: &str = "/sys/class/leds";
 
-/// Fast enough that pressing Caps Lock and glancing at the bar shows the new state, slow enough that the cost
-/// is two file reads a few times a second on a thread that only exists when something is watching.
+/// Fast enough that pressing Caps Lock and glancing at the bar shows the new state, slow enough that the cost is two file reads a few times a second on a thread that only exists when something is watching.
 const POLL: Duration = Duration::from_millis(300);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -37,8 +32,7 @@ fn is_lit(entry: &fs::DirEntry, buf: &mut String) -> bool {
         && buf.trim().parse::<u32>().is_ok_and(|value| value > 0)
 }
 
-/// Whether the machine exposes lock LEDs at all. A virtual machine or a laptop whose firmware hides them has
-/// nothing to report, and the producer retires rather than polling files that will never exist.
+/// Whether the machine exposes lock LEDs at all. A virtual machine or a laptop whose firmware hides them has nothing to report, and the producer retires rather than polling files that will never exist.
 fn has_leds(leds: &Path) -> bool {
     fs::read_dir(leds).is_ok_and(|entries| {
         entries.flatten().any(|entry| {
@@ -52,10 +46,7 @@ fn has_leds(leds: &Path) -> bool {
 
 /// Both modifiers off one walk of the LED directory.
 ///
-/// Each attached keyboard gets its own `inputN::capslock` entry and they all track the same modifier, so one lit
-/// LED is the answer for the machine. Read in a single pass, with one buffer reused across the entries, because
-/// this runs three times a second forever: as two passes building a `String` per file it accounted for 25,989
-/// allocations in twenty minutes, of which 25,991 were transient — 99.99%.
+/// Each attached keyboard gets its own `inputN::capslock` entry and they all track the same modifier, so one lit LED is the answer for the machine. Read in a single pass, with one buffer reused across the entries, because this runs three times a second forever: as two passes building a `String` per file it accounted for 25,989 allocations in twenty minutes, of which 25,991 were transient — 99.99%.
 fn read_from(leds: &Path) -> LockKeys {
     let mut keys = LockKeys::default();
     let Ok(entries) = fs::read_dir(leds) else {

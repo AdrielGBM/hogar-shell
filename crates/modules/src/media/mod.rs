@@ -3,8 +3,7 @@
 use config::{MediaConfig, MediaScroll};
 use services::mpris::{self, Playback, Player};
 
-/// The glyph for a player's transport state. Stopped and absent look the same on purpose: a chip that shows a
-/// pause symbol for a player that isn't running would invite a click that does nothing.
+/// The glyph for a player's transport state. Stopped and absent look the same on purpose: a chip that shows a pause symbol for a player that isn't running would invite a click that does nothing.
 pub fn glyph(player: &Player) -> &'static str {
     match player.playback {
         Playback::Playing => "pause",
@@ -13,17 +12,12 @@ pub fn glyph(player: &Player) -> &'static str {
     }
 }
 
-/// The gap drawn between the end of a scrolling title and its own start, so the wrap reads as a loop rather
-/// than as the words running into each other.
+/// The gap drawn between the end of a scrolling title and its own start, so the wrap reads as a loop rather than as the words running into each other.
 const MARQUEE_GAP: &str = "   ·   ";
 
-/// The chip's text: `artist — title`, whole. Empty when nothing is running, which lets the module collapse to
-/// just its icon instead of showing a placeholder.
+/// The chip's text: `artist — title`, whole. Empty when nothing is running, which lets the module collapse to just its icon instead of showing a placeholder.
 ///
-/// Nothing trims it here. The chip gives up width when its side of the bar is short of it and the label elides
-/// to what is left, which is the same question asked in the unit it is actually about — `max_chars` cut a short
-/// title on an empty bar exactly as readily as a long one on a full bar. It still sizes the marquee, which is a
-/// window measured in characters because it steps in characters.
+/// Nothing trims it here. The chip gives up width when its side of the bar is short of it and the label elides to what is left, which is the same question asked in the unit it is actually about — `max_chars` cut a short title on an empty bar exactly as readily as a long one on a full bar. It still sizes the marquee, which is a window measured in characters because it steps in characters.
 pub fn label(player: &Player) -> String {
     if player.is_empty() {
         return String::new();
@@ -33,9 +27,7 @@ pub fn label(player: &Player) -> String {
 
 /// One frame of a scrolling title: the full text rotated left by `step` characters, cut to `max`.
 ///
-/// A rotation rather than a bounce, so the chip's width never changes — a bar whose modules shift sideways as
-/// a title scrolls is worse than a truncated title. Text that already fits is returned untouched and never
-/// animates, which is what keeps the common case free.
+/// A rotation rather than a bounce, so the chip's width never changes — a bar whose modules shift sideways as a title scrolls is worse than a truncated title. Text that already fits is returned untouched and never animates, which is what keeps the common case free.
 pub fn marquee(player: &Player, config: &MediaConfig, step: usize) -> String {
     if player.is_empty() {
         return String::new();
@@ -55,14 +47,12 @@ pub fn marquee(player: &Player, config: &MediaConfig, step: usize) -> String {
         .collect::<String>()
 }
 
-/// Whether a title is long enough to be worth scrolling. The ticker is only started when it is, so a bar
-/// showing a short title costs nothing.
+/// Whether a title is long enough to be worth scrolling. The ticker is only started when it is, so a bar showing a short title costs nothing.
 pub fn overflows(player: &Player, config: &MediaConfig) -> bool {
     !player.is_empty() && player.summary().chars().count() > config.max_chars.max(1) as usize
 }
 
-/// Cuts `text` to `max` characters, ending in `…` when it had to. Counts characters, not bytes, so a track
-/// title with accents or CJK is never cut mid-codepoint.
+/// Cuts `text` to `max` characters, ending in `…` when it had to. Counts characters, not bytes, so a track title with accents or CJK is never cut mid-codepoint.
 fn truncate(text: &str, max: usize) -> String {
     if max == 0 {
         return String::new();
@@ -76,9 +66,7 @@ fn truncate(text: &str, max: usize) -> String {
 
 /// The marquee's clock: one tick per `[media] marquee_speed_ms`, forever.
 ///
-/// A `watch` producer rather than a re-armed `timeout`, and that is the whole point: `watch` binds the
-/// subscription to the surface and drops it when the surface goes away, so the ticker ends with the bar it
-/// belongs to. A self-rescheduling timeout would keep firing into a torn-down surface.
+/// A `watch` producer rather than a re-armed `timeout`, and that is the whole point: `watch` binds the subscription to the surface and drops it when the surface goes away, so the ticker ends with the bar it belongs to. A self-rescheduling timeout would keep firing into a torn-down surface.
 pub fn marquee_ticks(tx: platform_wayland::EventSender<u64>) {
     let step = config::shared_config()
         .map(|c| c.media.marquee_step())
@@ -93,14 +81,12 @@ pub fn marquee_ticks(tx: platform_wayland::EventSender<u64>) {
     }
 }
 
-/// Click toggles playback. Nothing running is a no-op rather than an error: the chip is a readout until a
-/// player appears.
+/// Click toggles playback. Nothing running is a no-op rather than an error: the chip is a readout until a player appears.
 pub fn toggle() {
     mpris::play_pause();
 }
 
-/// The wheel over the chip, per `[media] scroll`: adjust the volume (the common case — the chip is where your
-/// pointer already is when a track is too loud), skip tracks, or nothing.
+/// The wheel over the chip, per `[media] scroll`: adjust the volume (the common case — the chip is where your pointer already is when a track is too loud), skip tracks, or nothing.
 pub fn scroll(_dx: f32, dy: f32) {
     let config = config::config()
         .map(|c| c.media.clone())
@@ -220,9 +206,7 @@ mod tests {
 
     /// A track name reaches the chip whole; the elide is what shortens it, at the width it actually has.
     ///
-    /// `max_chars` used to cut it here too, which took the room away before the layout could offer it — and it
-    /// is still what sizes the marquee, so this is the line between the two: a window that steps in characters
-    /// is measured in characters, and a label that has to fit a bar is measured in pixels.
+    /// `max_chars` used to cut it here too, which took the room away before the layout could offer it — and it is still what sizes the marquee, so this is the line between the two: a window that steps in characters is measured in characters, and a label that has to fit a bar is measured in pixels.
     #[test]
     fn a_long_track_is_handed_over_untouched() {
         let track = playing("A Love Supreme, Pt. I", "John Coltrane");

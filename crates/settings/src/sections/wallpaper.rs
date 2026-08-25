@@ -1,7 +1,6 @@
 //! The wallpaper, the library it is picked from, and what is drawn over it.
 //!
-//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine
-//! decides the length of. The static-shape forms are `.rsx` components beside this file.
+//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
 use std::path::{Path, PathBuf};
 use ui::scale::{corner, paint, space};
@@ -15,22 +14,16 @@ use crate::form::*;
 use config::theme::{FontRole, NordTheme};
 use config::{BackgroundConfig, WallpaperTransition};
 
-/// How wide one wallpaper tile is, and the shape of its picture — landscape, because a wallpaper is a picture
-/// of a screen and a square crop of one is unrecognisable.
+/// How wide one wallpaper tile is, and the shape of its picture — landscape, because a wallpaper is a picture of a screen and a square crop of one is unrecognisable.
 const WALL_TILE: f32 = 132.0;
 const WALL_ASPECT: f32 = 9.0 / 16.0;
 
-/// The same bound, and the same reason, as the launcher's wallpaper grid: `ReactiveList` builds a widget per
-/// tile up front, so a library of two thousand would spend the UI thread before the page appeared. The search
-/// box is what reaches past it.
+/// The same bound, and the same reason, as the launcher's wallpaper grid: `ReactiveList` builds a widget per tile up front, so a library of two thousand would spend the UI thread before the page appeared. The search box is what reaches past it.
 const WALL_TILES: usize = 150;
 
 /// K9: the wallpaper library, grouped by the folder each image was found in.
 ///
-/// `[background] image` names one file and `[background.monitors]` names one per screen — both of which the
-/// forms below already edit. What neither of them is, is a way to *see* the library, and choosing a picture
-/// from a list of paths is choosing it by its file name. Pressing a tile sets it on every screen, which is the
-/// rule the wallpaper commands already follow: a mutation with no target named means all of them.
+/// `[background] image` names one file and `[background.monitors]` names one per screen — both of which the forms below already edit. What neither of them is, is a way to *see* the library, and choosing a picture from a list of paths is choosing it by its file name. Pressing a tile sets it on every screen, which is the rule the wallpaper commands already follow: a mutation with no target named means all of them.
 pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let (config, _path) = crate::form::source();
     let theme = telar::use_theme::<NordTheme>();
@@ -42,8 +35,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
         sink.set(entries)
     });
 
-    // Which tile reads as the current one. The runtime choice first, then whatever `[background]` resolves to,
-    // so a fresh session with nothing chosen at runtime still marks the picture actually on screen.
+    // Which tile reads as the current one. The runtime choice first, then whatever `[background]` resolves to, so a fresh session with nothing chosen at runtime still marks the picture actually on screen.
     let configured = services::wallpaper::current_image(&config, None);
     let current = signal(services::wallpaper::assignment().global.or(configured));
     let current_sink = current.clone();
@@ -122,8 +114,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
 /// One folder's worth of the library, as the browser draws it.
 #[derive(Clone, Debug, PartialEq)]
 struct WallGroup {
-    /// Keyed on the pictures *and* on which of them is current, so choosing one repaints the ring without the
-    /// whole library rebuilding under the pointer.
+    /// Keyed on the pictures *and* on which of them is current, so choosing one repaints the ring without the whole library rebuilding under the pointer.
     key: String,
     folder: String,
     entries: Vec<services::wallpaper::Entry>,
@@ -140,8 +131,7 @@ fn group_key(
     format!("{folder}|{}|{chosen:?}", entries.len())
 }
 
-/// The library narrowed by `query` and grouped by folder, top-level images first and the rest alphabetical —
-/// which is the order a file manager would show them in, and the only one a user can predict.
+/// The library narrowed by `query` and grouped by folder, top-level images first and the rest alphabetical — which is the order a file manager would show them in, and the only one a user can predict.
 fn folders(
     entries: &[services::wallpaper::Entry],
     query: &str,
@@ -256,12 +246,9 @@ fn wallpaper_tile(
     Ok(Box::new(tile))
 }
 
-/// Every screen a `[background.monitors]` row should exist for: the ones plugged in now, plus any the config
-/// already names.
+/// Every screen a `[background.monitors]` row should exist for: the ones plugged in now, plus any the config already names.
 ///
-/// Both halves matter. Only listing the connected screens would silently drop the override a user wrote for the
-/// monitor they left at the office the moment they saved anything; only listing the configured ones would mean
-/// a screen can never get its first override from the UI, which is the whole of J9.
+/// Both halves matter. Only listing the connected screens would silently drop the override a user wrote for the monitor they left at the office the moment they saved anything; only listing the configured ones would mean a screen can never get its first override from the UI, which is the whole of J9.
 fn monitor_keys(configured: &std::collections::HashMap<String, PathBuf>) -> Vec<String> {
     let mut names: Vec<String> = platform_wayland::outputs()
         .into_iter()
@@ -316,8 +303,7 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
         )?,
     ];
 
-    // One row per screen, which is what makes a map-valued section editable without K13's generic key/value
-    // machinery: the keys are not free text here, they are the monitors that exist.
+    // One row per screen, which is what makes a map-valued section editable without K13's generic key/value machinery: the keys are not free text here, they are the monitors that exist.
     let names = monitor_keys(&b.monitors);
     let mut monitors: Vec<(String, RwSignal<String>)> = Vec::new();
     if !names.is_empty() {
@@ -397,8 +383,7 @@ mod tests {
         );
         assert_eq!(grouped[1].1.len(), 2);
 
-        // A folder name matches as well as an image name: "show me the deserts" is the question a grouped
-        // browser exists to answer, and typing one image's name to reach its neighbours is not an answer.
+        // A folder name matches as well as an image name: "show me the deserts" is the question a grouped browser exists to answer, and typing one image's name to reach its neighbours is not an answer.
         assert_eq!(folders(&library, "deserts")[0].1.len(), 2);
         assert_eq!(folders(&library, "fjord").len(), 1);
         assert!(folders(&library, "tundra").is_empty());

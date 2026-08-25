@@ -1,9 +1,6 @@
 //! Ending the session: lock, log out, reboot, power off, suspend, hibernate.
 //!
-//! Every action goes through logind rather than through `systemctl`, for two reasons. It works without
-//! privileges — logind decides what the active session's user is allowed to do — and it can be *asked* first:
-//! `CanHibernate` tells the shell whether to offer hibernate at all, so the session menu greys out what this
-//! machine cannot do instead of offering a button that fails.
+//! Every action goes through logind rather than through `systemctl`, for two reasons. It works without privileges — logind decides what the active session's user is allowed to do — and it can be *asked* first: `CanHibernate` tells the shell whether to offer hibernate at all, so the session menu greys out what this machine cannot do instead of offering a button that fails.
 
 use std::time::{Duration, Instant};
 
@@ -66,8 +63,7 @@ impl Action {
         }
     }
 
-    /// The logind manager method, and the `Can…` property that says whether it is available. `Lock` and
-    /// `Logout` act on the session object instead, so they have no manager method here.
+    /// The logind manager method, and the `Can…` property that says whether it is available. `Lock` and `Logout` act on the session object instead, so they have no manager method here.
     fn manager_method(self) -> Option<(&'static str, &'static str)> {
         match self {
             Action::Suspend => Some(("Suspend", "CanSuspend")),
@@ -83,9 +79,7 @@ fn connection() -> Option<Connection> {
     crate::bus::system(None)
 }
 
-/// Whether logind will let this session perform `action`. The `Can…` methods answer `"yes"`, `"no"`,
-/// `"challenge"` (would prompt for authentication) or `"na"` (unsupported by the machine — no swap for
-/// hibernate, say). `"challenge"` counts as available: the prompt is the polkit agent's job, not the shell's.
+/// Whether logind will let this session perform `action`. The `Can…` methods answer `"yes"`, `"no"`, `"challenge"` (would prompt for authentication) or `"na"` (unsupported by the machine — no swap for hibernate, say). `"challenge"` counts as available: the prompt is the polkit agent's job, not the shell's.
 pub fn is_available(action: Action) -> bool {
     let Some((_, probe)) = action.manager_method() else {
         return true; // lock and logout always apply to one's own session
@@ -107,9 +101,7 @@ pub fn available() -> Vec<Action> {
         .collect()
 }
 
-/// Performs `action`. Runs off the UI thread — a D-Bus round-trip that suspends the machine must not happen
-/// inside a click handler — and reports failures rather than returning them, since a caller has nothing useful
-/// to do about a refused power action beyond what logind already told the user.
+/// Performs `action`. Runs off the UI thread — a D-Bus round-trip that suspends the machine must not happen inside a click handler — and reports failures rather than returning them, since a caller has nothing useful to do about a refused power action beyond what logind already told the user.
 pub fn perform(action: Action) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-session".to_string())
@@ -123,8 +115,7 @@ pub fn perform(action: Action) {
 fn call(action: Action) -> Result<(), zbus::Error> {
     let conn = connection().ok_or(zbus::Error::InvalidField)?;
     match action {
-        // `Lock` asks the session's lock handler (us) to lock; it does not lock by itself. Emitting it rather
-        // than locking directly keeps one code path whether the request came from here or from `loginctl`.
+        // `Lock` asks the session's lock handler (us) to lock; it does not lock by itself. Emitting it rather than locking directly keeps one code path whether the request came from here or from `loginctl`.
         Action::Lock => {
             conn.call_method(Some(LOGIN1), SESSION_PATH, Some(SESSION_IFACE), "Lock", &())?;
         }
@@ -154,8 +145,7 @@ fn call(action: Action) -> Result<(), zbus::Error> {
     Ok(())
 }
 
-/// Tells logind whether this session is locked, so `loginctl session-status` — and anything else that asks it
-/// rather than asking the shell — agrees with what is on screen.
+/// Tells logind whether this session is locked, so `loginctl session-status` — and anything else that asks it rather than asking the shell — agrees with what is on screen.
 ///
 /// Off the UI thread, like every other logind call here: a hint is not worth a frame.
 pub fn set_locked_hint(locked: bool) {
@@ -175,13 +165,10 @@ pub fn set_locked_hint(locked: bool) {
         });
 }
 
-/// How long the shell may hold the machine awake while it puts the lock screen up. Long enough for a
-/// compositor to grant a lock and paint one covered frame, short enough that a shell which cannot lock delays
-/// the lid closing by a moment rather than by a minute.
+/// How long the shell may hold the machine awake while it puts the lock screen up. Long enough for a compositor to grant a lock and paint one covered frame, short enough that a shell which cannot lock delays the lid closing by a moment rather than by a minute.
 const SLEEP_GRACE: Duration = Duration::from_secs(5);
 
-/// What logind tells the shell about its session. Delivered to the driver thread, which is the only one that
-/// may act on it.
+/// What logind tells the shell about its session. Delivered to the driver thread, which is the only one that may act on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     /// `loginctl lock-session`, or anything else that asked this session to lock.
@@ -191,14 +178,9 @@ pub enum Event {
     Resumed,
 }
 
-/// Parks on logind's session signals and reports them to the driver thread — and, while it is there, holds the
-/// sleep inhibitor that makes `lock_before_sleep` mean anything.
+/// Parks on logind's session signals and reports them to the driver thread — and, while it is there, holds the sleep inhibitor that makes `lock_before_sleep` mean anything.
 ///
-/// The inhibitor is the whole reason this is a thread rather than a subscription. logind announces a suspend
-/// with `PrepareForSleep(true)` and then waits only for the *delay* inhibitors clients hold; without one, the
-/// machine is asleep before the compositor has drawn a single covered frame, and the desktop is briefly on
-/// screen when it wakes. So the fd is taken up front, released once the lock is confirmed, and taken again on
-/// the way back — which has to happen on whichever thread owns it.
+/// The inhibitor is the whole reason this is a thread rather than a subscription. logind announces a suspend with `PrepareForSleep(true)` and then waits only for the *delay* inhibitors clients hold; without one, the machine is asleep before the compositor has drawn a single covered frame, and the desktop is briefly on screen when it wakes. So the fd is taken up front, released once the lock is confirmed, and taken again on the way back — which has to happen on whichever thread owns it.
 pub fn watch(tx: EventSender<Event>) {
     let Some(conn) = connection() else {
         tracing::info!("no system bus; `loginctl lock-session` will not reach the shell");
@@ -248,8 +230,7 @@ pub fn watch(tx: EventSender<Event>) {
     drop(inhibitor);
 }
 
-/// Blocks until the compositor confirms the lock, or the grace runs out. `wanted` is not enough here — the
-/// point of the delay is that the screen is *covered* before the machine sleeps.
+/// Blocks until the compositor confirms the lock, or the grace runs out. `wanted` is not enough here — the point of the delay is that the screen is *covered* before the machine sleeps.
 fn wait_until_locked() {
     if !config::shared_config()
         .map(|c| c.lock.lock_before_sleep)
@@ -259,11 +240,7 @@ fn wait_until_locked() {
     }
     let deadline = Instant::now() + SLEEP_GRACE;
     while Instant::now() < deadline {
-        // The compositor's own flag, not the shell's polled copy of it ([`crate::lock::is_locked`]). That copy
-        // is refreshed by a timer on the driver's loop, so a driver with work queued ahead of it could not tell
-        // this thread the screen was already covered — and a wait that cannot observe success gives up and
-        // sleeps the machine anyway. It happened: a critical-battery suspend while the driver was busy, and the
-        // laptop slept with the session open.
+        // The compositor's own flag, not the shell's polled copy of it ([`crate::lock::is_locked`]). That copy is refreshed by a timer on the driver's loop, so a driver with work queued ahead of it could not tell this thread the screen was already covered — and a wait that cannot observe success gives up and sleeps the machine anyway. It happened: a critical-battery suspend while the driver was busy, and the laptop slept with the session open.
         if platform_wayland::session_is_locked() {
             return;
         }
@@ -274,9 +251,7 @@ fn wait_until_locked() {
     );
 }
 
-/// One iterator over every signal this shell cares about. A match rule cannot express "either of these", so it
-/// is broadened to logind's own signals and narrowed by member here — logind emits few enough that the cost is
-/// nothing, unlike the same trick on the session bus.
+/// One iterator over every signal this shell cares about. A match rule cannot express "either of these", so it is broadened to logind's own signals and narrowed by member here — logind emits few enough that the cost is nothing, unlike the same trick on the session bus.
 fn session_signals(conn: &Connection) -> Option<MessageIterator> {
     let rule = zbus::MatchRule::builder()
         .msg_type(MessageType::Signal)
@@ -286,8 +261,7 @@ fn session_signals(conn: &Connection) -> Option<MessageIterator> {
     MessageIterator::for_match_rule(rule, conn, None).ok()
 }
 
-/// Takes a `delay` sleep inhibitor. `delay` rather than `block`: the shell is asking for a moment to cover the
-/// screen, not for a veto over suspending — a veto is the kind of thing that leaves a laptop cooking in a bag.
+/// Takes a `delay` sleep inhibitor. `delay` rather than `block`: the shell is asking for a moment to cover the screen, not for a veto over suspending — a veto is the kind of thing that leaves a laptop cooking in a bag.
 fn take_sleep_inhibitor(conn: &Connection) -> Option<zbus::zvariant::OwnedFd> {
     let reply = conn
         .call_method(
@@ -307,14 +281,12 @@ fn take_sleep_inhibitor(conn: &Connection) -> Option<zbus::zvariant::OwnedFd> {
     reply.body().deserialize().ok()
 }
 
-/// Runs one logind session event on the driver thread. Everything it does goes through the lock service, so a
-/// `loginctl lock-session` and a click on the session menu's Lock are the same lock.
+/// Runs one logind session event on the driver thread. Everything it does goes through the lock service, so a `loginctl lock-session` and a click on the session menu's Lock are the same lock.
 pub fn on_event(event: Event) {
     match event {
         Event::Lock => crate::lock::lock(),
         Event::Unlock => crate::lock::unlock(),
-        // A machine coming back from suspend is exactly when a face-unlock user wants the camera to try, and
-        // the lock screen has been up since before it slept, so nothing else would trigger it.
+        // A machine coming back from suspend is exactly when a face-unlock user wants the camera to try, and the lock screen has been up since before it slept, so nothing else would trigger it.
         Event::Resumed => {
             let trigger = config::config()
                 .map(|c| c.lock.trigger_on_wake)

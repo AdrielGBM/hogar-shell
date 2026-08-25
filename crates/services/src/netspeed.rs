@@ -1,8 +1,6 @@
 //! Live upload/download rates, from the kernel's own byte counters.
 //!
-//! Separate from [`network`](super::network), which answers "am I connected, and how well" from link state:
-//! this answers "how much is moving right now", which needs a second sample to mean anything. Kept apart so a
-//! bar showing only a Wi-Fi icon never starts a throughput poller it has no use for.
+//! Separate from [`network`](super::network), which answers "am I connected, and how well" from link state: this answers "how much is moving right now", which needs a second sample to mean anything. Kept apart so a bar showing only a Wi-Fi icon never starts a throughput poller it has no use for.
 
 use std::fs;
 use std::path::Path;
@@ -29,8 +27,7 @@ pub struct NetSpeed {
     pub total_up: u64,
 }
 
-/// Cumulative received/transmitted bytes across every physical interface. Virtual devices (`docker0`, `veth*`,
-/// `lo`) are skipped: counting a bridge would double every byte that crosses it.
+/// Cumulative received/transmitted bytes across every physical interface. Virtual devices (`docker0`, `veth*`, `lo`) are skipped: counting a bridge would double every byte that crosses it.
 fn read_totals(net_dir: &Path) -> (u64, u64) {
     let mut rx = 0;
     let mut tx = 0;
@@ -54,8 +51,7 @@ fn read_totals(net_dir: &Path) -> (u64, u64) {
     (rx, tx)
 }
 
-/// Bytes per second between two cumulative samples. A counter that went backwards means an interface was
-/// removed or wrapped, which reports as zero rather than as a negative or absurd rate.
+/// Bytes per second between two cumulative samples. A counter that went backwards means an interface was removed or wrapped, which reports as zero rather than as a negative or absurd rate.
 fn rate(previous: u64, now: u64, elapsed: Duration) -> f64 {
     let seconds = elapsed.as_secs_f64();
     if seconds <= 0.0 {
@@ -104,8 +100,7 @@ pub fn current() -> Option<NetSpeed> {
     NETSPEED.current()
 }
 
-/// A rate as a bar chip shows it: `1.2 MB/s`. Decimal units, which is how link speeds are quoted, unlike the
-/// binary units used for stored bytes.
+/// A rate as a bar chip shows it: `1.2 MB/s`. Decimal units, which is how link speeds are quoted, unlike the binary units used for stored bytes.
 pub fn format_rate(bytes_per_second: f64) -> String {
     const UNITS: [&str; 4] = ["B/s", "kB/s", "MB/s", "GB/s"];
     let mut value = bytes_per_second;

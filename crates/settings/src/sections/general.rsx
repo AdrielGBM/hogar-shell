@@ -8,8 +8,7 @@ let over_fullscreen = signal(config.general.show_over_fullscreen);
 let logo = signal(config.general.logo.clone());
 let apps = config.general.apps.clone();
 let legacy_terminal = config.general.terminal.clone();
-// `[general.apps] terminal` is the field's home now; a config still carrying the older top-level key is seeded
-// from it, so editing here moves the value rather than appearing to lose it.
+// `[general.apps] terminal` is the field's home now; a config still carrying the older top-level key is seeded from it, so editing here moves the value rather than appearing to lose it.
 let terminal = signal(if apps.terminal.trim().is_empty() {
     config.general.terminal.clone()
 } else {

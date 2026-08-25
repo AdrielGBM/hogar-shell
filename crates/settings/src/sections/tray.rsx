@@ -21,8 +21,7 @@ let save: Box<dyn Fn()> = Box::new({
             recolour: recolour.peek(),
             background: background.peek(),
             hidden: split_csv(&hidden.peek()),
-            // Map-valued, so it stays hand-edited in the TOML like `theme.colors`; carrying it through means
-            // saving here does not silently drop the user's icon substitutions.
+            // Map-valued, so it stays hand-edited in the TOML like `theme.colors`; carrying it through means saving here does not silently drop the user's icon substitutions.
             icon_subs: base.icon_subs.clone(),
         };
         persist(&path, "tray", &value);

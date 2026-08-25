@@ -9,8 +9,7 @@ fn bright_glyph(level: i32) -> &'static str {
 let level = signal(brightness::read().unwrap_or(0));
 let level_glyph = level.read_only();
 let fg = ui::module::module_fg();
-// The chip shows one number, so it follows the snapshot's primary display — the internal panel on a laptop, the
-// first monitor on a desk. Per-output levels are reached through `hogar-shell brightness` and the settings page.
+// The chip shows one number, so it follows the snapshot's primary display — the internal panel on a laptop, the first monitor on a desk. Per-output levels are reached through `hogar-shell brightness` and the settings page.
 platform_wayland::watch(
     brightness::subscribe,
     move |snapshot: brightness::Snapshot| {

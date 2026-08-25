@@ -1,9 +1,6 @@
 //! Which modules exist, and what each one does when it is clicked, scrolled or hovered.
 //!
-//! The composition root for the bar: the only place that knows both the module vocabulary — [`ModuleRegistry`]
-//! and friends, which live in `ui` and know nothing about any particular module — and the modules themselves.
-//! Keeping the two apart is what lets a module crate be built without the shell that arranges it, and what
-//! stops a chip helper from reaching sideways into the chip next to it.
+//! The composition root for the bar: the only place that knows both the module vocabulary — [`ModuleRegistry`] and friends, which live in `ui` and know nothing about any particular module — and the modules themselves. Keeping the two apart is what lets a module crate be built without the shell that arranges it, and what stops a chip helper from reaching sideways into the chip next to it.
 
 use ui::module::{ModuleDef, ModuleRegistry, icon_px, module_fg};
 use ui::popouts::PopoutRegistry;
@@ -67,14 +64,12 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
         ModuleDef::new(|_ctx| modules::kblayout())
             .on_click(services::hyprland::cycle_main_keyboard_layout),
     );
-    // Self-managed: it draws its own indicator row, and with `hide_inactive` that row can be empty — a chip
-    // shell would leave a padded gap in the bar where nothing is shown.
+    // Self-managed: it draws its own indicator row, and with `hide_inactive` that row can be empty — a chip shell would leave a padded gap in the bar where nothing is shown.
     registry.register(
         "lockstatus",
         ModuleDef::new(|_ctx| modules::lockstatus()).self_managed(),
     );
-    // Self-managed: it draws one pressable box per application, each with its own click, middle-click,
-    // right-click and scroll — a single chip shell around the row could carry none of that.
+    // Self-managed: it draws one pressable box per application, each with its own click, middle-click, right-click and scroll — a single chip shell around the row could carry none of that.
     registry.register(
         "tray",
         ModuleDef::new(|_ctx| modules::tray()).self_managed(),
@@ -117,8 +112,7 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
             .on_click(modules::osd::volume_action)
             .on_scroll(modules::osd::volume_scroll),
     );
-    // The pointer path to a non-default device. The volume chip stays what it is — a level, a mute and a wheel
-    // — because a chip that opened a panel could no longer toggle mute with the same press.
+    // The pointer path to a non-default device. The volume chip stays what it is — a level, a mute and a wheel — because a chip that opened a panel could no longer toggle mute with the same press.
     registry.register(
         "mixer",
         ModuleDef::new(|_ctx| {
@@ -181,13 +175,9 @@ mod tests {
         super::default_registry(&crate::core::popouts::default_popouts())
     }
 
-    /// The two halves of the composition root have to agree, and neither direction is a compile error: a module
-    /// wired with `.opens()` and left out of the panel registry falls back to the clock on screen, and a panel
-    /// registered for a module that does not exist can never be reached. Checked against each other rather than
-    /// against a hand-kept list, so adding a module in one place and forgetting the other fails here.
+    /// The two halves of the composition root have to agree, and neither direction is a compile error: a module wired with `.opens()` and left out of the panel registry falls back to the clock on screen, and a panel registered for a module that does not exist can never be reached. Checked against each other rather than against a hand-kept list, so adding a module in one place and forgetting the other fails here.
     ///
-    /// The reverse of the first check is deliberately weaker than "its chip opens it": `logo` is an alias that
-    /// shows the session panel, and its chip runs an action rather than opening its own.
+    /// The reverse of the first check is deliberately weaker than "its chip opens it": `logo` is an alias that shows the session panel, and its chip runs an action rather than opening its own.
     #[test]
     fn a_module_opens_a_panel_exactly_when_one_is_registered_for_it() {
         let modules = default_registry();
@@ -236,9 +226,7 @@ mod tests {
         );
     }
 
-    /// A reading shown in the `statusicons` cluster and a reading shown as its own chip are the same thing under
-    /// the same name, so a user moving one between the two does not have to rename it. Checked here because the
-    /// cluster and the module list are two different modules' business, and this is where both are in scope.
+    /// A reading shown in the `statusicons` cluster and a reading shown as its own chip are the same thing under the same name, so a user moving one between the two does not have to rename it. Checked here because the cluster and the module list are two different modules' business, and this is where both are in scope.
     #[test]
     fn a_cluster_icon_and_its_own_chip_share_one_name() {
         use modules::statusicons::StatusIcon;

@@ -12,8 +12,7 @@ fn heat_color(celsius: Option<f32>, config: &TemperatureConfig, fg: Color) -> Co
     }
 }
 
-// A machine with no hwmon (a VM, some ARM boards) has nothing to show; the chip renders a dash rather than a
-// misleading 0 °C.
+// A machine with no hwmon (a VM, some ARM boards) has nothing to show; the chip renders a dash rather than a misleading 0 °C.
 fn heat_text(celsius: Option<f32>, config: &TemperatureConfig) -> String {
     match celsius {
         Some(c) => config.unit.format(c),

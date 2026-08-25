@@ -1,8 +1,6 @@
 //! The form toolkit every settings section is built out of.
 //!
-//! A section is a heading, a column of fields, and one Save button. This is that vocabulary — the widgets, the
-//! write-back to `config.toml`, and the recorder that tells a button whether anything under it moved — so the
-//! sections themselves are a description of *which* fields they have rather than of how a field behaves.
+//! A section is a heading, a column of fields, and one Save button. This is that vocabulary — the widgets, the write-back to `config.toml`, and the recorder that tells a button whether anything under it moved — so the sections themselves are a description of *which* fields they have rather than of how a field behaves.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -53,13 +51,9 @@ pub(crate) const PLACEMENTS: &[&str] = &[
 ];
 /// K14, the recorder half: every field the form helpers build, so a section knows when one of them moved.
 ///
-/// A thread-local rather than a parameter because the alternative is threading a tracker through all forty
-/// `*_section` functions and every `text_field`/`toggle_field`/`enum_field` call inside them. The forms are
-/// built one at a time on the driver thread, and each ends with exactly one [`save_button`] — which is where
-/// the recording is drained. That is the whole contract: **a form's fields must be built before its button.**
+/// A thread-local rather than a parameter because the alternative is threading a tracker through all forty `*_section` functions and every `text_field`/`toggle_field`/`enum_field` call inside them. The forms are built one at a time on the driver thread, and each ends with exactly one [`save_button`] — which is where the recording is drained. That is the whole contract: **a form's fields must be built before its button.**
 ///
-/// Each entry is an effect that bumps `revision` when its field changes, plus the revision itself. Effects are
-/// handed to the button so they live exactly as long as the form does.
+/// Each entry is an effect that bumps `revision` when its field changes, plus the revision itself. Effects are handed to the button so they live exactly as long as the form does.
 struct FormRecorder {
     revision: RwSignal<u64>,
     subscriptions: Vec<telar::Effect>,
@@ -69,8 +63,7 @@ thread_local! {
     static RECORDING: std::cell::RefCell<Option<FormRecorder>> = const { std::cell::RefCell::new(None) };
 }
 
-/// How long after the last keystroke a live-preview form applies itself. Long enough that typing a font name
-/// is one apply rather than nine, short enough to read as a preview rather than as a delay.
+/// How long after the last keystroke a live-preview form applies itself. Long enough that typing a font name is one apply rather than nine, short enough to read as a preview rather than as a delay.
 const LIVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(700);
 
 /// Hands `effect` to the form being built, which keeps it alive until its button is gone.
@@ -90,8 +83,7 @@ fn park(build: impl FnOnce(RwSignal<u64>) -> telar::Effect) {
 pub(crate) fn record_field<T: Clone + PartialEq + 'static>(value: &RwSignal<T>) {
     let watched = value.read_only();
     park(move |revision| {
-        // An effect fires once when it is registered, and that first run is the field being *seeded* — not a
-        // user changing anything. Reporting it would make every form apply itself the moment it was drawn.
+        // An effect fires once when it is registered, and that first run is the field being *seeded* — not a user changing anything. Reporting it would make every form apply itself the moment it was drawn.
         let seeded = std::cell::Cell::new(false);
         telar::effect(move || {
             let _ = watched.get();
@@ -104,9 +96,7 @@ pub(crate) fn record_field<T: Clone + PartialEq + 'static>(value: &RwSignal<T>) 
 
 /// Binds a form's `String` field to the index the catalogue's `select` speaks in, and records it.
 ///
-/// The sections speak in the value they write to `config.toml`, the widget in positions. The two are kept in
-/// step both ways, because a Revert writes the string back and the trigger has to follow it — an effect the
-/// form keeps, since a `.rsx` component cannot hold one of its own past the call that builds it.
+/// The sections speak in the value they write to `config.toml`, the widget in positions. The two are kept in step both ways, because a Revert writes the string back and the trigger has to follow it — an effect the form keeps, since a `.rsx` component cannot hold one of its own past the call that builds it.
 pub(crate) fn option_index(
     value: RwSignal<String>,
     options: &'static [&'static str],
@@ -129,8 +119,7 @@ pub(crate) fn option_index(
 
 /// Writes the option at `at` back to the field it came from.
 ///
-/// Guarded because a signal notifies on every write: re-picking what is already selected is not an edit, and
-/// counting it would apply the whole form.
+/// Guarded because a signal notifies on every write: re-picking what is already selected is not an edit, and counting it would apply the whole form.
 pub(crate) fn pick_option(value: &RwSignal<String>, options: &'static [&'static str], at: u32) {
     let next = options[at as usize].to_string();
     if value.peek() != next {
@@ -140,9 +129,7 @@ pub(crate) fn pick_option(value: &RwSignal<String>, options: &'static [&'static 
 
 /// Wires the recorded fields to `apply`, debounced — the second half of K14.
 ///
-/// Returns the subscriptions for the caller to hold. The window survives the reload its own write causes (the
-/// shell reconciles its surfaces in place rather than reopening them), so what the user is typing into is the
-/// same field it was before the change landed.
+/// Returns the subscriptions for the caller to hold. The window survives the reload its own write causes (the shell reconciles its surfaces in place rather than reopening them), so what the user is typing into is the same field it was before the change landed.
 pub(crate) fn live_apply(apply: Rc<dyn Fn()>) -> Vec<telar::Effect> {
     let Some(recorder) = RECORDING.with(|recording| recording.borrow_mut().take()) else {
         return Vec::new();
@@ -159,8 +146,7 @@ pub(crate) fn live_apply(apply: Rc<dyn Fn()>) -> Vec<telar::Effect> {
         }
         let apply = Rc::clone(&apply);
         let watched = watched.clone();
-        // Debounced by re-reading the counter when the timer fires: a change that arrived in the meantime has
-        // its own timer running, so only the last one in a burst applies.
+        // Debounced by re-reading the counter when the timer fires: a change that arrived in the meantime has its own timer running, so only the last one in a burst applies.
         platform_wayland::timeout(LIVE_DEBOUNCE, move || {
             if watched.peek() == at {
                 apply();
@@ -171,9 +157,7 @@ pub(crate) fn live_apply(apply: Rc<dyn Fn()>) -> Vec<telar::Effect> {
 }
 
 thread_local! {
-    /// Which `config.toml` the forms on this window read and write. Ambient rather than an argument threaded
-    /// through all fifty-one of them: a form is not given a file, it edits *the* file, and the panel is the
-    /// only thing that ever chose one. A test points it at a scratch copy the same way.
+    /// Which `config.toml` the forms on this window read and write. Ambient rather than an argument threaded through all fifty-one of them: a form is not given a file, it edits *the* file, and the panel is the only thing that ever chose one. A test points it at a scratch copy the same way.
     static SOURCE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -189,17 +173,14 @@ pub(crate) fn source_path() -> PathBuf {
 
 /// What a form seeds itself from: the file as it stands *now*, and where it is.
 ///
-/// Read per form rather than once per window, because a form rebuilt is a form re-seeded — that is how Revert
-/// and an edit made by hand reach a page that is already open.
+/// Read per form rather than once per window, because a form rebuilt is a form re-seeded — that is how Revert and an edit made by hand reach a page that is already open.
 pub(crate) fn source() -> (Config, PathBuf) {
     let path = source_path();
     (Config::load_or_default(&path), path)
 }
 
 thread_local! {
-    /// The page area's scroll window, for the one form that draws more rows than fit in it. Ambient for the
-    /// same reason the source file is: a section takes no arguments, and threading a viewport through every
-    /// one of them to reach a single list is the shape `Build` exists not to have.
+    /// The page area's scroll window, for the one form that draws more rows than fit in it. Ambient for the same reason the source file is: a section takes no arguments, and threading a viewport through every one of them to reach a single list is the shape `Build` exists not to have.
     static VIEWPORT: std::cell::RefCell<Option<telar::ScrollViewport>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -209,8 +190,7 @@ pub(crate) fn set_viewport(viewport: telar::ScrollViewport) {
     VIEWPORT.with(|slot| *slot.borrow_mut() = Some(viewport));
 }
 
-/// The scroll window, or `None` for a form built outside a page — a preview or a test, where there is nothing
-/// to virtualise against and a plain list is the right answer.
+/// The scroll window, or `None` for a form built outside a page — a preview or a test, where there is nothing to virtualise against and a plain list is the right answer.
 pub(crate) fn viewport() -> Option<telar::ScrollViewport> {
     VIEWPORT.with(|slot| slot.borrow().clone())
 }
@@ -220,8 +200,7 @@ thread_local! {
     static OPENED_WITH: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Takes the Revert snapshot, once per window. A second call while one is held is the window rebuilding itself
-/// after a reload, and overwriting it there would make Revert restore the change it is meant to undo.
+/// Takes the Revert snapshot, once per window. A second call while one is held is the window rebuilding itself after a reload, and overwriting it there would make Revert restore the change it is meant to undo.
 pub(crate) fn remember_opened(path: &Path) {
     OPENED_WITH.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -236,12 +215,9 @@ pub(crate) fn forget_opened() {
     OPENED_WITH.with(|slot| *slot.borrow_mut() = None);
 }
 
-/// Puts `config.toml` back to how it was when this settings window opened, and lets the config watcher apply
-/// it — the Revert half of K14.
+/// Puts `config.toml` back to how it was when this settings window opened, and lets the config watcher apply it — the Revert half of K14.
 ///
-/// The whole file rather than a per-section undo stack: with apply-on-change there is no single edit to undo,
-/// and "how it was when I opened this" is the state a user actually means. It therefore also discards a change
-/// made to the file by hand while the window was open, which is why it is a button and not automatic.
+/// The whole file rather than a per-section undo stack: with apply-on-change there is no single edit to undo, and "how it was when I opened this" is the state a user actually means. It therefore also discards a change made to the file by hand while the window was open, which is why it is a button and not automatic.
 pub(crate) fn revert_to_opened(path: &Path) {
     let snapshot = OPENED_WITH.with(|slot| slot.borrow().clone());
     let Some(text) = snapshot else {
@@ -264,11 +240,7 @@ pub(crate) fn persist<T: Serialize>(path: &Path, name: &str, value: &T) {
 
 /// [`persist`] for a form that owns only *part* of a `[toml]` section.
 ///
-/// `save_section` replaces the whole table, so every form has to hand it the keys it does not edit as well —
-/// and taking those from the snapshot the form was built with is what makes two forms over one section
-/// destructive: the applications page marks a favourite, the launcher form saves a width ten seconds later,
-/// and the favourite is gone. Reading the file at save time is also what makes a hand-edit made while the
-/// settings window was open survive it.
+/// `save_section` replaces the whole table, so every form has to hand it the keys it does not edit as well — and taking those from the snapshot the form was built with is what makes two forms over one section destructive: the applications page marks a favourite, the launcher form saves a width ten seconds later, and the favourite is gone. Reading the file at save time is also what makes a hand-edit made while the settings window was open survive it.
 pub(crate) fn persist_with<T: Serialize>(
     path: &Path,
     name: &str,
@@ -365,8 +337,7 @@ pub(crate) fn text_field(
     labelled(label, Box::new(boxed), theme)
 }
 
-/// A switch. The catalogue's `toggle` carries its own label, which this form has already drawn in the row's
-/// left column — so it takes an empty one and the row stays the shape every other field is.
+/// A switch. The catalogue's `toggle` carries its own label, which this form has already drawn in the row's left column — so it takes an empty one and the row stays the shape every other field is.
 pub(crate) fn toggle_field(
     label: impl Fn() -> String + 'static,
     value: RwSignal<bool>,
@@ -417,9 +388,7 @@ pub(crate) fn enum_field(
 
 /// A form's action button — and, with live preview on, where that form's fields get wired to it.
 ///
-/// The wiring lives here because every `*_section` builds its fields and then calls this exactly once, so this
-/// is the one point in the file that has both the form's fields (through [`RECORDING`]) and the action they
-/// feed. The alternative was a fortieth argument on forty functions.
+/// The wiring lives here because every `*_section` builds its fields and then calls this exactly once, so this is the one point in the file that has both the form's fields (through [`RECORDING`]) and the action they feed. The alternative was a fortieth argument on forty functions.
 pub(crate) fn save_button(
     label: impl Fn() -> String + 'static,
     on_press: impl Fn() + 'static,
@@ -427,8 +396,7 @@ pub(crate) fn save_button(
     let on_press: Rc<dyn Fn()> = Rc::new(on_press);
     let live = live_apply(Rc::clone(&on_press));
 
-    // The catalogue's button with no `fill` of its own: unset means "the theme's `primary`", which is this
-    // theme's accent, darkened on hover — the three states this form used to spell out by hand.
+    // The catalogue's button with no `fill` of its own: unset means "the theme's `primary`", which is this theme's accent, darkened on hover — the three states this form used to spell out by hand.
     let button = telar::button(telar::ButtonProps {
         label: Box::new(label),
         on_press: Box::new(move || on_press()),
@@ -640,10 +608,7 @@ mod tests {
         assert_eq!(join_csv(&["a".to_string(), "b".to_string()]), "a, b");
     }
 
-    /// A reorder must not cost an entry its own settings. The comma-separated field this replaced could only
-    /// carry ids, so it had to reconstruct `{ id = "clock", accent = "red" }` by claiming entries back by
-    /// name; the pill editor moves the entry itself, and this is the guard that it keeps doing so — including
-    /// across zones, where losing the accent would look like the module having been re-added rather than moved.
+    /// A reorder must not cost an entry its own settings. The comma-separated field this replaced could only carry ids, so it had to reconstruct `{ id = "clock", accent = "red" }` by claiming entries back by name; the pill editor moves the entry itself, and this is the guard that it keeps doing so — including across zones, where losing the accent would look like the module having been re-added rather than moved.
     #[test]
     fn enum_helpers_round_trip() {
         for e in Edge::ALL {
@@ -667,10 +632,7 @@ mod tests {
         }
     }
 
-    /// K14's one subtle rule: an effect fires once when it is registered, and that run is the field being
-    /// seeded from the file — not a user changing anything. Counting it would make every form on the page
-    /// write itself back the moment it was drawn, which with a dozen forms on a page is a dozen config saves
-    /// and a dozen reloads for a window the user has only just opened.
+    /// K14's one subtle rule: an effect fires once when it is registered, and that run is the field being seeded from the file — not a user changing anything. Counting it would make every form on the page write itself back the moment it was drawn, which with a dozen forms on a page is a dozen config saves and a dozen reloads for a window the user has only just opened.
     #[test]
     fn seeding_a_form_is_not_a_change_to_it() {
         telar::reset_runtime();
@@ -695,8 +657,7 @@ mod tests {
         filled.set(true);
         assert_eq!(recorder.revision.peek(), 2, "either field counts");
 
-        // And the recording is per form: the next one starts empty, or a section would apply its neighbour's
-        // fields as well as its own.
+        // And the recording is per form: the next one starts empty, or a section would apply its neighbour's fields as well as its own.
         assert!(RECORDING.with(|recording| recording.borrow().is_none()));
     }
 }

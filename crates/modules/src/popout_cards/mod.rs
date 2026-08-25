@@ -1,9 +1,6 @@
 //! What each chip shows when the pointer rests on it.
 //!
-//! Every popout here reads a service that already exists and subscribes to it, so the card follows the value
-//! while it is up — hovering the volume chip and scrolling it is one gesture, and a card that froze at the
-//! level it opened with would be worse than no card. Nothing polls: each `watch` is bound to the popout
-//! surface and dies with it.
+//! Every popout here reads a service that already exists and subscribes to it, so the card follows the value while it is up — hovering the volume chip and scrolling it is one gesture, and a card that froze at the level it opened with would be worse than no card. Nothing polls: each `watch` is bound to the popout surface and dies with it.
 
 use telar::{RwSignal, signal};
 
@@ -18,9 +15,7 @@ use ui::glyph;
 use ui::popouts::PopoutRegistry;
 use util::reactive::{Live, derive, derive_pair, fixed, fixed_text};
 
-/// The modules a hover popout is offered for. A module whose click already opens a panel is deliberately
-/// included where the popout is the *faster* read of the same state (battery) and left out where the panel is
-/// the only sensible presentation (notes, settings, the session menu).
+/// The modules a hover popout is offered for. A module whose click already opens a panel is deliberately included where the popout is the *faster* read of the same state (battery) and left out where the panel is the only sensible presentation (notes, settings, the session menu).
 pub fn cards() -> PopoutRegistry {
     let mut cards = PopoutRegistry::new();
     cards.register("volume", |config, theme| {
@@ -51,8 +46,7 @@ enum AudioSide {
     Input,
 }
 
-/// Volume and microphone are the same card: a level, a mute state and the wheel step that moves it. Splitting
-/// them would duplicate every row to change one glyph and one string.
+/// Volume and microphone are the same card: a level, a mute state and the wheel step that moves it. Splitting them would duplicate every row to change one glyph and one string.
 fn audio_card(side: AudioSide, config: &Config, theme: NordTheme) -> Card {
     let initial = match side {
         AudioSide::Output => volume::current().unwrap_or(volume::Volume {
@@ -71,8 +65,7 @@ fn audio_card(side: AudioSide, config: &Config, theme: NordTheme) -> Card {
         AudioSide::Input => platform_wayland::watch(volume::subscribe_mic, move |v| sink.set(v)),
     };
 
-    // Which device the level belongs to. The chip is one glyph for whatever happens to be default, and after a
-    // headset is plugged in "is this the speakers or the headphones" is the question the hover is asked.
+    // Which device the level belongs to. The chip is one glyph for whatever happens to be default, and after a headset is plugged in "is this the speakers or the headphones" is the question the hover is asked.
     let graph = signal(pipewire::current().unwrap_or_default());
     let graph_sink = graph.clone();
     platform_wayland::watch(pipewire::subscribe, move |g| graph_sink.set(g));
@@ -117,8 +110,7 @@ fn audio_card(side: AudioSide, config: &Config, theme: NordTheme) -> Card {
             derive(state.clone(), |v| on_off(v.muted)),
         )
         .row(
-            // Only the output side: an application recording is not something the shell can list without
-            // claiming more than PipeWire tells it, and the row would read as "nothing" on every machine.
+            // Only the output side: an application recording is not something the shell can list without claiming more than PipeWire tells it, and the row would read as "nothing" on every machine.
             fixed_text(match side {
                 AudioSide::Output => telar::t!("popout.playing"),
                 AudioSide::Input => telar::t!("popout.step"),
@@ -130,8 +122,7 @@ fn audio_card(side: AudioSide, config: &Config, theme: NordTheme) -> Card {
         )
 }
 
-/// What is making noise: the application when there is one, its name and one more when there are two, and a
-/// count past that — a popout has room for a line, not for a mixer.
+/// What is making noise: the application when there is one, its name and one more when there are two, and a count past that — a popout has room for a line, not for a mixer.
 fn playing_label(graph: &pipewire::Graph) -> String {
     let names: Vec<String> = graph
         .playback_streams()
@@ -170,8 +161,7 @@ fn brightness_card(theme: NordTheme) -> Card {
         )
 }
 
-/// The battery card carries what the chip cannot: how long is left, and at what rate. `stream_details` is the
-/// same producer the battery panel uses, so hovering and clicking report the same numbers.
+/// The battery card carries what the chip cannot: how long is left, and at what rate. `stream_details` is the same producer the battery panel uses, so hovering and clicking report the same numbers.
 fn battery_card(theme: NordTheme) -> Card {
     let details = signal(battery::details());
     let sink = details.clone();
@@ -243,9 +233,7 @@ fn duration_text(secs: i64) -> Option<String> {
     })
 }
 
-/// The link verdict comes from sysfs and the detail from NetworkManager, which is why the card subscribes to
-/// both: the glyph and the "am I online" line keep working on a machine with no NetworkManager, and the SSID
-/// and band rows fill in where there is one.
+/// The link verdict comes from sysfs and the detail from NetworkManager, which is why the card subscribes to both: the glyph and the "am I online" line keep working on a machine with no NetworkManager, and the SSID and band rows fill in where there is one.
 fn network_card() -> Card {
     let state = signal(network::read());
     let sink = state.clone();
@@ -295,8 +283,7 @@ fn kind_label(kind: network::NetworkKind) -> String {
     }
 }
 
-/// The chip is one glyph for four states; the popout is where "connected to what, and how much charge is left
-/// in it" fits. Which is the question a Bluetooth indicator is actually read for.
+/// The chip is one glyph for four states; the popout is where "connected to what, and how much charge is left in it" fits. Which is the question a Bluetooth indicator is actually read for.
 fn bluetooth_card(theme: NordTheme) -> Card {
     let state = signal(bluetooth::current().unwrap_or_default());
     let sink = state.clone();
@@ -393,8 +380,7 @@ fn lock_card() -> Card {
         )
 }
 
-/// The bar truncates a window title to `max_chars`; the popout carries the whole one, plus the class a title
-/// alone doesn't identify.
+/// The bar truncates a window title to `max_chars`; the popout carries the whole one, plus the class a title alone doesn't identify.
 fn window_card() -> Card {
     let initial = hyprland::socket_dir()
         .map(|dir| hyprland::active_window(&dir))
@@ -482,8 +468,7 @@ fn cpu_card(theme: NordTheme) -> Card {
         )
 }
 
-/// The GPU's card is the CPU's shape with a different set of unknowns: which of usage, temperature and VRAM a
-/// card answers is a property of its driver, so each row says "—" rather than a zero it did not measure.
+/// The GPU's card is the CPU's shape with a different set of unknowns: which of usage, temperature and VRAM a card answers is a property of its driver, so each row says "—" rather than a zero it did not measure.
 fn gpu_card(theme: NordTheme) -> Card {
     let state = signal(gpu::current().unwrap_or_default());
     let sink = state.clone();
@@ -567,8 +552,7 @@ fn memory_card(theme: NordTheme) -> Card {
         .row(fixed_text(telar::t!("popout.disk_io")), disk_row(state))
 }
 
-/// Names the sensor the reading came from, which is the one thing `[temperature] sensor` cannot be configured
-/// without: the chip shows a number, and only the popout says whose number it is.
+/// Names the sensor the reading came from, which is the one thing `[temperature] sensor` cannot be configured without: the chip shows a number, and only the popout says whose number it is.
 fn temperature_card(config: &Config, theme: NordTheme) -> Card {
     let state = resource_signal();
     let settings = config.temperature.clone();
@@ -610,8 +594,7 @@ fn temperature_card(config: &Config, theme: NordTheme) -> Card {
         )
 }
 
-/// The configured sensor's reading, or the hottest one — the same fallback the chip uses, so the two never
-/// disagree about which sensor is being reported.
+/// The configured sensor's reading, or the hottest one — the same fallback the chip uses, so the two never disagree about which sensor is being reported.
 fn reading_for(resources: &resources::Resources, wanted: &str) -> Option<f32> {
     if wanted.trim().is_empty() {
         return resources.temperature;
@@ -662,8 +645,7 @@ fn netspeed_card() -> Card {
         )
 }
 
-/// Disk throughput has no chip of its own, so it rides on the memory card — the surface a user checks when the
-/// machine feels slow, which is the same question.
+/// Disk throughput has no chip of its own, so it rides on the memory card — the surface a user checks when the machine feels slow, which is the same question.
 fn disk_row(state: RwSignal<Option<resources::Resources>>) -> Live<String> {
     derive(state, |r| match r {
         Some(r) => format!(
@@ -675,8 +657,7 @@ fn disk_row(state: RwSignal<Option<resources::Resources>>) -> Live<String> {
     })
 }
 
-/// One subscription to the resource service, shared by whichever card asked for it. Three sysinfo popouts read
-/// the same snapshot, so they are all the same signal shaped differently.
+/// One subscription to the resource service, shared by whichever card asked for it. Three sysinfo popouts read the same snapshot, so they are all the same signal shaped differently.
 fn resource_signal() -> RwSignal<Option<resources::Resources>> {
     let state = signal(resources::current());
     let sink = state.clone();
@@ -719,8 +700,7 @@ fn rate(value: Option<f64>) -> String {
 mod tests {
     use super::*;
 
-    /// Each card builds for real: every one of them wires its own subscriptions and reads a service, so a card
-    /// that only compiles is a card nobody has laid out.
+    /// Each card builds for real: every one of them wires its own subscriptions and reads a service, so a card that only compiles is a card nobody has laid out.
     #[test]
     fn every_registered_card_builds() {
         let config = Config::starter();

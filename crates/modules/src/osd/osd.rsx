@@ -13,9 +13,7 @@ fn osd_tint(dimmed: bool) -> Color {
     if dimmed { t.muted } else { t.text }
 }
 
-// A single-shot snapshot — the OSD is transient, and every trigger (click, scroll, key) replaces it with a
-// freshly built one. It reads the shared services' cached value rather than the system: `volume::read()` forks
-// `wpctl`, which has no business running while a surface is being laid out.
+// A single-shot snapshot — the OSD is transient, and every trigger (click, scroll, key) replaces it with a freshly built one. It reads the shared services' cached value rather than the system: `volume::read()` forks `wpctl`, which has no business running while a surface is being laid out.
 let (glyph, frac, dimmed) = match current_osd_kind() {
     OsdKind::Volume => {
         let v = volume::current().unwrap_or(volume::Volume {
@@ -50,9 +48,7 @@ let track_rad = TRACK_H / 2.0;
 let rad = current_osd_radius();
 
 [view]
-// No `height:100%`: this is a card in the shell's one column now, not a surface of its own, and a card is as
-// tall as what is in it. Filling was right while the OSD had a 280×60 surface to fill; in a column sized for a
-// full run of cards it stretched one OSD over the lot.
+// No `height:100%`: this is a card in the shell's one column now, not a surface of its own, and a card is as tall as what is in it. Filling was right while the OSD had a 280×60 surface to fill; in a column sized for a full run of cards it stretched one OSD over the lot.
 box direction:row align:center justify:center gap(::ui::scale::space::xl()) pad_x(::ui::scale::space::xl()) pad_y(::ui::scale::space::xl()) width:100% fill:panel_fill() radius:rad
     icon_glyph name(move || glyph.to_string()) tint(move || osd_tint(dimmed)) size:theme.icon_size
     box direction:row align:center width:TRACK_W height:TRACK_H fill:muted radius:track_rad

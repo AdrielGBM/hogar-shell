@@ -1,8 +1,6 @@
 //! What this crate's `[preview]`s stand in for: the machine a headless render cannot reach.
 //!
-//! Each seeds its service rather than starting it — see [`util::broadcast::Service::seed`] — so a preview draws
-//! the same thing on a laptop, on a build box and with the shell already running. The bar every chip sits on
-//! comes from [`ui::preview`].
+//! Each seeds its service rather than starting it — see [`util::broadcast::Service::seed`] — so a preview draws the same thing on a laptop, on a build box and with the shell already running. The bar every chip sits on comes from [`ui::preview`].
 
 use std::sync::Arc;
 
@@ -14,9 +12,7 @@ use services::volume::Volume;
 
 const MONITOR: &str = "DP-1";
 
-/// The previews this crate registers by hand, for the surfaces whose content is still built by a Rust function
-/// and so has no `.rsx` component for a `[preview]` block to hang off. Each replaces a `TELAR_VISUAL_*` test
-/// that rendered the same tree only when an environment variable asked it to.
+/// The previews this crate registers by hand, for the surfaces whose content is still built by a Rust function and so has no `.rsx` component for a `[preview]` block to hang off. Each replaces a `TELAR_VISUAL_*` test that rendered the same tree only when an environment variable asked it to.
 pub fn entries() -> Vec<PreviewEntry> {
     vec![
         PreviewEntry {
@@ -61,8 +57,7 @@ pub fn entries() -> Vec<PreviewEntry> {
     ]
 }
 
-/// A volume the OSD can draw a bar for: `volume::current()` is `None` until PipeWire has published something,
-/// which on a headless render is never, and a meter at 0% reads as broken rather than as quiet.
+/// A volume the OSD can draw a bar for: `volume::current()` is `None` until PipeWire has published something, which on a headless render is never, and a meter at 0% reads as broken rather than as quiet.
 pub fn osd() {
     services::volume::seed(Volume {
         level: 64,
@@ -70,9 +65,7 @@ pub fn osd() {
     });
 }
 
-/// Two tray applications, so the module previews as the row it is instead of as the blank page an empty tray
-/// honestly draws. Both hand over their own pixels — the one resolution path that needs neither an installed
-/// icon theme nor a network, and the one most items on the bus take anyway.
+/// Two tray applications, so the module previews as the row it is instead of as the blank page an empty tray honestly draws. Both hand over their own pixels — the one resolution path that needs neither an installed icon theme nor a network, and the one most items on the bus take anyway.
 pub fn tray() {
     ui::preview::bar_chip_with(|config| config.tray.enabled = true);
     services::tray::seed(vec![
@@ -81,8 +74,7 @@ pub fn tray() {
     ]);
 }
 
-/// Five workspaces on one monitor, three of them holding windows and the second focused — enough for the pill
-/// row to show every state it draws: active, occupied and empty.
+/// Five workspaces on one monitor, three of them holding windows and the second focused — enough for the pill row to show every state it draws: active, occupied and empty.
 pub fn workspaces() {
     ui::preview::bar_chip();
     services::hyprland::seed_workspaces(Snapshot {

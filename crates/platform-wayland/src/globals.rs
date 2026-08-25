@@ -1,13 +1,8 @@
 //! Asking the compositor what it advertises, from anywhere.
 //!
-//! The other "is this supported" answers in this crate read state the driver put there — `lock_supported`
-//! asks the driver facts, `idle_supported` a thread-local the event loop owns — which is right inside a
-//! running shell and silently wrong outside one, where both answer `false` because there is no driver rather
-//! than because the compositor is missing the protocol.
+//! The other "is this supported" answers in this crate read state the driver put there — `lock_supported` asks the driver facts, `idle_supported` a thread-local the event loop owns — which is right inside a running shell and silently wrong outside one, where both answer `false` because there is no driver rather than because the compositor is missing the protocol.
 //!
-//! That distinction is the whole point of asking: a dependency check runs in a bare CLI process, on the machine
-//! where something is broken, quite possibly *because* the shell will not start. So this connects on its own
-//! and reads the registry, and separates "the compositor does not have it" from "nothing here could tell".
+//! That distinction is the whole point of asking: a dependency check runs in a bare CLI process, on the machine where something is broken, quite possibly *because* the shell will not start. So this connects on its own and reads the registry, and separates "the compositor does not have it" from "nothing here could tell".
 
 use wayland_client::{Connection, globals::registry_queue_init};
 
@@ -32,22 +27,16 @@ impl
     }
 }
 
-/// Whether the compositor advertises `interface`, or `None` when this process cannot reach a compositor at all
-/// — no `WAYLAND_DISPLAY`, or a socket that will not answer.
+/// Whether the compositor advertises `interface`, or `None` when this process cannot reach a compositor at all — no `WAYLAND_DISPLAY`, or a socket that will not answer.
 ///
-/// `None` is not a failure to report: on a machine with no session running it is the *correct* answer, and a
-/// caller that flattened it to `false` would tell the user their compositor lacks a protocol it may implement
-/// perfectly well.
+/// `None` is not a failure to report: on a machine with no session running it is the *correct* answer, and a caller that flattened it to `false` would tell the user their compositor lacks a protocol it may implement perfectly well.
 pub fn advertises(interface: &str) -> Option<bool> {
     advertises_all(&[interface])
 }
 
 /// Whether the compositor advertises *every* interface in `interfaces`, over one connection.
 ///
-/// One protocol is not always one global: `ext-image-copy-capture` is a capture manager plus the factory that
-/// makes the sources it takes, and a compositor carrying one without the other can capture nothing. Asking for
-/// the set together is also what keeps this cheap enough to call from a surface deciding whether to offer a
-/// gesture — a connection and a registry read per interface would be a round trip per name.
+/// One protocol is not always one global: `ext-image-copy-capture` is a capture manager plus the factory that makes the sources it takes, and a compositor carrying one without the other can capture nothing. Asking for the set together is also what keeps this cheap enough to call from a surface deciding whether to offer a gesture — a connection and a registry read per interface would be a round trip per name.
 pub fn advertises_all(interfaces: &[&str]) -> Option<bool> {
     let connection = Connection::connect_to_env().ok()?;
     let (globals, _queue) = registry_queue_init::<Probe>(&connection).ok()?;

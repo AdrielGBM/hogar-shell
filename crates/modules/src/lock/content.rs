@@ -1,10 +1,6 @@
-//! What the lock screen shows besides the field: what is playing, the weather, the machine's load, and how
-//! many notifications are waiting.
+//! What the lock screen shows besides the field: what is playing, the weather, the machine's load, and how many notifications are waiting.
 //!
-//! Every row is a *reading*, never a control. A lock screen's whole promise is that nothing behind it can be
-//! reached, so a play button — which reaches into another application — would be a hole in it; and a
-//! notification body is the one thing on this surface that can be read by whoever is standing there, which is
-//! why `hide_notifs` counts them instead of showing them until the user says otherwise.
+//! Every row is a *reading*, never a control. A lock screen's whole promise is that nothing behind it can be reached, so a play button — which reaches into another application — would be a hole in it; and a notification body is the one thing on this surface that can be read by whoever is standing there, which is why `hide_notifs` counts them instead of showing them until the user says otherwise.
 
 use std::sync::Arc;
 use ui::scale::space;
@@ -18,8 +14,7 @@ use config::Config;
 use config::theme::{FontRole, NordTheme};
 use services::notifications::SharedSnapshot;
 
-/// The rows `[lock]` switches on, in the order they read best: what is playing, then the weather, then the
-/// machine, then what is waiting. An empty vector is the ordinary case — the default lock screen is a field.
+/// The rows `[lock]` switches on, in the order they read best: what is playing, then the weather, then the machine, then what is waiting. An empty vector is the ordinary case — the default lock screen is a field.
 pub fn extras(
     config: &Arc<Config>,
     theme: NordTheme,
@@ -120,8 +115,7 @@ fn resources(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// How many notifications are waiting, and — only if `hide_notifs` is off — who they are from.
 ///
-/// Never the body. A lock screen is read by whoever is in the room, and a message preview is the one thing on
-/// it that leaks something the lock was supposed to protect.
+/// Never the body. A lock screen is read by whoever is in the room, and a message preview is the one thing on it that leaks something the lock was supposed to protect.
 fn notifications(hide: bool, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     use services::notifications as notifs;
     let snapshot = signal(notifs::snapshot_now());
@@ -195,8 +189,7 @@ mod tests {
 
     #[test]
     fn notification_bodies_are_hidden_by_default() {
-        // The one setting on this screen with a privacy consequence: a preview on a locked screen is readable
-        // by whoever walks past it.
+        // The one setting on this screen with a privacy consequence: a preview on a locked screen is readable by whoever walks past it.
         assert!(LockConfig::default().hide_notifs);
     }
 }

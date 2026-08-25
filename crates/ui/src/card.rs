@@ -1,7 +1,6 @@
 //! The builder every popout fills in.
 //!
-//! The shape itself is [`crate::popout_card`]; this is the name its callers know it by, and the one-field-at-a-time
-//! way they say what goes in it. A module describes its card and hands it over — the surface decides the frame.
+//! The shape itself is [`crate::popout_card`]; this is the name its callers know it by, and the one-field-at-a-time way they say what goes in it. A module describes its card and hands it over — the surface decides the frame.
 
 use telar::{Color, LayoutError, LayoutItem};
 

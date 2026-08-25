@@ -1,13 +1,8 @@
 //! The mixer: every device and every stream in the audio graph, each with its own level and mute.
 //!
-//! The shell has been able to *read* the whole graph since the PipeWire service replaced the `wpctl` poll, and
-//! `hogar-shell audio` has been able to drive all of it — but with a pointer there was no way to reach anything
-//! but the default sink. Choosing a different output meant a keybind or a script. This is that missing half:
-//! one surface per adjustable node, so the graph the service already carries is something a user can touch.
+//! The shell has been able to *read* the whole graph since the PipeWire service replaced the `wpctl` poll, and `hogar-shell audio` has been able to drive all of it — but with a pointer there was no way to reach anything but the default sink. Choosing a different output meant a keybind or a script. This is that missing half: one surface per adjustable node, so the graph the service already carries is something a user can touch.
 //!
-//! Nothing here holds its own state. Every row's level, mute and default marker is read out of the live graph
-//! by node id, which is what lets a row survive its own drag: a slider that rebuilt on every value it set
-//! would drop the gesture that was setting it (the same trap the network panel's signal strength documents).
+//! Nothing here holds its own state. Every row's level, mute and default marker is read out of the live graph by node id, which is what lets a row survive its own drag: a slider that rebuilt on every value it set would drop the gesture that was setting it (the same trap the network panel's signal strength documents).
 
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReactiveList,
@@ -29,8 +24,7 @@ const ROW_ICON: f32 = 20.0;
 const ROW_RADIUS: f32 = 8.0;
 const METER_HEIGHT: f32 = 6.0;
 
-/// The three lists, in the order a user reaches for them: what they are listening on, what is playing, and —
-/// last, because it is the one they set once — what they are recording with.
+/// The three lists, in the order a user reaches for them: what they are listening on, what is playing, and — last, because it is the one they set once — what they are recording with.
 const GROUPS: [Group; 3] = [
     Group {
         label: "outputs",
@@ -54,9 +48,7 @@ struct Group {
 
 /// One row of a list: the node, and whether it is the default device of its kind.
 ///
-/// The level and the mute state are deliberately *not* here. They move while the row is being dragged, and a
-/// keyed list rebuilds a row whose key changed — which would destroy the drag mid-gesture. Both are read from
-/// the graph signal inside the row instead, so a scrub repaints the bar and rebuilds nothing.
+/// The level and the mute state are deliberately *not* here. They move while the row is being dragged, and a keyed list rebuilds a row whose key changed — which would destroy the drag mid-gesture. Both are read from the graph signal inside the row instead, so a scrub repaints the bar and rebuilds nothing.
 #[derive(Clone, Debug, PartialEq)]
 struct Row {
     node: Node,
@@ -86,8 +78,7 @@ pub fn mixer_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     mixer_view(config, use_theme::<NordTheme>())
 }
 
-/// The mixer itself, taking its config and theme rather than reading the surface's, so a caller that already
-/// resolved them does not have to be a surface for this to build.
+/// The mixer itself, taking its config and theme rather than reading the surface's, so a caller that already resolved them does not have to be a surface for this to build.
 pub fn mixer_view(
     config: AudioConfig,
     theme: NordTheme,
@@ -125,8 +116,7 @@ fn title(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(text))
 }
 
-/// The nodes a group lists, in the graph's own order — which is by id, so a machine's own devices stay above
-/// the applications that came later and nothing reshuffles under the pointer.
+/// The nodes a group lists, in the graph's own order — which is by id, so a machine's own devices stay above the applications that came later and nothing reshuffles under the pointer.
 fn listed(graph: &Graph, group: &Group) -> Vec<Row> {
     graph
         .nodes
@@ -147,8 +137,7 @@ fn is_default(graph: &Graph, node: &Node) -> bool {
     }
 }
 
-/// One group's subheading and rows. Both are hidden while the group is empty: a "Applications" heading over
-/// nothing reads as a mixer that lost the stream it was showing.
+/// One group's subheading and rows. Both are hidden while the group is empty: a "Applications" heading over nothing reads as a mixer that lost the stream it was showing.
 fn group_list(
     group: &'static Group,
     graph: RwSignal<Graph>,
@@ -198,9 +187,7 @@ fn group_list(
 
 /// One adjustable node: its glyph, its name, what it is doing, and the slider that sets it.
 ///
-/// Pressing the glyph mutes it; pressing the labels makes a device the default one; dragging the bar sets the
-/// level. Three gestures on one row rather than a row of buttons, because a mixer with eight streams on it is
-/// a list a user scans, and every control that is not the slider is one they use once.
+/// Pressing the glyph mutes it; pressing the labels makes a device the default one; dragging the bar sets the level. Three gestures on one row rather than a row of buttons, because a mixer with eight streams on it is a list a user scans, and every control that is not the slider is one they use once.
 fn node_row(
     row: Row,
     graph: RwSignal<Graph>,
@@ -284,8 +271,7 @@ fn node_row(
             .gap(space::xs()),
         vec![box_item(name), box_item(detail)],
     )?;
-    // Only a device has a default to be made; wrapping a stream's labels in a press target would give a user
-    // something to click that answers with nothing.
+    // Only a device has a default to be made; wrapping a stream's labels in a press target would give a user something to click that answers with nothing.
     let labels: Box<dyn LayoutItem> = if matches!(kind, NodeKind::Sink | NodeKind::Source) {
         Box::new(
             StyledContainer::new(
@@ -344,8 +330,7 @@ fn node_row(
     )?))
 }
 
-/// What a row says about itself under its name: which track a stream is playing, and which device is the one
-/// everything else goes to.
+/// What a row says about itself under its name: which track a stream is playing, and which device is the one everything else goes to.
 fn detail_line(node: &Node, default: bool) -> String {
     if node.kind.is_stream() {
         let media = node.media.trim();
@@ -439,8 +424,7 @@ mod tests {
 
     #[test]
     fn a_row_is_keyed_on_what_it_draws_but_not_on_the_level() {
-        // The whole reason the level is read from the graph rather than baked into the row: a key that moved
-        // with it would rebuild the row on every pointer move of its own drag, and a rebuilt row has no drag.
+        // The whole reason the level is read from the graph rather than baked into the row: a key that moved with it would rebuild the row on every pointer move of its own drag, and a rebuilt row has no drag.
         let base = Row {
             node: node(1, "analog", NodeKind::Sink),
             default: true,
@@ -489,8 +473,7 @@ mod tests {
         assert_ne!(detail_line(&device, true), detail_line(&device, false));
     }
 
-    /// The re-entrant-borrow guard every panel in this shell carries: a closure that reads a second signal
-    /// inside another's `with` panics at build time and nowhere else.
+    /// The re-entrant-borrow guard every panel in this shell carries: a closure that reads a second signal inside another's `with` panics at build time and nowhere else.
     #[test]
     fn the_mixer_builds_without_a_re_entrant_borrow() {
         telar::reset_layout_runtime();

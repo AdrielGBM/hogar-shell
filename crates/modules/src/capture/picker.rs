@@ -2,17 +2,11 @@
 //!
 //! Three decisions are worth knowing about.
 //!
-//! **The still is the capture.** With `[screenshot] freeze` on, the overlay is drawn over a picture of the screen
-//! taken the instant before it mapped, and the selection is *cropped out of that picture*. Asking the compositor
-//! again afterwards would photograph the overlay, and waiting for the overlay to go away first would lose the
-//! menu or hover state the user was trying to capture — which is the whole reason to freeze.
+//! **The still is the capture.** With `[screenshot] freeze` on, the overlay is drawn over a picture of the screen taken the instant before it mapped, and the selection is *cropped out of that picture*. Asking the compositor again afterwards would photograph the overlay, and waiting for the overlay to go away first would lose the menu or hover state the user was trying to capture — which is the whole reason to freeze.
 //!
-//! **A click is a selection too.** Dragging a box is the general case, but "this window" is the common one, so a
-//! press with no travel selects the window under the pointer, and one on empty desktop selects the whole output.
-//! Edges within a few pixels of a window snap to it, so a rough drag still comes out flush.
+//! **A click is a selection too.** Dragging a box is the general case, but "this window" is the common one, so a press with no travel selects the window under the pointer, and one on empty desktop selects the whole output. Edges within a few pixels of a window snap to it, so a rough drag still comes out flush.
 //!
-//! **It covers the focused screen.** A selection is made on one monitor; the overlay opens on the focused one and
-//! reports its rectangle in the compositor's global logical coordinates, which is what every consumer wants.
+//! **It covers the focused screen.** A selection is made on one monitor; the overlay opens on the focused one and reports its rectangle in the compositor's global logical coordinates, which is what every consumer wants.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -33,27 +27,23 @@ use services::screenshot::{self, Area};
 use ui::panel::PanelSurface;
 use ui::placement::Placement;
 
-/// How close an edge has to come to a window's own before it snaps to it, in logical pixels. Generous enough
-/// that a hand-drawn box lands flush, small enough that it never pulls a deliberate selection off target.
+/// How close an edge has to come to a window's own before it snaps to it, in logical pixels. Generous enough that a hand-drawn box lands flush, small enough that it never pulls a deliberate selection off target.
 const SNAP: f32 = 12.0;
 
-/// Below this, a drag was a click: nobody selects an 8-pixel box on purpose, and treating it as one would answer
-/// a mis-click with an unusable capture.
+/// Below this, a drag was a click: nobody selects an 8-pixel box on purpose, and treating it as one would answer a mis-click with an unusable capture.
 const CLICK_SLOP: f32 = 8.0;
 
 const DIM: f32 = 0.45;
 const BORDER: f32 = 2.0;
 
-/// What the picker hands back: where the selection is, in global logical coordinates, and the pixels for it when
-/// the overlay was drawn over a frozen screen.
+/// What the picker hands back: where the selection is, in global logical coordinates, and the pixels for it when the overlay was drawn over a frozen screen.
 pub struct Picked {
     pub area: Area,
     pub frozen: Option<screenshot::Image>,
 }
 
 thread_local! {
-    /// The open picker. Single-slot: a second one would leave two overlays fighting for the pointer, and the
-    /// first one's selection would land after the second had already covered the screen.
+    /// The open picker. Single-slot: a second one would leave two overlays fighting for the pointer, and the first one's selection would land after the second had already covered the screen.
     static OPEN: RefCell<Option<SurfaceHandle>> = const { RefCell::new(None) };
 }
 
@@ -65,8 +55,7 @@ pub fn is_open() -> bool {
     })
 }
 
-/// Opens the picker on the focused screen and calls `then` with the selection. Cancelling — Escape, or a
-/// right-click — closes the overlay and calls nothing.
+/// Opens the picker on the focused screen and calls `then` with the selection. Cancelling — Escape, or a right-click — closes the overlay and calls nothing.
 pub fn pick(then: impl Fn(Picked) + 'static) {
     if is_open() {
         return;
@@ -74,17 +63,14 @@ pub fn pick(then: impl Fn(Picked) + 'static) {
     let output = surfaces::shell::focused_output();
     let config = config::config_for(output.as_deref());
     let screen = output_box(output.as_deref());
-    // Taken before the surface exists, which is the only moment that answers "what was on screen when the user
-    // asked". Held on the app rather than in the tree, so it also survives a rebuild — a config change while a
-    // selection is being drawn must not throw away the picture the selection is being drawn on.
+    // Taken before the surface exists, which is the only moment that answers "what was on screen when the user asked". Held on the app rather than in the tree, so it also survives a rebuild — a config change while a selection is being drawn must not throw away the picture the selection is being drawn on.
     let frozen = config
         .screenshot
         .freeze
         .then(|| output.as_deref().and_then(frozen_output))
         .flatten();
 
-    // Held on the surface rather than in the tree, so both survive a rebuild: a config change while a
-    // selection is being drawn must not throw away the picture it is being drawn on, nor who is waiting for it.
+    // Held on the surface rather than in the tree, so both survive a rebuild: a config change while a selection is being drawn must not throw away the picture it is being drawn on, nor who is waiting for it.
     let frozen = Rc::new(RefCell::new(frozen));
     let then: Rc<dyn Fn(Picked)> = Rc::new(then);
     let handle = PanelSurface::new(placement(output), move |env| {
@@ -105,16 +91,12 @@ pub fn close() {
     OPEN.with(|slot| *slot.borrow_mut() = None);
 }
 
-/// The whole screen, over everything — including a fullscreen window, because the user asked to select a
-/// region of what they can *see* — and holding the keyboard, so Escape arrives without the overlay having to
-/// be clicked into first. Both are what [`Placement::screen`] means.
+/// The whole screen, over everything — including a fullscreen window, because the user asked to select a region of what they can *see* — and holding the keyboard, so Escape arrives without the overlay having to be clicked into first. Both are what [`Placement::screen`] means.
 fn placement(output: Option<String>) -> Placement {
     Placement::screen("hogar-shell-picker").output(output)
 }
 
-/// Where the picker's screen is and how big it is, in the compositor's logical coordinates. The origin is what
-/// turns a surface-local selection into the global rectangle every consumer takes; the size is what a click on
-/// empty desktop selects, and what says how many image pixels one logical pixel is.
+/// Where the picker's screen is and how big it is, in the compositor's logical coordinates. The origin is what turns a surface-local selection into the global rectangle every consumer takes; the size is what a click on empty desktop selects, and what says how many image pixels one logical pixel is.
 #[derive(Clone, Copy)]
 struct Screen {
     origin: (i32, i32),
@@ -144,8 +126,7 @@ fn frozen_output(name: &str) -> Option<screenshot::Image> {
         .map(|(_, image)| image)
 }
 
-/// The live selection, in surface-local logical pixels. `None` before the first press, which is what draws the
-/// screen evenly dimmed rather than with an empty box in the corner.
+/// The live selection, in surface-local logical pixels. `None` before the first press, which is what draws the screen evenly dimmed rather than with an empty box in the corner.
 type Live = RwSignal<Option<Area>>;
 
 fn overlay(
@@ -155,8 +136,7 @@ fn overlay(
     then: Rc<dyn Fn(Picked)>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let selection: Live = signal(None);
-    // Where the drag began. Set on the first `on_drag` of a gesture and cleared when it ends, exactly like the
-    // chip's drag-to-open — the platform reports positions, not gestures.
+    // Where the drag began. Set on the first `on_drag` of a gesture and cleared when it ends, exactly like the chip's drag-to-open — the platform reports positions, not gestures.
     let anchor: Rc<RefCell<Option<(f32, f32)>>> = Rc::new(RefCell::new(None));
     let windows = window_rects(screen);
 
@@ -222,9 +202,7 @@ fn overlay(
 
 /// Crops the still (when there is one), closes the overlay, and hands the selection on.
 ///
-/// The order matters even with a still: the consumer may be the recorder, which starts capturing the screen for
-/// real, and it must not start while the overlay is still mapped. `request_close` only asks — the driver tears
-/// the surface down on its next turn — so the callback is deferred past that turn.
+/// The order matters even with a still: the consumer may be the recorder, which starts capturing the screen for real, and it must not start while the overlay is still mapped. `request_close` only asks — the driver tears the surface down on its next turn — so the callback is deferred past that turn.
 fn finish(
     area: Area,
     screen: Screen,
@@ -241,9 +219,7 @@ fn finish(
         ..area
     };
     let cropped = frozen.borrow_mut().take().and_then(|still| {
-        // The still is in the output's physical pixels; the selection is logical, so it scales by whatever ratio
-        // the two have — derived from the image rather than from the output's reported scale, which is rounded
-        // to an integer and so would be wrong on a fractionally-scaled screen.
+        // The still is in the output's physical pixels; the selection is logical, so it scales by whatever ratio the two have — derived from the image rather than from the output's reported scale, which is rounded to an integer and so would be wrong on a fractionally-scaled screen.
         let scale = scale_of(&still, screen);
         screenshot::crop(
             &still,
@@ -298,9 +274,7 @@ fn still_image(
 
 /// The dim over everything that is not selected, and the selection's own outline.
 ///
-/// Four rectangles around the selection rather than one over the whole screen with a hole in it: the renderer
-/// has no way to subtract a shape from a fill, and dimming the selection too would defeat the point of showing
-/// the user what they are about to capture.
+/// Four rectangles around the selection rather than one over the whole screen with a hole in it: the renderer has no way to subtract a shape from a fill, and dimming the selection too would defeat the point of showing the user what they are about to capture.
 fn wash(
     selection: telar::ReadSignal<Option<Area>>,
     theme: NordTheme,
@@ -344,8 +318,7 @@ fn box_path(x: f32, y: f32, width: f32, height: f32) -> PathData {
     ])
 }
 
-/// The size readout, pinned to the top of the screen rather than following the pointer: a label chasing the
-/// cursor is the one thing guaranteed to be under whatever the user is trying to look at.
+/// The size readout, pinned to the top of the screen rather than following the pointer: a label chasing the cursor is the one thing guaranteed to be under whatever the user is trying to look at.
 fn readout(
     selection: telar::ReadSignal<Option<Area>>,
     theme: NordTheme,
@@ -380,8 +353,7 @@ fn readout(
     )?))
 }
 
-/// Every window on this output as a surface-local rectangle, front to back, plus the output itself last — so a
-/// click that hits no window still has something to select.
+/// Every window on this output as a surface-local rectangle, front to back, plus the output itself last — so a click that hits no window still has something to select.
 fn window_rects(screen: Screen) -> Rc<Vec<Area>> {
     let clients = hyprland::current_clients()
         .or_else(|| hyprland::socket_dir().map(|dir| hyprland::clients(&dir)));
@@ -410,8 +382,7 @@ fn local_rect(client: &Client, origin: (i32, i32)) -> Area {
     }
 }
 
-/// The frontmost rectangle containing the point — a window, else the output. `rects` is ordered front to back
-/// with the output last, so the first hit is the answer.
+/// The frontmost rectangle containing the point — a window, else the output. `rects` is ordered front to back with the output last, so the first hit is the answer.
 fn under_pointer(x: f32, y: f32, rects: &[Area]) -> Area {
     rects
         .iter()
@@ -429,8 +400,7 @@ fn whole_output(rects: &[Area]) -> Area {
     rects.last().copied().unwrap_or_default()
 }
 
-/// Pulls each edge of `drawn` onto a window edge it is already within [`SNAP`] of. Each edge snaps on its own,
-/// so a box drawn roughly over two tiled windows comes out flush against both.
+/// Pulls each edge of `drawn` onto a window edge it is already within [`SNAP`] of. Each edge snaps on its own, so a box drawn roughly over two tiled windows comes out flush against both.
 fn snapped(drawn: Area, rects: &[Area]) -> Area {
     let mut left = drawn.x as f32;
     let mut top = drawn.y as f32;
@@ -606,8 +576,7 @@ mod tests {
         };
         assert_eq!(scale_of(&hidpi, test_screen()), 2.0);
 
-        // A fractionally-scaled screen: 1.5× reports an integer scale of 2, so deriving the ratio from the
-        // image is the only way a crop lands where the user drew it.
+        // A fractionally-scaled screen: 1.5× reports an integer scale of 2, so deriving the ratio from the image is the only way a crop lands where the user drew it.
         let fractional = screenshot::Image {
             width: 2880,
             height: 1620,

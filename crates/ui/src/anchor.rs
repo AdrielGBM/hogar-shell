@@ -1,21 +1,15 @@
 //! Placing a surface against the bar chip that opened it.
 //!
-//! A bar is only its own thickness tall, so anything larger than a chip has to become a surface of its own.
-//! A module's drawer, the tray's context menus and the hover popouts all anchor the same way: the chip's
-//! laid-out rect decides where the surface sits along the bar, and the bar's edge decides which side it hangs
-//! off. No platform capability beyond an anchor and a margin is involved, which is why all three work on all
-//! four edges unchanged — and why a click and a hover on one chip open two surfaces in the same place.
+//! A bar is only its own thickness tall, so anything larger than a chip has to become a surface of its own. A module's drawer, the tray's context menus and the hover popouts all anchor the same way: the chip's laid-out rect decides where the surface sits along the bar, and the bar's edge decides which side it hangs off. No platform capability beyond an anchor and a margin is involved, which is why all three work on all four edges unchanged — and why a click and a hover on one chip open two surfaces in the same place.
 //!
-//! This is the arithmetic only. Which *shape* of surface it positions is
-//! [`Placement::off_chip`](crate::placement::Placement::off_chip), the one door all three go through.
+//! This is the arithmetic only. Which *shape* of surface it positions is [`Placement::off_chip`](crate::placement::Placement::off_chip), the one door all three go through.
 
 use telar::Rect;
 
 use config::Edge;
 use config::SurfaceEnv;
 
-/// Stand-in for an output the compositor has not reported a logical size for yet. Only ever feeds the clamp
-/// arithmetic, which needs a finite screen to clamp against.
+/// Stand-in for an output the compositor has not reported a logical size for yet. Only ever feeds the clamp arithmetic, which needs a finite screen to clamp against.
 const ASSUMED_OUTPUT: (f32, f32) = (1920.0, 1080.0);
 
 /// The logical size of the monitor this bar is on, for keeping an anchored surface on screen.
@@ -33,16 +27,9 @@ fn output_size(env: &SurfaceEnv) -> (f32, f32) {
 
 /// How far along the bar the surface starts, in the coordinates its margin is measured in.
 ///
-/// A horizontal bar centres the surface on its chip, which is what a menu hanging under an icon should do. A
-/// vertical one lines the surface's top up with the chip's instead: `span` there is the surface's *height*,
-/// which is content-derived for a menu and therefore often unknown, and a centre that cannot be computed is
-/// worse than an edge that can.
+/// A horizontal bar centres the surface on its chip, which is what a menu hanging under an icon should do. A vertical one lines the surface's top up with the chip's instead: `span` there is the surface's *height*, which is content-derived for a menu and therefore often unknown, and a centre that cannot be computed is worse than an edge that can.
 ///
-/// Two conversions stand between the chip and that margin, and leaving either out puts the surface off screen.
-/// The chip's rect is relative to the bar surface, which sits at its own gap off the screen edge. The margin is
-/// relative to the *usable* area, because this surface asks for no exclusive zone of its own and so is placed
-/// inside everyone else's — the perpendicular bars and, under `[shape] frame`, the ring. Clamping against the
-/// whole output instead is what pushed the popout on a bar's last chip past the far edge of the screen.
+/// Two conversions stand between the chip and that margin, and leaving either out puts the surface off screen. The chip's rect is relative to the bar surface, which sits at its own gap off the screen edge. The margin is relative to the *usable* area, because this surface asks for no exclusive zone of its own and so is placed inside everyone else's — the perpendicular bars and, under `[shape] frame`, the ring. Clamping against the whole output instead is what pushed the popout on a bar's last chip past the far edge of the screen.
 fn along(env: &SurfaceEnv, chip: Rect, span: Option<f32>) -> f32 {
     let config = &env.config;
     let gap = config.panel_gap(env.edge) as f32;
@@ -61,9 +48,7 @@ fn along(env: &SurfaceEnv, chip: Rect, span: Option<f32>) -> f32 {
     (start + off_screen_edge - leading).clamp(gap, far)
 }
 
-/// The margin `(top, right, bottom, left)` for a surface hanging `off_bar` px off the bar and lined up with
-/// `chip` along it. `span` is the surface's own extent along the bar, when it is known — without it the
-/// surface can still be positioned, only not kept clear of the far end.
+/// The margin `(top, right, bottom, left)` for a surface hanging `off_bar` px off the bar and lined up with `chip` along it. `span` is the surface's own extent along the bar, when it is known — without it the surface can still be positioned, only not kept clear of the far end.
 pub fn chip_margin(
     env: &SurfaceEnv,
     chip: Rect,
@@ -132,10 +117,7 @@ mod tests {
         );
     }
 
-    /// The margin is measured from the usable area, not from the screen, because the surface takes no exclusive
-    /// zone and the compositor places it inside everyone else's. Under `[shape] frame` that area is inset on
-    /// every edge at once, so a clamp against the output overshoots by the whole ring — which is exactly how the
-    /// popout on the last chip of a top bar ended up hanging past the right edge of the screen.
+    /// The margin is measured from the usable area, not from the screen, because the surface takes no exclusive zone and the compositor places it inside everyone else's. Under `[shape] frame` that area is inset on every edge at once, so a clamp against the output overshoots by the whole ring — which is exactly how the popout on the last chip of a top bar ended up hanging past the right edge of the screen.
     #[test]
     fn a_popout_stays_inside_the_frame_ring_not_merely_inside_the_screen() {
         let framed = SurfaceEnv {
@@ -164,8 +146,7 @@ mod tests {
             "a popout on the last chip runs past the ring: {placed} + {SPAN} > {inner_right}"
         );
 
-        // And the near end is measured in the same space: a popout on the first chip clears the ring rather
-        // than starting under it.
+        // And the near end is measured in the same space: a popout on the first chip clears the ring rather than starting under it.
         let (_, _, _, near) = chip_margin(&framed, chip(inner_left + 4.0, 0.0), 8.0, Some(SPAN));
         assert!(
             near >= 0,

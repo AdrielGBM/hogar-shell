@@ -12,8 +12,7 @@ let initial = mpris::current().unwrap_or_default();
 let player = signal(initial.clone());
 let icon_name = signal(glyph(&initial).to_string());
 let icon_view = icon_name.read_only();
-// A vertical bar has no room for a track title, so it shows only the transport glyph; the same module works on
-// every edge instead of needing a second one.
+// A vertical bar has no room for a track title, so it shows only the transport glyph; the same module works on every edge instead of needing a second one.
 let vertical = ui::module::bar_is_vertical();
 
 // A read handle taken before the watch closure moves the signal in: a signal is not `Copy`.
@@ -23,8 +22,7 @@ platform_wayland::watch(mpris::subscribe, move |p: Player| {
     player.set(p);
 });
 
-// The marquee's step. Only subscribed when the user asked for one, so a bar without it runs no ticker at all;
-// the step still only *moves* the text while a title actually overflows.
+// The marquee's step. Only subscribed when the user asked for one, so a bar without it runs no ticker at all; the step still only *moves* the text while a title actually overflows.
 let frame = signal(0u64);
 if config.marquee && !vertical {
     platform_wayland::watch(marquee_ticks, move |tick: u64| frame.set(tick));

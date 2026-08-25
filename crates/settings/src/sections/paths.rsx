@@ -10,8 +10,7 @@ let recordings = signal(p.recordings.clone());
 let screenshots = signal(p.screenshots.clone());
 let assets = signal(p.assets.clone());
 
-// Each hint is the directory the shell would use if the field is left empty, resolved against this machine —
-// so the form shows where things actually land rather than a generic example.
+// Each hint is the directory the shell would use if the field is left empty, resolved against this machine — so the form shows where things actually land rather than a generic example.
 let show = |dir: std::path::PathBuf| dir.to_string_lossy().into_owned();
 let wallpapers_hint = show(config.wallpaper_dir());
 let lyrics_hint = show(config.lyrics_dir());

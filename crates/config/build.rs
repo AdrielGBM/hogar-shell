@@ -1,19 +1,13 @@
-//! Lifts the doc comments off the config types so `hogar-shell config schema` can annotate the defaults it
-//! prints.
+//! Lifts the doc comments off the config types so `hogar-shell config schema` can annotate the defaults it prints.
 //!
-//! Generated rather than hand-maintained because a hand-written reference is a second copy of the truth, and the
-//! copy is always the one that goes stale — the roadmap's whole reason for L9. A scanner rather than a parser:
-//! the file is one crate's own source in a known shape (a `///` run, then `pub struct X {` or ` pub field:`), so
-//! matching that shape costs a few dozen lines instead of a syn dependency.
+//! Generated rather than hand-maintained because a hand-written reference is a second copy of the truth, and the copy is always the one that goes stale — the roadmap's whole reason for L9. A scanner rather than a parser: the file is one crate's own source in a known shape (a `///` run, then `pub struct X {` or ` pub field:`), so matching that shape costs a few dozen lines instead of a syn dependency.
 //!
-//! Anything it fails to recognise is simply not annotated. A missed comment costs a bare key in the printed schema;
-//! it can never fail the build, which is the right trade for documentation.
+//! Anything it fails to recognise is simply not annotated. A missed comment costs a bare key in the printed schema; it can never fail the build, which is the right trade for documentation.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-/// Every file that declares a config type: `Config` itself, and one file per area under `sections/`. Scanned by
-/// listing the directory rather than by naming the files, so a new area is documented without touching this.
+/// Every file that declares a config type: `Config` itself, and one file per area under `sections/`. Scanned by listing the directory rather than by naming the files, so a new area is documented without touching this.
 fn sources() -> Vec<PathBuf> {
     let mut sources = vec![PathBuf::from("src/config.rs")];
     let sections = Path::new("src/sections");
@@ -90,12 +84,9 @@ fn main() {
     std::fs::write(out.join("config_docs.rs"), generated).expect("write config_docs.rs");
 }
 
-/// `    pub scale: ScaleConfig,` → `ScaleConfig`. Only the bare name is wanted, so a wrapped type
-/// (`Option<FontSpec>`, `HashMap<String, PathBuf>`) yields nothing rather than a guess about which parameter
-/// matters — a nested table is only ever a plain struct here.
+/// `    pub scale: ScaleConfig,` → `ScaleConfig`. Only the bare name is wanted, so a wrapped type (`Option<FontSpec>`, `HashMap<String, PathBuf>`) yields nothing rather than a guess about which parameter matters — a nested table is only ever a plain struct here.
 ///
-/// `Vec<T>` is the one wrapper that unwraps, because a list of tables is documented by its element: the prose
-/// explaining `[[idle.stages]]` sits on `IdleStage`, not on the field holding the list.
+/// `Vec<T>` is the one wrapper that unwraps, because a list of tables is documented by its element: the prose explaining `[[idle.stages]]` sits on `IdleStage`, not on the field holding the list.
 fn field_type(line: &str) -> Option<String> {
     let (_, rest) = line.split_once(':')?;
     let kind = rest.trim().trim_end_matches(',').trim();

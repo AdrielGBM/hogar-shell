@@ -43,8 +43,7 @@ pub struct Pill {
 impl Pill {
     /// What the view keys its list on: everything the pill draws, not just its id.
     ///
-    /// A keyed list rebuilds an item only when its key changes, and a workspace keeps its id while its window
-    /// set turns over — so keying on the id alone leaves a pill showing the icons of applications that closed.
+    /// A keyed list rebuilds an item only when its key changes, and a workspace keeps its id while its window set turns over — so keying on the id alone leaves a pill showing the icons of applications that closed.
     pub fn key(&self) -> String {
         let mut key = format!(
             "{}|{}|{}{}",
@@ -70,20 +69,13 @@ pub struct PillStyle {
     pub side: f32,
     pub vertical: bool,
     pub occupied_background: bool,
-    /// Whether a sliding indicator paints the active pill. When it does, the pill must not paint its own accent
-    /// fill: two accents in the same place is the indicator arriving on top of a pill that already recoloured,
-    /// which reads as no animation at all.
+    /// Whether a sliding indicator paints the active pill. When it does, the pill must not paint its own accent fill: two accents in the same place is the indicator arriving on top of a pill that already recoloured, which reads as no animation at all.
     pub indicator: bool,
 }
 
-/// The three states, three fills: the active pill takes the accent, an occupied one the surface token so it
-/// reads as "something lives here", and an empty one the bar's own background so it recedes.
+/// The three states, three fills: the active pill takes the accent, an occupied one the surface token so it reads as "something lives here", and an empty one the bar's own background so it recedes.
 ///
-/// With the sliding indicator on, none of them paints anything. The indicator is one box *under* the row — it
-/// has to be, or it would cover the label it marks — so every opaque fill in the row is something it travels
-/// behind: the active pill hid it where it landed, and its neighbours hid it the whole way there, leaving a box
-/// that only exists at its destination. Occupancy still reads, from the label colour, which is where the
-/// difference between an occupied and an empty workspace was already carried.
+/// With the sliding indicator on, none of them paints anything. The indicator is one box *under* the row — it has to be, or it would cover the label it marks — so every opaque fill in the row is something it travels behind: the active pill hid it where it landed, and its neighbours hid it the whole way there, leaving a box that only exists at its destination. Occupancy still reads, from the label colour, which is where the difference between an occupied and an empty workspace was already carried.
 fn fill_for(pill: &Pill, style: PillStyle) -> Color {
     if style.indicator {
         Color::TRANSPARENT
@@ -106,9 +98,7 @@ fn text_for(pill: &Pill, style: PillStyle) -> Color {
     }
 }
 
-/// One workspace pill, built in Rust rather than in the view because the view's `for` is reactive: it
-/// constructs each item afresh whenever that workspace's key changes, so its content has to be an expression
-/// (`build`) rather than a widget bound once in `[logic]`.
+/// One workspace pill, built in Rust rather than in the view because the view's `for` is reactive: it constructs each item afresh whenever that workspace's key changes, so its content has to be an expression (`build`) rather than a widget bound once in `[logic]`.
 pub fn pill_view(
     pill: Pill,
     style: PillStyle,
@@ -119,8 +109,7 @@ pub fn pill_view(
 
 /// [`pill_view`], with the active pill reporting where it landed so the indicator can follow it.
 ///
-/// The rect has to come from the pill rather than be worked out from an index: a pill carrying window icons is
-/// wider than a bare one, so "the third slot" is not a position the row can compute.
+/// The rect has to come from the pill rather than be worked out from an index: a pill carrying window icons is wider than a bare one, so "the third slot" is not a position the row can compute.
 fn tracked_pill_view(
     pill: Pill,
     style: PillStyle,
@@ -177,24 +166,21 @@ fn tracked_pill_view(
         content,
     )?;
 
-    // Only the active pill is tracked. Every pill reporting its rect would be a signal write per pill per
-    // layout pass, to answer a question about exactly one of them.
+    // Only the active pill is tracked. Every pill reporting its rect would be a signal write per pill per layout pass, to answer a question about exactly one of them.
     let mut tracking = Vec::new();
     if let Some(slot) = active_rect.filter(|_| pill.active)
         && let Some(rect) = track_layout(container.layout_node())
     {
         tracking.push(telar::effect(move || {
             let rect = rect.get();
-            // A rebuilt pill's node is laid out at zero before its first pass; reporting that would send the
-            // indicator to the corner and back on every workspace change.
+            // A rebuilt pill's node is laid out at zero before its first pass; reporting that would send the indicator to the corner and back on every workspace change.
             if rect.width > 0.0 && rect.height > 0.0 {
                 slot.set(rect);
             }
         }));
     }
 
-    // The subscription lives exactly as long as the pill: the list rebuilds its rows, and an effect outliving
-    // one would keep reporting a rect for a workspace that is no longer active.
+    // The subscription lives exactly as long as the pill: the list rebuilds its rows, and an effect outliving one would keep reporting a rect for a workspace that is no longer active.
     Ok(Box::new(telar::Holding::new(
         Box::new(container.on_press(move || on_press(id))),
         tracking,
@@ -203,10 +189,7 @@ fn tracked_pill_view(
 
 /// The pills, with the active-workspace indicator sliding behind them.
 ///
-/// The indicator is one box that moves, not a fill each pill paints: it is a canvas laid over the whole row,
-/// painting its rect wherever the active pill landed. That distinction is the whole feature — the canvas sits
-/// outside the flow, so the row does not reflow sixty times a second while the indicator travels, and the
-/// pills underneath never move.
+/// The indicator is one box that moves, not a fill each pill paints: it is a canvas laid over the whole row, painting its rect wherever the active pill landed. That distinction is the whole feature — the canvas sits outside the flow, so the row does not reflow sixty times a second while the indicator travels, and the pills underneath never move.
 pub fn grid(
     items: ReadSignal<Vec<Pill>>,
     style: PillStyle,
@@ -214,8 +197,7 @@ pub fn grid(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let slot = signal(ZERO_RECT);
     let for_rows = slot.clone();
-    // `with_style` rather than `with_gap`: the gap constructors hardcode a column, so a bottom bar would stack
-    // its pills downwards inside a strip one pill high and show nothing at all.
+    // `with_style` rather than `with_gap`: the gap constructors hardcode a column, so a bottom bar would stack its pills downwards inside a strip one pill high and show nothing at all.
     let axis = if style.vertical {
         LayoutStyle::new().flex_column()
     } else {
@@ -241,9 +223,7 @@ pub fn grid(
     Ok(Box::new(Container::new(axis, children)?))
 }
 
-/// The box that marks the active workspace, carried to it rather than repainted in place.
-/// The spring the indicator chases its target with: `[animation] curve`, else the shell's own default. Read
-/// from the surface's config rather than hardcoded, so one `[animation]` section governs every moving part.
+/// The box that marks the active workspace, carried to it rather than repainted in place. The spring the indicator chases its target with: `[animation] curve`, else the shell's own default. Read from the surface's config rather than hardcoded, so one `[animation]` section governs every moving part.
 fn indicator_spring() -> Spring {
     config::surface_env()
         .map(|env| env.config.animation.spring())
@@ -252,10 +232,7 @@ fn indicator_spring() -> Spring {
 
 /// The box actually painted: `target` stretched along its direction of travel toward `goal`.
 ///
-/// Not new machinery — the same animated rect, drawn as the union of where it is and a `trail` fraction of
-/// where it is still going. That makes it exactly one pill wide the instant it arrives (the distance is zero,
-/// so the union is the rect itself) and longest at the moment it is moving fastest, which is what reads as
-/// speed rather than as a box that grew.
+/// Not new machinery — the same animated rect, drawn as the union of where it is and a `trail` fraction of where it is still going. That makes it exactly one pill wide the instant it arrives (the distance is zero, so the union is the rect itself) and longest at the moment it is moving fastest, which is what reads as speed rather than as a box that grew.
 fn with_trail(target: Rect, goal: Rect, trail: f32) -> Rect {
     if trail <= 0.0 {
         return target;
@@ -270,9 +247,7 @@ fn with_trail(target: Rect, goal: Rect, trail: f32) -> Rect {
     }
 }
 
-/// How far the indicator stretches while travelling, as a fraction of the distance left to cover. `0` is the
-/// square box that was there before; the config bounds it below `1`, where the trail would reach the whole way
-/// to the goal and read as one long bar rather than as motion.
+/// How far the indicator stretches while travelling, as a fraction of the distance left to cover. `0` is the square box that was there before; the config bounds it below `1`, where the trail would reach the whole way to the goal and read as one long bar rather than as motion.
 fn indicator_trail() -> f32 {
     config::surface_env()
         .map(|env| env.config.workspaces.trail())
@@ -281,10 +256,7 @@ fn indicator_trail() -> f32 {
 
 fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let trail = indicator_trail();
-    // Built on the first target rather than at construction: an `Animated` seeded with a zero rect would
-    // travel out of the corner the first time the bar ever draws, which reads as a glitch rather than as the
-    // motion this exists for. A spring rather than a tween because it keeps velocity through a retarget —
-    // holding a workspace key down should bend the indicator's path, not restart it from a standstill.
+    // Built on the first target rather than at construction: an `Animated` seeded with a zero rect would travel out of the corner the first time the bar ever draws, which reads as a glitch rather than as the motion this exists for. A spring rather than a tween because it keeps velocity through a retarget — holding a workspace key down should bend the indicator's path, not restart it from a standstill.
     let motion: Rc<RefCell<Option<Animated<Rect>>>> = Rc::new(RefCell::new(None));
 
     let follow = {
@@ -295,20 +267,14 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
             if wanted.width <= 0.0 || wanted.height <= 0.0 {
                 return;
             }
-            // Cloned out before `retarget`, which writes a signal and flushes: reaching back through the
-            // `RefCell` while this one is still borrowed is the re-entrant panic, not a compile error.
+            // Cloned out before `retarget`, which writes a signal and flushes: reaching back through the `RefCell` while this one is still borrowed is the re-entrant panic, not a compile error.
             let existing = motion.borrow().clone();
             match existing {
                 Some(animated) => animated.retarget(wanted),
                 None => {
-                    // Seeded collapsed on the goal's own centre and retargeted at once, so the indicator grows
-                    // into place on the workspace it marks rather than arriving from nowhere.
+                    // Seeded collapsed on the goal's own centre and retargeted at once, so the indicator grows into place on the workspace it marks rather than arriving from nowhere.
                     //
-                    // The appearance is the smaller half of it. An `Animated` created already at its goal is
-                    // born *settled*, and a settled animation never registers with the ticker — so nothing
-                    // scheduled the frame that would have painted the indicator for the first time, and it
-                    // stayed invisible until some unrelated event forced a redraw. Starting it in motion is
-                    // what makes the loop keep drawing frames until it arrives.
+                    // The appearance is the smaller half of it. An `Animated` created already at its goal is born *settled*, and a settled animation never registers with the ticker — so nothing scheduled the frame that would have painted the indicator for the first time, and it stayed invisible until some unrelated event forced a redraw. Starting it in motion is what makes the loop keep drawing frames until it arrives.
                     let seed = Rect {
                         x: wanted.x + wanted.width / 2.0,
                         y: wanted.y + wanted.height / 2.0,
@@ -323,8 +289,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
         })
     };
 
-    // Where the row itself sits. The pill rects are absolute and a canvas paints in its own local space, so
-    // the row's origin is what converts between them. Filled in after construction, below.
+    // Where the row itself sits. The pill rects are absolute and a canvas paints in its own local space, so the row's origin is what converts between them. Filled in after construction, below.
     let origin = signal(ZERO_RECT);
     let painted = origin.read_only();
 
@@ -332,22 +297,16 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
     let radius = style.radius;
     let wanted = slot.read_only();
     let canvas = Canvas::new(LayoutStyle::new().absolute_fill(), move |_local| {
-        // Both read unconditionally, before anything can return early. `motion` lives in a `RefCell`, not a
-        // signal, so reading only *it* subscribes this canvas to nothing: while it was still `None` the
-        // indicator had no reason to repaint when a pill finally reported its rect, and stayed invisible until
-        // some unrelated event — moving the pointer over the bar — forced a redraw.
+        // Both read unconditionally, before anything can return early. `motion` lives in a `RefCell`, not a signal, so reading only *it* subscribes this canvas to nothing: while it was still `None` the indicator had no reason to repaint when a pill finally reported its rect, and stayed invisible until some unrelated event — moving the pointer over the bar — forced a redraw.
         let goal = wanted.get();
         let row = painted.get();
         // Nothing to point at: the active workspace is on another monitor, or scrolled out of a fixed window.
         if goal.width <= 0.0 || goal.height <= 0.0 {
             return RenderNode::Empty;
         }
-        // Painted rather than transformed. Scaling one box down to a pill would squash its corner radius with
-        // it — the row is far wider than a pill, so the rounding came out flattened on one axis — and drawing
-        // the rect where it belongs costs one command either way.
+        // Painted rather than transformed. Scaling one box down to a pill would squash its corner radius with it — the row is far wider than a pill, so the rounding came out flattened on one axis — and drawing the rect where it belongs costs one command either way.
         //
-        // The raw goal until the animation exists, so the first paint lands in the right place rather than
-        // waiting a frame for the spring to be built.
+        // The raw goal until the animation exists, so the first paint lands in the right place rather than waiting a frame for the spring to be built.
         let target = motion
             .borrow()
             .clone()
@@ -378,9 +337,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
 
 /// The pills to draw for a snapshot.
 ///
-/// With `shown = 0` this is exactly the workspaces that exist. With `shown = N` the bar always draws N pills,
-/// filling gaps with placeholders — which is the point: a bar whose width changes every time a workspace is
-/// created or destroyed makes every module to its right jump around.
+/// With `shown = 0` this is exactly the workspaces that exist. With `shown = N` the bar always draws N pills, filling gaps with placeholders — which is the point: a bar whose width changes every time a workspace is created or destroyed makes every module to its right jump around.
 pub fn pills(snapshot: &Snapshot, config: &WorkspacesConfig, output: Option<&str>) -> Vec<Pill> {
     let mut visible: Vec<&Workspace> = snapshot
         .workspaces
@@ -412,8 +369,7 @@ pub fn pills(snapshot: &Snapshot, config: &WorkspacesConfig, output: Option<&str
     pills
 }
 
-/// Whether a workspace belongs on this bar. Without `per_monitor` every bar shows every workspace; with it, a
-/// bar shows only its own monitor's — which is what a multi-head setup usually means by "my workspaces".
+/// Whether a workspace belongs on this bar. Without `per_monitor` every bar shows every workspace; with it, a bar shows only its own monitor's — which is what a multi-head setup usually means by "my workspaces".
 fn belongs_here(
     workspace: &Workspace,
     config: &WorkspacesConfig,
@@ -423,16 +379,14 @@ fn belongs_here(
     if !config.per_monitor {
         return true;
     }
-    // A bar with no output name (a single-monitor setup, or a surface the compositor didn't name) falls back to
-    // the focused monitor rather than hiding everything.
+    // A bar with no output name (a single-monitor setup, or a surface the compositor didn't name) falls back to the focused monitor rather than hiding everything.
     let mine = output.unwrap_or(&snapshot.focused_monitor);
     mine.is_empty() || workspace.monitor.is_empty() || workspace.monitor == mine
 }
 
 /// A fixed-width run of `shown` ids, anchored so the active workspace is always inside it.
 ///
-/// Anchoring on the active one is what lets `shown = 5` work on a setup that uses workspaces 1–20: the window
-/// slides to follow you instead of stranding you off the end of a fixed 1–5.
+/// Anchoring on the active one is what lets `shown = 5` work on a setup that uses workspaces 1–20: the window slides to follow you instead of stranding you off the end of a fixed 1–5.
 fn fixed_window(visible: &[&Workspace], config: &WorkspacesConfig, active: i32) -> Vec<Pill> {
     let count = config.shown as i32;
     let lowest = visible.first().map(|w| w.id).unwrap_or(1).max(1);
@@ -501,8 +455,7 @@ fn pill_for(w: &Workspace, config: &WorkspacesConfig, index: usize, active: i32)
     }
 }
 
-/// The workspace one wheel notch away from `active`, clamped to the ones that exist. Returns `None` when there
-/// is nowhere to go, so the handler can leave the compositor alone rather than dispatching a no-op.
+/// The workspace one wheel notch away from `active`, clamped to the ones that exist. Returns `None` when there is nowhere to go, so the handler can leave the compositor alone rather than dispatching a no-op.
 pub fn scroll_target(snapshot: &Snapshot, up: bool) -> Option<i32> {
     let mut ids: Vec<i32> = snapshot
         .workspaces
@@ -522,8 +475,7 @@ pub fn scroll_target(snapshot: &Snapshot, up: bool) -> Option<i32> {
 
 /// The wheel over the pills switches workspace, when `[workspaces] scroll` allows it.
 ///
-/// Reads the shared snapshot rather than the compositor: a wheel notch must not spend a socket round-trip
-/// deciding where to go, and the service already holds the answer.
+/// Reads the shared snapshot rather than the compositor: a wheel notch must not spend a socket round-trip deciding where to go, and the service already holds the answer.
 pub fn scroll(_dx: f32, dy: f32) {
     let enabled = config::config()
         .map(|c| c.workspaces.scroll)
@@ -782,9 +734,7 @@ mod tests {
 
     /// The row runs along the bar, not across it.
     ///
-    /// The regression this exists for: the keyed-list constructors that take a gap hardcode a column, so the
-    /// pills stacked downwards inside a bottom bar one pill high and the module drew nothing at all. Building
-    /// successfully proves none of that — only laying it out does.
+    /// The regression this exists for: the keyed-list constructors that take a gap hardcode a column, so the pills stacked downwards inside a bottom bar one pill high and the module drew nothing at all. Building successfully proves none of that — only laying it out does.
     #[test]
     fn the_pills_run_along_the_bar_on_every_edge() {
         use telar::{AvailableSpace, compute_layout, new_container, track_layout};
@@ -826,8 +776,7 @@ mod tests {
             };
             let grid = grid(items, style, |_| {}).expect("the grid builds");
             let rect = track_layout(grid.layout_node()).expect("the grid registers its rect");
-            // Centred rather than the default stretch, so the grid reports the size of its own content
-            // instead of the harness's.
+            // Centred rather than the default stretch, so the grid reports the size of its own content instead of the harness's.
             let root = new_container(
                 LayoutStyle::new()
                     .flex_row()
@@ -861,8 +810,7 @@ mod tests {
         }
     }
 
-    /// The indicator's paint closure, the pill's style closure and the tracking effect only run when something
-    /// builds them, and each reads a signal — which is the shape that panics on a re-entrant borrow.
+    /// The indicator's paint closure, the pill's style closure and the tracking effect only run when something builds them, and each reads a signal — which is the shape that panics on a re-entrant borrow.
     #[test]
     fn the_grid_builds_on_every_edge_with_and_without_the_indicator() {
         let bare = Pill {
@@ -938,8 +886,7 @@ mod tests {
         // The text still has to read against the accent the indicator puts behind it.
         assert_eq!(text_for(&active, style(true)), theme.base);
 
-        // And the neighbours, which is the same bug one pill over: the indicator travels *under* the row, so
-        // an occupied pill painting its tint is a box the indicator disappears behind on the way past.
+        // And the neighbours, which is the same bug one pill over: the indicator travels *under* the row, so an occupied pill painting its tint is a box the indicator disappears behind on the way past.
         let occupied = Pill {
             active: false,
             ..active.clone()

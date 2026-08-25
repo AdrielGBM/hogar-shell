@@ -1,9 +1,6 @@
 //! The small pieces more than one surface draws.
 //!
-//! A meter and a label/value row are six lines each, which is exactly why they drift: the popout grew one, the
-//! dashboard wanted the same thing a size larger, and two copies of "how a fraction reads as a bar" is one copy
-//! too many. Each takes its metrics as arguments so a glance card and a full page can share the drawing without
-//! sharing a size.
+//! A meter and a label/value row are six lines each, which is exactly why they drift: the popout grew one, the dashboard wanted the same thing a size larger, and two copies of "how a fraction reads as a bar" is one copy too many. Each takes its metrics as arguments so a glance card and a full page can share the drawing without sharing a size.
 
 use crate::scale::space;
 use std::sync::Arc;
@@ -16,17 +13,13 @@ use telar::{
 
 use util::reactive::Live;
 
-/// How much of the tint an area fill keeps under its line. Enough to read as a filled series, light enough that
-/// two sparklines stacked in a column don't fight the text between them.
+/// How much of the tint an area fill keeps under its line. Enough to read as a filled series, light enough that two sparklines stacked in a column don't fight the text between them.
 const AREA_ALPHA: f32 = 0.22;
 const LINE_WIDTH: f32 = 1.5;
 
 /// A 0..1 bar, full width, that follows its fraction.
 ///
-/// The fill is an absolutely-positioned child scaled horizontally from the left edge rather than a box laid out
-/// narrower — the technique `progress` uses, and what makes the bar cheap enough to track a value that moves on
-/// every wheel notch. It is spelled out here rather than delegated because `progress` sizes its track in px and
-/// binds through an `RwSignal`, and a card wants a percentage-width track fed straight from a [`Live`] value.
+/// The fill is an absolutely-positioned child scaled horizontally from the left edge rather than a box laid out narrower — the technique `progress` uses, and what makes the bar cheap enough to track a value that moves on every wheel notch. It is spelled out here rather than delegated because `progress` sizes its track in px and binds through an `RwSignal`, and a card wants a percentage-width track fed straight from a [`Live`] value.
 pub fn meter(
     fraction: Live<f32>,
     tint: Live<Color>,
@@ -38,10 +31,7 @@ pub fn meter(
     let fill = StyledContainer::new(
         LayoutStyle::new().absolute_fill(),
         move |_r| {
-            // A bar with nothing in it has no fill to draw, and saying so is not only tidier. The rect stays
-            // its full laid-out size — the collapse below is in the matrix, not in the box — so a renderer
-            // handed a fill still has a rounded path to fill, and a path a transform has flattened to a line is
-            // one tiny_skia refuses, warning once a frame for as long as the reading sits at zero.
+            // A bar with nothing in it has no fill to draw, and saying so is not only tidier. The rect stays its full laid-out size — the collapse below is in the matrix, not in the box — so a renderer handed a fill still has a rounded path to fill, and a path a transform has flattened to a line is one tiny_skia refuses, warning once a frame for as long as the reading sits at zero.
             if empty.get() <= 0.0 {
                 RectStyle::default()
             } else {
@@ -64,16 +54,12 @@ pub fn meter(
     )?))
 }
 
-/// How much taller than its bar a [`slider`]'s hit area is, above and below. A 6px meter is a target a
-/// pointer misses; the padding is what makes the whole row's height pressable without the bar itself growing.
+/// How much taller than its bar a [`slider`]'s hit area is, above and below. A 6px meter is a target a pointer misses; the padding is what makes the whole row's height pressable without the bar itself growing.
 const SLIDER_REACH: f32 = 7.0;
 
-/// A [`meter`] that is also a control: pressing or dragging anywhere along it reports the fraction under the
-/// pointer, as `0..1`.
+/// A [`meter`] that is also a control: pressing or dragging anywhere along it reports the fraction under the pointer, as `0..1`.
 ///
-/// `on_drag` fires on the press as well as on every move until release, so a single click is a set and a drag
-/// is a scrub — one handler covers both. The width comes from the box's own laid-out rect rather than from a
-/// constant, so the same slider works in a drawer and on a settings page without being told how wide it is.
+/// `on_drag` fires on the press as well as on every move until release, so a single click is a set and a drag is a scrub — one handler covers both. The width comes from the box's own laid-out rect rather than from a constant, so the same slider works in a drawer and on a settings page without being told how wide it is.
 pub fn slider(
     fraction: Live<f32>,
     tint: Live<Color>,
@@ -102,8 +88,7 @@ pub fn slider(
     })))
 }
 
-/// A label on the left, its value on the right. The label never shrinks, so a long value wraps or truncates
-/// rather than squeezing the word that says what it is.
+/// A label on the left, its value on the right. The label never shrinks, so a long value wraps or truncates rather than squeezing the word that says what it is.
 pub fn label_value(
     label: Live<String>,
     value: Live<String>,
@@ -134,9 +119,7 @@ pub fn label_value(
 
 /// A filled area chart over `values`, oldest first, scaled so `ceiling` reaches the top.
 ///
-/// `ceiling` is a signal rather than a constant because half the series here have no natural one: CPU is a
-/// percentage and tops out at 100, but a byte rate's full scale is whatever the last minute peaked at, and a
-/// chart that rescaled only when it was rebuilt would flatten the moment traffic dropped.
+/// `ceiling` is a signal rather than a constant because half the series here have no natural one: CPU is a percentage and tops out at 100, but a byte rate's full scale is whatever the last minute peaked at, and a chart that rescaled only when it was rebuilt would flatten the moment traffic dropped.
 pub fn sparkline(
     values: Live<Vec<f32>>,
     ceiling: Live<f32>,
@@ -174,15 +157,12 @@ pub fn sparkline(
 
 /// How a spectrum's bars are drawn: the gap between them and how round their ends are, both in pixels.
 ///
-/// A struct rather than two more positional arguments because the two consumers are drawn very differently —
-/// a desktop-wide row and a ring the size of an album cover — and a call site reading `(4.0, 2.0, 3.0)` says
-/// nothing about which number is which.
+/// A struct rather than two more positional arguments because the two consumers are drawn very differently — a desktop-wide row and a ring the size of an album cover — and a call site reading `(4.0, 2.0, 3.0)` says nothing about which number is which.
 #[derive(Clone, Copy, Debug)]
 pub struct SpectrumStyle {
     pub gap: f32,
     pub radius: f32,
-    /// How tall a band reading zero still draws, so a silent row is a line rather than nothing at all. The
-    /// caller decides whether that is wanted: a background visualiser that vanishes entirely is the point.
+    /// How tall a band reading zero still draws, so a silent row is a line rather than nothing at all. The caller decides whether that is wanted: a background visualiser that vanishes entirely is the point.
     pub floor: f32,
 }
 
@@ -198,10 +178,7 @@ impl Default for SpectrumStyle {
 
 /// A row of bars, one per band, growing away from `edge`.
 ///
-/// The bars are laid out across the box's *long* axis and grow along its short one, so the same call draws a
-/// row along the bottom of a screen and a column up its left-hand side. Each is one `RenderNode::rect`: a
-/// spectrum arriving sixty times a second is the one place in this shell where the drawing has to be free, and
-/// a rounded rect is a primitive the renderer already batches.
+/// The bars are laid out across the box's *long* axis and grow along its short one, so the same call draws a row along the bottom of a screen and a column up its left-hand side. Each is one `RenderNode::rect`: a spectrum arriving sixty times a second is the one place in this shell where the drawing has to be free, and a rounded rect is a primitive the renderer already batches.
 pub fn spectrum(
     bands: Live<Arc<[f32]>>,
     tint: Live<Color>,
@@ -241,8 +218,7 @@ fn bar_rects(
         rect.width
     };
     let slot = along / values.len() as f32;
-    // A gap wider than the slot would give every bar a negative width, which reads as bars that vanish as the
-    // row gets denser rather than as a gap the user set too large.
+    // A gap wider than the slot would give every bar a negative width, which reads as bars that vanish as the row gets denser rather than as a gap the user set too large.
     let thickness = (slot - style.gap).max(1.0);
     let inset = (slot - thickness) / 2.0;
 
@@ -282,10 +258,7 @@ fn bar_rects(
 
 /// The same bands radiating outward from a circle of `inner` radius, centred in the box.
 ///
-/// A ring rather than a second row because what it wraps is a square picture: bars along one of its sides
-/// would read as belonging to the layout, and the thing a cover-art visualiser is *for* is looking like it
-/// belongs to the record. Each bar is an upright rect rotated about the centre — the renderer's rotation, so a
-/// band that changes costs a matrix and not a re-tessellated path.
+/// A ring rather than a second row because what it wraps is a square picture: bars along one of its sides would read as belonging to the layout, and the thing a cover-art visualiser is *for* is looking like it belongs to the record. Each bar is an upright rect rotated about the centre — the renderer's rotation, so a band that changes costs a matrix and not a re-tessellated path.
 pub fn spectrum_ring(
     bands: Live<Arc<[f32]>>,
     tint: Live<Color>,
@@ -301,8 +274,7 @@ pub fn spectrum_ring(
             return RenderNode::Empty;
         }
         let (cx, cy) = (rect.width / 2.0, rect.height / 2.0);
-        // The spectrum is mirrored around the top of the circle rather than wrapped once, so the two halves
-        // answer each other. A single sweep puts the bass beside the treble, which reads as a seam.
+        // The spectrum is mirrored around the top of the circle rather than wrapped once, so the two halves answer each other. A single sweep puts the bass beside the treble, which reads as a seam.
         let spokes = values.len() * 2;
         let thickness = ((std::f32::consts::TAU * inner / spokes as f32) - style.gap).max(1.0);
 
@@ -331,8 +303,7 @@ pub fn spectrum_ring(
     Ok(Box::new(canvas))
 }
 
-/// The polyline through `values`. `None` for a series too short to be a line — one reading is a dot, and a
-/// chart drawn from it would claim a trend the shell has not measured yet.
+/// The polyline through `values`. `None` for a series too short to be a line — one reading is a dot, and a chart drawn from it would claim a trend the shell has not measured yet.
 fn series_path(values: &[f32], ceiling: f32, rect: Rect) -> Option<PathData> {
     if values.len() < 2 || rect.width <= 0.0 || rect.height <= 0.0 {
         return None;
@@ -362,9 +333,7 @@ fn close_to_baseline(line: &PathData, rect: Rect) -> PathData {
         .close()
 }
 
-/// Both spectrum forms over a synthetic sweep, for [`crate::preview`]. A hump rather than a ramp, so a band
-/// drawn in the wrong slot is obvious rather than plausible — which is the only way to see that the ring's
-/// spokes mirror instead of wrapping, and that the row's caps are the radius asked for.
+/// Both spectrum forms over a synthetic sweep, for [`crate::preview`]. A hump rather than a ramp, so a band drawn in the wrong slot is obvious rather than plausible — which is the only way to see that the ring's spokes mirror instead of wrapping, and that the row's caps are the radius asked for.
 pub(crate) fn spectrum_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = telar::use_theme::<config::theme::NordTheme>();
     let bands: Arc<[f32]> = (0..48)
@@ -501,9 +470,7 @@ mod tests {
 
     #[test]
     fn a_bar_grows_away_from_its_own_edge() {
-        // The one thing that makes this widget work on all four edges. Getting it wrong is not a crash: the
-        // bars simply grow *into* the screen from the far side, which on a bottom row means a fringe hanging
-        // off the top of the surface.
+        // The one thing that makes this widget work on all four edges. Getting it wrong is not a crash: the bars simply grow *into* the screen from the far side, which on a bottom row means a fringe hanging off the top of the surface.
         let box_ = Rect {
             x: 0.0,
             y: 0.0,
@@ -550,8 +517,7 @@ mod tests {
                 bar_rects(&values, edge, SpectrumStyle::default(), box_).collect();
             assert_eq!(bars.len(), values.len(), "one bar per band on {edge:?}");
             for bar in bars {
-                // A band reading zero is a bar with no *length*, which is right; a bar with no thickness is
-                // a slot that swallowed its own width, which is a row that draws nothing.
+                // A band reading zero is a bar with no *length*, which is right; a bar with no thickness is a slot that swallowed its own width, which is a row that draws nothing.
                 let thickness = if edge.is_horizontal() {
                     bar.width
                 } else {
@@ -571,8 +537,7 @@ mod tests {
 
     #[test]
     fn a_gap_wider_than_the_slot_still_draws_bars() {
-        // A dense row with a generous gap is a config a user reaches by turning one number up, and the
-        // arithmetic answer — a negative width — is a row that silently empties as it gets more detailed.
+        // A dense row with a generous gap is a config a user reaches by turning one number up, and the arithmetic answer — a negative width — is a row that silently empties as it gets more detailed.
         let box_ = Rect {
             x: 0.0,
             y: 0.0,

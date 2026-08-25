@@ -6,8 +6,7 @@ let (config, path) = source();
 let c = &config.clock;
 let base = c.clone();
 let twelve_hour = signal(c.twelve_hour);
-// An empty field means "no override", which is what `Option<String>` carries; the placeholder shows what the
-// 12/24-hour switch would produce, so it is clear what leaving it blank does.
+// An empty field means "no override", which is what `Option<String>` carries; the placeholder shows what the 12/24-hour switch would produce, so it is clear what leaving it blank does.
 let format = signal(c.format.clone().unwrap_or_default());
 let show_date = signal(c.show_date);
 let date_format = signal(c.date_format.clone());

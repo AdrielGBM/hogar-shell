@@ -55,8 +55,7 @@ let save: Box<dyn Fn()> = Box::new({
             occupied_label: occupied_label.peek().trim().to_string(),
             active_label: active_label.peek().trim().to_string(),
             capitalize: parse_capitalize(&capitalize.peek()),
-            // Map-valued, so it stays hand-edited in the TOML; carrying it through means saving here does not
-            // silently drop the user's scratchpad icons.
+            // Map-valued, so it stays hand-edited in the TOML; carrying it through means saving here does not silently drop the user's scratchpad icons.
             special_icons: base.special_icons.clone(),
         };
         persist(&path, "workspaces", &value);

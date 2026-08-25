@@ -1,9 +1,6 @@
 //! The vocabulary `Config` needs to express a policy about something a service produces.
 //!
-//! Each of these types is named by a config section — `[notifications]` gates on an urgency, `[toasts.events]`
-//! on a toast event, `[weather]` resolves to a coordinate — so they belong to the config rather than to the
-//! producer. The service that raises them re-exports the type from here, which is what keeps the dependency
-//! pointing one way: a service knows about the config, the config knows nothing about a service.
+//! Each of these types is named by a config section — `[notifications]` gates on an urgency, `[toasts.events]` on a toast event, `[weather]` resolves to a coordinate — so they belong to the config rather than to the producer. The service that raises them re-exports the type from here, which is what keeps the dependency pointing one way: a service knows about the config, the config knows nothing about a service.
 
 /// How insistent a notification is, as delivered in the freedesktop `urgency` hint.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
@@ -14,8 +11,7 @@ pub enum Urgency {
     Critical,
 }
 
-/// What a toast is about. Each one is a switch in `[toasts.events]`, so a user who wants to know about their VPN
-/// and not about their keyboard layout can have exactly that.
+/// What a toast is about. Each one is a switch in `[toasts.events]`, so a user who wants to know about their VPN and not about their keyboard layout can have exactly that.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastEvent {
     ConfigLoaded,

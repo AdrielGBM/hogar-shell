@@ -1,9 +1,6 @@
 //! The Performance page: six cards over the services that already measure the machine.
 //!
-//! Nothing here starts a producer. Every series is the `History` ring its service already keeps, which is what
-//! makes a card open showing the last minute instead of a blank chart that fills in as you watch. The one thing
-//! the page owns is *how often it redraws*: `[dashboard] resource_update_interval` throttles the resource
-//! subscription, so a slower dashboard costs less without slowing down the bar chips reading the same service.
+//! Nothing here starts a producer. Every series is the `History` ring its service already keeps, which is what makes a card open showing the last minute instead of a blank chart that fills in as you watch. The one thing the page owns is *how often it redraws*: `[dashboard] resource_update_interval` throttles the resource subscription, so a slower dashboard costs less without slowing down the bar chips reading the same service.
 
 use std::time::{Duration, Instant};
 use ui::scale::space;
@@ -37,9 +34,7 @@ pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
 
 /// The shared resource reading, accepted at most once per `interval`.
 ///
-/// The service publishes every second for the bar; a dashboard configured to refresh every ten would otherwise
-/// redraw six cards and six charts nine times for nothing. Dropping the reading here rather than asking the
-/// service to slow down is the only version that leaves the chips alone.
+/// The service publishes every second for the bar; a dashboard configured to refresh every ten would otherwise redraw six cards and six charts nine times for nothing. Dropping the reading here rather than asking the service to slow down is the only version that leaves the chips alone.
 fn throttled_resources(interval: Duration) -> RwSignal<Option<resources::Resources>> {
     let state = signal(resources::current());
     let sink = state.clone();
@@ -99,8 +94,7 @@ fn cpu_card(
         .build(theme)
 }
 
-/// Which of usage, temperature and VRAM a card answers is a property of its driver, so each field says "—"
-/// rather than a zero it never measured — the same rule the GPU service itself follows.
+/// Which of usage, temperature and VRAM a card answers is a property of its driver, so each field says "—" rather than a zero it never measured — the same rule the GPU service itself follows.
 fn gpu_card(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let unit = config.temperature.unit;
     let state = signal(gpu::current().unwrap_or_default());
@@ -177,8 +171,7 @@ fn memory_card(
         .build(theme)
 }
 
-/// Storage has no history ring — a filesystem does not move fast enough for one to say anything — so the card
-/// is a meter per mount instead, which is also what answers the question it is opened for.
+/// Storage has no history ring — a filesystem does not move fast enough for one to say anything — so the card is a meter per mount instead, which is also what answers the question it is opened for.
 fn storage_card(
     machine: RwSignal<Option<resources::Resources>>,
     theme: NordTheme,
@@ -244,8 +237,7 @@ fn disk_row(disk: resources::Disk, theme: NordTheme) -> Result<Box<dyn LayoutIte
     )?))
 }
 
-/// Down and up share one chart because they share one scale: a card that drew them separately would show a
-/// 50 KB/s upload as tall as a 50 MB/s download, which is the opposite of what a throughput chart is for.
+/// Down and up share one chart because they share one scale: a card that drew them separately would show a 50 KB/s upload as tall as a 50 MB/s download, which is the opposite of what a throughput chart is for.
 fn network_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let state = signal(netspeed::current().unwrap_or_default());
     let sink = state.clone();
@@ -279,8 +271,7 @@ fn network_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
         .build(theme)
 }
 
-/// On a desktop the battery service reports nothing, and the card says so rather than drawing an empty meter
-/// that reads as a flat battery.
+/// On a desktop the battery service reports nothing, and the card says so rather than drawing an empty meter that reads as a flat battery.
 fn battery_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let state = signal(battery::details());
     let sink = state.clone();

@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// One persisted note: an optional icon (`set:name`, e.g. `mdi:home`), a title, and a body. Stored in a TOML
-/// array of tables (`[[notes]]`) under the data dir; the panel is the single editor, loading on open and
-/// saving on edit.
+/// One persisted note: an optional icon (`set:name`, e.g. `mdi:home`), a title, and a body. Stored in a TOML array of tables (`[[notes]]`) under the data dir; the panel is the single editor, loading on open and saving on edit.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Note {
     pub id: u64,

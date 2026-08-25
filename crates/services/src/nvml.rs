@@ -1,14 +1,8 @@
 //! NVIDIA's own management library, for the readings the kernel does not publish.
 //!
-//! AMD and Intel put utilisation and VRAM in `/sys/class/drm`, so the shell reads them for free. NVIDIA
-//! publishes nothing there — the driver keeps its counters behind NVML — which is why the GPU card used to
-//! fork `nvidia-smi` **once per reading**, on the dashboard's poll interval. That is the expensive pattern
-//! this shell avoids everywhere else: a process start to answer a number.
+//! AMD and Intel put utilisation and VRAM in `/sys/class/drm`, so the shell reads them for free. NVIDIA publishes nothing there — the driver keeps its counters behind NVML — which is why the GPU card used to fork `nvidia-smi` **once per reading**, on the dashboard's poll interval. That is the expensive pattern this shell avoids everywhere else: a process start to answer a number.
 //!
-//! **Loaded at runtime, not linked**, for the same reason as [`pam`](super::pam): linking `libnvidia-ml` would
-//! make an NVIDIA driver a build dependency of a shell that has to run on machines with an AMD card and no
-//! NVIDIA anything. `dlopen` turns "no NVIDIA here" into a question answered once, at startup, by a library
-//! that simply is not there.
+//! **Loaded at runtime, not linked**, for the same reason as [`pam`](super::pam): linking `libnvidia-ml` would make an NVIDIA driver a build dependency of a shell that has to run on machines with an AMD card and no NVIDIA anything. `dlopen` turns "no NVIDIA here" into a question answered once, at startup, by a library that simply is not there.
 //!
 //! Only the six symbols a GPU card needs. NVML is a large API and none of the rest of it has a reader here.
 
@@ -61,8 +55,7 @@ unsafe impl Sync for Nvml {}
 static NVML: OnceLock<Option<Nvml>> = OnceLock::new();
 
 fn load() -> Option<Nvml> {
-    // SAFETY: loading a shared object runs its initialisers, and the six symbols are looked up by the
-    // signatures NVML documents for them.
+    // SAFETY: loading a shared object runs its initialisers, and the six symbols are looked up by the signatures NVML documents for them.
     unsafe {
         deps::open_library(Dep::Nvml, None, |library| {
             let init = *library.get::<unsafe extern "C" fn() -> c_int>(b"nvmlInit_v2\0")?;
@@ -84,8 +77,7 @@ fn load() -> Option<Nvml> {
             let memory = *library.get::<unsafe extern "C" fn(Device, *mut Memory) -> c_int>(
                 b"nvmlDeviceGetMemoryInfo\0",
             )?;
-            // Initialised once, here, and never shut down: the library outlives the shell's interest in
-            // it, and `nvmlShutdown` on a process that is exiting anyway buys nothing.
+            // Initialised once, here, and never shut down: the library outlives the shell's interest in it, and `nvmlShutdown` on a process that is exiting anyway buys nothing.
             if init() != NVML_SUCCESS {
                 return Err(libloading::Error::DlOpenUnknown);
             }
@@ -113,8 +105,7 @@ pub fn available() -> bool {
     })
 }
 
-/// One GPU's counters. Every field is optional for the reason the whole `gpu` service is: a card that does not
-/// report a number must read as unknown, never as zero — a hard `0` draws an idle GPU under full load.
+/// One GPU's counters. Every field is optional for the reason the whole `gpu` service is: a card that does not report a number must read as unknown, never as zero — a hard `0` draws an idle GPU under full load.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reading {
     pub name: Option<String>,
@@ -126,8 +117,7 @@ pub struct Reading {
 
 /// Reads GPU `index`, or `None` when NVML is absent or has no such device.
 ///
-/// Cheap enough to call on a poll tick, which is the whole point: this replaces a `fork`/`exec` of
-/// `nvidia-smi` and a CSV parse with five function calls into a library already mapped.
+/// Cheap enough to call on a poll tick, which is the whole point: this replaces a `fork`/`exec` of `nvidia-smi` and a CSV parse with five function calls into a library already mapped.
 pub fn read(index: u32) -> Option<Reading> {
     let nvml = nvml()?;
     unsafe {
@@ -175,8 +165,7 @@ pub fn read(index: u32) -> Option<Reading> {
 mod tests {
     use super::*;
 
-    /// Loading is separate from using, so a machine with no NVIDIA driver answers rather than failing to
-    /// build or panicking — the same shape the PAM loader is tested in.
+    /// Loading is separate from using, so a machine with no NVIDIA driver answers rather than failing to build or panicking — the same shape the PAM loader is tested in.
     #[test]
     fn asking_on_a_machine_without_nvidia_answers_rather_than_panicking() {
         // Whichever way this machine goes, both branches must be reachable without a crash.

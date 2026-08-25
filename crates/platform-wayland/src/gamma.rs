@@ -1,23 +1,12 @@
 //! Colour temperature over `zwlr-gamma-control-unstable-v1`: warming the screen without a helper process.
 //!
-//! A night light is a gamma ramp per output, and this protocol is the portable way to set one. Every wlroots
-//! compositor carries it, so nothing here needs `hyprsunset`, `gammastep` or `wlsunset` running alongside.
+//! A night light is a gamma ramp per output, and this protocol is the portable way to set one. Every wlroots compositor carries it, so nothing here needs `hyprsunset`, `gammastep` or `wlsunset` running alongside.
 //!
-//! **The control object *is* the setting.** The compositor restores the original ramp the moment the
-//! `zwlr_gamma_control_v1` is destroyed — which is the protocol keeping a crashed client from leaving a screen
-//! orange for ever, and which means turning the tint off is dropping the object rather than sending a neutral
-//! ramp. It also means the objects have to be held for as long as the tint lasts, so this owns a connection and
-//! a thread.
+//! **The control object *is* the setting.** The compositor restores the original ramp the moment the `zwlr_gamma_control_v1` is destroyed — which is the protocol keeping a crashed client from leaving a screen orange for ever, and which means turning the tint off is dropping the object rather than sending a neutral ramp. It also means the objects have to be held for as long as the tint lasts, so this owns a connection and a thread.
 //!
-//! **And for no longer than that.** The shell's standing rule is that nothing runs unless something is asking
-//! for it, and here the two are the same fact: the controls are the tint, so a thread with nothing to hold has
-//! nothing to do. Turning the night light off therefore ends the thread and closes the connection rather than
-//! parking them until the process exits, and the next `warm` starts a fresh one. [`retire`] is that hand-over,
-//! and the lock it takes is what keeps a `warm` arriving mid-retirement from being answered by nobody.
+//! **And for no longer than that.** The shell's standing rule is that nothing runs unless something is asking for it, and here the two are the same fact: the controls are the tint, so a thread with nothing to hold has nothing to do. Turning the night light off therefore ends the thread and closes the connection rather than parking them until the process exits, and the next `warm` starts a fresh one. [`retire`] is that hand-over, and the lock it takes is what keeps a `warm` arriving mid-retirement from being answered by nobody.
 //!
-//! **Only one client at a time.** A compositor grants gamma control to one client per output; a second gets
-//! `failed`. That is reported rather than retried, because the honest answer to "something else already owns
-//! the gamma" is to say so and leave that something else alone.
+//! **Only one client at a time.** A compositor grants gamma control to one client per output; a second gets `failed`. That is reported rather than retried, because the honest answer to "something else already owns the gamma" is to say so and leave that something else alone.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -43,20 +32,16 @@ use wayland_protocols_wlr::gamma_control::v1::client::{
 /// The global a compositor advertises when its gamma can be set at all.
 pub const GAMMA_INTERFACE: &str = "zwlr_gamma_control_manager_v1";
 
-/// The range a caller may ask for, in kelvin. Below the floor the screen is unreadably red and above the
-/// ceiling the ramp is clipping rather than cooling — both ends are the point at which the setting stops
-/// meaning anything, not an implementation limit.
+/// The range a caller may ask for, in kelvin. Below the floor the screen is unreadably red and above the ceiling the ramp is clipping rather than cooling — both ends are the point at which the setting stops meaning anything, not an implementation limit.
 pub const MIN_TEMPERATURE: u32 = 1000;
 pub const MAX_TEMPERATURE: u32 = 10000;
 
 /// The temperature at which the ramp is the identity, which is what "off" restores.
 pub const NEUTRAL_TEMPERATURE: u32 = 6500;
 
-/// The live producer's channel, and `None` whenever no tint is held — which is what lets a later [`warm`] start
-/// a fresh thread instead of talking into one that has already gone.
+/// The live producer's channel, and `None` whenever no tint is held — which is what lets a later [`warm`] start a fresh thread instead of talking into one that has already gone.
 static REQUESTS: Mutex<Option<Sender<Request>>> = Mutex::new(None);
-/// Set when starting finds no compositor or no gamma protocol. A machine that cannot do this at all would
-/// otherwise open a connection on every call, since there is no producer left behind to say it already failed.
+/// Set when starting finds no compositor or no gamma protocol. A machine that cannot do this at all would otherwise open a connection on every call, since there is no producer left behind to say it already failed.
 static UNSUPPORTED: AtomicBool = AtomicBool::new(false);
 static APPLIED: Mutex<Option<u32>> = Mutex::new(None);
 
@@ -65,28 +50,23 @@ enum Request {
     Neutral,
 }
 
-/// Whether the compositor lets a client set gamma at all, asked over a connection of its own so it answers
-/// outside a running shell. `None` means no compositor could be reached.
+/// Whether the compositor lets a client set gamma at all, asked over a connection of its own so it answers outside a running shell. `None` means no compositor could be reached.
 pub fn gamma_supported() -> Option<bool> {
     crate::globals::advertises(GAMMA_INTERFACE)
 }
 
 /// Warms every output to `kelvin`, clamped to the range this protocol is useful over.
 ///
-/// Reports whether the request could be sent, not whether the screen changed: the compositor answers a refused
-/// gamma grab with an event, not a reply, so [`current`] is what says whether a tint is actually held.
+/// Reports whether the request could be sent, not whether the screen changed: the compositor answers a refused gamma grab with an event, not a reply, so [`current`] is what says whether a tint is actually held.
 pub fn warm(kelvin: u32) -> bool {
     let kelvin = kelvin.clamp(MIN_TEMPERATURE, MAX_TEMPERATURE);
     let mut slot = REQUESTS.lock().unwrap();
     let Some(requests) = producer(&mut slot) else {
         return false;
     };
-    // Recorded here rather than on the watcher thread. The request is asynchronous, so a caller that warmed the
-    // screen and immediately asked what it was holding would be told `None` — which is what `nightlight status`
-    // straight after `nightlight on` is.
+    // Recorded here rather than on the watcher thread. The request is asynchronous, so a caller that warmed the screen and immediately asked what it was holding would be told `None` — which is what `nightlight status` straight after `nightlight on` is.
     //
-    // Written while the producer slot is held, and read back under the same lock by [`retire`]: that overlap is
-    // the whole of what stops a `warm` landing on a thread already on its way out.
+    // Written while the producer slot is held, and read back under the same lock by [`retire`]: that overlap is the whole of what stops a `warm` landing on a thread already on its way out.
     *APPLIED.lock().unwrap() = Some(kelvin);
     requests.send(Request::Warm(kelvin)).is_ok()
 }
@@ -104,18 +84,14 @@ pub fn neutral() -> bool {
 
 /// The temperature the shell is holding, or `None` when the screens are at their own.
 ///
-/// What was asked for, not a reading: this protocol has no way to ask the compositor what the gamma currently
-/// is — deliberately, since the ramp is per-client state — so a client's own intent is the only answer there
-/// can be. An output whose gamma another client already owns is dropped from the tint and logged rather than
-/// changing this.
+/// What was asked for, not a reading: this protocol has no way to ask the compositor what the gamma currently is — deliberately, since the ramp is per-client state — so a client's own intent is the only answer there can be. An output whose gamma another client already owns is dropped from the tint and logged rather than changing this.
 pub fn current() -> Option<u32> {
     *APPLIED.lock().unwrap()
 }
 
 /// The channel to talk to a producer over, starting one if none is live.
 ///
-/// Takes the slot the caller already holds rather than locking again, because a caller has to keep that lock
-/// across recording its intent — see [`warm`].
+/// Takes the slot the caller already holds rather than locking again, because a caller has to keep that lock across recording its intent — see [`warm`].
 fn producer(slot: &mut Option<Sender<Request>>) -> Option<Sender<Request>> {
     if let Some(requests) = slot.as_ref() {
         return Some(requests.clone());
@@ -134,10 +110,7 @@ fn producer(slot: &mut Option<Sender<Request>>) -> Option<Sender<Request>> {
 
 /// Gives up the producer slot, for a thread that is about to return.
 ///
-/// Answering `true` is final: the caller returns, its controls go with it and every screen is restored, so the
-/// slot has to be free before that happens or the next [`warm`] would talk to a corpse. Answering `false` is a
-/// `warm` having landed since the tint was dropped — it has already recorded what it wants and put its request
-/// in the channel, and retiring now would leave the user's night light asked for and never applied.
+/// Answering `true` is final: the caller returns, its controls go with it and every screen is restored, so the slot has to be free before that happens or the next [`warm`] would talk to a corpse. Answering `false` is a `warm` having landed since the tint was dropped — it has already recorded what it wants and put its request in the channel, and retiring now would leave the user's night light asked for and never applied.
 fn retire() -> bool {
     let mut slot = REQUESTS.lock().unwrap();
     if APPLIED.lock().unwrap().is_some() {
@@ -147,9 +120,7 @@ fn retire() -> bool {
     true
 }
 
-/// Gives the slot up whatever was asked for, for a producer whose connection has failed under it. Leaving the
-/// sender behind would have every later [`warm`] report success into a channel nobody is reading, and leaving
-/// [`APPLIED`] set would have the shell claim a tint that died with the connection.
+/// Gives the slot up whatever was asked for, for a producer whose connection has failed under it. Leaving the sender behind would have every later [`warm`] report success into a channel nobody is reading, and leaving [`APPLIED`] set would have the shell claim a tint that died with the connection.
 fn forget() {
     let mut slot = REQUESTS.lock().unwrap();
     *slot = None;
@@ -221,9 +192,7 @@ fn run(
     if registered.is_err() {
         return forget();
     }
-    // The controls this thread holds are the tint: returning drops them and gives every screen back. That is
-    // exactly what is wanted once nothing is tinted and never before, so both halves are checked — a control
-    // still held is a screen still warm, whatever was last asked for.
+    // The controls this thread holds are the tint: returning drops them and gives every screen back. That is exactly what is wanted once nothing is tinted and never before, so both halves are checked — a control still held is a screen still warm, whatever was last asked for.
     while event_loop.dispatch(None, &mut gamma).is_ok() {
         if gamma.wanted.is_none() && gamma.controls.is_empty() && retire() {
             return;
@@ -243,8 +212,7 @@ struct Control {
 struct Gamma {
     connection: Connection,
     manager: ZwlrGammaControlManagerV1,
-    /// Held rather than taken from a dispatch callback: a temperature arrives over a channel, and creating a
-    /// control needs a queue handle at exactly that moment.
+    /// Held rather than taken from a dispatch callback: a temperature arrives over a channel, and creating a control needs a queue handle at exactly that moment.
     qh: QueueHandle<Gamma>,
     outputs: HashMap<u32, wl_output::WlOutput>,
     /// Keyed by the control's own protocol id, since that is what its events arrive against.
@@ -294,8 +262,7 @@ impl Gamma {
         );
     }
 
-    /// Sends the ramp for one control, if the compositor has said how long it wants it. A control created a
-    /// moment ago has not, and its `gamma_size` is what comes back to do this.
+    /// Sends the ramp for one control, if the compositor has said how long it wants it. A control created a moment ago has not, and its `gamma_size` is what comes back to do this.
     fn send_ramp(&self, id: u32) {
         let Some(held) = self.controls.get(&id) else {
             return;
@@ -313,9 +280,7 @@ impl Gamma {
 
 /// The white point of a black body at `kelvin`, as red, green and blue multipliers in 0..=1.
 ///
-/// Tanner Helland's approximation, which is what every night-light implementation uses and is accurate enough
-/// that the error is invisible next to the effect. The alternative is a Planckian locus and a colour-space
-/// conversion for a difference nobody looking at a warm screen can see.
+/// Tanner Helland's approximation, which is what every night-light implementation uses and is accurate enough that the error is invisible next to the effect. The alternative is a Planckian locus and a colour-space conversion for a difference nobody looking at a warm screen can see.
 fn white_point(kelvin: u32) -> (f64, f64, f64) {
     let t = f64::from(kelvin) / 100.0;
     let channel = |v: f64| (v / 255.0).clamp(0.0, 1.0);
@@ -334,9 +299,7 @@ fn white_point(kelvin: u32) -> (f64, f64, f64) {
     }
 }
 
-/// The three ramps the protocol wants, back to back: `size` reds, then greens, then blues, as native-endian
-/// `u16`. A linear ramp scaled by the white point, which is what makes the correction a tint rather than a
-/// change of contrast.
+/// The three ramps the protocol wants, back to back: `size` reds, then greens, then blues, as native-endian `u16`. A linear ramp scaled by the white point, which is what makes the correction a tint rather than a change of contrast.
 fn ramp(size: u32, kelvin: u32) -> Vec<u8> {
     let (red, green, blue) = white_point(kelvin);
     let last = f64::from(size.saturating_sub(1)).max(1.0);
@@ -353,9 +316,7 @@ fn ramp(size: u32, kelvin: u32) -> Vec<u8> {
 
 /// The ramp in a pipe, ready to hand to the compositor.
 ///
-/// Written before the read end is sent rather than after: the table is a few kilobytes against a pipe buffer of
-/// sixty-four, so it lands in the buffer without anything reading yet — and writing after the request would
-/// mean racing a compositor that may already be blocked reading.
+/// Written before the read end is sent rather than after: the table is a few kilobytes against a pipe buffer of sixty-four, so it lands in the buffer without anything reading yet — and writing after the request would mean racing a compositor that may already be blocked reading.
 fn ramp_fd(size: u32, kelvin: u32) -> Option<OwnedFd> {
     let (read, write) = std::io::pipe().ok()?;
     let mut write = std::fs::File::from(OwnedFd::from(write));
@@ -384,8 +345,7 @@ impl Dispatch<ZwlrGammaControlV1, u32> for Gamma {
                 state.send_ramp(id);
                 let _ = state.connection.flush();
             }
-            // Another client owns this output's gamma. Saying so and leaving it alone is the whole handling:
-            // the protocol grants control to one client, and fighting for it would flicker.
+            // Another client owns this output's gamma. Saying so and leaving it alone is the whole handling: the protocol grants control to one client, and fighting for it would flicker.
             zwlr_gamma_control_v1::Event::Failed => {
                 tracing::warn!("another client already controls this output's gamma");
                 if let Some(held) = state.controls.remove(&id) {
@@ -496,8 +456,7 @@ mod tests {
         }
     }
 
-    /// The wire format, which the compositor reads without negotiating: three ramps back to back, `size`
-    /// native-endian `u16` each. Getting the length wrong is a protocol error, not a wrong colour.
+    /// The wire format, which the compositor reads without negotiating: three ramps back to back, `size` native-endian `u16` each. Getting the length wrong is a protocol error, not a wrong colour.
     #[test]
     fn the_table_is_three_ramps_of_native_endian_words() {
         let size = 256;
@@ -538,11 +497,9 @@ mod tests {
         assert_eq!(ramp(1, 3000).len(), 6);
     }
 
-    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: a producer
-    /// nobody needs has to *stop*, and the slot it held has to be free for the next caller to start a fresh one.
+    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: a producer nobody needs has to *stop*, and the slot it held has to be free for the next caller to start a fresh one.
     ///
-    /// One test rather than three because all three phases move the same two statics, and split across
-    /// `cargo test`'s threads they would take turns wrecking each other's world.
+    /// One test rather than three because all three phases move the same two statics, and split across `cargo test`'s threads they would take turns wrecking each other's world.
     #[test]
     fn the_producer_lives_exactly_as_long_as_the_tint() {
         let install = || {
@@ -551,16 +508,13 @@ mod tests {
             channel
         };
 
-        // Nothing is tinted: the producer goes, and the slot is free before its thread returns — otherwise the
-        // next `warm` would talk to a corpse.
+        // Nothing is tinted: the producer goes, and the slot is free before its thread returns — otherwise the next `warm` would talk to a corpse.
         let _channel = install();
         *APPLIED.lock().unwrap() = None;
         assert!(retire(), "nothing is tinted, so nothing needs the producer");
         assert!(REQUESTS.lock().unwrap().is_none(), "the slot stayed taken");
 
-        // The race the lock exists for: a `warm` between the neutral and the retirement has already recorded
-        // its intent and queued its request, so retiring would leave the night light asked for and never
-        // applied, with nothing running left to notice.
+        // The race the lock exists for: a `warm` between the neutral and the retirement has already recorded its intent and queued its request, so retiring would leave the night light asked for and never applied, with nothing running left to notice.
         let _channel = install();
         *APPLIED.lock().unwrap() = Some(3000);
         assert!(!retire(), "a tint was asked for, so the producer stays");
@@ -579,9 +533,7 @@ mod tests {
     ///
     /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland gamma -- --nocapture --test-threads=1`
     ///
-    /// **It warms the screen for a second and puts it back.** There is no reading to check instead — the
-    /// protocol has no "what is the gamma" request, by design, so the only evidence it worked is that the
-    /// compositor did not answer `failed` and the screen went warm.
+    /// **It warms the screen for a second and puts it back.** There is no reading to check instead — the protocol has no "what is the gamma" request, by design, so the only evidence it worked is that the compositor did not answer `failed` and the screen went warm.
     #[test]
     fn the_compositor_takes_a_ramp_and_gives_the_screen_back() {
         use std::time::Duration;
@@ -609,8 +561,7 @@ mod tests {
             "the thread holding the tint outlived the tint"
         );
 
-        // And a second tint after the first has been given up gets a producer of its own, which is the half of
-        // retiring that a released slot alone does not prove.
+        // And a second tint after the first has been given up gets a producer of its own, which is the half of retiring that a released slot alone does not prove.
         assert!(warm(2500), "a fresh producer could not be started");
         std::thread::sleep(Duration::from_millis(800));
         assert_eq!(current(), Some(2500));

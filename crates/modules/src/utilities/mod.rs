@@ -1,13 +1,8 @@
 //! The utilities panel: the switches a user reaches for without opening anything.
 //!
-//! Every toggle here already exists as a service and, for most of them, as its own bar chip. What this panel adds
-//! is *one place* — a user who wants to turn the microphone off and the VPN on should not have to put two chips on
-//! a bar and remember which is which. The toggles are declared by id in `[utilities] toggles`, so the order is
-//! the user's; an id this build does not know is dropped with a warning rather than failing the panel.
+//! Every toggle here already exists as a service and, for most of them, as its own bar chip. What this panel adds is *one place* — a user who wants to turn the microphone off and the VPN on should not have to put two chips on a bar and remember which is which. The toggles are declared by id in `[utilities] toggles`, so the order is the user's; an id this build does not know is dropped with a warning rather than failing the panel.
 //!
-//! Each tile subscribes to its own service, exactly as the equivalent chip does. That is deliberate: a panel that
-//! held one aggregate state would need a producer of its own, and the whole point of the service layer is that
-//! N views of one reading cost one subscription each and one producer in total.
+//! Each tile subscribes to its own service, exactly as the equivalent chip does. That is deliberate: a panel that held one aggregate state would need a producer of its own, and the whole point of the service layer is that N views of one reading cost one subscription each and one producer in total.
 
 mod capture;
 
@@ -29,8 +24,7 @@ const TILE_ICON: f32 = 22.0;
 const TILE_RADIUS: f32 = 12.0;
 const GAP: f32 = 8.0;
 
-/// A quick toggle. One enum rather than a trait object per toggle: the set is fixed by what the shell's services
-/// can actually do, and an id that maps to nothing is the error this catches.
+/// A quick toggle. One enum rather than a trait object per toggle: the set is fixed by what the shell's services can actually do, and an id that maps to nothing is the error this catches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Quick {
     Wifi,
@@ -127,15 +121,12 @@ impl Quick {
         }
     }
 
-    /// Whether the tile is a switch (drawn active while it is on) or an action (a press that does something and
-    /// leaves nothing behind). An action tile never paints as active, which is what stops "take a screenshot"
-    /// looking like a setting that is currently on.
+    /// Whether the tile is a switch (drawn active while it is on) or an action (a press that does something and leaves nothing behind). An action tile never paints as active, which is what stops "take a screenshot" looking like a setting that is currently on.
     fn is_action(self) -> bool {
         matches!(self, Quick::Screenshot | Quick::Settings)
     }
 
-    /// What pressing it does. Every arm is an existing service entry point — this panel adds no behaviour of its
-    /// own, which is why a toggle here and the same toggle from IPC cannot disagree.
+    /// What pressing it does. Every arm is an existing service entry point — this panel adds no behaviour of its own, which is why a toggle here and the same toggle from IPC cannot disagree.
     fn press(self) {
         use services::{bluetooth, gamemode, idle, network, notifications, volume, vpn};
         match self {
@@ -156,8 +147,7 @@ impl Quick {
     }
 }
 
-/// A tile's live state. `available` is the third answer a toggle needs: a machine with no Bluetooth adapter must
-/// grey the tile out rather than offer a switch that cannot move.
+/// A tile's live state. `available` is the third answer a toggle needs: a machine with no Bluetooth adapter must grey the tile out rather than offer a switch that cannot move.
 #[derive(Clone, Debug, PartialEq)]
 struct TileState {
     active: bool,
@@ -185,8 +175,7 @@ pub fn utilities_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )
 }
 
-/// Which toggles this config asks for, in its order. An unknown id is reported once and dropped: a config written
-/// against a newer build should cost a log line, not the whole panel.
+/// Which toggles this config asks for, in its order. An unknown id is reported once and dropped: a config written against a newer build should cost a log line, not the whole panel.
 fn requested(config: &UtilitiesConfig) -> Vec<Quick> {
     config
         .toggles
@@ -238,9 +227,7 @@ pub fn utilities_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// The panel inside the frame its host draws around it, for [`crate::preview`] — the toggle grid, the capture
-/// card and the recordings list. On a machine with no recordings that list draws its empty line, which is part
-/// of what there is to look at.
+/// The panel inside the frame its host draws around it, for [`crate::preview`] — the toggle grid, the capture card and the recordings list. On a machine with no recordings that list draws its empty line, which is part of what there is to look at.
 pub(crate) fn panel_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     Ok(Box::new(StyledContainer::new(
@@ -253,9 +240,7 @@ pub(crate) fn panel_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// The toggle grid on its own, for a surface that wants the switches without the rest of the panel — the
-/// notification centre hosts exactly these, and hosting a second copy of them is what the sidebar existing at all
-/// is supposed to avoid.
+/// The toggle grid on its own, for a surface that wants the switches without the rest of the panel — the notification centre hosts exactly these, and hosting a second copy of them is what the sidebar existing at all is supposed to avoid.
 pub fn toggles_grid(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let config = surface_env()
         .map(|env| env.config.utilities.clone())
@@ -265,8 +250,7 @@ pub fn toggles_grid(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError
 
 /// The toggles, laid out in rows of `[utilities] columns`.
 ///
-/// Rows of fixed-count containers rather than a wrapping row: a wrap would reflow on every panel width and put a
-/// lone tile on its own line, and the grid is the one part of this panel whose shape the user set deliberately.
+/// Rows of fixed-count containers rather than a wrapping row: a wrap would reflow on every panel width and put a lone tile on its own line, and the grid is the one part of this panel whose shape the user set deliberately.
 fn grid(config: &UtilitiesConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let columns = config.grid_columns();
     let toggles = requested(config);
@@ -276,8 +260,7 @@ fn grid(config: &UtilitiesConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem
         for quick in chunk {
             cells.push(tile(*quick, theme)?);
         }
-        // The last row is padded with empty cells so its tiles keep the width the full rows have, rather than
-        // stretching to fill the gap the missing ones left.
+        // The last row is padded with empty cells so its tiles keep the width the full rows have, rather than stretching to fill the gap the missing ones left.
         for _ in chunk.len()..columns {
             cells.push(Box::new(Container::new(
                 LayoutStyle::new().flex_grow(1.0).flex_basis(0.0),
@@ -331,8 +314,7 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
         move || quick.label(),
         LayoutStyle::new(),
         move || {
-            // The state is read out before `text_style`, which reads the theme's own signals: a nested read
-            // inside a `with` is a re-entrant borrow of the reactive runtime and panics at build time.
+            // The state is read out before `text_style`, which reads the theme's own signals: a nested read inside a `with` is a re-entrant borrow of the reactive runtime and panics at build time.
             let state = label_state.get();
             let tint = if !state.available {
                 theme.muted
@@ -399,8 +381,7 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
         RectStyle::filled(fill, TILE_RADIUS)
     })
     .on_press(move || {
-        // Checked at the press rather than by leaving the handler off: availability is live, and a tile that
-        // became available while the panel was open should work without rebuilding it.
+        // Checked at the press rather than by leaving the handler off: availability is live, and a tile that became available while the panel was open should work without rebuilding it.
         if state.peek().available {
             quick.press();
         }
@@ -408,8 +389,7 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
     Ok(Box::new(tile))
 }
 
-/// Subscribes `state` to whichever service backs `quick`, seeded from that service's last reading so the tile
-/// opens in the right position instead of flicking into it.
+/// Subscribes `state` to whichever service backs `quick`, seeded from that service's last reading so the tile opens in the right position instead of flicking into it.
 fn subscribe(quick: Quick, state: RwSignal<TileState>) {
     use services::{
         bluetooth, gamemode, network, notifications, recorder, screenshot, state as shell_state,
@@ -537,8 +517,7 @@ mod tests {
         for quick in Quick::ALL {
             assert_eq!(Quick::from_id(quick.id()), Some(quick), "{}", quick.id());
         }
-        // The shipped default list is the one config nobody wrote by hand, so an id that stopped resolving here
-        // would grey out a tile on every fresh install.
+        // The shipped default list is the one config nobody wrote by hand, so an id that stopped resolving here would grey out a tile on every fresh install.
         let default = UtilitiesConfig::default();
         assert_eq!(
             requested(&default).len(),
@@ -562,8 +541,7 @@ mod tests {
 
     #[test]
     fn an_action_tile_never_paints_as_a_switch_that_is_on() {
-        // Pressing "screenshot" does something and leaves nothing behind; drawn active, it would read as a
-        // setting the machine is currently in.
+        // Pressing "screenshot" does something and leaves nothing behind; drawn active, it would read as a setting the machine is currently in.
         assert!(Quick::Screenshot.is_action() && Quick::Settings.is_action());
         for switch in [Quick::Wifi, Quick::Dnd, Quick::Mic, Quick::Record] {
             assert!(!switch.is_action(), "{} is a state", switch.id());
@@ -572,8 +550,7 @@ mod tests {
 
     #[test]
     fn the_mic_tile_is_active_when_the_microphone_is_muted() {
-        // The tile is a *mute* toggle, so "on" is the muted machine — and the glyph has to agree, or the panel
-        // says the microphone is live while it is off.
+        // The tile is a *mute* toggle, so "on" is the muted machine — and the glyph has to agree, or the panel says the microphone is live while it is off.
         assert_eq!(Quick::Mic.glyph(true), "mic-off");
         assert_eq!(Quick::Mic.glyph(false), "mic");
     }
@@ -599,8 +576,7 @@ mod tests {
     fn the_grid_pads_its_last_row_to_the_configured_width() {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        // Five toggles over four columns: the second row must still lay its one tile out at a quarter width,
-        // which is what the padding cells are for.
+        // Five toggles over four columns: the second row must still lay its one tile out at a quarter width, which is what the padding cells are for.
         let config = UtilitiesConfig {
             toggles: ["wifi", "bluetooth", "mic", "dnd", "vpn"]
                 .into_iter()

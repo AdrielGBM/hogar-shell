@@ -1,12 +1,8 @@
 //! Taking a picture of the screen.
 //!
-//! The pixels come from the compositor over a protocol — `ext-image-copy-capture` where there is one, older
-//! `wlr-screencopy` where there is not — which the platform crate owns. This layer is what happens to them
-//! afterwards: composing several outputs into one desktop, cropping a selection, encoding once, and deciding
-//! whether that goes to a file, to the clipboard or to an annotator.
+//! The pixels come from the compositor over a protocol — `ext-image-copy-capture` where there is one, older `wlr-screencopy` where there is not — which the platform crate owns. This layer is what happens to them afterwards: composing several outputs into one desktop, cropping a selection, encoding once, and deciding whether that goes to a file, to the clipboard or to an annotator.
 //!
-//! Everything here runs off the UI thread. A capture is a round trip to the compositor followed by a PNG encode
-//! of several megapixels; done in a click handler it would drop frames on every surface at once.
+//! Everything here runs off the UI thread. A capture is a round trip to the compositor followed by a PNG encode of several megapixels; done in a click handler it would drop frames on every surface at once.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -17,8 +13,7 @@ use platform_wayland::{CaptureArea, CaptureBackend, EventSender};
 use config::ScreenshotConfig;
 use util::broadcast::Store;
 
-/// A rectangle in the compositor's logical coordinate space — the space window geometry and output positions are
-/// reported in, and the one a selection drawn on an overlay is made in.
+/// A rectangle in the compositor's logical coordinate space — the space window geometry and output positions are reported in, and the one a selection drawn on an overlay is made in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Area {
     pub x: i32,
@@ -102,8 +97,7 @@ pub struct Shot {
     pub taken_at: u64,
 }
 
-/// The last capture: the shot when one succeeded, the reason when it did not. `None` until the first attempt —
-/// which is the third state a panel needs, and the one a `Result` alone cannot carry.
+/// The last capture: the shot when one succeeded, the reason when it did not. `None` until the first attempt — which is the third state a panel needs, and the one a `Result` alone cannot carry.
 static LAST: Store<Option<Result<Shot, String>>> = Store::new(|| None);
 
 pub fn subscribe(tx: EventSender<Option<Result<Shot, String>>>) {
@@ -114,23 +108,19 @@ pub fn current() -> Option<Result<Shot, String>> {
     LAST.get()
 }
 
-/// Whether this compositor implements either capture protocol. Read before offering the gesture, so a missing
-/// one greys a button out instead of failing a keypress.
+/// Whether this compositor implements either capture protocol. Read before offering the gesture, so a missing one greys a button out instead of failing a keypress.
 pub fn supported() -> bool {
     platform_wayland::capture_supported()
 }
 
-/// Takes `request` on a thread of its own and publishes the outcome. Returns immediately: the caller is a click
-/// handler or an IPC command, and neither should wait on a compositor round trip.
+/// Takes `request` on a thread of its own and publishes the outcome. Returns immediately: the caller is a click handler or an IPC command, and neither should wait on a compositor round trip.
 pub fn take(request: Request) {
     finish(request, None);
 }
 
 /// The same save/copy/annotate path for pixels the caller already has.
 ///
-/// The area picker is the caller that needs it: with `[screenshot] freeze` on, the selection is drawn over a
-/// still of the screen taken *before* the overlay mapped, and cropping that still is the only way to capture
-/// what the user was looking at — asking the compositor again would photograph the overlay.
+/// The area picker is the caller that needs it: with `[screenshot] freeze` on, the selection is drawn over a still of the screen taken *before* the overlay mapped, and cropping that still is the only way to capture what the user was looking at — asking the compositor again would photograph the overlay.
 pub fn deliver(image: Image, request: Request) {
     finish(request, Some(image));
 }
@@ -154,8 +144,7 @@ fn finish(request: Request, captured: Option<Image>) {
         });
 }
 
-/// Captures, saves, copies and hands off — in that order, so a failure to reach the clipboard cannot lose the
-/// file that was already written.
+/// Captures, saves, copies and hands off — in that order, so a failure to reach the clipboard cannot lose the file that was already written.
 fn perform(
     request: &Request,
     captured: Option<Image>,
@@ -166,8 +155,7 @@ fn perform(
         Some(image) => image,
         None => capture_pixels(request, config.backend())?,
     };
-    // Encoded once, in memory, so the same bytes can be saved and put on the clipboard without a second encode
-    // or a round trip through the disk.
+    // Encoded once, in memory, so the same bytes can be saved and put on the clipboard without a second encode or a round trip through the disk.
     let bytes = image.to_png()?;
     let path = if request.save {
         Some(write_file(&bytes, dir, &config.file_name)?)
@@ -228,9 +216,7 @@ impl Image {
 
 /// Where an output's pixels sit in one screen-wide image: its logical rectangle multiplied by its own scale.
 ///
-/// Exact whenever every output runs at the same scale, which is every single-monitor session and most others.
-/// A mixed-scale layout is the one case this can only approximate — the compositor reports an integer scale per
-/// output, so two screens at 1× and 1.5× have no common pixel grid to compose onto.
+/// Exact whenever every output runs at the same scale, which is every single-monitor session and most others. A mixed-scale layout is the one case this can only approximate — the compositor reports an integer scale per output, so two screens at 1× and 1.5× have no common pixel grid to compose onto.
 fn output_rects() -> Vec<(String, Area, i32)> {
     platform_wayland::outputs()
         .into_iter()
@@ -266,8 +252,7 @@ fn capture_output(name: &str, cursor: bool, backend: CaptureBackend) -> Result<I
         .map_err(|e| e.to_string())
 }
 
-/// Every output at its place in the layout. One capture per screen, composed rather than asked for as a whole:
-/// both protocols capture one output, so a desktop-wide picture is something only the shell can assemble.
+/// Every output at its place in the layout. One capture per screen, composed rather than asked for as a whole: both protocols capture one output, so a desktop-wide picture is something only the shell can assemble.
 fn compose_screen(cursor: bool, backend: CaptureBackend) -> Result<Image, String> {
     let mut parts = Vec::new();
     for (name, area, scale) in output_rects() {
@@ -283,10 +268,7 @@ fn compose_screen(cursor: bool, backend: CaptureBackend) -> Result<Image, String
 
 /// A selection, captured from the one output that holds it where possible.
 ///
-/// A region inside a single screen is asked for as a region, and the platform crate cuts it — off the
-/// compositor where the protocol can crop, out of the output's own pixels where it cannot. A selection spanning
-/// two screens has no single output to ask, so the whole desktop is composed and cropped instead: slower, and
-/// the only answer that is right.
+/// A region inside a single screen is asked for as a region, and the platform crate cuts it — off the compositor where the protocol can crop, out of the output's own pixels where it cannot. A selection spanning two screens has no single output to ask, so the whole desktop is composed and cropped instead: slower, and the only answer that is right.
 fn capture_area(area: Area, cursor: bool, backend: CaptureBackend) -> Result<Image, String> {
     if area.is_empty() {
         return Err("the selection is empty".to_string());
@@ -326,8 +308,7 @@ fn capture_area(area: Area, cursor: bool, backend: CaptureBackend) -> Result<Ima
     )
 }
 
-/// The top-left of the composed desktop in logical coordinates — not always `(0, 0)`, since a screen may sit
-/// left of or above the primary one.
+/// The top-left of the composed desktop in logical coordinates — not always `(0, 0)`, since a screen may sit left of or above the primary one.
 fn screen_origin() -> (i32, i32) {
     let rects = output_rects();
     let x = rects.iter().map(|(_, area, _)| area.x).min().unwrap_or(0);
@@ -374,8 +355,7 @@ fn compose(parts: Vec<Placed>) -> Option<Image> {
     })
 }
 
-/// `area` of `image`, in pixels, clamped to what the image actually holds — a selection dragged past the edge of
-/// the screen is a selection to the edge, not a failure.
+/// `area` of `image`, in pixels, clamped to what the image actually holds — a selection dragged past the edge of the screen is a selection to the edge, not a failure.
 pub fn crop(image: &Image, area: Area) -> Result<Image, String> {
     let x = area.x.max(0) as u32;
     let y = area.y.max(0) as u32;
@@ -404,8 +384,7 @@ fn write_file(bytes: &[u8], dir: &Path, name_format: &str) -> Result<PathBuf, St
     Ok(path)
 }
 
-/// `<stem>.png`, or `<stem>-2.png` when that exists. Two captures inside the same second are a user pressing the
-/// key twice, and the second one must not overwrite the first.
+/// `<stem>.png`, or `<stem>-2.png` when that exists. Two captures inside the same second are a user pressing the key twice, and the second one must not overwrite the first.
 fn unique(dir: &Path, stem: &str) -> PathBuf {
     let first = dir.join(format!("{stem}.png"));
     if !first.exists() {
@@ -417,8 +396,7 @@ fn unique(dir: &Path, stem: &str) -> PathBuf {
         .unwrap_or(first)
 }
 
-/// Hands the saved file to the configured annotator. Detached and unwaited: an annotator is a window the user
-/// works in for as long as they like, not a subprocess the shell manages.
+/// Hands the saved file to the configured annotator. Detached and unwaited: an annotator is a window the user works in for as long as they like, not a subprocess the shell manages.
 fn annotate(path: &Path, command: &str) {
     let mut words = annotator_words(command, path);
     if words.is_empty() {
@@ -436,8 +414,7 @@ fn annotate(path: &Path, command: &str) {
     }
 }
 
-/// The annotator's argv: `{file}` substituted where the user put it, appended when they did not — so both
-/// `satty --filename {file}` and a bare `swappy -f` do the right thing.
+/// The annotator's argv: `{file}` substituted where the user put it, appended when they did not — so both `satty --filename {file}` and a bare `swappy -f` do the right thing.
 fn annotator_words(command: &str, path: &Path) -> Vec<String> {
     let file = path.to_string_lossy().to_string();
     let mut words: Vec<String> = command
@@ -450,12 +427,9 @@ fn annotator_words(command: &str, path: &Path) -> Vec<String> {
     words
 }
 
-/// Tells the user where the picture went. A capture with no visible outcome is indistinguishable from a keybind
-/// that did nothing.
+/// Tells the user where the picture went. A capture with no visible outcome is indistinguishable from a keybind that did nothing.
 ///
-/// Two channels, because they answer different questions: the notification is the *record* — it keeps the file
-/// name where the user can find it again — and the toast is the acknowledgement. `[screenshot] notify` and
-/// `[toasts.events] screenshot` are separate switches for that reason, and the toast is off by default.
+/// Two channels, because they answer different questions: the notification is the *record* — it keeps the file name where the user can find it again — and the toast is the acknowledgement. `[screenshot] notify` and `[toasts.events] screenshot` are separate switches for that reason, and the toast is off by default.
 fn announce(outcome: &Result<Shot, String>, config: &ScreenshotConfig) {
     let (title, body) = message(outcome);
     crate::toaster::post(
@@ -492,9 +466,7 @@ fn file_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// The pixels for `target`, for a caller that wants an image *on screen* rather than a file — the window info
-/// panel's preview. No PNG, no clipboard, no file: a preview that went through the disk would be a screenshot
-/// taken every second.
+/// The pixels for `target`, for a caller that wants an image *on screen* rather than a file — the window info panel's preview. No PNG, no clipboard, no file: a preview that went through the disk would be a screenshot taken every second.
 pub fn snapshot(target: Target, cursor: bool) -> Result<Image, String> {
     capture_pixels(
         &Request {
@@ -517,8 +489,7 @@ fn configured_backend() -> CaptureBackend {
 
 /// Every output's current contents, for an overlay that has to stand still while the user draws on it.
 ///
-/// Taken synchronously, on purpose. "Freeze the screen" means the pixels from the instant *before* the overlay
-/// appeared; handing the work to a thread and opening the overlay first would capture the overlay.
+/// Taken synchronously, on purpose. "Freeze the screen" means the pixels from the instant *before* the overlay appeared; handing the work to a thread and opening the overlay first would capture the overlay.
 pub fn freeze_outputs() -> Vec<(String, Image)> {
     let backend = configured_backend();
     let mut frames = Vec::new();
@@ -680,8 +651,7 @@ mod tests {
         assert!(annotator_words("   ", path).is_empty());
     }
 
-    /// A backend named in the config is "this route or none"; anything else, including a name a past build
-    /// understood and this one does not, means take whichever route works.
+    /// A backend named in the config is "this route or none"; anything else, including a name a past build understood and this one does not, means take whichever route works.
     #[test]
     fn the_configured_backend_names_a_route_or_falls_back_to_either() {
         let with = |backend: &str| {

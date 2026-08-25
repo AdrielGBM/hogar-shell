@@ -1,7 +1,6 @@
 //! The `[toml]` sections `Config` is made of, grouped the way the settings application groups their forms.
 //!
-//! Split by area rather than one file per section: `[bars]`, `[panels]` and `[popouts]` are read together and
-//! changed together, and forty files of thirty lines would hide that.
+//! Split by area rather than one file per section: `[bars]`, `[panels]` and `[popouts]` are read together and changed together, and forty files of thirty lines would hide that.
 
 pub mod appearance;
 pub mod audio;

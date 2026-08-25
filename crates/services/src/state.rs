@@ -1,9 +1,6 @@
 //! What the shell remembers across restarts.
 //!
-//! Distinct from `config.toml`, which the user owns and hand-edits: this is machine-written state — which
-//! wallpaper is up, whether do-not-disturb is on, how often each app was launched. It lives in
-//! `$XDG_STATE_HOME/hogar-shell/state.json` so a reload, a restart or a re-login lands back where the user left
-//! off, and so a toggle flipped from one surface is the same toggle every other surface reads.
+//! Distinct from `config.toml`, which the user owns and hand-edits: this is machine-written state — which wallpaper is up, whether do-not-disturb is on, how often each app was launched. It lives in `$XDG_STATE_HOME/hogar-shell/state.json` so a reload, a restart or a re-login lands back where the user left off, and so a toggle flipped from one surface is the same toggle every other surface reads.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use util::broadcast::Store;
 use util::paths;
 
-/// Every persisted field is `#[serde(default)]` so a state file written by an older build — or a hand-deleted
-/// key — still loads instead of resetting the user's whole session.
+/// Every persisted field is `#[serde(default)]` so a state file written by an older build — or a hand-deleted key — still loads instead of resetting the user's whole session.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShellState {
@@ -24,8 +20,7 @@ pub struct ShellState {
     /// Per-output wallpaper, keyed by output name; falls back to `wallpaper`.
     pub wallpaper_monitors: HashMap<String, PathBuf>,
     pub dnd: bool,
-    /// Applications whose notifications are recorded but never allowed to pop. Persisted because a mute the
-    /// user set from the history panel is a standing decision about that application, not about this session.
+    /// Applications whose notifications are recorded but never allowed to pop. Persisted because a mute the user set from the history panel is a standing decision about that application, not about this session.
     pub muted_apps: Vec<String>,
     pub game_mode: bool,
     pub idle_inhibit: bool,
@@ -37,9 +32,7 @@ fn path() -> PathBuf {
     paths::state_dir().join("state.json")
 }
 
-/// Reads a state file, falling back to defaults when it is missing or unreadable. A corrupt file is reported
-/// and replaced by defaults rather than taken as fatal — losing remembered state is recoverable, refusing to
-/// start is not.
+/// Reads a state file, falling back to defaults when it is missing or unreadable. A corrupt file is reported and replaced by defaults rather than taken as fatal — losing remembered state is recoverable, refusing to start is not.
 fn load_from(path: &std::path::Path) -> ShellState {
     let Ok(text) = std::fs::read_to_string(path) else {
         return ShellState::default();
@@ -59,8 +52,7 @@ fn load() -> ShellState {
 
 static STATE: Store<ShellState> = Store::new(load);
 
-/// Writes `state` to disk off the UI thread — a synchronous write in a click handler would stall the frame.
-/// Written to a sibling temp file and renamed, so a crash mid-write can't leave a truncated file behind.
+/// Writes `state` to disk off the UI thread — a synchronous write in a click handler would stall the frame. Written to a sibling temp file and renamed, so a crash mid-write can't leave a truncated file behind.
 fn persist(state: ShellState) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-state-write".to_string())
@@ -82,15 +74,13 @@ pub fn get() -> ShellState {
     STATE.get()
 }
 
-/// Applies `change`, fans the result out to every subscriber, and persists it. The single write path, so no
-/// caller has to remember to save.
+/// Applies `change`, fans the result out to every subscriber, and persists it. The single write path, so no caller has to remember to save.
 pub fn update(change: impl FnOnce(&mut ShellState)) {
     let next = STATE.update(change);
     persist(next);
 }
 
-/// Registers `tx` for live state changes, sending the current value immediately. Pass to
-/// `platform_wayland::watch` from a surface that reflects a persisted toggle.
+/// Registers `tx` for live state changes, sending the current value immediately. Pass to `platform_wayland::watch` from a surface that reflects a persisted toggle.
 pub fn subscribe(tx: EventSender<ShellState>) {
     STATE.subscribe(tx);
 }

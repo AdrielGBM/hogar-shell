@@ -1,15 +1,8 @@
 //! Bluetooth, through BlueZ's D-Bus API.
 //!
-//! Everything the shell shows and every action it offers comes from one object tree: BlueZ publishes the
-//! adapter and every known device under `org.bluez` as managed objects, and emits `InterfacesAdded`,
-//! `InterfacesRemoved` and `PropertiesChanged` as they change. So there is nothing to poll — one subscription
-//! covers a device connecting, a scan finding a new one, a headset's battery dropping and the adapter being
-//! switched off.
+//! Everything the shell shows and every action it offers comes from one object tree: BlueZ publishes the adapter and every known device under `org.bluez` as managed objects, and emits `InterfacesAdded`, `InterfacesRemoved` and `PropertiesChanged` as they change. So there is nothing to poll — one subscription covers a device connecting, a scan finding a new one, a headset's battery dropping and the adapter being switched off.
 //!
-//! Two threads, for the same reason the tray needs them: the reader parks on a `MessageIterator` and must never
-//! block on a method call, so it only pings, and a refresher owns the connection that re-reads the tree. A
-//! scan emits an `RSSI` update per device per second, which is exactly the burst a coalescing refresher exists
-//! to fold into one re-read.
+//! Two threads, for the same reason the tray needs them: the reader parks on a `MessageIterator` and must never block on a method call, so it only pings, and a refresher owns the connection that re-reads the tree. A scan emits an `RSSI` update per device per second, which is exactly the burst a coalescing refresher exists to fold into one re-read.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,25 +24,19 @@ const ADAPTER_IFACE: &str = "org.bluez.Adapter1";
 const DEVICE_IFACE: &str = "org.bluez.Device1";
 const BATTERY_IFACE: &str = "org.bluez.Battery1";
 
-/// A burst of property changes is the normal case, not the exception: a scan reports a new signal strength for
-/// every visible device every second or so. The refresher waits this long after the first ping and drains the
-/// rest, turning the burst into one re-read.
+/// A burst of property changes is the normal case, not the exception: a scan reports a new signal strength for every visible device every second or so. The refresher waits this long after the first ping and drains the rest, turning the burst into one re-read.
 const COALESCE: Duration = Duration::from_millis(120);
 
-/// Reading the object tree is a local call to a daemon that is either answering or wedged; a bound keeps a
-/// wedged BlueZ from parking the refresher forever (see the tray's note on blocking calls into other processes).
+/// Reading the object tree is a local call to a daemon that is either answering or wedged; a bound keeps a wedged BlueZ from parking the refresher forever (see the tray's note on blocking calls into other processes).
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Connecting and pairing are slow *by design* — a headset can take ten seconds to come up, and pairing waits
-/// on the peer — so an action gets its own, far more generous bound than a read.
+/// Connecting and pairing are slow *by design* — a headset can take ten seconds to come up, and pairing waits on the peer — so an action gets its own, far more generous bound than a read.
 const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// How long a scan runs before stopping itself. Long enough to find a device someone is holding a pairing
-/// button on, short enough that a forgotten scan is not a radio left running all afternoon.
+/// How long a scan runs before stopping itself. Long enough to find a device someone is holding a pairing button on, short enough that a forgotten scan is not a radio left running all afternoon.
 const SCAN_WINDOW: Duration = Duration::from_secs(45);
 
-/// Which scan the auto-stop below belongs to. Every start or stop invalidates the previous window, so a scan
-/// restarted at second 44 gets a full one rather than inheriting one second.
+/// Which scan the auto-stop below belongs to. Every start or stop invalidates the previous window, so a scan restarted at second 44 gets a full one rather than inheriting one second.
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// One device BlueZ knows about: paired, previously seen, or currently in range of a scan.
@@ -59,8 +46,7 @@ pub struct Device {
     pub path: String,
     pub address: String,
     pub name: String,
-    /// BlueZ's `Icon`: a freedesktop icon name naming the *kind* of device (`audio-headset`, `input-mouse`),
-    /// which is what lets the UI draw a headset as a headset rather than as a generic dot.
+    /// BlueZ's `Icon`: a freedesktop icon name naming the *kind* of device (`audio-headset`, `input-mouse`), which is what lets the UI draw a headset as a headset rather than as a generic dot.
     pub icon: String,
     pub paired: bool,
     pub trusted: bool,
@@ -73,8 +59,7 @@ pub struct Device {
 }
 
 impl Device {
-    /// What to call it in a list: BlueZ's name where there is one, else the hardware address, which is at least
-    /// unique. Never empty — a row with no label is a row a user cannot act on.
+    /// What to call it in a list: BlueZ's name where there is one, else the hardware address, which is at least unique. Never empty — a row with no label is a row a user cannot act on.
     pub fn label(&self) -> String {
         if !self.name.trim().is_empty() {
             self.name.clone()
@@ -86,8 +71,7 @@ impl Device {
     }
 }
 
-/// The adapter and everything it knows about. `available` is false when there is no Bluetooth hardware at all
-/// (or no BlueZ), which is what lets a chip retire instead of showing a permanently-off radio.
+/// The adapter and everything it knows about. `available` is false when there is no Bluetooth hardware at all (or no BlueZ), which is what lets a chip retire instead of showing a permanently-off radio.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bluetooth {
     pub available: bool,
@@ -101,9 +85,7 @@ pub struct Bluetooth {
 
 /// What a one-glyph indicator needs, without the device list behind it.
 ///
-/// `Copy`, and that is the point: a chip holds this in its signal rather than the whole [`Bluetooth`], so
-/// reading it costs no allocation and — more importantly — needs no `with`. Holding the reactive runtime's
-/// borrow across a closure that also reads the foreground signal is a re-entrant borrow, and it panics.
+/// `Copy`, and that is the point: a chip holds this in its signal rather than the whole [`Bluetooth`], so reading it costs no allocation and — more importantly — needs no `with`. Holding the reactive runtime's borrow across a closure that also reads the foreground signal is a re-entrant borrow, and it panics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Status {
     pub available: bool,
@@ -168,9 +150,7 @@ fn as_u8(props: &Props, key: &str) -> Option<u8> {
     }
 }
 
-/// Connected first, then paired, then whatever a scan can currently hear, strongest signal first. The order a
-/// list is read in is the order the actions are wanted in: disconnect what is on, connect what is known, pair
-/// what is new.
+/// Connected first, then paired, then whatever a scan can currently hear, strongest signal first. The order a list is read in is the order the actions are wanted in: disconnect what is on, connect what is known, pair what is new.
 fn sort_devices(devices: &mut [Device]) {
     devices.sort_by(|a, b| {
         b.connected
@@ -181,11 +161,9 @@ fn sort_devices(devices: &mut [Device]) {
     });
 }
 
-/// Turns BlueZ's object tree into the state the shell draws. Split from the D-Bus call so the shape of the
-/// answer is testable without a bus.
+/// Turns BlueZ's object tree into the state the shell draws. Split from the D-Bus call so the shape of the answer is testable without a bus.
 fn state_from_objects(objects: &ManagedObjects) -> Bluetooth {
-    // The first adapter, by path, so a machine with a built-in radio and a dongle picks the same one every time
-    // rather than whichever the hash map happened to yield first.
+    // The first adapter, by path, so a machine with a built-in radio and a dongle picks the same one every time rather than whichever the hash map happened to yield first.
     let mut adapters: Vec<(&OwnedObjectPath, &Props)> = objects
         .iter()
         .filter_map(|(path, ifaces)| ifaces.get(ADAPTER_IFACE).map(|props| (path, props)))
@@ -213,8 +191,7 @@ fn state_from_objects(objects: &ManagedObjects) -> Bluetooth {
                 blocked: as_bool(props, "Blocked"),
                 connected: as_bool(props, "Connected"),
                 rssi: as_i16(props, "RSSI"),
-                // The battery lives on a second interface of the same object, so it is read here rather than
-                // costing a call of its own per device.
+                // The battery lives on a second interface of the same object, so it is read here rather than costing a call of its own per device.
                 battery: ifaces
                     .get(BATTERY_IFACE)
                     .and_then(|b| as_u8(b, "Percentage")),
@@ -260,8 +237,7 @@ static BLUETOOTH: Service<Bluetooth> = Service::new("hogar-shell-bluetooth", run
 
 fn run(out: &Arc<Broadcast<Bluetooth>>) {
     let Some(conn) = connection(READ_TIMEOUT) else {
-        // No system bus at all. Publishing the empty state rather than nothing is what tells a subscribed chip
-        // there is no radio here, instead of leaving it waiting for a first reading that never comes.
+        // No system bus at all. Publishing the empty state rather than nothing is what tells a subscribed chip there is no radio here, instead of leaving it waiting for a first reading that never comes.
         out.publish(Bluetooth::default());
         return;
     };
@@ -284,8 +260,7 @@ fn run(out: &Arc<Broadcast<Bluetooth>>) {
     }
 }
 
-/// Parks a thread on every signal BlueZ emits and pings the refresher. It reads nothing itself: a blocking call
-/// from the thread draining the message queue is how a D-Bus client deadlocks against a slow peer.
+/// Parks a thread on every signal BlueZ emits and pings the refresher. It reads nothing itself: a blocking call from the thread draining the message queue is how a D-Bus client deadlocks against a slow peer.
 fn watch_signals(ping: SyncSender<()>) -> Option<()> {
     let conn = connection(READ_TIMEOUT)?;
     let rule = zbus::MatchRule::builder()
@@ -313,9 +288,7 @@ fn settings() -> config::BluetoothConfig {
         .unwrap_or_default()
 }
 
-/// Registers `tx` for live Bluetooth state, starting the single shared producer on first use — unless
-/// `[bluetooth] enabled` is off, in which case no BlueZ connection and no thread are created. Guarded here
-/// rather than inside the producer because `Service` spawns on first touch.
+/// Registers `tx` for live Bluetooth state, starting the single shared producer on first use — unless `[bluetooth] enabled` is off, in which case no BlueZ connection and no thread are created. Guarded here rather than inside the producer because `Service` spawns on first touch.
 pub fn subscribe(tx: EventSender<Bluetooth>) {
     if !settings().enabled {
         return;
@@ -333,17 +306,13 @@ pub fn current() -> Option<Bluetooth> {
 
 /// The connection every mutation goes through, kept for the process.
 ///
-/// Not an implementation detail: BlueZ scopes `StartDiscovery` to the D-Bus client that called it and stops the
-/// scan the moment that client disconnects. A mutation on a throwaway connection would therefore start a scan
-/// that ended before the first device was reported. Every other action is happy to share it.
+/// Not an implementation detail: BlueZ scopes `StartDiscovery` to the D-Bus client that called it and stops the scan the moment that client disconnects. A mutation on a throwaway connection would therefore start a scan that ended before the first device was reported. Every other action is happy to share it.
 fn control() -> Option<&'static Connection> {
     static CONTROL: std::sync::OnceLock<Option<Connection>> = std::sync::OnceLock::new();
     CONTROL.get_or_init(|| connection(ACTION_TIMEOUT)).as_ref()
 }
 
-/// Runs a BlueZ mutation off the UI thread. A click handler must never block on a pairing negotiation, and the
-/// reply is not interesting anyway: the state change arrives as a signal, on the same path a change made from
-/// any other application takes.
+/// Runs a BlueZ mutation off the UI thread. A click handler must never block on a pairing negotiation, and the reply is not interesting anyway: the state change arrives as a signal, on the same path a change made from any other application takes.
 fn act(what: &'static str, job: impl FnOnce(&Connection) + Send + 'static) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-bluetooth-act".to_string())
@@ -371,9 +340,7 @@ fn set_property(conn: &Connection, path: &str, iface: &str, name: &str, value: V
     }
 }
 
-/// Powers the adapter on or off, publishing the target first so the chip flips on the same frame. Switching off
-/// also clears the device list and any scan: BlueZ reports both a moment later, and showing a connected headset
-/// under a radio the user just turned off is worse than showing nothing.
+/// Powers the adapter on or off, publishing the target first so the chip flips on the same frame. Switching off also clears the device list and any scan: BlueZ reports both a moment later, and showing a connected headset under a radio the user just turned off is worse than showing nothing.
 pub fn set_powered(on: bool) {
     let Some(state) = current().filter(|s| s.available) else {
         return;
@@ -400,13 +367,9 @@ pub fn toggle_powered() {
     }
 }
 
-/// Starts or stops a scan. A scan on an adapter that is off would be refused, so this powers it on first — the
-/// user asked to look for a device, not to be told the radio is off.
+/// Starts or stops a scan. A scan on an adapter that is off would be refused, so this powers it on first — the user asked to look for a device, not to be told the radio is off.
 ///
-/// A scan is bounded by [`SCAN_WINDOW`] rather than left running. Discovery keeps the radio busy, drains a
-/// laptop and emits a signal per visible device per second, and nothing closes it on the way out: the surface
-/// that asked for it can be dismissed by a click on the scrim, which no handler sees. A self-limiting scan is
-/// the one shape that cannot leak.
+/// A scan is bounded by [`SCAN_WINDOW`] rather than left running. Discovery keeps the radio busy, drains a laptop and emits a signal per visible device per second, and nothing closes it on the way out: the surface that asked for it can be dismissed by a click on the scrim, which no handler sees. A self-limiting scan is the one shape that cannot leak.
 pub fn set_discovering(on: bool) {
     let Some(state) = current().filter(|s| s.available) else {
         return;
@@ -448,8 +411,7 @@ pub fn toggle_discovering() {
     }
 }
 
-/// Connects a device, pairing first when it isn't paired yet. BlueZ's `Connect` on an unpaired device fails
-/// with an authentication error, so the one gesture a user has — "use this device" — has to cover both.
+/// Connects a device, pairing first when it isn't paired yet. BlueZ's `Connect` on an unpaired device fails with an authentication error, so the one gesture a user has — "use this device" — has to cover both.
 pub fn connect(path: &str) {
     let Some(device) = current().and_then(|s| s.device(path).cloned()) else {
         return;
@@ -458,8 +420,7 @@ pub fn connect(path: &str) {
     act("connect", move |conn| {
         if !device.paired {
             call(conn, &path, DEVICE_IFACE, "Pair");
-            // Pairing an audio device auto-connects it on most stacks; asking again is harmless where it did
-            // and necessary where it did not.
+            // Pairing an audio device auto-connects it on most stacks; asking again is harmless where it did and necessary where it did not.
         }
         call(conn, &path, DEVICE_IFACE, "Connect");
     });
@@ -510,8 +471,7 @@ pub fn forget(path: &str) {
     });
 }
 
-/// Trusting a device is what lets it reconnect on its own — a keyboard that has to be re-authorised at every
-/// boot is a keyboard you cannot log in with.
+/// Trusting a device is what lets it reconnect on its own — a keyboard that has to be re-authorised at every boot is a keyboard you cannot log in with.
 pub fn set_trusted(path: &str, trusted: bool) {
     let path = path.to_string();
     act("trust the device", move |conn| {
@@ -561,8 +521,7 @@ mod tests {
         assert_eq!(anonymous.label(), "dev_AA", "never an empty row");
     }
 
-    /// The object tree BlueZ answers `GetManagedObjects` with, built by hand so the mapping is tested without a
-    /// bus: one adapter, one connected headset with a battery, one device belonging to a second adapter.
+    /// The object tree BlueZ answers `GetManagedObjects` with, built by hand so the mapping is tested without a bus: one adapter, one connected headset with a battery, one device belonging to a second adapter.
     fn objects() -> ManagedObjects {
         let owned = |v: Value<'static>| OwnedValue::try_from(v).unwrap();
         let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();

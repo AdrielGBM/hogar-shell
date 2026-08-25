@@ -13,17 +13,11 @@ for that monitor — see [Per-monitor setup](../guides/per-monitor.md).
 
 ## `[active_window]`
 
-The `active_window` module. `compact` shows the app's class instead of the document title — stable while you
-move around inside one app, and much narrower.
+The `active_window` module. `compact` shows the app's class instead of the document title — stable while you move around inside one app, and much narrower.
 
-Nothing bounds the title's length. The chip gives up width when its side of the bar runs short and the label
-elides, so a browser tab that runs to a paragraph costs the modules beside it nothing. A character count
-bounded it once and could not tell the two cases apart: it cut a short title on a wide bar exactly as
-readily as a long one on a narrow bar, which is the wrong unit for a question about room.
+Nothing bounds the title's length. The chip gives up width when its side of the bar runs short and the label elides, so a browser tab that runs to a paragraph costs the modules beside it nothing. A character count bounded it once and could not tell the two cases apart: it cut a short title on a wide bar exactly as readily as a long one on a narrow bar, which is the wrong unit for a question about room.
 
-`inverted` puts the icon after the title instead of before it. Which reads better depends on where the chip
-sits: leading the icon points into the bar from the left, and trailing it does the same from the right, so
-a chip in the end zone usually wants this on.
+`inverted` puts the icon after the title instead of before it. Which reads better depends on where the chip sits: leading the icon points into the bar from the left, and trailing it does the same from the right, so a chip in the end zone usually wants this on.
 
 - **`compact`** · default `false`
 - **`inverted`** · default `false`
@@ -33,14 +27,9 @@ a chip in the end zone usually wants this on.
 
 How the shell moves (`[animation]`).
 
-Two curve families rather than one, because rsx has two motion models and they answer different questions.
-`curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace
-indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a
-**timing function**, for a transition with a start, an end and a duration — a panel opening.
+Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration — a panel opening.
 
-`duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled
-= false` collapses every duration to zero, which is the accessibility answer (and what a user on a remote
-desktop wants) rather than a per-surface opt-out.
+`duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, which is the accessibility answer (and what a user on a remote desktop wants) rather than a per-surface opt-out.
 
 - **`curve`** · default `"gentle"`
 
@@ -58,10 +47,7 @@ desktop wants) rather than a per-surface opt-out.
 
 ## `[audio]`
 
-Audio control (`[audio]`). `increment` is what one wheel notch over the volume or microphone chip moves and
-what `hogar-shell volume up` steps by. `max_volume` is the ceiling the sink can be raised to: PipeWire lets a
-sink boost past 100 %, which rescues a quiet laptop and wrecks a good speaker, so it belongs to the user
-rather than to a constant in the code.
+Audio control (`[audio]`). `increment` is what one wheel notch over the volume or microphone chip moves and what `hogar-shell volume up` steps by. `max_volume` is the ceiling the sink can be raised to: PipeWire lets a sink boost past 100 %, which rescues a quiet laptop and wrecks a good speaker, so it belongs to the user rather than to a constant in the code.
 
 - **`increment`** · default `5`
 - **`max_volume`** · default `150`
@@ -87,11 +73,7 @@ Full-screen wallpaper behind everything, one surface per monitor. Off by default
 
 One bar per screen edge; empty bars collapse to zero. Default is all-empty by design (serde fills missing fields), so configs get only what they specify — see [`Config::starter`] for the initial setup.
 
-`excluded_screens` names outputs that get no bars at all — a TV, a projector, a monitor that only ever shows
-one fullscreen thing. Each entry matches the connector name (`DP-1`) as a `*` pattern, so `HDMI-*` covers a
-port whose index moves between reboots. *Which* modules a screen shows is a per-monitor config override
-(`monitors/<output>/config.toml`) rather than a key here: it is the same `[bars.<edge>]` shape, so there is
-nothing new to learn and nothing to keep in step.
+`excluded_screens` names outputs that get no bars at all — a TV, a projector, a monitor that only ever shows one fullscreen thing. Each entry matches the connector name (`DP-1`) as a `*` pattern, so `HDMI-*` covers a port whose index moves between reboots. *Which* modules a screen shows is a per-monitor config override (`monitors/<output>/config.toml`) rather than a key here: it is the same `[bars.<edge>]` shape, so there is nothing new to learn and nothing to keep in step.
 
 - **`excluded_screens`** · default `[]`
 
@@ -101,20 +83,15 @@ nothing new to learn and nothing to keep in step.
 - **`end`** · default `[]`
 - **`peek`** · default `2`
 
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit
-  is worse than absent, so this is floored at 1.
+  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
 
 - **`persistent`** · default `true`
 
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its
-  own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out
-  when the pointer leaves.
+  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
 
 - **`show_on_hover`** · default `true`
 
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward
-  past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer
-  that keeps brushing the screen edge on its way somewhere else does not.
+  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
 
 - **`size`** · default `34`
 - **`start`** · default `[]`
@@ -132,20 +109,15 @@ nothing new to learn and nothing to keep in step.
 - **`end`** · default `[]`
 - **`peek`** · default `2`
 
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit
-  is worse than absent, so this is floored at 1.
+  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
 
 - **`persistent`** · default `true`
 
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its
-  own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out
-  when the pointer leaves.
+  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
 
 - **`show_on_hover`** · default `true`
 
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward
-  past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer
-  that keeps brushing the screen edge on its way somewhere else does not.
+  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
 
 - **`size`** · default `34`
 - **`start`** · default `[]`
@@ -163,20 +135,15 @@ nothing new to learn and nothing to keep in step.
 - **`end`** · default `[]`
 - **`peek`** · default `2`
 
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit
-  is worse than absent, so this is floored at 1.
+  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
 
 - **`persistent`** · default `true`
 
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its
-  own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out
-  when the pointer leaves.
+  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
 
 - **`show_on_hover`** · default `true`
 
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward
-  past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer
-  that keeps brushing the screen edge on its way somewhere else does not.
+  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
 
 - **`size`** · default `34`
 - **`start`** · default `[]`
@@ -194,20 +161,15 @@ nothing new to learn and nothing to keep in step.
 - **`end`** · default `["notes"]`
 - **`peek`** · default `2`
 
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit
-  is worse than absent, so this is floored at 1.
+  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
 
 - **`persistent`** · default `true`
 
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its
-  own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out
-  when the pointer leaves.
+  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
 
 - **`show_on_hover`** · default `true`
 
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward
-  past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer
-  that keeps brushing the screen edge on its way somewhere else does not.
+  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
 
 - **`size`** · default `34`
 - **`start`** · default `["workspaces"]`
@@ -221,9 +183,7 @@ nothing new to learn and nothing to keep in step.
 
 ## `[battery]`
 
-Low-battery behaviour (`[battery]`): the levels that raise a notification, and the action to take once the
-charge is low enough that the machine should put itself away. On a desktop none of it ever fires, since
-there is no battery to read.
+Low-battery behaviour (`[battery]`): the levels that raise a notification, and the action to take once the charge is low enough that the machine should put itself away. On a desktop none of it ever fires, since there is no battery to read.
 
 - **`critical_action`** · default `""`
 
@@ -237,13 +197,9 @@ there is no battery to read.
 
 ### `[[battery.warn_levels]]`
 
-One charge level worth interrupting the user about, declared as a `[[battery.warn_levels]]` table. It fires
-once as the charge crosses down through `level` while discharging, and re-arms once the battery is charging
-again — so a laptop left at 19 % does not warn every minute.
+One charge level worth interrupting the user about, declared as a `[[battery.warn_levels]]` table. It fires once as the charge crosses down through `level` while discharging, and re-arms once the battery is charging again — so a laptop left at 19 % does not warn every minute.
 
-`title` and `message` left empty take the shell's own translated text, so the defaults follow the UI
-language instead of pinning English into everyone's config; `{level}` in either is replaced with the charge
-at the moment it fired.
+`title` and `message` left empty take the shell's own translated text, so the defaults follow the UI language instead of pinning English into everyone's config; `{level}` in either is replaced with the charge at the moment it fired.
 
 The entries a fresh install starts with:
 
@@ -267,10 +223,7 @@ title = ""
 
 Bluetooth (`[bluetooth]`): the chip and the device list its panel shows.
 
-`scan_on_open` is what makes "pair something new" one gesture instead of two — a panel opened to find a
-device starts looking, and stops when it closes, so no scan outlives the surface that asked for it.
-`show_unnamed` is off because a scan in a public place turns up dozens of devices BlueZ knows only an
-address for, and a list of addresses is not a list anyone can choose from.
+`scan_on_open` is what makes "pair something new" one gesture instead of two — a panel opened to find a device starts looking, and stops when it closes, so no scan outlives the surface that asked for it. `show_unnamed` is off because a scan in a public place turns up dozens of devices BlueZ knows only an address for, and a list of addresses is not a list anyone can choose from.
 
 - **`enabled`** · default `true`
 - **`max_devices`** · default `12`
@@ -282,8 +235,7 @@ address for, and a list of addresses is not a list anyone can choose from.
 
 ## `[brightness]`
 
-Backlight control (`[brightness]`): the step a wheel notch or `hogar-shell brightness up` moves. Its own
-section rather than a key under `[audio]` so the per-output and DDC/CI settings that follow have a home.
+Backlight control (`[brightness]`): the step a wheel notch or `hogar-shell brightness up` moves. Its own section rather than a key under `[audio]` so the per-output and DDC/CI settings that follow have a home.
 
 - **`external`** · default `true`
 
@@ -293,9 +245,7 @@ section rather than a key under `[audio]` so the per-output and DDC/CI settings 
 
 ## `[clock]`
 
-The `clock` module and its panel. `format` and `date_format` are `strftime` patterns, so a user can have
-anything from `%H:%M` to a full locale date without the shell enumerating presets; `twelve_hour` is the one
-switch worth naming, since it is what most people actually mean by "change the clock format".
+The `clock` module and its panel. `format` and `date_format` are `strftime` patterns, so a user can have anything from `%H:%M` to a full locale date without the shell enumerating presets; `twelve_hour` is the one switch worth naming, since it is what most people actually mean by "change the clock format".
 
 - **`date_format`** · default `"%a %d %b"`
 - **`show_date`** · default `false`
@@ -315,15 +265,11 @@ switch worth naming, since it is what most people actually mean by "change the c
 
 The dashboard surface (`[dashboard]`).
 
-The two intervals are here rather than on the services they read because the cost is the dashboard's, not
-theirs: the performance cards redraw a sparkline per tick, and the playhead is an MPRIS property no player
-signals — following it means asking for it. A bar chip's own rate is unaffected either way, and neither
-ticker exists while the dashboard is closed.
+The two intervals are here rather than on the services they read because the cost is the dashboard's, not theirs: the performance cards redraw a sparkline per tick, and the playhead is an MPRIS property no player signals — following it means asking for it. A bar chip's own rate is unaffected either way, and neither ticker exists while the dashboard is closed.
 
 - **`avatar`** · default `""`
 
-  The image the user card shows. Empty means the usual places — `~/.face`, `~/.face.icon`, then the
-  AccountsService icon a display manager writes.
+  The image the user card shows. Empty means the usual places — `~/.face`, `~/.face.icon`, then the AccountsService icon a display manager writes.
 
 - **`first_day_of_week`** · default `"monday"`
 
@@ -339,16 +285,11 @@ ticker exists while the dashboard is closed.
 
 - **`tabs`** · default `["dash", "media", "performance", "weather"]`
 
-  Which pages the dashboard offers, in order; an id it doesn't know is dropped with a warning rather than
-  failing the whole config parse, which would cost the user every other section over one typo.
+  Which pages the dashboard offers, in order; an id it doesn't know is dropped with a warning rather than failing the whole config parse, which would cost the user every other section over one typo.
 
 ## `[general]`
 
-App-wide settings that don't belong to a specific visual section. `language` is a BCP-47 tag
-(`"en"`, `"es"`); empty means "follow the OS locale, else English". `show_over_fullscreen` lifts the bars
-onto the overlay layer so they stay visible over a fullscreen window — off by default, since a fullscreen
-game or video is normally meant to cover them. `logo` is the icon the `logo` module shows; empty detects the
-distribution from `/etc/os-release`.
+App-wide settings that don't belong to a specific visual section. `language` is a BCP-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `show_over_fullscreen` lifts the bars onto the overlay layer so they stay visible over a fullscreen window — off by default, since a fullscreen game or video is normally meant to cover them. `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os-release`.
 
 - **`language`** · default `""`
 - **`logo`** · default `""`
@@ -357,8 +298,7 @@ distribution from `/etc/os-release`.
 
   The terminal used to run a desktop entry marked `Terminal=true`; empty falls back to `xterm`.
 
-  Superseded by `[general.apps] terminal`, and still read when that one is unset — a config written
-  before the section existed keeps working rather than silently reverting to `xterm`.
+  Superseded by `[general.apps] terminal`, and still read when that one is unset — a config written before the section existed keeps working rather than silently reverting to `xterm`.
 
 ### `[general.apps]`
 
@@ -373,10 +313,7 @@ distribution from `/etc/os-release`.
 
 The graphics processor (`[gpu]`).
 
-`backend` is `auto` (the default), one of `amd` / `intel` / `nvidia`, or `none` to switch the service off
-entirely. Forcing one matters on a laptop with switchable graphics: the kernel lists the integrated GPU
-first, and "the first card with a driver we can read" is then the wrong one. `card` names the `drm` entry
-(`card1`) directly, which is the only way to tell two cards from the same vendor apart.
+`backend` is `auto` (the default), one of `amd` / `intel` / `nvidia`, or `none` to switch the service off entirely. Forcing one matters on a laptop with switchable graphics: the kernel lists the integrated GPU first, and "the first card with a driver we can read" is then the wrong one. `card` names the `drm` entry (`card1`) directly, which is the only way to tell two cards from the same vendor apart.
 
 - **`backend`** · default `"auto"`
 - **`card`** · default `""`
@@ -394,9 +331,7 @@ Where bar icons come from: an Iconify-compatible HTTP endpoint (`{provider}/{set
 
 Idle behaviour (`[idle]`): the timeouts, and what keeps them from firing.
 
-`respect_inhibitors` is not a condition the shell evaluates — it selects which question is asked of the
-compositor. `ext-idle-notify-v1` has one request that stays quiet while any client holds an idle inhibitor
-and another that reports raw input idleness, and the compositor is the only thing that can tell them apart.
+`respect_inhibitors` is not a condition the shell evaluates — it selects which question is asked of the compositor. `ext-idle-notify-v1` has one request that stays quiet while any client holds an idle inhibitor and another that reports raw input idleness, and the compositor is the only thing that can tell them apart.
 
 - **`enabled`** · default `false`
 - **`inhibit_when_audio`** · default `true`
@@ -413,12 +348,9 @@ and another that reports raw input idleness, and the compositor is the only thin
 
 ### `[[idle.stages]]`
 
-One idle timeout, declared as an `[[idle.stages]]` table: what to run once the seat has been idle that long,
-and what to run when it stops being.
+One idle timeout, declared as an `[[idle.stages]]` table: what to run once the seat has been idle that long, and what to run when it stops being.
 
-Both actions are request lines the shell already answers — the same strings `hogar-shell` takes on the command
-line — so a stage needs no new vocabulary and anything bindable to a key is bindable to a timeout. `hogar-shell
---list` is the full menu; `lock on`, `shell dpms off` and `session do suspend` are the usual three.
+Both actions are request lines the shell already answers — the same strings `hogar-shell` takes on the command line — so a stage needs no new vocabulary and anything bindable to a key is bindable to a timeout. `hogar-shell --list` is the full menu; `lock on`, `shell dpms off` and `session do suspend` are the usual three.
 
 The entries a fresh install starts with:
 
@@ -438,17 +370,13 @@ timeout = 360
 
 Keyboard navigation shared by every list surface (`[keynav]`).
 
-`vim` is off by default and has to be: the launcher's list sits under a search field, and a list that reads
-`j` as "down" cannot also let you type `jitsi`. Turning it on is a deliberate trade a vim user makes
-knowingly — the arrows keep working either way.
+`vim` is off by default and has to be: the launcher's list sits under a search field, and a list that reads `j` as "down" cannot also let you type `jitsi`. Turning it on is a deliberate trade a vim user makes knowingly — the arrows keep working either way.
 
 - **`vim`** · default `false`
 
 ## `[launcher]`
 
-`fuzzy` off makes the query a plain substring match, for users who find fuzzy matching too loose.
-`hidden` lists desktop-entry ids to keep out of the results entirely, and `favourites` lists ids to pin
-above the ranking, in the order given. `actions` are the `>`-prefixed commands of the action mode.
+`fuzzy` off makes the query a plain substring match, for users who find fuzzy matching too loose. `hidden` lists desktop-entry ids to keep out of the results entirely, and `favourites` lists ids to pin above the ranking, in the order given. `actions` are the `>`-prefixed commands of the action mode.
 
 - **`actions`** · default `[]`
 - **`calculator`** · default `true`
@@ -457,8 +385,7 @@ above the ranking, in the order given. `actions` are the `>`-prefixed commands o
 
 - **`enable_dangerous_actions`** · default `false`
 
-  Off by default: an action that can destroy something should take a deliberate opt-in, not arrive with
-  a config someone pasted from the internet.
+  Off by default: an action that can destroy something should take a deliberate opt-in, not arrive with a config someone pasted from the internet.
 
 - **`favourites`** · default `[]`
 - **`fuzzy`** · default `true`
@@ -473,20 +400,15 @@ above the ranking, in the order given. `actions` are the `>`-prefixed commands o
 
 ### `[launcher.icons]`
 
-Per-application icon overrides, keyed by desktop-entry id (`firefox`), valued as anything
-[`app_icon_view`] resolves: an icon-theme name or an absolute path.
+Per-application icon overrides, keyed by desktop-entry id (`firefox`), valued as anything [`app_icon_view`] resolves: an icon-theme name or an absolute path.
 
-For the entries whose `Icon` key names something this machine's icon theme does not have — which is
-most self-packaged software — where the alternative is editing a `.desktop` file the package manager
-owns and will overwrite.
+For the entries whose `Icon` key names something this machine's icon theme does not have — which is most self-packaged software — where the alternative is editing a `.desktop` file the package manager owns and will overwrite.
 
 ## `[lock]`
 
 The lock screen (`[lock]`): what it authenticates against, and what it shows while it waits.
 
-The screen only comes up on a compositor that implements `ext-session-lock-v1` and with a PAM library the
-shell can load. Both are checked *before* the lock is taken, because the failure mode of finding out
-afterwards is a user staring at a screen with no way back in.
+The screen only comes up on a compositor that implements `ext-session-lock-v1` and with a PAM library the shell can load. Both are checked *before* the lock is taken, because the failure mode of finding out afterwards is a user staring at a screen with no way back in.
 
 - **`fingerprint`** · default `false`
 
@@ -494,13 +416,11 @@ afterwards is a user staring at a screen with no way back in.
 
 - **`hide_notifs`** · default `true`
 
-  Start with the notification dock collapsed — the lock screen is the one surface where a stranger can
-  read what arrived without unlocking.
+  Start with the notification dock collapsed — the lock screen is the one surface where a stranger can read what arrived without unlocking.
 
 - **`howdy_command`** · default `""`
 
-  The Howdy face-unlock command, run with the user name appended; empty disables it. Exit status 0 is a
-  successful match, as Howdy's own PAM module treats it.
+  The Howdy face-unlock command, run with the user name appended; empty disables it. Exit status 0 is a successful match, as Howdy's own PAM module treats it.
 
 - **`lock_before_sleep`** · default `true`
 
@@ -515,15 +435,11 @@ afterwards is a user staring at a screen with no way back in.
 
 - **`pam_library`** · default `""`
 
-  Where `libpam` is. Empty tries `libpam.so.0`, `libpam.so` and NixOS's
-  `/run/current-system/sw/lib/libpam.so.0`, which between them cover every machine met so far; set it only
-  if `hogar-shell lock status` says the library could not be loaded.
+  Where `libpam` is. Empty tries `libpam.so.0`, `libpam.so` and NixOS's `/run/current-system/sw/lib/libpam.so.0`, which between them cover every machine met so far; set it only if `hogar-shell lock status` says the library could not be loaded.
 
 - **`pam_service`** · default `""`
 
-  The PAM service to authenticate against — a file under `/etc/pam.d`. Empty picks the first of
-  `hogar-shell`, `swaylock`, `login` that exists, so a machine with no hogar-shell-specific stack still
-  unlocks instead of refusing every password.
+  The PAM service to authenticate against — a file under `/etc/pam.d`. Empty picks the first of `hogar-shell`, `swaylock`, `login` that exists, so a machine with no hogar-shell-specific stack still unlocks instead of refusing every password.
 
 - **`show_avatar`** · default `true`
 - **`show_media`** · default `true`
@@ -536,9 +452,7 @@ afterwards is a user staring at a screen with no way back in.
 
 ## `[lock_status]`
 
-The `lockstatus` module: caps- and num-lock indicators. `hide_inactive` shows an indicator only while its
-key is engaged, for a bar that should stay quiet; off (the default) keeps both glyphs in place, muted, so
-the module is visible the moment it is added and the bar's width never shifts.
+The `lockstatus` module: caps- and num-lock indicators. `hide_inactive` shows an indicator only while its key is engaged, for a bar that should stay quiet; off (the default) keeps both glyphs in place, muted, so the module is visible the moment it is added and the bar's width never shifts.
 
 - **`caps`** · default `true`
 - **`hide_inactive`** · default `false`
@@ -548,10 +462,7 @@ the module is visible the moment it is added and the bar's width never shifts.
 
 Timed lyrics (`[lyrics]`).
 
-Where hand-kept `.lrc` files live is `[paths] lyrics`, with every other folder the shell owns — a file sitting
-next to the audio track is found without either. `online` is the only part of the feature that asks a third party
-anything (it sends the artist, title, album and length of what is playing to LRCLIB), so it is a switch of its
-own rather than part of `enabled`.
+Where hand-kept `.lrc` files live is `[paths] lyrics`, with every other folder the shell owns — a file sitting next to the audio track is found without either. `online` is the only part of the feature that asks a third party anything (it sends the artist, title, album and length of what is playing to LRCLIB), so it is a switch of its own rather than part of `enabled`.
 
 - **`enabled`** · default `true`
 - **`online`** · default `true`
@@ -560,15 +471,11 @@ own rather than part of `enabled`.
 
 ## `[media]`
 
-The `media` module. `preferred_player` names an MPRIS bus suffix (`spotify`, `mpv`) to favour when several
-players are running — it only wins while that player is actually up, so naming one you don't always run
-never blanks the chip. `aliases` renames a player for display, since players name themselves badly often
-enough (`com.github.th_ch.youtube_music` → `YT Music`) to be worth a config key.
+The `media` module. `preferred_player` names an MPRIS bus suffix (`spotify`, `mpv`) to favour when several players are running — it only wins while that player is actually up, so naming one you don't always run never blanks the chip. `aliases` renames a player for display, since players name themselves badly often enough (`com.github.th_ch.youtube_music` → `YT Music`) to be worth a config key.
 
 - **`marquee`** · default `false`
 
-  Scroll a title longer than `max_chars` instead of cutting it. Off by default: a bar that never moves is
-  easier to read past, and a marquee costs a repaint per step for as long as the track is playing.
+  Scroll a title longer than `max_chars` instead of cutting it. Off by default: a bar that never moves is easier to read past, and a marquee costs a repaint per step for as long as the track is playing.
 
 - **`marquee_speed_ms`** · default `220`
 
@@ -597,16 +504,11 @@ enough (`com.github.th_ch.youtube_music` → `YT Music`) to be worth a config ke
 
 The network (`[network]`): the wireless list its panel shows.
 
-`rescan_seconds` is a trade, not a preference: an access point that goes out of range emits nothing, so only
-a fresh scan notices it left. But a scan takes the radio off its channel, which on a busy link is a visible
-stutter and on some drivers worse — so the background interval is deliberately slow, and the moment that
-actually needs a fresh list (opening the panel) triggers a scan of its own. Turn it down only if a stale
-list bothers you more than the scans do.
+`rescan_seconds` is a trade, not a preference: an access point that goes out of range emits nothing, so only a fresh scan notices it left. But a scan takes the radio off its channel, which on a busy link is a visible stutter and on some drivers worse — so the background interval is deliberately slow, and the moment that actually needs a fresh list (opening the panel) triggers a scan of its own. Turn it down only if a stale list bothers you more than the scans do.
 
 - **`enabled`** · default `true`
 
-  Switches the NetworkManager layer off entirely: no D-Bus connection, no rescan timer, no threads. The
-  bar chip keeps working — it reads sysfs and never needed NetworkManager.
+  Switches the NetworkManager layer off entirely: no D-Bus connection, no rescan timer, no threads. The bar chip keeps working — it reads sysfs and never needed NetworkManager.
 
 - **`max_networks`** · default `20`
 
@@ -615,23 +517,15 @@ list bothers you more than the scans do.
 - **`rescan_seconds`** · default `300`
 - **`show_hidden`** · default `false`
 
-  List networks that broadcast no SSID. Off by default: a hidden network cannot be joined by picking it
-  out of a list anyway, so it is a row that can only disappoint.
+  List networks that broadcast no SSID. Off by default: a hidden network cannot be joined by picking it out of a list anyway, so it is a row that can only disappoint.
 
 ## `[notifications]`
 
-Notification popups: what a card shows and how it behaves. Where the column sits, how wide it is, how many
-cards it holds and how long each stays are the column's — see [`StackConfig`].
+Notification popups: what a card shows and how it behaves. Where the column sits, how wide it is, how many cards it holds and how long each stays are the column's — see [`StackConfig`].
 
-The history panel's own behaviour lives here too, since it draws the same cards: `group_by_app` collapses an
-application's notifications under one header with a count, a mute and a clear, showing `group_preview_num`
-of them until the group is expanded; `action_on_click` makes tapping a card body invoke the notification's
-`default` action rather than only dismissing it; `body_lines`/`open_expanded` bound (or release) how much of
-a long body a card shows.
+The history panel's own behaviour lives here too, since it draws the same cards: `group_by_app` collapses an application's notifications under one header with a count, a mute and a clear, showing `group_preview_num` of them until the group is expanded; `action_on_click` makes tapping a card body invoke the notification's `default` action rather than only dismissing it; `body_lines`/`open_expanded` bound (or release) how much of a long body a card shows.
 
-`sound` is a command run — detached, through `sh -c` — each time a notification actually pops. Empty is
-silent, which is the default: a shell that started making noise on upgrade would be a bug, and the right
-command is per-machine (`canberra-gtk-play -i message`, `paplay /usr/share/sounds/…`).
+`sound` is a command run — detached, through `sh -c` — each time a notification actually pops. Empty is silent, which is the default: a shell that started making noise on upgrade would be a bug, and the right command is per-machine (`canberra-gtk-play -i message`, `paplay /usr/share/sounds/…`).
 
 - **`action_on_click`** · default `true`
 - **`body_lines`** · default `4`
@@ -640,13 +534,9 @@ command is per-machine (`canberra-gtk-play -i message`, `paplay /usr/share/sound
 
 - **`critical_max_secs`** · default `120`
 
-  How long a sticky `critical` notification waits before retiring to the history panel anyway, in seconds.
-  `0` restores the unbounded wait.
+  How long a sticky `critical` notification waits before retiring to the history panel anyway, in seconds. `0` restores the unbounded wait.
 
-  A ceiling rather than a second timeout: sticky means "long enough that it cannot be missed", and the
-  unbounded reading of that has one failure mode with no way out — a card whose only exit is a gesture,
-  on a shell where the gesture did not land, stays on screen until the shell is restarted. Retiring is not
-  dismissing, so nothing is lost when it fires: the notification is still in the panel behind the bell.
+  A ceiling rather than a second timeout: sticky means "long enough that it cannot be missed", and the unbounded reading of that has one failure mode with no way out — a card whose only exit is a gesture, on a shell where the gesture did not land, stays on screen until the shell is restarted. Retiring is not dismissing, so nothing is lost when it fires: the notification is still in the panel behind the bell.
 
 - **`critical_sticky`** · default `true`
 
@@ -660,20 +550,13 @@ command is per-machine (`canberra-gtk-play -i message`, `paplay /usr/share/sound
 
 ## `[panels]`
 
-Panel presentation shared by drawers and floating windows (`[panels]`): each form's size, and the gesture
-that opens one. One home for both so a drawer and a float are configured the same way.
+Panel presentation shared by drawers and floating windows (`[panels]`): each form's size, and the gesture that opens one. One home for both so a drawer and a float are configured the same way.
 
-**What is deliberately not here.** The gap a panel keeps from the bar is derived, never set: the bar's own
-outer gap when it floats, else a default so a hugging bar's panels still breathe. And its opacity is
-`[theme] opacity`, for every surface at once. Both used to be overridable per-panel, and neither key
-bought anything but the chance for a drawer to sit at a distance, or at an opacity, that nothing else on
-the screen shares.
+**What is deliberately not here.** The gap a panel keeps from the bar is derived, never set: the bar's own outer gap when it floats, else a default so a hugging bar's panels still breathe. And its opacity is `[theme] opacity`, for every surface at once. Both used to be overridable per-panel, and neither key bought anything but the chance for a drawer to sit at a distance, or at an opacity, that nothing else on the screen shares.
 
 - **`drag_threshold`** · default `48.0`
 
-  How far a chip must be dragged away from the bar before letting go opens its panel, in px. `0` switches
-  the gesture off. One threshold for every panel rather than one each: the gesture is the same everywhere
-  on the bar, and a per-panel distance would make the bar feel inconsistent under the same finger.
+  How far a chip must be dragged away from the bar before letting go opens its panel, in px. `0` switches the gesture off. One threshold for every panel rather than one each: the gesture is the same everywhere on the bar, and a per-panel distance would make the bar feel inconsistent under the same finger.
 
 ### `[panels.drawer]`
 
@@ -689,9 +572,7 @@ the screen shares.
 
 Where the shell reads and writes user content (`[paths]`).
 
-Every entry is empty by default, meaning "work it out": the wallpaper, screenshot and recording directories
-resolve through the user's own XDG directories, so they land in `Imágenes/Capturas` on a Spanish desktop
-rather than in a `Pictures` nobody has. `~` is expanded on read.
+Every entry is empty by default, meaning "work it out": the wallpaper, screenshot and recording directories resolve through the user's own XDG directories, so they land in `Imágenes/Capturas` on a Spanish desktop rather than in a `Pictures` nobody has. `~` is expanded on read.
 
 - **`assets`** · default `""`
 
@@ -704,13 +585,9 @@ rather than in a `Pictures` nobody has. `~` is expanded on read.
 
 ## `[popouts]`
 
-Hover popouts (`[popouts]`): the readout a chip shows while the pointer rests on it, distinct from the
-drawer a click opens.
+Hover popouts (`[popouts]`): the readout a chip shows while the pointer rests on it, distinct from the drawer a click opens.
 
-The delays are what separate a popout from a flicker. Without `open_delay`, dragging the pointer across the
-bar would fire every chip's popout in turn; without `close_delay`, the popout would vanish in the gap
-between the chip and itself. Both are clamped on read, so a typo can make a popout slow but never instant
-or permanent.
+The delays are what separate a popout from a flicker. Without `open_delay`, dragging the pointer across the bar would fire every chip's popout in turn; without `close_delay`, the popout would vanish in the gap between the chip and itself. Both are clamped on read, so a typo can make a popout slow but never instant or permanent.
 
 - **`close_delay`** · default `200`
 
@@ -722,8 +599,7 @@ or permanent.
 
 - **`max_height`** · default `300.0`
 
-  The tallest a popout may grow. Its surface is this tall whatever the card needs; the surplus is carved
-  out of the input region, so it stays click-through rather than swallowing presses.
+  The tallest a popout may grow. Its surface is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
 
 - **`open_delay`** · default `280`
 
@@ -735,8 +611,7 @@ or permanent.
 
 Screen recording (`[recorder]`).
 
-`backend` is `auto`, `wf-recorder` or `gpu-screen-recorder`; `auto` takes whichever is installed. Neither is a
-dependency of the shell — with no recorder present the controls grey out rather than failing on the press.
+`backend` is `auto`, `wf-recorder` or `gpu-screen-recorder`; `auto` takes whichever is installed. Neither is a dependency of the shell — with no recorder present the controls grey out rather than failing on the press.
 
 - **`audio`** · default `false`
 - **`audio_device`** · default `""`
@@ -759,13 +634,9 @@ dependency of the shell — with no recorder present the controls grey out rathe
 
 Screenshots (`[screenshot]`).
 
-`backend` names the protocol to capture through: `auto` (the default), `image-copy-capture` or `screencopy`.
-`auto` prefers `ext-image-copy-capture`, the standardised one, and falls back to `wlr-screencopy` on a
-compositor too old for it. Naming one means "this route or none" — a user who names a backend is usually
-debugging one, and a silent fallback is what hides the answer.
+`backend` names the protocol to capture through: `auto` (the default), `image-copy-capture` or `screencopy`. `auto` prefers `ext-image-copy-capture`, the standardised one, and falls back to `wlr-screencopy` on a compositor too old for it. Naming one means "this route or none" — a user who names a backend is usually debugging one, and a silent fallback is what hides the answer.
 
-`annotator` is the command a saved capture is handed to, with `{file}` where the path goes (appended when the
-command does not name it): `satty --filename {file}`, `swappy -f`. Empty means the capture is simply saved.
+`annotator` is the command a saved capture is handed to, with `{file}` where the path goes (appended when the command does not name it): `satty --filename {file}`, `swappy -f`. Empty means the capture is simply saved.
 
 - **`annotator`** · default `""`
 - **`backend`** · default `"auto"`
@@ -779,8 +650,7 @@ command does not name it): `satty --filename {file}`, `swappy -f`. Empty means t
 
 - **`freeze`** · default `true`
 
-  Hold the last frame on screen while a region is being selected, so a menu or a hover state can be
-  captured without disappearing the moment the overlay takes the pointer.
+  Hold the last frame on screen while a region is being selected, so a menu or a hover state can be captured without disappearing the moment the overlay takes the pointer.
 
 - **`include_cursor`** · default `false`
 - **`notify`** · default `true`
@@ -802,11 +672,9 @@ Global shape settings. `gap` defaults to 0 (edge-to-edge bar; floating is opt-in
 
 ## `[sidebar]`
 
-The notification centre (`[sidebar]`): a full-height surface that is the home for the notification history and
-the quick toggles.
+The notification centre (`[sidebar]`): a full-height surface that is the home for the notification history and the quick toggles.
 
-Distinct from the bell drawer, which is a glance: this is where a user goes to *deal with* what has arrived,
-so it takes the whole edge, scrolls, and hosts the utilities panel's own toggles rather than a second set.
+Distinct from the bell drawer, which is a glance: this is where a user goes to *deal with* what has arrived, so it takes the whole edge, scrolls, and hosts the utilities panel's own toggles rather than a second set.
 
 - **`edge`** · default `"right"`
 - **`show_history`** · default `true`
@@ -817,36 +685,25 @@ so it takes the whole edge, scrolls, and hosts the utilities panel's own toggles
 
 ## `[stack]`
 
-The column of cards the shell pins to a screen edge and takes away again (`[stack]`): notification popups,
-in-shell toasts, and the OSD a volume or brightness change flashes.
+The column of cards the shell pins to a screen edge and takes away again (`[stack]`): notification popups, in-shell toasts, and the OSD a volume or brightness change flashes.
 
-**One section because they are one column.** They were three, each with its own `edge`, `align`, `width` and
-timeout, and being three is what let them sit in three different places and overlap each other on a narrow
-screen with no one of them able to know. Where the column is, how wide it is and how many cards it shows at
-once are properties of the column; what each card *is* stays in `[notifications]` and `[toasts]`.
+**One section because they are one column.** They were three, each with its own `edge`, `align`, `width` and timeout, and being three is what let them sit in three different places and overlap each other on a narrow screen with no one of them able to know. Where the column is, how wide it is and how many cards it shows at once are properties of the column; what each card *is* stays in `[notifications]` and `[toasts]`.
 
-`timeout_ms` is one number for the same reason. Which is not to say every card goes: a `critical`
-notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with
-nothing left to say. Not expiring is a property of the card, not a second timeout.
+`timeout_ms` is one number for the same reason. Which is not to say every card goes: a `critical` notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with nothing left to say. Not expiring is a property of the card, not a second timeout.
 
 - **`align`** · default `"end"`
 - **`clear_threshold`** · default `0.35`
 
-  How far sideways a card must be dragged before letting go retires it, as a fraction of its width.
-  `0` switches the gesture off, which is what a touchpad user who keeps catching it wants.
+  How far sideways a card must be dragged before letting go retires it, as a fraction of its width. `0` switches the gesture off, which is what a touchpad user who keeps catching it wants.
 
-  The column's, not any one card's: a notification, a toast and an OSD are dismissed by the same gesture,
-  and a threshold that differed between them would make the column feel like three surfaces again.
+  The column's, not any one card's: a notification, a toast and an OSD are dismissed by the same gesture, and a threshold that differed between them would make the column feel like three surfaces again.
 
 - **`edge`** · default `"top"`
 - **`max_visible`** · default `4`
 
   How many cards show at once; the rest queue behind them.
 
-  Not a hard ceiling, and the exception is the point: every source with something to say — a notification,
-  a toast, an OSD — is guaranteed one card before this is shared out, so a brightness reading you asked for
-  by pressing a key is never queued behind notifications you did not. With more sources speaking at once
-  than this allows, the column is that many cards tall.
+  Not a hard ceiling, and the exception is the point: every source with something to say — a notification, a toast, an OSD — is guaranteed one card before this is shared out, so a brightness reading you asked for by pressing a key is never queued behind notifications you did not. With more sources speaking at once than this allows, the column is that many cards tall.
 
 - **`timeout_ms`** · default `3000`
 - **`width`** · default `380.0`
@@ -855,11 +712,7 @@ nothing left to say. Not expiring is a property of the card, not a second timeou
 
 The compact status cluster (`[status_icons]`): several service readings sharing one chip.
 
-`icons` is a list rather than a set of flags because the order is the point — it is what a user reads
-left-to-right, and a fixed order would make the cluster the shell's priority instead of theirs. The names
-match the module ids the same readings have as standalone chips, so moving one between the two is not a
-rename; `caps` and `num` are the exception, since `lockstatus` is one module drawing two indicators and a
-cluster should be able to take only one of them.
+`icons` is a list rather than a set of flags because the order is the point — it is what a user reads left-to-right, and a fixed order would make the cluster the shell's priority instead of theirs. The names match the module ids the same readings have as standalone chips, so moving one between the two is not a rename; `caps` and `num` are the exception, since `lockstatus` is one module drawing two indicators and a cluster should be able to take only one of them.
 
 - **`icons`** · default `["volume", "mic", "network", "battery"]`
 - **`spacing`** · default `0.35`
@@ -868,10 +721,7 @@ cluster should be able to take only one of them.
 
 ## `[temperature]`
 
-The `temperature` module. `sensor` names an hwmon chip (`k10temp`, `coretemp`) or a sensor label (`Tctl`,
-`Package id 0`) to follow; empty tracks the hottest sensor on the machine, which is what works without a
-per-machine config. `warn`/`critical` are the °C the chip tints amber and red at — a desktop CPU that idles
-at 65 °C should not show a permanent warning, so they are the user's numbers.
+The `temperature` module. `sensor` names an hwmon chip (`k10temp`, `coretemp`) or a sensor label (`Tctl`, `Package id 0`) to follow; empty tracks the hottest sensor on the machine, which is what works without a per-machine config. `warn`/`critical` are the °C the chip tints amber and red at — a desktop CPU that idles at 65 °C should not show a permanent warning, so they are the user's numbers.
 
 - **`critical`** · default `85.0`
 - **`sensor`** · default `""`
@@ -885,29 +735,22 @@ Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dy
 - **`accent`** · default `"cyan"`
 - **`fallback`** · default `"nord"`
 
-  The palette a `dynamic` theme falls back to before a wallpaper has been quantised — on the very first
-  start, or with no wallpaper set at all.
+  The palette a `dynamic` theme falls back to before a wallpaper has been quantised — on the very first start, or with no wallpaper set at all.
 
 - **`mode`** · default `"auto"`
 
-  `dark`, `light`, or `auto` (the default) to keep whatever the named palette already is. A built-in with
-  a sibling in the asked-for mode switches to it (`gruvbox` ↔ `gruvbox-light`); one without keeps its own.
+  `dark`, `light`, or `auto` (the default) to keep whatever the named palette already is. A built-in with a sibling in the asked-for mode switches to it (`gruvbox` ↔ `gruvbox-light`); one without keeps its own.
 
 - **`name`** · default `"nord"`
 - **`opacity`** · default `1.0`
 
-  How opaque every surface the shell paints is, from `0.2` to `1.0` — bars, panels, cards and flashes
-  alike. One key for the whole shell and no way to break it apart: a drawer at an opacity the bar it
-  hangs off does not share is not a look anybody chooses, it is two settings that drifted.
+  How opaque every surface the shell paints is, from `0.2` to `1.0` — bars, panels, cards and flashes alike. One key for the whole shell and no way to break it apart: a drawer at an opacity the bar it hangs off does not share is not a look anybody chooses, it is two settings that drifted.
 
-  **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job — a
-  `layer_rule = blur, ^hogar-shell`, which needs no code here — and it shows nothing through a surface
-  painted opaque. Lowering this is what gives it something to blur.
+  **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job — a `layer_rule = blur, ^hogar-shell`, which needs no code here — and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
 
 - **`variant`** · default `"vibrant"`
 
-  How much colour a `dynamic` scheme carries: `vibrant` (the default), `content`, `expressive`, `fidelity`
-  or `muted`. Ignored by the built-in palettes, which carry their own.
+  How much colour a `dynamic` scheme carries: `vibrant` (the default), `content`, `expressive`, `fidelity` or `muted`. Ignored by the built-in palettes, which carry their own.
 
 - **`radius`** · unset by default
 - **`spacing`** · unset by default
@@ -973,9 +816,7 @@ Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dy
 
 In-shell toasts (`[toasts]`): the transient messages the shell says about itself.
 
-Not notifications. A notification belongs to an application, goes into history and waits under
-Do-Not-Disturb; "Caps Lock is on" is feedback about a key that was just pressed and is worthless a second
-later. See `shared::services::toaster`.
+Not notifications. A notification belongs to an application, goes into history and waits under Do-Not-Disturb; "Caps Lock is on" is feedback about a key that was just pressed and is worthless a second later. See `shared::services::toaster`.
 
 - **`enabled`** · default `true`
 
@@ -1004,12 +845,9 @@ later. See `shared::services::toaster`.
 
 The system tray (`[tray]`).
 
-`hidden` drops an application's icon by its `Id`, and `icon_subs` swaps one for an Iconify glyph so an
-application shipping a mismatched icon can be made to sit with the rest of the bar. Both match the id as a
-`*` pattern rather than a literal, because a good number of applications bury a PID in theirs.
+`hidden` drops an application's icon by its `Id`, and `icon_subs` swaps one for an Iconify glyph so an application shipping a mismatched icon can be made to sit with the rest of the bar. Both match the id as a `*` pattern rather than a literal, because a good number of applications bury a PID in theirs.
 
-`recolour` tints every icon to the bar's foreground. Coherent, but it flattens an application that uses
-colour to report state — a sync client going red — so it stays off unless asked for.
+`recolour` tints every icon to the bar's foreground. Coherent, but it flattens an application that uses colour to report state — a sync client going red — so it stays off unless asked for.
 
 - **`background`** · default `false`
 
@@ -1021,8 +859,7 @@ colour to report state — a sync client going red — so it stays off unless as
 
 - **`enabled`** · default `true`
 
-  Off costs nothing: the module draws nothing and the service — three threads and a D-Bus name — is
-  never started.
+  Off costs nothing: the module draws nothing and the service — three threads and a D-Bus name — is never started.
 
 - **`hidden`** · default `[]`
 - **`recolour`** · default `false`
@@ -1033,9 +870,7 @@ colour to report state — a sync client going red — so it stays off unless as
 
 The utilities panel (`[utilities]`): the quick toggles it lists, and in which order.
 
-`toggles` is a list of ids rather than a switch per toggle, because the order is the point — the toggles a
-user reaches for live at the front. Unknown ids are dropped with a warning rather than failing the config, so
-a name from a newer build costs a line in the log instead of the whole panel.
+`toggles` is a list of ids rather than a switch per toggle, because the order is the point — the toggles a user reaches for live at the front. Unknown ids are dropped with a warning rather than failing the config, so a name from a newer build costs a line in the log instead of the whole panel.
 
 - **`columns`** · default `4`
 
@@ -1052,17 +887,13 @@ a name from a newer build costs a line in the log instead of the whole panel.
 - **`toggles`** · default `["wifi", "bluetooth", "mic", "dnd", "game_mode", "vpn", "idle_inhibit", "settings"]`
 - **`window_preview_ms`** · default `1000`
 
-  How often the window info panel re-captures its preview, in ms. `0` takes one still and leaves it, which
-  is what a machine on battery wants — the preview is a screen capture per refresh.
+  How often the window info panel re-captures its preview, in ms. `0` takes one still and leaves it, which is what a machine on battery wants — the preview is a screen capture per refresh.
 
 ## `[visualiser]`
 
-The audio visualiser's *source* (`[visualiser]`): how the sound coming out of the speakers is turned into
-bars. Shared by everything that draws it — the desktop background, the media card — so the analysis is
-described once and the look belongs to each consumer's own section.
+The audio visualiser's *source* (`[visualiser]`): how the sound coming out of the speakers is turned into bars. Shared by everything that draws it — the desktop background, the media card — so the analysis is described once and the look belongs to each consumer's own section.
 
-Nothing here starts a capture on its own: the service behind it runs only while something is subscribed, so
-a shell with no visualiser switched on never opens a stream.
+Nothing here starts a capture on its own: the service behind it runs only while something is subscribed, so a shell with no visualiser switched on never opens a stream.
 
 - **`bars`** · default `48`
 
@@ -1116,29 +947,23 @@ The wallpaper library: which folder is browsed and how (`[wallpaper]`). The fold
 
 The weather (`[weather]`).
 
-`location` is a place name (`"Madrid"`), geocoded once; `latitude`/`longitude` skip that step. With none of
-them set the service asks an IP-geolocation endpoint where this connection is — which is the only part of
-the feature that tells a third party anything, and setting either of the others avoids it.
+`location` is a place name (`"Madrid"`), geocoded once; `latitude`/`longitude` skip that step. With none of them set the service asks an IP-geolocation endpoint where this connection is — which is the only part of the feature that tells a third party anything, and setting either of the others avoids it.
 
 - **`enabled`** · default `true`
 - **`forecast_days`** · default `7`
 - **`location`** · default `""`
 - **`refresh_minutes`** · default `15`
 
-  Minutes between refreshes. Clamped on read: the forecast changes hourly, and hammering a free service
-  every few seconds is how a shell gets its users rate-limited.
+  Minutes between refreshes. Clamped on read: the forecast changes hourly, and hammering a free service every few seconds is how a shell gets its users rate-limited.
 
 - **`latitude`** · unset by default
 - **`longitude`** · unset by default
 
 ## `[widgets]`
 
-Widgets drawn on the desktop, on a surface of their own: a clock face, an audio visualiser. All off by
-default, and the surface exists only while one of them is on.
+Widgets drawn on the desktop, on a surface of their own: a clock face, an audio visualiser. All off by default, and the surface exists only while one of them is on.
 
-**Not the wallpaper.** The wallpaper covers the whole screen under every window; this sits in what the bars
-left free, so a widget lines up with the applications rather than with the screen — and a visualiser that
-repaints with the music repaints that area instead of the whole screen behind it.
+**Not the wallpaper.** The wallpaper covers the whole screen under every window; this sits in what the bars left free, so a widget lines up with the applications rather than with the screen — and a visualiser that repaints with the music repaints that area instead of the whole screen behind it.
 
 ### `[widgets.clock]`
 
@@ -1157,8 +982,7 @@ repaints with the music repaints that area instead of the whole screen behind it
 - **`enabled`** · default `false`
 - **`invert`** · default `false`
 
-  Draw the face in the theme's base colour instead of its text colour — for a pale wallpaper, where light
-  text disappears.
+  Draw the face in the theme's base colour instead of its text colour — for a pale wallpaper, where light text disappears.
 
 - **`margin`** · default `48`
 
@@ -1224,13 +1048,9 @@ repaints with the music repaints that area instead of the whole screen behind it
 
 The `workspaces` module.
 
-`shown` pins how many pills the bar draws regardless of how many workspaces exist, which is what keeps the
-bar's width from shifting every time one is created or destroyed; `0` shows exactly the ones that exist.
-`label` is a `{id}`/`{name}`/`{index}` template so a user can have numbers, names or icons without the
-shell enumerating presets, and `special_icons` maps a scratchpad's bare name to an Iconify glyph.
+`shown` pins how many pills the bar draws regardless of how many workspaces exist, which is what keeps the bar's width from shifting every time one is created or destroyed; `0` shows exactly the ones that exist. `label` is a `{id}`/`{name}`/`{index}` template so a user can have numbers, names or icons without the shell enumerating presets, and `special_icons` maps a scratchpad's bare name to an Iconify glyph.
 
-`occupied_label` and `active_label` override that template for a pill holding windows and for the focused
-one; both empty (the default) means every pill renders the same way, which is what most bars want.
+`occupied_label` and `active_label` override that template for a pill holding windows and for the focused one; both empty (the default) means every pill renders the same way, which is what most bars want.
 
 - **`active_label`** · default `""`
 
@@ -1239,20 +1059,17 @@ one; both empty (the default) means every pill renders the same way, which is wh
 - **`capitalize`** · default `"none"`
 - **`indicator`** · default `true`
 
-  Mark the active workspace with one box that slides between pills instead of recolouring each pill in
-  place. Off restores the older look exactly — the pill paints its own accent and nothing moves.
+  Mark the active workspace with one box that slides between pills instead of recolouring each pill in place. Off restores the older look exactly — the pill paints its own accent and nothing moves.
 
 - **`indicator_trail`** · default `0.35`
 
-  How far the indicator stretches along its direction of travel, as a fraction of the distance still to
-  cover. `0` keeps it exactly one pill wide the whole way; the default gives it a little speed.
+  How far the indicator stretches along its direction of travel, as a fraction of the distance still to cover. `0` keeps it exactly one pill wide the whole way; the default gives it a little speed.
 
 - **`label`** · default `"{id}"`
 - **`max_window_icons`** · default `4`
 - **`occupied_background`** · default `true`
 
-  Tint a pill that holds windows differently from an empty one. Ignored while `indicator` is on, which
-  needs every pill transparent to slide under them; the label colour carries occupancy there.
+  Tint a pill that holds windows differently from an empty one. Ignored while `indicator` is on, which needs every pill transparent to slide under them; the label colour carries occupancy there.
 
 - **`occupied_label`** · default `""`
 

@@ -1,8 +1,7 @@
 [logic]
 use ::config::Config;
 
-// Readings, not fields — so it has no Save. The compositor and session lines are what a bug report needs
-// first and what a user otherwise has to leave the shell to find.
+// Readings, not fields — so it has no Save. The compositor and session lines are what a bug report needs first and what a user otherwise has to leave the shell to find.
 /// A non-empty environment variable, which is the only kind worth reporting.
 fn env_or_unknown(name: &str) -> Option<String> {
     std::env::var(name)

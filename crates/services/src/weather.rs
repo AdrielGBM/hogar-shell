@@ -1,13 +1,8 @@
 //! The weather, from Open-Meteo.
 //!
-//! Open-Meteo because it needs no API key: a shell that asked its user to register for one before it could
-//! show a temperature would ship with the feature effectively off. Two calls, both cached: a geocoding lookup
-//! that turns a place name into coordinates (once, and remembered), and the forecast itself.
+//! Open-Meteo because it needs no API key: a shell that asked its user to register for one before it could show a temperature would ship with the feature effectively off. Two calls, both cached: a geocoding lookup that turns a place name into coordinates (once, and remembered), and the forecast itself.
 //!
-//! Readings are always Celsius and km/h. Converting at the source would mean every surface having to know
-//! which unit the service happened to be configured in; the shell already has one place that turns a
-//! temperature into text for a user ([`TemperatureUnit`](config::TemperatureUnit)), and this
-//! feeds it.
+//! Readings are always Celsius and km/h. Converting at the source would mean every surface having to know which unit the service happened to be configured in; the shell already has one place that turns a temperature into text for a user ([`TemperatureUnit`](config::TemperatureUnit)), and this feeds it.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -21,21 +16,17 @@ use util::paths;
 
 const FORECAST_URL: &str = "https://api.open-meteo.com/v1/forecast";
 const GEOCODE_URL: &str = "https://geocoding-api.open-meteo.com/v1/search";
-/// IP geolocation, used only when no location is configured. Chosen because it answers plain JSON over HTTPS
-/// with no key and no cookie.
+/// IP geolocation, used only when no location is configured. Chosen because it answers plain JSON over HTTPS with no key and no cookie.
 const GEOIP_URL: &str = "https://ipapi.co/json/";
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How long after a failed fetch before trying again. Far shorter than the refresh interval: a laptop that
-/// opened its lid with no network yet should not wait a quarter of an hour for its first reading.
+/// How long after a failed fetch before trying again. Far shorter than the refresh interval: a laptop that opened its lid with no network yet should not wait a quarter of an hour for its first reading.
 const RETRY: Duration = Duration::from_secs(60);
 
 /// The sky, in the handful of states worth drawing a different icon for.
 ///
-/// WMO's code table has twenty-eight entries that distinguish "slight" from "moderate" drizzle, which is more
-/// than any icon set draws and more than a forecast line can say. These are the groups the distinctions
-/// collapse into.
+/// WMO's code table has twenty-eight entries that distinguish "slight" from "moderate" drizzle, which is more than any icon set draws and more than a forecast line can say. These are the groups the distinctions collapse into.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Condition {
     Clear,
@@ -73,8 +64,7 @@ impl Condition {
         }
     }
 
-    /// The stable slug, for IPC and config. Deliberately not the translated name: a script branching on the
-    /// weather must not change behaviour when the user switches the UI language.
+    /// The stable slug, for IPC and config. Deliberately not the translated name: a script branching on the weather must not change behaviour when the user switches the UI language.
     pub fn id(self) -> &'static str {
         match self {
             Self::Clear => "clear",
@@ -93,8 +83,7 @@ impl Condition {
         }
     }
 
-    /// The translated description a card shows. One `t!` per condition rather than a key built from [`id`]:
-    /// the macro checks its key against the catalogs at compile time, and a computed key would opt out of that.
+    /// The translated description a card shows. One `t!` per condition rather than a key built from [`id`]: the macro checks its key against the catalogs at compile time, and a computed key would opt out of that.
     pub fn label(self) -> String {
         match self {
             Self::Clear => telar::t!("weather.clear"),
@@ -131,8 +120,7 @@ impl Day {
     }
 }
 
-/// The current conditions plus the days ahead. Serialised as-is to the cache, so a shell that starts offline
-/// shows the last reading it had instead of a blank card.
+/// The current conditions plus the days ahead. Serialised as-is to the cache, so a shell that starts offline shows the last reading it had instead of a blank card.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Weather {
     pub place: String,
@@ -146,8 +134,7 @@ pub struct Weather {
     pub wind: f32,
     pub is_day: bool,
     pub days: Vec<Day>,
-    /// Unix seconds when this reading was fetched — what makes a cached one show its age rather than pass as
-    /// current.
+    /// Unix seconds when this reading was fetched — what makes a cached one show its age rather than pass as current.
     pub fetched_at: u64,
 }
 
@@ -156,8 +143,7 @@ impl Weather {
         Condition::from_wmo(self.code)
     }
 
-    /// Whether the reading is older than `interval` — a card can then say so instead of showing yesterday's
-    /// sky as today's.
+    /// Whether the reading is older than `interval` — a card can then say so instead of showing yesterday's sky as today's.
     pub fn is_stale(&self, interval: Duration) -> bool {
         now().saturating_sub(self.fetched_at) > interval.as_secs()
     }
@@ -191,11 +177,9 @@ fn get_json(agent: &ureq::Agent, url: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&body).ok()
 }
 
-/// Where to ask about: the configured coordinates, else the configured place name geocoded, else this
-/// connection's own approximate location.
+/// Where to ask about: the configured coordinates, else the configured place name geocoded, else this connection's own approximate location.
 ///
-/// The IP lookup is last on purpose — it is the only step that tells a third party anything, and configuring
-/// either of the other two avoids it entirely.
+/// The IP lookup is last on purpose — it is the only step that tells a third party anything, and configuring either of the other two avoids it entirely.
 fn locate(agent: &ureq::Agent, config: &WeatherConfig) -> Option<(Coordinates, String)> {
     if let Some(coordinates) = config.coordinates() {
         let place = if config.location.trim().is_empty() {
@@ -242,8 +226,7 @@ fn geolocate_by_ip(agent: &ureq::Agent) -> Option<(Coordinates, String)> {
     Some((coordinates, name))
 }
 
-/// Percent-encodes a query value. A city name can carry a space or an accent, and only these few characters
-/// need escaping for a query string — pulling in a URL crate for one parameter would not earn its place.
+/// Percent-encodes a query value. A city name can carry a space or an accent, and only these few characters need escaping for a query string — pulling in a URL crate for one parameter would not earn its place.
 fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.as_bytes() {
@@ -268,8 +251,7 @@ fn forecast_url(at: Coordinates, days: u32) -> String {
     )
 }
 
-/// Turns Open-Meteo's answer into a reading. The daily block comes back as parallel arrays rather than a list
-/// of objects, which is why the days are zipped by index here.
+/// Turns Open-Meteo's answer into a reading. The daily block comes back as parallel arrays rather than a list of objects, which is why the days are zipped by index here.
 fn parse(json: &serde_json::Value, place: &str) -> Option<Weather> {
     let current = json.get("current")?;
     let number = |value: Option<&serde_json::Value>| value.and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -358,9 +340,7 @@ fn settings() -> WeatherConfig {
         .unwrap_or_default()
 }
 
-/// Publishes the cached reading first so a card has something the moment it opens, then refreshes on the
-/// configured interval. A failed refresh keeps the previous reading rather than blanking the card: yesterday's
-/// forecast with a visible timestamp is more use than nothing.
+/// Publishes the cached reading first so a card has something the moment it opens, then refreshes on the configured interval. A failed refresh keeps the previous reading rather than blanking the card: yesterday's forecast with a visible timestamp is more use than nothing.
 fn run(out: &Arc<Broadcast<Weather>>) {
     let config = settings();
     if let Some(cached) = load_cache() {
@@ -382,9 +362,7 @@ fn run(out: &Arc<Broadcast<Weather>>) {
     }
 }
 
-/// Registers `tx` for readings — unless `[weather] enabled` is off, in which case no request is ever made.
-/// Worth guarding here rather than inside the producer: the first thing the producer does is ask a third party
-/// where this connection is, which is not something a disabled section should do at all.
+/// Registers `tx` for readings — unless `[weather] enabled` is off, in which case no request is ever made. Worth guarding here rather than inside the producer: the first thing the producer does is ask a third party where this connection is, which is not something a disabled section should do at all.
 pub fn subscribe(tx: EventSender<Weather>) {
     if !settings().enabled {
         return;
@@ -443,8 +421,7 @@ mod tests {
 
     #[test]
     fn an_answer_with_no_forecast_still_yields_the_current_conditions() {
-        // Not hypothetical: `forecast_days=1` and a request that drops the daily block both land here, and a
-        // missing forecast should cost the days rather than the whole reading.
+        // Not hypothetical: `forecast_days=1` and a request that drops the daily block both land here, and a missing forecast should cost the days rather than the whole reading.
         let json: serde_json::Value =
             serde_json::from_str(r#"{"current": {"temperature_2m": 9.0, "weather_code": 3}}"#)
                 .unwrap();

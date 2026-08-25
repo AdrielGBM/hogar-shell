@@ -1,13 +1,8 @@
 //! The lock screen: one surface per monitor, and the only thing on it that matters is the password field.
 //!
-//! Two things shape every decision here. The surface is a `ext-session-lock-v1` surface, so it covers the whole
-//! output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but
-//! authenticating. And it is drawn on *every* monitor, so the parts that would be silly in duplicate (the
-//! field, the avatar, the clock) are drawn only on the one the pointer or the compositor focused, while the
-//! rest stay a plain background.
+//! Two things shape every decision here. The surface is a `ext-session-lock-v1` surface, so it covers the whole output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but authenticating. And it is drawn on *every* monitor, so the parts that would be silly in duplicate (the field, the avatar, the clock) are drawn only on the one the pointer or the compositor focused, while the rest stay a plain background.
 //!
-//! Everything it shows is a subscription to [`lock::LockState`], which is written from a worker thread. The
-//! screen never authenticates; it collects a password and hands it over.
+//! Everything it shows is a subscription to [`lock::LockState`], which is written from a worker thread. The screen never authenticates; it collects a password and hands it over.
 
 use std::sync::Arc;
 use ui::scale::{corner, space};
@@ -26,11 +21,9 @@ use telar::WindowRoot;
 const AVATAR: f32 = 96.0;
 const CARD_WIDTH: f32 = 380.0;
 
-/// One monitor's lock surface. Built by the platform crate's lock session, once per output and again for any
-/// monitor connected while the screen is locked.
+/// One monitor's lock surface. Built by the platform crate's lock session, once per output and again for any monitor connected while the screen is locked.
 pub struct LockApp {
-    /// `None` before the shell has a config — which cannot happen for a lock the shell itself took, but the
-    /// type says so rather than the code assuming it.
+    /// `None` before the shell has a config — which cannot happen for a lock the shell itself took, but the type says so rather than the code assuming it.
     pub config: Option<Arc<Config>>,
     pub output: Option<String>,
 }
@@ -44,9 +37,7 @@ impl App for LockApp {
             .unwrap_or_else(|| Arc::new(Config::default()));
         set_theme(config.resolve_theme());
         services::locale::attach(config.language());
-        // Not a `PanelSurface` — the compositor's lock session mounts this, and it is the one surface that must
-        // never be translucent — but its content reads settings the same way every panel does, so it installs
-        // the same environment by hand.
+        // Not a `PanelSurface` — the compositor's lock session mounts this, and it is the one surface that must never be translucent — but its content reads settings the same way every panel does, so it installs the same environment by hand.
         let edge = ui::panel::drawn_edge(&config);
         set_surface_env(SurfaceEnv {
             edge,
@@ -59,8 +50,7 @@ impl App for LockApp {
     }
 
     fn clear_color(&self) -> Option<Color> {
-        // Opaque, and deliberately the darkest token there is: a lock surface is the only thing between the
-        // desktop and the room, so anything translucent would be a hole in it.
+        // Opaque, and deliberately the darkest token there is: a lock surface is the only thing between the desktop and the room, so anything translucent would be a hole in it.
         let theme = self
             .config
             .as_ref()
@@ -74,8 +64,7 @@ impl App for LockApp {
     }
 }
 
-/// The lock screen as the session opener mounts it, for [`crate::preview`] — over the starter config, since a
-/// preview has no session to read one from.
+/// The lock screen as the session opener mounts it, for [`crate::preview`] — over the starter config, since a preview has no session to read one from.
 pub(crate) fn screen_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     screen(&Arc::new(Config::starter()))
 }
@@ -123,8 +112,7 @@ fn screen(config: &Arc<Config>) -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// The card rounds like the shell's panels do, so the lock screen belongs to the same set as the drawers
-/// rather than being the one surface with its own corner.
+/// The card rounds like the shell's panels do, so the lock screen belongs to the same set as the drawers rather than being the one surface with its own corner.
 fn card_radius() -> f32 {
     config::config()
         .map(|c| c.panel_radius(config::Edge::Top))
@@ -133,8 +121,7 @@ fn card_radius() -> f32 {
 
 /// The time, large, at the top of the card — the one thing on a lock screen a glance is usually after.
 ///
-/// Formatted from the same `[clock]` keys the bar chip reads, so a user who set a 12-hour clock or their own
-/// pattern does not meet a different one here.
+/// Formatted from the same `[clock]` keys the bar chip reads, so a user who set a 12-hour clock or their own pattern does not meet a different one here.
 fn clock(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let clock = config.clock.clone();
     let time_format = clock.time_format().to_string();
@@ -175,9 +162,7 @@ fn clock(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layou
 
 /// Centres one item across the card.
 ///
-/// A `Text` laid out in a column takes the column's width and draws its glyphs from the left, so
-/// `align_items: center` on the card does nothing for it — the row it sits in has to do the centring. Every
-/// single-line reading on this screen goes through here rather than each one growing its own wrapper.
+/// A `Text` laid out in a column takes the column's width and draws its glyphs from the left, so `align_items: center` on the card does nothing for it — the row it sits in has to do the centring. Every single-line reading on this screen goes through here rather than each one growing its own wrapper.
 pub(crate) fn centred(item: Box<dyn LayoutItem>) -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(Container::new(
         LayoutStyle::new()
@@ -202,8 +187,7 @@ fn user_name(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// The password field. Masked, submits on Enter, and inert while a check is in flight or a lockout is running
-/// — a field that keeps taking keystrokes it will throw away reads as a frozen screen.
+/// The password field. Masked, submits on Enter, and inert while a check is in flight or a lockout is running — a field that keeps taking keystrokes it will throw away reads as a frozen screen.
 fn field(
     state: telar::ReadSignal<LockState>,
     theme: NordTheme,
@@ -230,8 +214,7 @@ fn field(
         move || theme.text_style(FontRole::Body, theme.text),
     )?
     .secret()
-    // The one surface where focus-on-tap is not good enough: a lock screen that needs a click before it takes
-    // a password reads as a frozen machine.
+    // The one surface where focus-on-tap is not good enough: a lock screen that needs a click before it takes a password reads as a frozen machine.
     .autofocus()
     .placeholder(telar::t!("lock.password"))
     .on_submit(submit);
@@ -246,8 +229,7 @@ fn field(
             .padding_vertical(space::md())
             .width(SizeDimension::Percent(1.0)),
         move |_| {
-            // The field itself carries the verdict: a wrong password tints the box the user is already
-            // looking at, rather than only a line of text below it they have to notice.
+            // The field itself carries the verdict: a wrong password tints the box the user is already looking at, rather than only a line of text below it they have to notice.
             let fill = if outline.get().failures > 0 {
                 theme.red.with_alpha(0.18)
             } else {
@@ -261,16 +243,14 @@ fn field(
 
 /// The line under the field: what the shell is waiting for, what went wrong, or how long the lockout has left.
 ///
-/// Read out of the state *before* any branch, so the paint registers its dependency on the frame that draws
-/// nothing too — a message that only appears after an unrelated re-render is the failure this avoids.
+/// Read out of the state *before* any branch, so the paint registers its dependency on the frame that draws nothing too — a message that only appears after an unrelated re-render is the failure this avoids.
 fn status_line(
     state: telar::ReadSignal<LockState>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let text = state.clone();
     let tint = state;
-    // The line is drawn even when it says nothing, so a wrong password does not resize the card under the
-    // hand that is about to retype the password.
+    // The line is drawn even when it says nothing, so a wrong password does not resize the card under the hand that is about to retype the password.
     centred(box_item(Text::auto(
         move || {
             let state = text.get();
@@ -303,9 +283,7 @@ fn status_line(
 
 /// Resolves one of the lock screen's own message keys.
 ///
-/// `t!` takes a literal so the analyzer can prove every key exists, but which message the status line shows is
-/// decided by a worker thread — so the keys are enumerated here instead. Anything unrecognised falls through
-/// to a generic failure rather than printing the key at the user.
+/// `t!` takes a literal so the analyzer can prove every key exists, but which message the status line shows is decided by a worker thread — so the keys are enumerated here instead. Anything unrecognised falls through to a generic failure rather than printing the key at the user.
 fn translate(key: &str) -> String {
     match key {
         "lock.checking" => telar::t!("lock.checking"),
@@ -344,8 +322,7 @@ mod tests {
 
     #[test]
     fn a_password_is_never_left_in_the_field_after_it_is_submitted() {
-        // The field's own copy is cleared before the secret is handed on, so a shoulder-surfer reading a
-        // screen that is still up after a failed attempt learns the length of nothing.
+        // The field's own copy is cleared before the secret is handed on, so a shoulder-surfer reading a screen that is still up after a failed attempt learns the length of nothing.
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
         let state = signal(LockState {

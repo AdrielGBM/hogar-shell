@@ -1,13 +1,8 @@
 //! The shell's command surface: one Unix socket, a flat `<target> <command> [args…]` protocol.
 //!
-//! Everything the shell can be told to do from outside — a Hyprland keybind, a script, another shell — arrives
-//! here. Commands run on the driver thread, the same thread every surface lives on, so a handler can open a
-//! panel or publish to a service exactly as a click handler would.
+//! Everything the shell can be told to do from outside — a Hyprland keybind, a script, another shell — arrives here. Commands run on the driver thread, the same thread every surface lives on, so a handler can open a panel or publish to a service exactly as a click handler would.
 //!
-//! The protocol is one request line in and one reply out, so `hogar-shell panel toggle clock` is also
-//! `printf 'panel toggle clock\n' | socat - UNIX-CONNECT:$sock`. Replies are prefixed `ok` or `err` so a script
-//! can branch without parsing prose. A reply is usually one line but need not be — a census, a palette or a list
-//! of monitors is a table — so its end is marked by the shell closing its side, not by a newline.
+//! The protocol is one request line in and one reply out, so `hogar-shell panel toggle clock` is also `printf 'panel toggle clock\n' | socat - UNIX-CONNECT:$sock`. Replies are prefixed `ok` or `err` so a script can branch without parsing prose. A reply is usually one line but need not be — a census, a palette or a list of monitors is a table — so its end is marked by the shell closing its side, not by a newline.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -20,13 +15,10 @@ use platform_wayland::EventSender;
 use surfaces::shell;
 use util::paths;
 
-/// How long the socket thread waits for the driver thread to answer before giving up. Long enough for a command
-/// that opens a surface, short enough that a wedged UI thread doesn't hang a script forever.
+/// How long the socket thread waits for the driver thread to answer before giving up. Long enough for a command that opens a surface, short enough that a wedged UI thread doesn't hang a script forever.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The socket's file name for a compositor instance. Keyed by the Hyprland instance signature so two
-/// compositors on one login session get one socket each instead of fighting over a shared name; outside
-/// Hyprland the name is still stable, so the CLI can find a shell running under any compositor.
+/// The socket's file name for a compositor instance. Keyed by the Hyprland instance signature so two compositors on one login session get one socket each instead of fighting over a shared name; outside Hyprland the name is still stable, so the CLI can find a shell running under any compositor.
 fn socket_name(instance: Option<String>) -> String {
     let instance = instance.filter(|s| !s.is_empty());
     format!("{}.sock", instance.as_deref().unwrap_or("default"))
@@ -39,9 +31,7 @@ pub fn socket_path() -> PathBuf {
     ))
 }
 
-/// Shuts the shell down: closes every surface, then exits. Surfaces are dropped first so the compositor sees
-/// them unmapped rather than the connection simply dying, and the IPC socket is removed on the way out — which
-/// is why this lives beside the socket rather than beside the surface registry it empties.
+/// Shuts the shell down: closes every surface, then exits. Surfaces are dropped first so the compositor sees them unmapped rather than the connection simply dying, and the IPC socket is removed on the way out — which is why this lives beside the socket rather than beside the surface registry it empties.
 pub(crate) fn request_quit() {
     shell::close_all();
     let _ = std::fs::remove_file(socket_path());
@@ -55,17 +45,14 @@ pub(crate) fn request_quit() {
         });
 }
 
-/// A shortcut and a `hogar-shell …` invocation must produce the same thing, and only one of the two can see this
-/// socket, so the type they share is defined below the pair of them.
+/// A shortcut and a `hogar-shell …` invocation must produce the same thing, and only one of the two can see this socket, so the type they share is defined below the pair of them.
 pub use services::command::Request;
 
-/// The socket producer: binds, then hands every request line to the driver thread and writes back its reply.
-/// Runs on its own thread via `platform_wayland::watch`, so a slow or hostile client never blocks the UI.
+/// The socket producer: binds, then hands every request line to the driver thread and writes back its reply. Runs on its own thread via `platform_wayland::watch`, so a slow or hostile client never blocks the UI.
 pub fn serve(tx: EventSender<Request>) {
     let path = socket_path();
     paths::ensure_dir(path.parent().map(PathBuf::from).unwrap_or_default());
-    // A socket left behind by a killed shell would refuse the bind; the caller has already established that
-    // nothing is listening on it (see `another_instance_is_running`), so removing it is safe here.
+    // A socket left behind by a killed shell would refuse the bind; the caller has already established that nothing is listening on it (see `another_instance_is_running`), so removing it is safe here.
     let _ = std::fs::remove_file(&path);
     let listener = match UnixListener::bind(&path) {
         Ok(listener) => listener,
@@ -85,8 +72,7 @@ pub fn serve(tx: EventSender<Request>) {
     let _ = std::fs::remove_file(&path);
 }
 
-/// Serves one connection, which may carry several request lines. Returns `false` once the driver stops
-/// answering, which is the socket thread's signal to wind itself down.
+/// Serves one connection, which may carry several request lines. Returns `false` once the driver stops answering, which is the socket thread's signal to wind itself down.
 fn handle_client(stream: UnixStream, tx: &EventSender<Request>) -> bool {
     let Ok(mut out) = stream.try_clone() else {
         return true;
@@ -119,11 +105,7 @@ pub fn handle(request: Request) {
 
 /// Sends one request to a running shell and returns its reply. The client half of the protocol, used by the CLI.
 ///
-/// The write half is closed before reading because a reply is not always one line: a census, a palette or a list
-/// of monitors is a table, and `read_line` would take its first row and silently drop the rest — which is what
-/// `shell status`, `shell screens`, `shell clients` and `scheme colors` all did. Half-closing tells the shell the
-/// request is complete, so it answers and closes its side, and that EOF is what bounds the read. The wire format
-/// is untouched: still a request line in, still `ok`/`err` leading the reply.
+/// The write half is closed before reading because a reply is not always one line: a census, a palette or a list of monitors is a table, and `read_line` would take its first row and silently drop the rest — which is what `shell status`, `shell screens`, `shell clients` and `scheme colors` all did. Half-closing tells the shell the request is complete, so it answers and closes its side, and that EOF is what bounds the read. The wire format is untouched: still a request line in, still `ok`/`err` leading the reply.
 pub fn call(line: &str) -> std::io::Result<String> {
     call_at(&socket_path(), line)
 }
@@ -139,8 +121,7 @@ fn call_at(path: &std::path::Path, line: &str) -> std::io::Result<String> {
     Ok(reply.trim_end().to_string())
 }
 
-/// Whether a shell is already listening on this session's socket. A stale socket file from a killed process
-/// fails to connect, so this answers "is one actually running", not "does the file exist".
+/// Whether a shell is already listening on this session's socket. A stale socket file from a killed process fails to connect, so this answers "is one actually running", not "does the file exist".
 pub fn another_instance_is_running() -> bool {
     UnixStream::connect(socket_path()).is_ok()
 }
@@ -166,8 +147,7 @@ mod tests {
 
     #[test]
     fn a_round_trip_through_the_socket_answers_on_the_driver_thread() {
-        // The whole client → socket thread → driver → reply path, minus the driver's real event loop: a stand-in
-        // consumer runs `handle` exactly as the `watch` callback does.
+        // The whole client → socket thread → driver → reply path, minus the driver's real event loop: a stand-in consumer runs `handle` exactly as the `watch` callback does.
         let (tx, rx) = mpsc::channel::<Request>();
         let driver = std::thread::spawn(move || {
             while let Ok(request) = rx.recv() {
@@ -185,10 +165,7 @@ mod tests {
 
     /// A tabular reply has to survive the socket whole.
     ///
-    /// It did not: the client read one line and dropped the rest, so `shell status` reported its first row and
-    /// nothing else — a census that looked like an answer while omitting most of it. Exercised end to end, over a
-    /// real socket, because the truncation was in the client's framing and no test of the command itself could
-    /// have seen it.
+    /// It did not: the client read one line and dropped the rest, so `shell status` reported its first row and nothing else — a census that looked like an answer while omitting most of it. Exercised end to end, over a real socket, because the truncation was in the client's framing and no test of the command itself could have seen it.
     #[test]
     fn a_reply_spanning_several_lines_survives_the_socket() {
         let dir = std::env::temp_dir().join(format!("hogar-shell-ipc-{}", std::process::id()));

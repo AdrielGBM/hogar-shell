@@ -1,7 +1,6 @@
 //! Volume, the mixer, the visualiser and what is playing.
 //!
-//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine
-//! decides the length of. The static-shape forms are `.rsx` components beside this file.
+//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
 use telar::{LayoutError, LayoutItem, LayoutStyle, RwSignal, Text, box_item, signal};
 
@@ -9,8 +8,7 @@ use crate::form::*;
 use config::MediaConfig;
 use config::theme::{FontRole, NordTheme};
 
-/// Every media player a `[media.aliases]` row should exist for: the ones seen on the bus this session, plus
-/// any the config already renames. Both halves matter, for the reason `monitor_keys` documents.
+/// Every media player a `[media.aliases]` row should exist for: the ones seen on the bus this session, plus any the config already renames. Both halves matter, for the reason `monitor_keys` documents.
 fn player_keys(configured: &std::collections::HashMap<String, String>) -> Vec<String> {
     let mut keys: Vec<String> = configured.keys().cloned().collect();
     if let Some(player) = services::mpris::current()

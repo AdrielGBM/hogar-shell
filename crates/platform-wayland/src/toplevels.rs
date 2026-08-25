@@ -1,26 +1,14 @@
 //! Open windows over `ext-foreign-toplevel-list-v1`: what exists, what it is called, and a handle on it.
 //!
-//! The enumeration a dock, a window switcher and an open-window launcher mode all rest on, read from the
-//! compositor rather than from one compositor's IPC.
+//! The enumeration a dock, a window switcher and an open-window launcher mode all rest on, read from the compositor rather than from one compositor's IPC.
 //!
-//! **The identifier is the join.** Each toplevel carries an opaque, stable string the compositor promises is
-//! unique for that window's whole life. On Hyprland it is exactly the `stableId` of `hyprctl clients` —
-//! verified against a live 0.56.1 session — which is what lets a reading taken here be matched against one
-//! taken over IPC by equality rather than by guessing from titles.
+//! **The identifier is the join.** Each toplevel carries an opaque, stable string the compositor promises is unique for that window's whole life. On Hyprland it is exactly the `stableId` of `hyprctl clients` — verified against a live 0.56.1 session — which is what lets a reading taken here be matched against one taken over IPC by equality rather than by guessing from titles.
 //!
-//! **What this protocol does not carry.** A toplevel handle reports a title, an app id and that identifier. It
-//! does *not* report which workspace or output the window is on, whether it is focused, minimised or
-//! fullscreen, and it offers no way to act on the window — `zwlr-foreign-toplevel-management-v1` is the only
-//! portable route to any of that. A list built from this alone is a list, not a switcher.
+//! **What this protocol does not carry.** A toplevel handle reports a title, an app id and that identifier. It does *not* report which workspace or output the window is on, whether it is focused, minimised or fullscreen, and it offers no way to act on the window — `zwlr-foreign-toplevel-management-v1` is the only portable route to any of that. A list built from this alone is a list, not a switcher.
 //!
-//! It is also the only way to *name* a window as a capture source: `ext-image-copy-capture-v1` will capture a
-//! toplevel, but only one identified by the `ext_foreign_toplevel_handle_v1` that only this protocol hands out.
+//! It is also the only way to *name* a window as a capture source: `ext-image-copy-capture-v1` will capture a toplevel, but only one identified by the `ext_foreign_toplevel_handle_v1` that only this protocol hands out.
 //!
-//! **The watcher stops when the last registration is retired**, dropping its connection with it, and the next
-//! [`watch`] starts a fresh one. Unlike the other three watchers here this one is read-only — the protocol has
-//! no requests — so there is nothing to talk to it over and the running flag is the whole of its slot. Teardown
-//! is bounded by the next event either way: until the compositor says a window opened or closed, the thread is
-//! asleep in `poll`, resident but not running.
+//! **The watcher stops when the last registration is retired**, dropping its connection with it, and the next [`watch`] starts a fresh one. Unlike the other three watchers here this one is read-only — the protocol has no requests — so there is nothing to talk to it over and the running flag is the whole of its slot. Teardown is bounded by the next event either way: until the compositor says a window opened or closed, the thread is asleep in `poll`, resident but not running.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -51,8 +39,7 @@ pub struct ToplevelId(u32);
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Toplevel {
     pub id: ToplevelId,
-    /// Opaque, unique and stable for the window's life. Hyprland's `stableId`, and the field to match on when
-    /// the same window is also being read over compositor IPC.
+    /// Opaque, unique and stable for the window's life. Hyprland's `stableId`, and the field to match on when the same window is also being read over compositor IPC.
     pub identifier: String,
     pub title: String,
     /// The application's own id — what `class` is called everywhere except Hyprland.
@@ -69,27 +56,21 @@ struct Registration {
 
 static HANDLERS: Mutex<Vec<Registration>> = Mutex::new(Vec::new());
 static LATEST: Mutex<Vec<Toplevel>> = Mutex::new(Vec::new());
-/// Whether a watcher is running. Not a `OnceLock`, because it has to be able to say "no" again: the thread
-/// gives it back when the last registration goes, and a later [`watch`] starts a fresh one.
+/// Whether a watcher is running. Not a `OnceLock`, because it has to be able to say "no" again: the thread gives it back when the last registration goes, and a later [`watch`] starts a fresh one.
 static WATCHING: Mutex<bool> = Mutex::new(false);
-/// Set when starting finds no compositor or no list protocol, so a caller on one that cannot answer does not
-/// open a connection on every `watch` — no watcher is left behind to say it already failed.
+/// Set when starting finds no compositor or no list protocol, so a caller on one that cannot answer does not open a connection on every `watch` — no watcher is left behind to say it already failed.
 static UNSUPPORTED: AtomicBool = AtomicBool::new(false);
 
-/// Whether the compositor lists windows at all, asked over a connection of its own so it answers outside a
-/// running shell. `None` means no compositor could be reached.
+/// Whether the compositor lists windows at all, asked over a connection of its own so it answers outside a running shell. `None` means no compositor could be reached.
 pub fn toplevels_supported() -> Option<bool> {
     crate::globals::advertises(TOPLEVEL_LIST_INTERFACE)
 }
 
-/// Registers `on_change` for the window list, starting the watcher on first use and keeping it for as long as
-/// `interest` is alive.
+/// Registers `on_change` for the window list, starting the watcher on first use and keeping it for as long as `interest` is alive.
 ///
-/// Returns false when the compositor does not implement the protocol, in which case `on_change` is never
-/// called. A handler registered after the watcher is running is handed the current list immediately.
+/// Returns false when the compositor does not implement the protocol, in which case `on_change` is never called. A handler registered after the watcher is running is handed the current list immediately.
 ///
-/// The running flag is held across both the start and the registration, and taken again by [`retire`]: that
-/// overlap is what stops a `watch` landing on a watcher already on its way out and never being called.
+/// The running flag is held across both the start and the registration, and taken again by [`retire`]: that overlap is what stops a `watch` landing on a watcher already on its way out and never being called.
 pub fn watch(interest: &Interest, on_change: impl FnMut(&[Toplevel]) + Send + 'static) -> bool {
     let mut handler: Handler = Box::new(on_change);
     let mut running = WATCHING.lock().unwrap();
@@ -126,8 +107,7 @@ fn anyone_listening() -> bool {
     !handlers.is_empty()
 }
 
-/// Gives up the running flag, for a thread about to return. `false` is a `watch` having landed since the last
-/// registration went: it is already in the list, and retiring now would leave it waiting on nothing.
+/// Gives up the running flag, for a thread about to return. `false` is a `watch` having landed since the last registration went: it is already in the list, and retiring now would leave it waiting on nothing.
 fn retire() -> bool {
     let mut running = WATCHING.lock().unwrap();
     if !HANDLERS.lock().unwrap().is_empty() {
@@ -137,17 +117,14 @@ fn retire() -> bool {
     true
 }
 
-/// Gives the flag up whatever is registered, for a watcher whose connection has failed under it: every
-/// registration is waiting on a thread that is not coming back, and leaving the flag set would stop any later
-/// caller from starting one that works.
+/// Gives the flag up whatever is registered, for a watcher whose connection has failed under it: every registration is waiting on a thread that is not coming back, and leaving the flag set would stop any later caller from starting one that works.
 fn forget() {
     let mut running = WATCHING.lock().unwrap();
     HANDLERS.lock().unwrap().clear();
     *running = false;
 }
 
-/// Connects and binds here rather than on the watcher thread, so the answer to "does this compositor list
-/// windows" is known by the time [`watch`] returns.
+/// Connects and binds here rather than on the watcher thread, so the answer to "does this compositor list windows" is known by the time [`watch`] returns.
 fn start() -> bool {
     let Ok(connection) = Connection::connect_to_env() else {
         return false;
@@ -181,9 +158,7 @@ fn run(mut watcher: Watcher, connection: Connection, queue: EventQueue<Watcher>)
         if event_loop.dispatch(None, &mut watcher).is_err() {
             break;
         }
-        // Asked after a dispatch rather than after a publish: a registration is retired by whoever made it,
-        // which is not something this thread is told about, so the only sound moment to look is every time it
-        // wakes.
+        // Asked after a dispatch rather than after a publish: a registration is retired by whoever made it, which is not something this thread is told about, so the only sound moment to look is every time it wakes.
         if !anyone_listening() && retire() {
             return;
         }
@@ -198,13 +173,11 @@ struct Entry {
     app_id: String,
 }
 
-/// The accumulated list, with no protocol object of its own — which is what lets the reading be checked
-/// without a compositor.
+/// The accumulated list, with no protocol object of its own — which is what lets the reading be checked without a compositor.
 #[derive(Default)]
 struct State {
     windows: HashMap<u32, Entry>,
-    /// Announcement order, which is the only order this protocol offers: a `HashMap` would reshuffle a window
-    /// list on every publish.
+    /// Announcement order, which is the only order this protocol offers: a `HashMap` would reshuffle a window list on every publish.
     order: Vec<u32>,
 }
 
@@ -243,8 +216,7 @@ impl State {
 }
 
 impl Watcher {
-    /// Publishes the whole list. The protocol batches a window's changes behind its own `done`, so a title
-    /// being retyped one keystroke at a time is one publish per commit rather than one per event.
+    /// Publishes the whole list. The protocol batches a window's changes behind its own `done`, so a title being retyped one keystroke at a time is one publish per commit rather than one per event.
     fn publish(&self) {
         let snapshot = self.state.snapshot();
         *LATEST.lock().unwrap() = snapshot.clone();
@@ -330,14 +302,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Watcher {
 mod tests {
     use super::*;
 
-    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the
-    /// watcher has to *stop* when the last registration is retired, and say so again so the next [`watch`]
-    /// starts a fresh one rather than registering with a thread on its way out.
+    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the watcher has to *stop* when the last registration is retired, and say so again so the next [`watch`] starts a fresh one rather than registering with a thread on its way out.
     ///
-    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live
-    /// tests here and in `capture` register with a real watcher, so "nothing is registered" is false through no
-    /// fault of the code, and emptying the registry to make it true would retire the watcher out from under
-    /// them.
+    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live tests here and in `capture` register with a real watcher, so "nothing is registered" is false through no fault of the code, and emptying the registry to make it true would retire the watcher out from under them.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
         if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
@@ -354,8 +321,7 @@ mod tests {
         assert!(anyone_listening(), "a live registration is listening");
         assert!(!retire(), "something is registered, so the watcher stays");
 
-        // Retired by whoever registered, and dropped without ever being called again — which is the whole
-        // reason the answer lives beside the handler instead of in what it returns.
+        // Retired by whoever registered, and dropped without ever being called again — which is the whole reason the answer lives beside the handler instead of in what it returns.
         interest.retire();
         assert!(!anyone_listening(), "a retired registration was kept");
         assert!(retire(), "nothing is registered, so nothing needs it");
@@ -365,8 +331,7 @@ mod tests {
         );
     }
 
-    /// Captured from a live Hyprland 0.56.1 session, identifiers included: they are the `stableId` values
-    /// `hyprctl clients` reported for the same windows at the same moment.
+    /// Captured from a live Hyprland 0.56.1 session, identifiers included: they are the `stableId` values `hyprctl clients` reported for the same windows at the same moment.
     fn open_windows() -> State {
         let mut state = State::default();
         for (key, identifier, app_id, title) in [
@@ -396,8 +361,7 @@ mod tests {
         );
     }
 
-    /// A window closing must leave the rest in place — the bug a `HashMap` order hides until the day a list
-    /// reorders itself under the pointer.
+    /// A window closing must leave the rest in place — the bug a `HashMap` order hides until the day a list reorders itself under the pointer.
     #[test]
     fn a_closed_window_leaves_the_others_where_they_were() {
         let mut state = open_windows();
@@ -423,8 +387,7 @@ mod tests {
         assert_eq!(state.snapshot().len(), 3);
     }
 
-    /// The identifier is what a reading taken here is matched against one taken over IPC. If it ever arrives
-    /// empty the join silently becomes "everything matches everything".
+    /// The identifier is what a reading taken here is matched against one taken over IPC. If it ever arrives empty the join silently becomes "everything matches everything".
     #[test]
     fn every_window_carries_the_identifier_the_join_is_made_on() {
         assert!(
@@ -435,8 +398,7 @@ mod tests {
         );
     }
 
-    /// The half no fixture can prove: that this reads a real compositor, and that what it reads agrees with
-    /// what that compositor says about itself.
+    /// The half no fixture can prove: that this reads a real compositor, and that what it reads agrees with what that compositor says about itself.
     ///
     /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevels -- --nocapture --test-threads=1`
     #[test]

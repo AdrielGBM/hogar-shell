@@ -19,11 +19,7 @@ use ui::scale::{corner, space};
 /// How long after the last edit to a note before it is written to disk (trailing-edge debounce).
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(400);
 
-/// Panel-wide state. `notes` holds only plain data — never nested signals, since a signal that stored other
-/// signals in its value would re-enter the reactive runtime's borrow when the surface tears down (dropping the
-/// value while `drop_signal` holds the borrow). Each note's editable fields are per-card signals owned by the
-/// card's widgets; a card's sync effect (parked in `effects` for the panel's lifetime) mirrors those edits
-/// back into `notes` and schedules a save.
+/// Panel-wide state. `notes` holds only plain data — never nested signals, since a signal that stored other signals in its value would re-enter the reactive runtime's borrow when the surface tears down (dropping the value while `drop_signal` holds the borrow). Each note's editable fields are per-card signals owned by the card's widgets; a card's sync effect (parked in `effects` for the panel's lifetime) mirrors those edits back into `notes` and schedules a save.
 #[derive(Clone)]
 struct PanelState {
     notes: RwSignal<Vec<Note>>,
@@ -37,8 +33,7 @@ pub fn notes_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
     icon_view(|| "sticky-note".to_string(), move || fg.get(), icon_px())
 }
 
-/// The notes panel: a header (title + add) over the editable note list, each note an icon, title, body, and
-/// delete, with an inline icon picker per note. Loads from disk on open; every edit persists (debounced).
+/// The notes panel: a header (title + add) over the editable note list, each note an icon, title, body, and delete, with an inline icon picker per note. Loads from disk on open; every edit persists (debounced).
 pub fn notes_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     if let Some(env) = surface_env() {
         services::locale::attach(env.config.language());
@@ -208,8 +203,7 @@ fn note_card(
     Ok(Box::new(card))
 }
 
-/// Mirrors a card's edits back into the plain `notes` list and schedules a debounced save. The effect only
-/// subscribes to this card's fields, so it never re-fires from the list write it performs.
+/// Mirrors a card's edits back into the plain `notes` list and schedules a debounced save. The effect only subscribes to this card's fields, so it never re-fires from the list write it performs.
 fn wire_persist(
     state: &PanelState,
     id: u64,
@@ -235,9 +229,7 @@ fn wire_persist(
     state.effects.borrow_mut().push(sync);
 }
 
-/// The per-note icon picker, opened as a floating popover anchored to the note's icon button while that
-/// note's picker is open. Choosing an icon sets the note's icon (which persists via its sync effect); the
-/// popover closes on pick or on a click outside.
+/// The per-note icon picker, opened as a floating popover anchored to the note's icon button while that note's picker is open. Choosing an icon sets the note's icon (which persists via its sync effect); the popover closes on pick or on a click outside.
 fn picker_overlay(
     icon: RwSignal<Option<String>>,
     picking: RwSignal<bool>,
@@ -283,8 +275,7 @@ fn delete_note(state: &PanelState, id: u64) {
     notes::save(&state.notes.get());
 }
 
-/// Schedules a save `SAVE_DEBOUNCE` from now, superseding any pending one — only the latest scheduled save
-/// (matching generation) writes, so a burst of keystrokes collapses to a single trailing write.
+/// Schedules a save `SAVE_DEBOUNCE` from now, superseding any pending one — only the latest scheduled save (matching generation) writes, so a burst of keystrokes collapses to a single trailing write.
 fn schedule_save(notes: ReadSignal<Vec<Note>>, generation: Rc<Cell<u64>>) {
     let seq = generation.get().wrapping_add(1);
     generation.set(seq);

@@ -1,11 +1,8 @@
 //! The Weather page: what it is doing now, and what it will do.
 //!
-//! Everything here already ships — the service, its disk cache, the condition glyphs and the translated
-//! descriptions — so the page adds no I/O of its own.
+//! Everything here already ships — the service, its disk cache, the condition glyphs and the translated descriptions — so the page adds no I/O of its own.
 //!
-//! The unit toggle is local to the surface. Pressing a reading to check it in the other scale is a glance, not
-//! a preference, and writing `[temperature] unit` from a glance would change what the bar and the OSD show
-//! because someone looked at a number. The settings application is where that choice is made.
+//! The unit toggle is local to the surface. Pressing a reading to check it in the other scale is a glance, not a preference, and writing `[temperature] unit` from a glance would change what the bar and the OSD show because someone looked at a number. The settings application is where that choice is made.
 
 use chrono::NaiveDate;
 use telar::{
@@ -134,8 +131,7 @@ fn current_card(
     card.build(theme)
 }
 
-/// The reading, pressable. A press swaps the scale for this surface, and writes it back only when the user has
-/// live settings on — see the module note.
+/// The reading, pressable. A press swaps the scale for this surface, and writes it back only when the user has live settings on — see the module note.
 fn unit_toggle(
     reading: Live<String>,
     unit: RwSignal<TemperatureUnit>,
@@ -207,8 +203,7 @@ fn forecast_card(
         .build(theme)
 }
 
-/// One day: when, what, how likely to rain, and the range. Kept to a single row so a week reads as a column of
-/// comparable lines rather than seven small cards.
+/// One day: when, what, how likely to rain, and the range. Kept to a single row so a week reads as a column of comparable lines rather than seven small cards.
 fn forecast_row(
     day: Day,
     unit: TemperatureUnit,
@@ -261,8 +256,7 @@ fn forecast_row(
     )?))
 }
 
-/// The API's `YYYY-MM-DD` as a weekday name. An unparseable date falls back to the raw string rather than to a
-/// weekday it made up.
+/// The API's `YYYY-MM-DD` as a weekday name. An unparseable date falls back to the raw string rather than to a weekday it made up.
 fn weekday_label(date: &str) -> String {
     match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
         Ok(date) => super::dash::weekday_label(chrono::Datelike::weekday(&date)),

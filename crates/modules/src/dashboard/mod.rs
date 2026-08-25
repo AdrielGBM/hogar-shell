@@ -1,13 +1,8 @@
 //! The dashboard: one panel, four pages.
 //!
-//! It is a panel like every other one — routed through `module_panel`, presented as a drawer or a float per
-//! `[modules.dashboard] open`, opened from a chip, from IPC or from a keybind through the same bookkeeping — so
-//! nothing here is a second way to put a surface on screen.
+//! It is a panel like every other one — routed through `module_panel`, presented as a drawer or a float per `[modules.dashboard] open`, opened from a chip, from IPC or from a keybind through the same bookkeeping — so nothing here is a second way to put a surface on screen.
 //!
-//! Which page is showing lives in a [`Store`] rather than in the panel, for two reasons. Reopening the
-//! dashboard should land where it was left, and `hogar-shell dashboard tab weather` has to reach the tab a click
-//! would set; a signal owned by the surface could do neither, since the surface is rebuilt on every open and
-//! does not exist between them.
+//! Which page is showing lives in a [`Store`] rather than in the panel, for two reasons. Reopening the dashboard should land where it was left, and `hogar-shell dashboard tab weather` has to reach the tab a click would set; a signal owned by the surface could do neither, since the surface is rebuilt on every open and does not exist between them.
 
 mod card;
 mod dash;
@@ -70,8 +65,7 @@ pub fn dashboard_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let tabs = config.dashboard.tabs();
 
-    // A page can be dropped from `[dashboard] tabs` while it is the one showing, and a stored page the config
-    // no longer offers would leave the strip with nothing highlighted and the panel on a page it never listed.
+    // A page can be dropped from `[dashboard] tabs` while it is the one showing, and a stored page the config no longer offers would leave the strip with nothing highlighted and the panel on a page it never listed.
     let active = signal(match tabs.contains(&TAB.get()) {
         true => TAB.get(),
         false => tabs[0],
@@ -118,8 +112,7 @@ fn page(
     }
 }
 
-/// The config the panel resolves against: the bar's when a chip opened it, the running one when IPC or a
-/// keybind did — never the defaults, which would silently ignore everything the user configured.
+/// The config the panel resolves against: the bar's when a chip opened it, the running one when IPC or a keybind did — never the defaults, which would silently ignore everything the user configured.
 fn live_config() -> Arc<Config> {
     surface_env()
         .map(|env| env.config)
@@ -200,8 +193,7 @@ fn pill(
             vec![icon, box_item(label)],
         )?
         .hover_style(paint::md(theme.overlay))
-        // Through the store, not the local signal: a click and `hogar-shell dashboard tab …` must land in the
-        // same place, and the watch above is what brings the change back to this surface.
+        // Through the store, not the local signal: a click and `hogar-shell dashboard tab …` must land in the same place, and the watch above is what brings the change back to this surface.
         .on_press(move || set_tab(tab)),
     ))
 }
@@ -282,8 +274,7 @@ mod tests {
         );
     }
 
-    /// The only kind of test that runs a surface's closures. Every page reads a service and the theme at once,
-    /// which is the shape that panics on a re-entrant borrow, and none of it fires until something builds.
+    /// The only kind of test that runs a surface's closures. Every page reads a service and the theme at once, which is the shape that panics on a re-entrant borrow, and none of it fires until something builds.
     #[test]
     fn the_chip_and_every_page_build() {
         telar::set_locale("en");
@@ -304,8 +295,7 @@ mod tests {
         assert!(dashboard_panel().is_ok(), "the panel builds around them");
     }
 
-    /// The weather page has a second shape: `[weather] enabled = false` means no service to subscribe to, and
-    /// the page has to say so rather than subscribe to a producer that was switched off.
+    /// The weather page has a second shape: `[weather] enabled = false` means no service to subscribe to, and the page has to say so rather than subscribe to a producer that was switched off.
     #[test]
     fn the_weather_page_builds_with_the_service_switched_off() {
         telar::set_locale("en");

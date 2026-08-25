@@ -1,9 +1,6 @@
 //! The installed applications, from their `.desktop` files.
 //!
-//! Scanned once and cached for the process: the XDG application directories hold a few hundred entries, parsing
-//! them costs a few milliseconds, and a launcher that re-read them on every keystroke would be doing that work
-//! hundreds of times for a list that changes when you install software. A watcher notices when it does, so an
-//! install shows up in the launcher on its own; [`reload`] is the same thing on demand.
+//! Scanned once and cached for the process: the XDG application directories hold a few hundred entries, parsing them costs a few milliseconds, and a launcher that re-read them on every keystroke would be doing that work hundreds of times for a list that changes when you install software. A watcher notices when it does, so an install shows up in the launcher on its own; [`reload`] is the same thing on demand.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,8 +14,7 @@ use util::broadcast::Store;
 /// One launchable application.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct App {
-    /// The desktop-entry id (`firefox.desktop` → `firefox`), stable across restarts and what config and the
-    /// launch-count store key on.
+    /// The desktop-entry id (`firefox.desktop` → `firefox`), stable across restarts and what config and the launch-count store key on.
     pub id: String,
     pub name: String,
     /// `GenericName` or `Comment` — the subtitle a launcher row shows.
@@ -34,8 +30,7 @@ pub struct App {
 }
 
 impl App {
-    /// Everything a search should match against, not just the name: `keywords` is where an entry lists the
-    /// words users actually type (`www`, `browser`) and `description` catches the rest.
+    /// Everything a search should match against, not just the name: `keywords` is where an entry lists the words users actually type (`www`, `browser`) and `description` catches the rest.
     pub fn haystack(&self) -> String {
         let mut text = self.name.clone();
         if !self.description.is_empty() {
@@ -69,8 +64,7 @@ fn application_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Strips the `Exec` field codes the spec defines (`%f`, `%U`, `%i`, `%c`, `%k`, …). They stand for files or
-/// URLs to open, and launching with them left in passes the literal `%U` to the program as an argument.
+/// Strips the `Exec` field codes the spec defines (`%f`, `%U`, `%i`, `%c`, `%k`, …). They stand for files or URLs to open, and launching with them left in passes the literal `%U` to the program as an argument.
 fn clean_exec(exec: &str) -> String {
     exec.split_whitespace()
         .filter(|word| !(word.len() == 2 && word.starts_with('%')))
@@ -78,8 +72,7 @@ fn clean_exec(exec: &str) -> String {
         .join(" ")
 }
 
-/// Parses a desktop entry's `[Desktop Entry]` group. Returns `None` for anything not worth showing: a
-/// non-application type, `NoDisplay`, `Hidden`, or an entry with no name or no command.
+/// Parses a desktop entry's `[Desktop Entry]` group. Returns `None` for anything not worth showing: a non-application type, `NoDisplay`, `Hidden`, or an entry with no name or no command.
 fn parse_entry(id: &str, text: &str) -> Option<App> {
     let mut fields: HashMap<&str, &str> = HashMap::new();
     let mut in_group = false;
@@ -94,8 +87,7 @@ fn parse_entry(id: &str, text: &str) -> Option<App> {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {
-            // Localised keys (`Name[es]`) are ignored in favour of the plain one; picking the right locale is
-            // the shell's `locale` service's job and not worth a second parse here.
+            // Localised keys (`Name[es]`) are ignored in favour of the plain one; picking the right locale is the shell's `locale` service's job and not worth a second parse here.
             fields.entry(key.trim()).or_insert_with(|| value.trim());
         }
     }
@@ -143,8 +135,7 @@ fn parse_entry(id: &str, text: &str) -> Option<App> {
     })
 }
 
-/// Scans `dirs` for desktop entries. Earlier directories win, which is what makes `~/.local/share/applications`
-/// override a system entry of the same id.
+/// Scans `dirs` for desktop entries. Earlier directories win, which is what makes `~/.local/share/applications` override a system entry of the same id.
 fn scan(dirs: &[PathBuf]) -> Vec<App> {
     let mut found: HashMap<String, App> = HashMap::new();
     for dir in dirs {
@@ -175,14 +166,10 @@ fn scan(dirs: &[PathBuf]) -> Vec<App> {
     apps
 }
 
-/// How often the application directories are fingerprinted. Installing software is a human-paced event, so the
-/// interval is set by how long a user will tolerate the launcher not knowing about what they just installed,
-/// not by how fast the directories can change.
+/// How often the application directories are fingerprinted. Installing software is a human-paced event, so the interval is set by how long a user will tolerate the launcher not knowing about what they just installed, not by how fast the directories can change.
 const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
-/// A [`Store`] rather than a [`Service`](util::broadcast::Service): the list is seeded synchronously on first
-/// read, so a launcher opened a millisecond after start gets the applications instead of an empty list it would
-/// have to wait for. The watcher below is what makes it live.
+/// A [`Store`] rather than a [`Service`](util::broadcast::Service): the list is seeded synchronously on first read, so a launcher opened a millisecond after start gets the applications instead of an empty list it would have to wait for. The watcher below is what makes it live.
 static APPS: Store<Vec<App>> = Store::new(|| scan(&application_dirs()));
 
 /// Every installed application, sorted by name. Scanned on first call, and kept current from there.
@@ -191,8 +178,7 @@ pub fn all() -> Vec<App> {
     APPS.get()
 }
 
-/// Registers `tx` for the list, sending the current one immediately — for a surface that stays up across an
-/// install (an app browser) rather than reading the list once when it opens.
+/// Registers `tx` for the list, sending the current one immediately — for a surface that stays up across an install (an app browser) rather than reading the list once when it opens.
 pub fn subscribe(tx: EventSender<Vec<App>>) {
     ensure_watching();
     APPS.subscribe(tx);
@@ -205,8 +191,7 @@ pub fn reload() -> usize {
 
 static WATCHER: OnceLock<()> = OnceLock::new();
 
-/// Starts the directory watcher, once per process. Lazy for the same reason every service is: a shell with no
-/// launcher and no app browser never asks for the list, and should not pay for a thread watching it.
+/// Starts the directory watcher, once per process. Lazy for the same reason every service is: a shell with no launcher and no app browser never asks for the list, and should not pay for a thread watching it.
 fn ensure_watching() {
     WATCHER.get_or_init(|| {
         let _ = std::thread::Builder::new()
@@ -228,14 +213,9 @@ fn watch() {
     }
 }
 
-/// A cheap stand-in for "have the entries changed": every `.desktop` file's name, size and modification time,
-/// combined so the order `read_dir` happens to yield them in doesn't matter.
+/// A cheap stand-in for "have the entries changed": every `.desktop` file's name, size and modification time, combined so the order `read_dir` happens to yield them in doesn't matter.
 ///
-/// Directory mtimes alone would be the obvious choice and are the wrong one here. On a store-based distribution
-/// a profile's `applications` directory is a symlink into an immutable store where every path carries the same
-/// zeroed timestamp, so switching generations — installing software — changes no mtime the shell can see.
-/// Listing the entries does catch it, and a few hundred `stat` calls every few seconds costs well under a
-/// millisecond.
+/// Directory mtimes alone would be the obvious choice and are the wrong one here. On a store-based distribution a profile's `applications` directory is a symlink into an immutable store where every path carries the same zeroed timestamp, so switching generations — installing software — changes no mtime the shell can see. Listing the entries does catch it, and a few hundred `stat` calls every few seconds costs well under a millisecond.
 fn fingerprint(dirs: &[PathBuf]) -> u64 {
     let mut total: u64 = 0;
     for dir in dirs {
@@ -266,9 +246,7 @@ fn fingerprint(dirs: &[PathBuf]) -> u64 {
 
 /// Launches `app`, detached from the shell.
 ///
-/// Detaching matters: a child of the shell would die with it, and would inherit its file descriptors. `setsid`
-/// puts the program in its own session so neither happens. A terminal entry is wrapped in the configured
-/// terminal, since running it bare would give it no tty.
+/// Detaching matters: a child of the shell would die with it, and would inherit its file descriptors. `setsid` puts the program in its own session so neither happens. A terminal entry is wrapped in the configured terminal, since running it bare would give it no tty.
 pub fn launch(app: &App) {
     let mut command = app.exec.clone();
     if app.terminal {
@@ -281,8 +259,7 @@ pub fn launch(app: &App) {
     run_detached(command);
 }
 
-/// Launching a desktop entry is launching a program, and the config's own hooks want the same thing, so the
-/// spawn lives in `util` and this is the name the app-launching code already reaches for.
+/// Launching a desktop entry is launching a program, and the config's own hooks want the same thing, so the spawn lives in `util` and this is the name the app-launching code already reaches for.
 pub use util::process::run_detached;
 
 #[cfg(test)]
@@ -422,8 +399,7 @@ Exec=firefox --new-window
         .unwrap();
         assert_ne!(fingerprint(&dirs), installed, "an edited entry is a change");
 
-        // A file the scan would not read cannot move the fingerprint either, or every icon cache write in the
-        // directory would re-scan the world.
+        // A file the scan would not read cannot move the fingerprint either, or every icon cache write in the directory would re-scan the world.
         let before = fingerprint(&dirs);
         std::fs::write(dir.join("notes.txt"), "x").unwrap();
         assert_eq!(fingerprint(&dirs), before);

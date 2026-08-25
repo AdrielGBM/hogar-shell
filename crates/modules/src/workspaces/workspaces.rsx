@@ -3,8 +3,7 @@ use crate::workspaces::{Pill, PillStyle, grid, pills};
 use ::config::theme::NordTheme;
 use ::services::hyprland::{self, Snapshot};
 
-// Routed per click rather than bound here, so the handler stays capture-free and the choice between activating
-// over `ext-workspace-v1` and dispatching over Hyprland's socket lives with the service that owns both.
+// Routed per click rather than bound here, so the handler stays capture-free and the choice between activating over `ext-workspace-v1` and dispatching over Hyprland's socket lives with the service that owns both.
 fn focus(id: i32) {
     hyprland::focus_workspace_id(id);
 }
@@ -19,8 +18,7 @@ let output = env.as_ref().and_then(|e| e.output.clone());
 let occupied_background = config.occupied_background;
 let indicator = config.indicator;
 
-// Seeded from the last snapshot rather than left empty until the first event lands: the subscription below
-// delivers it, but only on the next turn of the loop, so the bar's first frame would draw an empty row.
+// Seeded from the last snapshot rather than left empty until the first event lands: the subscription below delivers it, but only on the next turn of the loop, so the bar's first frame would draw an empty row.
 let list = signal(
     hyprland::current_workspaces()
         .map(|snap| pills(&snap, &config, output.as_deref()))
@@ -42,8 +40,7 @@ let style = PillStyle {
     occupied_background,
     indicator,
 };
-// Built in Rust: the indicator has to read the active pill's laid-out rect and paint itself from it, and the
-// view DSL reaches neither layout nodes nor a canvas.
+// Built in Rust: the indicator has to read the active pill's laid-out rect and paint itself from it, and the view DSL reaches neither layout nodes nor a canvas.
 let row = grid(items, style, focus)?;
 
 [view]

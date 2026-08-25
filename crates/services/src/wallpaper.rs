@@ -1,14 +1,8 @@
 //! The wallpaper library and which image is on which screen.
 //!
-//! Two questions, one owner. **What is available** is a recursive scan of `[paths] wallpapers`, with a thumbnail
-//! cache so a grid of two hundred images does not decode two hundred full-resolution photographs. **What is
-//! showing** is a per-output assignment that outlives a restart, because a wallpaper picked at random or chosen
-//! from a grid is state the shell owns, not a preference the user hand-edited into `config.toml` — the same
-//! split every other runtime toggle follows.
+//! Two questions, one owner. **What is available** is a recursive scan of `[paths] wallpapers`, with a thumbnail cache so a grid of two hundred images does not decode two hundred full-resolution photographs. **What is showing** is a per-output assignment that outlives a restart, because a wallpaper picked at random or chosen from a grid is state the shell owns, not a preference the user hand-edited into `config.toml` — the same split every other runtime toggle follows.
 //!
-//! Resolution order for one screen, most specific first: the runtime per-output choice, the runtime global one,
-//! `[background.monitors]`, `[background] image`. A user who pinned an image in their config still sees it until
-//! something sets one at runtime, and `hogar-shell wallpaper clear` puts them back.
+//! Resolution order for one screen, most specific first: the runtime per-output choice, the runtime global one, `[background.monitors]`, `[background] image`. A user who pinned an image in their config still sees it until something sets one at runtime, and `hogar-shell wallpaper clear` puts them back.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -27,13 +21,11 @@ pub struct Entry {
     pub path: PathBuf,
     /// The file name without its extension — what a grid puts under the thumbnail.
     pub name: String,
-    /// The folder it was found in, relative to the library root; empty at the top level. What a "browse by
-    /// folder" view groups on (K9).
+    /// The folder it was found in, relative to the library root; empty at the top level. What a "browse by folder" view groups on (K9).
     pub folder: String,
 }
 
-/// How often the library is re-fingerprinted. A wallpaper collection changes when a human adds a file to it, so
-/// the interval is set by how long that human will wait to see it, not by how fast a directory can change.
+/// How often the library is re-fingerprinted. A wallpaper collection changes when a human adds a file to it, so the interval is set by how long that human will wait to see it, not by how fast a directory can change.
 const WATCH_INTERVAL: Duration = Duration::from_secs(10);
 
 fn settings() -> WallpaperConfig {
@@ -50,9 +42,7 @@ fn library_dir() -> PathBuf {
 
 /// Walks `root` for images, deepest-last and capped.
 ///
-/// Iterative rather than recursive: a symlink loop in a picture folder is not exotic, and a recursive walk would
-/// meet it with a stack overflow instead of the cap. The cap is what bounds it either way — `visited` would need
-/// canonical paths and a set, which is more machinery than "stop after `max_entries`" earns.
+/// Iterative rather than recursive: a symlink loop in a picture folder is not exotic, and a recursive walk would meet it with a stack overflow instead of the cap. The cap is what bounds it either way — `visited` would need canonical paths and a set, which is more machinery than "stop after `max_entries`" earns.
 fn scan(root: &Path, config: &WallpaperConfig) -> Vec<Entry> {
     let mut found = Vec::new();
     let mut queue = vec![root.to_path_buf()];
@@ -100,9 +90,7 @@ fn scan(root: &Path, config: &WallpaperConfig) -> Vec<Entry> {
     found
 }
 
-/// A [`Store`] rather than a `Service`: the library is seeded on first read, so a grid opened a millisecond
-/// after start gets the images instead of an empty page it has to wait for. The watcher below is what keeps it
-/// current while that grid is open.
+/// A [`Store`] rather than a `Service`: the library is seeded on first read, so a grid opened a millisecond after start gets the images instead of an empty page it has to wait for. The watcher below is what keeps it current while that grid is open.
 static LIBRARY: Store<Vec<Entry>> = Store::new(|| {
     let config = settings();
     if config.enabled {
@@ -118,8 +106,7 @@ pub fn all() -> Vec<Entry> {
     LIBRARY.get()
 }
 
-/// Registers `tx` for the library, sending the current one immediately — for a grid that stays up while the
-/// folder is being filled.
+/// Registers `tx` for the library, sending the current one immediately — for a grid that stays up while the folder is being filled.
 pub fn subscribe_library(tx: EventSender<Vec<Entry>>) {
     ensure_watching();
     LIBRARY.subscribe(tx);
@@ -166,9 +153,7 @@ fn watch() {
     }
 }
 
-/// A cheap stand-in for "has the collection changed": every listed image's name, size and mtime, combined so the
-/// order `read_dir` yields them in does not matter. Directory mtimes alone would miss a store-based
-/// distribution, for the same reason the application scanner does not trust them.
+/// A cheap stand-in for "has the collection changed": every listed image's name, size and mtime, combined so the order `read_dir` yields them in does not matter. Directory mtimes alone would miss a store-based distribution, for the same reason the application scanner does not trust them.
 fn fingerprint(root: &Path, config: &WallpaperConfig) -> u64 {
     let mut total: u64 = 0;
     for entry in scan(root, config) {
@@ -192,8 +177,7 @@ fn fingerprint(root: &Path, config: &WallpaperConfig) -> u64 {
 
 /// The image `output` should be painting, or `None` for the theme's base colour.
 ///
-/// The one resolution order, so the surface, the scheme extractor and `hogar-shell wallpaper get` cannot disagree
-/// about which image is showing.
+/// The one resolution order, so the surface, the scheme extractor and `hogar-shell wallpaper get` cannot disagree about which image is showing.
 pub fn current_image(config: &Config, output: Option<&str>) -> Option<PathBuf> {
     let state = state::get();
     let chosen = output
@@ -205,8 +189,7 @@ pub fn current_image(config: &Config, output: Option<&str>) -> Option<PathBuf> {
 
 /// What every wallpaper surface listens to: the assignment changed, and here is the whole of it.
 ///
-/// Published as the full map rather than as one output's path so a surface can tell "my screen changed" from
-/// "another one did" without a second lookup, and so a `clear` reaches every screen in one message.
+/// Published as the full map rather than as one output's path so a surface can tell "my screen changed" from "another one did" without a second lookup, and so a `clear` reaches every screen in one message.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Assignment {
     pub global: Option<PathBuf>,
@@ -241,8 +224,7 @@ pub fn subscribe(tx: EventSender<Assignment>) {
 
 /// Sets the wallpaper — for one output when `output` names one, for every screen otherwise.
 ///
-/// Setting the global one clears the per-output overrides on purpose: "set this wallpaper" means all of them,
-/// and a screen quietly keeping its old picture would read as the command having half worked.
+/// Setting the global one clears the per-output overrides on purpose: "set this wallpaper" means all of them, and a screen quietly keeping its old picture would read as the command having half worked.
 pub fn set(path: &Path, output: Option<&str>) {
     let path = paths::expand_tilde(path);
     match output {
@@ -300,19 +282,12 @@ pub struct Frame {
 
 /// How often a parked producer checks that the surface it feeds is still there.
 ///
-/// Not a poll for state — the producer waits on the store for that. It is how a thread whose surface was torn
-/// down by a config reload learns to stop, since the only liveness signal a `watch` channel offers is a failed
-/// send. Without it a shell reloaded fifty times would hold fifty parked threads until the next wallpaper
-/// change happened to reap them.
+/// Not a poll for state — the producer waits on the store for that. It is how a thread whose surface was torn down by a config reload learns to stop, since the only liveness signal a `watch` channel offers is a failed send. Without it a shell reloaded fifty times would hold fifty parked threads until the next wallpaper change happened to reap them.
 const LIVENESS: Duration = Duration::from_secs(5);
 
-/// The producer a wallpaper surface hands to `platform_wayland::watch`: waits for the runtime choice to
-/// change, decodes what `output` should now be showing, and delivers it ready to draw. `None` is the liveness
-/// heartbeat and means nothing changed.
+/// The producer a wallpaper surface hands to `platform_wayland::watch`: waits for the runtime choice to change, decodes what `output` should now be showing, and delivers it ready to draw. `None` is the liveness heartbeat and means nothing changed.
 ///
-/// Decoding here rather than in the consumer is the whole point — a full-resolution JPEG takes long enough that
-/// doing it on the driver thread would drop frames on every other surface at exactly the moment the user is
-/// watching the wallpaper change.
+/// Decoding here rather than in the consumer is the whole point — a full-resolution JPEG takes long enough that doing it on the driver thread would drop frames on every other surface at exactly the moment the user is watching the wallpaper change.
 pub fn frames(
     output: Option<String>,
     painted: Option<PathBuf>,
@@ -320,8 +295,7 @@ pub fn frames(
     move |tx| {
         let (changes, rx) = std::sync::mpsc::channel();
         ASSIGNED.listen(changes);
-        // Seeded with what the surface already drew at build time, so the immediate first delivery — the
-        // current assignment — decodes nothing and the shell does not cross-fade an image into itself.
+        // Seeded with what the surface already drew at build time, so the immediate first delivery — the current assignment — decodes nothing and the shell does not cross-fade an image into itself.
         let mut showing = painted;
         loop {
             match rx.recv_timeout(LIVENESS) {
@@ -361,9 +335,7 @@ pub fn frames(
 
 /// Picks a wallpaper from the library at random, avoiding the one already showing when there is a choice.
 ///
-/// Deterministic randomness is not wanted here and a PRNG crate would be one dependency for one call: the
-/// nanoseconds since the epoch are as unpredictable as this needs to be, and repeating a picture occasionally
-/// is not a bug worth a dependency.
+/// Deterministic randomness is not wanted here and a PRNG crate would be one dependency for one call: the nanoseconds since the epoch are as unpredictable as this needs to be, and repeating a picture occasionally is not a bug worth a dependency.
 pub fn random(exclude: Option<&Path>) -> Option<PathBuf> {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -389,9 +361,7 @@ fn choose<'a>(library: &'a [Entry], exclude: Option<&Path>, roll: usize) -> Opti
 
 /// The cached thumbnail for `source`, generating it on first ask.
 ///
-/// Keyed by path *and* mtime, so replacing an image in place shows the new one rather than the stale thumbnail
-/// of what used to be there. Callers run this off the UI thread: a cache miss decodes and rescales a full-size
-/// photograph.
+/// Keyed by path *and* mtime, so replacing an image in place shows the new one rather than the stale thumbnail of what used to be there. Callers run this off the UI thread: a cache miss decodes and rescales a full-size photograph.
 pub fn thumbnail(source: &Path, size: u32) -> Option<PathBuf> {
     let size = clamp_size(size);
     let cached = thumbnail_path(source, size);
@@ -412,8 +382,7 @@ pub fn thumbnail(source: &Path, size: u32) -> Option<PathBuf> {
     }
 }
 
-/// The thumbnail for `source` only if it has already been generated. What a grid asks before queueing work: a
-/// cache hit is one `exists` and can be drawn on the frame it is asked for, where a miss is a full-size decode.
+/// The thumbnail for `source` only if it has already been generated. What a grid asks before queueing work: a cache hit is one `exists` and can be drawn on the frame it is asked for, where a miss is a full-size decode.
 pub fn cached_thumbnail(source: &Path, size: u32) -> Option<PathBuf> {
     let cached = thumbnail_path(source, clamp_size(size));
     cached.exists().then_some(cached)
@@ -600,8 +569,7 @@ mod tests {
             );
         }
 
-        // A library of one: excluding what is showing empties the list, and doing nothing would read as the
-        // command having failed.
+        // A library of one: excluding what is showing empties the list, and doing nothing would read as the command having failed.
         let single = vec![entry("/a.png")];
         assert_eq!(
             choose(&single, Some(&showing), 5).map(|e| e.path.clone()),

@@ -18,8 +18,7 @@ use util::paths;
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Config {
-    /// Design-token overrides read from the sibling `tokens.toml`, not from `config.toml` — skipped from
-    /// serialization so a section save can never write them into the user's config file.
+    /// Design-token overrides read from the sibling `tokens.toml`, not from `config.toml` — skipped from serialization so a section save can never write them into the user's config file.
     #[serde(skip)]
     pub tokens: TokenOverrides,
     pub general: GeneralConfig,
@@ -69,11 +68,7 @@ pub struct Config {
 
 /// One bar per screen edge; empty bars collapse to zero. Default is all-empty by design (serde fills missing fields), so configs get only what they specify — see [`Config::starter`] for the initial setup.
 ///
-/// `excluded_screens` names outputs that get no bars at all — a TV, a projector, a monitor that only ever shows
-/// one fullscreen thing. Each entry matches the connector name (`DP-1`) as a `*` pattern, so `HDMI-*` covers a
-/// port whose index moves between reboots. *Which* modules a screen shows is a per-monitor config override
-/// (`monitors/<output>/config.toml`) rather than a key here: it is the same `[bars.<edge>]` shape, so there is
-/// nothing new to learn and nothing to keep in step.
+/// `excluded_screens` names outputs that get no bars at all — a TV, a projector, a monitor that only ever shows one fullscreen thing. Each entry matches the connector name (`DP-1`) as a `*` pattern, so `HDMI-*` covers a port whose index moves between reboots. *Which* modules a screen shows is a per-monitor config override (`monitors/<output>/config.toml`) rather than a key here: it is the same `[bars.<edge>]` shape, so there is nothing new to learn and nothing to keep in step.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct BarsConfig {
@@ -94,8 +89,7 @@ impl BarsConfig {
         }
     }
 
-    /// Whether this output should carry no bars. An output the compositor gave no name to is never excluded —
-    /// there is nothing to match it by, and dropping the bars off an unnameable screen would look like a bug.
+    /// Whether this output should carry no bars. An output the compositor gave no name to is never excluded — there is nothing to match it by, and dropping the bars off an unnameable screen would look like a bug.
     pub fn excludes(&self, output: Option<&str>) -> bool {
         let Some(output) = output else {
             return false;
@@ -114,16 +108,11 @@ pub struct BarConfig {
     pub center: Vec<ModuleEntry>,
     pub end: Vec<ModuleEntry>,
     pub shape: BarShape,
-    /// Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its
-    /// own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out
-    /// when the pointer leaves.
+    /// Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
     pub persistent: bool,
-    /// Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward
-    /// past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer
-    /// that keeps brushing the screen edge on its way somewhere else does not.
+    /// Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
     pub show_on_hover: bool,
-    /// How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit
-    /// is worse than absent, so this is floored at 1.
+    /// How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
     pub peek: u32,
 }
 
@@ -149,9 +138,7 @@ impl Default for BarConfig {
 }
 
 impl Config {
-    /// How long a wallpaper transition actually runs, after `[animation]` has had its say. Zero when animation
-    /// is off or the transition is `none`, which is what makes "wait for the picture to settle" a no-op there
-    /// instead of a pause with nothing happening in it.
+    /// How long a wallpaper transition actually runs, after `[animation]` has had its say. Zero when animation is off or the transition is `none`, which is what makes "wait for the picture to settle" a no-op there instead of a pause with nothing happening in it.
     pub fn wallpaper_transition(&self) -> Duration {
         if self.background.transition == WallpaperTransition::None {
             return Duration::ZERO;
@@ -163,9 +150,7 @@ impl Config {
 
     /// The mode and variant a dynamic scheme is generated at.
     ///
-    /// `auto` resolves through the fallback palette rather than to a hardcoded dark: a user whose fallback is
-    /// Catppuccin Latte has already said which end of the ramp they live at, and asking them to say it twice is
-    /// how the two settings end up disagreeing.
+    /// `auto` resolves through the fallback palette rather than to a hardcoded dark: a user whose fallback is Catppuccin Latte has already said which end of the ramp they live at, and asking them to say it twice is how the two settings end up disagreeing.
     pub fn scheme_selection(&self) -> (scheme::Mode, scheme::Variant) {
         let mode = self
             .theme
@@ -233,9 +218,7 @@ impl Config {
         }
     }
 
-    /// The command for a well-known helper application: `[general.apps]`, else the legacy `[general] terminal`
-    /// for the terminal, else the built-in fallback. Resolved here rather than at each call site so every
-    /// affordance that opens a real application agrees on which one that is.
+    /// The command for a well-known helper application: `[general.apps]`, else the legacy `[general] terminal` for the terminal, else the built-in fallback. Resolved here rather than at each call site so every affordance that opens a real application agrees on which one that is.
     pub fn app_command(&self, which: HelperApp) -> String {
         let apps = &self.general.apps;
         let configured = match which {
@@ -263,8 +246,7 @@ impl Config {
         })
     }
 
-    /// Where local `.lrc` files are looked up. Not a user-content directory by convention, so it defaults
-    /// inside the shell's own data directory rather than inventing a folder in `$HOME`.
+    /// Where local `.lrc` files are looked up. Not a user-content directory by convention, so it defaults inside the shell's own data directory rather than inventing a folder in `$HOME`.
     pub fn lyrics_dir(&self) -> PathBuf {
         self.resolved_path(&self.paths.lyrics, || paths::data_dir().join("lyrics"))
     }
@@ -295,8 +277,7 @@ impl Config {
         paths::expand_tilde(Path::new(configured))
     }
 
-    /// The effective UI language (BCP-47 tag): the `[general] language` override, else the OS locale, else
-    /// English. Each surface applies it via `telar::set_locale` when it builds.
+    /// The effective UI language (BCP-47 tag): the `[general] language` override, else the OS locale, else English. Each surface applies it via `telar::set_locale` when it builds.
     pub fn language(&self) -> String {
         let configured = self.general.language.trim();
         if !configured.is_empty() {
@@ -318,8 +299,7 @@ impl Config {
             .unwrap_or(&self.theme.accent)
     }
 
-    /// How a module's panel opens when clicked: its `[modules.<id>] open` override, else a drawer — except for
-    /// the application panels, which have no drawer-sized form (see [`APPLICATION_PANELS`]).
+    /// How a module's panel opens when clicked: its `[modules.<id>] open` override, else a drawer — except for the application panels, which have no drawer-sized form (see [`APPLICATION_PANELS`]).
     pub fn open_mode_for(&self, id: &str) -> OpenMode {
         match self.modules.get(id) {
             Some(over) => over.open,
@@ -330,10 +310,7 @@ impl Config {
 
     /// How big `id`'s float opens: its `[modules.<id>]` size override, else the global `[panels.float]`.
     ///
-    /// Per-module rather than one number for every float because the panels are not one kind of thing. A media
-    /// float is a card; the settings float is an application with a nav pane down its left-hand side, and a
-    /// size that suits one makes the other either cramped or mostly empty. The fallback keeps `[panels.float]`
-    /// meaning what it always did — nothing has to be said per module for a module that does not care.
+    /// Per-module rather than one number for every float because the panels are not one kind of thing. A media float is a card; the settings float is an application with a nav pane down its left-hand side, and a size that suits one makes the other either cramped or mostly empty. The fallback keeps `[panels.float]` meaning what it always did — nothing has to be said per module for a module that does not care.
     pub fn float_size_for(&self, id: &str) -> (u32, u32) {
         let over = self.modules.get(id);
         let (width, height) =
@@ -346,10 +323,7 @@ impl Config {
 
     /// How tall the settings application's page area is: the surface it opens in, less its header and chrome.
     ///
-    /// It has to be a number rather than "the rest of the box" because a scroll area is a layout *leaf* — its
-    /// content is laid out as its own root, so nothing inside contributes to its height and a viewport with no
-    /// height of its own measures zero and clips every form away. The same rule the launcher's result list is
-    /// sized by.
+    /// It has to be a number rather than "the rest of the box" because a scroll area is a layout *leaf* — its content is laid out as its own root, so nothing inside contributes to its height and a viewport with no height of its own measures zero and clips every form away. The same rule the launcher's result list is sized by.
     pub fn settings_page_height(&self) -> f32 {
         let surface = match self.open_mode_for("settings") {
             OpenMode::Float => self.float_size_for("settings").1 as f32,
@@ -358,9 +332,7 @@ impl Config {
         (surface - SETTINGS_CHROME).max(160.0)
     }
 
-    /// Which zone (start/center/end) a module occupies on `edge`, for deriving its drawer's alignment. A module
-    /// placed twice answers with the first zone it appears in — the panel is keyed by module id, so there is
-    /// only one of it to align.
+    /// Which zone (start/center/end) a module occupies on `edge`, for deriving its drawer's alignment. A module placed twice answers with the first zone it appears in — the panel is keyed by module id, so there is only one of it to align.
     pub fn zone_of(&self, edge: Edge, module_id: &str) -> Option<Zone> {
         let bar = self.bars.get(edge);
         let holds = |entries: &[ModuleEntry]| entries.iter().any(|m| m.id == module_id);
@@ -400,12 +372,9 @@ impl Config {
         }
     }
 
-    /// The palette `[theme] name` selects, before any override: the wallpaper's for `dynamic`, else the built-in
-    /// — switched to its light or dark sibling when `[theme] mode` asks for one it has.
+    /// The palette `[theme] name` selects, before any override: the wallpaper's for `dynamic`, else the built-in — switched to its light or dark sibling when `[theme] mode` asks for one it has.
     ///
-    /// A dynamic theme with nothing extracted yet resolves to `[theme] fallback` rather than to a blank or a
-    /// hardcoded default, so the first frame after an install is already the palette the user asked to fall back
-    /// to instead of a colour scheme they never chose.
+    /// A dynamic theme with nothing extracted yet resolves to `[theme] fallback` rather than to a blank or a hardcoded default, so the first frame after an install is already the palette the user asked to fall back to instead of a colour scheme they never chose.
     fn base_palette(&self, t: &ThemeConfig) -> NordTheme {
         if t.is_dynamic() {
             return scheme::theme().unwrap_or_else(|| Self::in_requested_mode(t, &t.fallback));
@@ -427,10 +396,7 @@ impl Config {
 
     /// The palette a `[theme]` section *would* produce, without adopting it.
     ///
-    /// The settings application's swatches and its preview both need to draw a selection the user has made but
-    /// not saved, and resolving one at the call site would be a second copy of the rules below — the accent
-    /// lookup, the light/dark sibling, `dynamic`'s fallback, `[theme.colors]`, `tokens.toml`. Hence a
-    /// parameter rather than a helper next to the picker, which is the convention the rest of this file keeps.
+    /// The settings application's swatches and its preview both need to draw a selection the user has made but not saved, and resolving one at the call site would be a second copy of the rules below — the accent lookup, the light/dark sibling, `dynamic`'s fallback, `[theme.colors]`, `tokens.toml`. Hence a parameter rather than a helper next to the picker, which is the convention the rest of this file keeps.
     pub fn theme_with(&self, t: &ThemeConfig) -> NordTheme {
         let mut theme = self.base_palette(t).with_accent(&t.accent);
         if let Some(r) = t.radius {
@@ -503,15 +469,9 @@ impl Config {
 
     /// Space the bar reserves from its edge — its outer gap plus thickness — i.e. how far a panel or app must sit from the edge to clear it.
     ///
-    /// An auto-hidden bar reserves nothing *of its own*, which is the whole meaning of `persistent = false`: a
-    /// bar that is not there most of the time must not carve a strip out of every window's idea of the screen.
-    /// Its peek strip is deliberately not counted either — reserving four pixels would tile every window four
-    /// pixels short for a sliver the user asked to be able to ignore.
+    /// An auto-hidden bar reserves nothing *of its own*, which is the whole meaning of `persistent = false`: a bar that is not there most of the time must not carve a strip out of every window's idea of the screen. Its peek strip is deliberately not counted either — reserving four pixels would tile every window four pixels short for a sliver the user asked to be able to ignore.
     ///
-    /// But the `[shape] frame` ring is not the bar. It is drawn on the background layer, so it is only visible
-    /// where no window covers it, and it is asked for on *every* edge at once. Reserving nothing at all for an
-    /// auto-hiding edge tiled the windows straight over that edge's ring — three sides framed and one not. So
-    /// an auto-hidden edge reserves exactly what it would with no bar on it at all.
+    /// But the `[shape] frame` ring is not the bar. It is drawn on the background layer, so it is only visible where no window covers it, and it is asked for on *every* edge at once. Reserving nothing at all for an auto-hiding edge tiled the windows straight over that edge's ring — three sides framed and one not. So an auto-hidden edge reserves exactly what it would with no bar on it at all.
     pub fn edge_reserved(&self, edge: Edge) -> u32 {
         if !self.bar_is_persistent(edge) {
             return match self.shape.frame {
@@ -522,33 +482,26 @@ impl Config {
         self.edge_gap(edge) + self.edge_thickness(edge)
     }
 
-    /// Whether `edge`'s bar stays on screen. A bar with nothing on it is persistent by definition — there is no
-    /// bar to hide — so this only ever answers `false` for an edge that actually carries one.
+    /// Whether `edge`'s bar stays on screen. A bar with nothing on it is persistent by definition — there is no bar to hide — so this only ever answers `false` for an edge that actually carries one.
     pub fn bar_is_persistent(&self, edge: Edge) -> bool {
         !self.edge_present(edge) || self.bars.get(edge).persistent
     }
 
-    /// How many logical pixels of a hidden bar stay on screen. Floored at 1: a strip the pointer cannot land on
-    /// is a bar with no way back.
+    /// How many logical pixels of a hidden bar stay on screen. Floored at 1: a strip the pointer cannot land on is a bar with no way back.
     pub fn bar_peek(&self, edge: Edge) -> u32 {
         self.bars.get(edge).peek.max(1)
     }
 
-    /// The margin an auto-hidden bar sits at on its own anchored edge, so that exactly [`bar_peek`] pixels of it
-    /// are on screen. Negative, and measured from the screen edge rather than from the bar's usual gap: a bar
-    /// that is hiding has no gap to keep.
+    /// The margin an auto-hidden bar sits at on its own anchored edge, so that exactly [`bar_peek`] pixels of it are on screen. Negative, and measured from the screen edge rather than from the bar's usual gap: a bar that is hiding has no gap to keep.
     ///
     /// [`bar_peek`]: Self::bar_peek
     pub fn bar_hidden_offset(&self, edge: Edge) -> i32 {
         self.bar_peek(edge) as i32 - self.edge_thickness(edge) as i32
     }
 
-    /// The gap every panel keeps from the bar and the screen edges: the bar's own outer gap when it floats, so
-    /// panels float in step with it, else a default so a hugging bar's panels still breathe. This is the
-    /// "gaps_out"-style spacing that keeps a panel off the bar and off the corners.
+    /// The gap every panel keeps from the bar and the screen edges: the bar's own outer gap when it floats, so panels float in step with it, else a default so a hugging bar's panels still breathe. This is the "gaps_out"-style spacing that keeps a panel off the bar and off the corners.
     ///
-    /// Derived, with no key to override it. There is no third case — a panel at a distance the bar is not at
-    /// is not a preference, it is the shell losing its spacing.
+    /// Derived, with no key to override it. There is no third case — a panel at a distance the bar is not at is not a preference, it is the shell losing its spacing.
     pub fn panel_gap(&self, edge: Edge) -> u32 {
         match self.edge_gap(edge) {
             0 => DEFAULT_PANEL_GAP,
@@ -563,10 +516,7 @@ impl Config {
 
     /// The space between two stacked cards — a run of toasts, a run of notification popups.
     ///
-    /// The shell's own `spacing` token, which is also what separates two chips on a bar: they are the same
-    /// question asked one level out, and answering it twice is how two stacks of cards end up with different
-    /// rhythms for no reason anybody chose. Read from the global `[shape] spacing` rather than a bar's, since
-    /// a stack hangs off no bar in particular.
+    /// The shell's own `spacing` token, which is also what separates two chips on a bar: they are the same question asked one level out, and answering it twice is how two stacks of cards end up with different rhythms for no reason anybody chose. Read from the global `[shape] spacing` rather than a bar's, since a stack hangs off no bar in particular.
     pub fn card_gap(&self) -> f32 {
         self.shape
             .spacing
@@ -574,25 +524,17 @@ impl Config {
             .unwrap_or_else(|| self.resolve_theme().spacing)
     }
 
-    /// How opaque the shell paints itself, `0.2`–`1` — every bar, panel, card and flash, from `[theme]
-    /// opacity`. One key rather than one per surface: a shell whose drawer is translucent and whose bar is not
-    /// is not a preference anybody holds, it is two settings that drifted.
+    /// How opaque the shell paints itself, `0.2`–`1` — every bar, panel, card and flash, from `[theme] opacity`. One key rather than one per surface: a shell whose drawer is translucent and whose bar is not is not a preference anybody holds, it is two settings that drifted.
     ///
-    /// This is also the half of "a blurred shell" that belongs here. The blur itself is the compositor's —
-    /// hogar-shell names every surface it opens, so Hyprland can be told to blur them:
+    /// This is also the half of "a blurred shell" that belongs here. The blur itself is the compositor's — hogar-shell names every surface it opens, so Hyprland can be told to blur them:
     ///
     /// ```text
     /// layer_rule = blur, ^hogar-shell
     /// ```
     ///
-    /// Drawing it here instead would mean copying the screen behind every surface each frame and blurring it
-    /// on the CPU, to reproduce what the compositor is already doing on the GPU. What the compositor cannot do
-    /// is see through an opaque surface, which is what this key is for: without it the rule above blurs a
-    /// region nothing shows.
+    /// Drawing it here instead would mean copying the screen behind every surface each frame and blurring it on the CPU, to reproduce what the compositor is already doing on the GPU. What the compositor cannot do is see through an opaque surface, which is what this key is for: without it the rule above blurs a region nothing shows.
     ///
-    /// Floored well above transparent, and clamped rather than trusted: a shell painted at `0` is one whose
-    /// panels are invisible and whose clicks land on them anyway, which reads as the whole thing being broken.
-    /// A non-finite value in the file falls back to solid instead of poisoning every colour it touches.
+    /// Floored well above transparent, and clamped rather than trusted: a shell painted at `0` is one whose panels are invisible and whose clicks land on them anyway, which reads as the whole thing being broken. A non-finite value in the file falls back to solid instead of poisoning every colour it touches.
     pub fn opacity(&self) -> f32 {
         if self.theme.opacity.is_finite() {
             self.theme.opacity.clamp(0.2, 1.0)
@@ -654,13 +596,9 @@ impl Config {
         (owned(lead), owned(trail))
     }
 
-    /// Whether the bar surface is fully opaque, which is what lets it be cleared to a solid colour and declared
-    /// non-transparent to the compositor. Only a hugging `bar` at full opacity, with no frame, qualifies.
+    /// Whether the bar surface is fully opaque, which is what lets it be cleared to a solid colour and declared non-transparent to the compositor. Only a hugging `bar` at full opacity, with no frame, qualifies.
     ///
-    /// **Both exclusions are things that used to be invisible.** A bar below full opacity cleared to a solid
-    /// colour is a bar whose opacity does nothing — the clear paints over what the alpha was for. And a framed
-    /// bar paints no background of its own at all, because the frame's ring already covers the strip; clearing
-    /// it solid puts that background back and darkens where the two overlap.
+    /// **Both exclusions are things that used to be invisible.** A bar below full opacity cleared to a solid colour is a bar whose opacity does nothing — the clear paints over what the alpha was for. And a framed bar paints no background of its own at all, because the frame's ring already covers the strip; clearing it solid puts that background back and darkens where the two overlap.
     pub fn bar_surface_opaque(&self, edge: Edge) -> bool {
         if self.shape.frame || self.opacity() < 1.0 {
             return false;
@@ -669,10 +607,7 @@ impl Config {
         s.mode == Shape::Bar && s.gap == 0 && s.radius == 0.0
     }
 
-    /// Reads and parses `config.toml`, writing the starter config on a fresh install (the `Missing` arm's job is
-    /// the caller's, so the distinction survives). Parse failures are returned rather than swallowed — a typo
-    /// must not silently replace a user's whole setup with the starter bar, which is what discarding the error
-    /// would do; the caller keeps the last config that worked and reports the error instead.
+    /// Reads and parses `config.toml`, writing the starter config on a fresh install (the `Missing` arm's job is the caller's, so the distinction survives). Parse failures are returned rather than swallowed — a typo must not silently replace a user's whole setup with the starter bar, which is what discarding the error would do; the caller keeps the last config that worked and reports the error instead.
     pub fn load(path: &Path) -> Result<Self, LoadError> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -691,13 +626,9 @@ impl Config {
 
     /// The config as `output` sees it: `config.toml` with `monitors/<output>/config.toml` deep-merged over it.
     ///
-    /// A merge rather than a replacement, so a per-monitor file says only what differs — a vertical bar on the
-    /// second screen is four lines, not a copy of the whole config that then drifts. Tables merge key by key;
-    /// anything else (a scalar, an array, a module list) replaces outright, because a half-overridden array is
-    /// not something a user can predict.
+    /// A merge rather than a replacement, so a per-monitor file says only what differs — a vertical bar on the second screen is four lines, not a copy of the whole config that then drifts. Tables merge key by key; anything else (a scalar, an array, a module list) replaces outright, because a half-overridden array is not something a user can predict.
     ///
-    /// Sections in [`GLOBAL_ONLY_SECTIONS`] are dropped from the override with a warning: one process owns them,
-    /// so honouring them per monitor would be a setting that silently did nothing on every screen but one.
+    /// Sections in [`GLOBAL_ONLY_SECTIONS`] are dropped from the override with a warning: one process owns them, so honouring them per monitor would be a setting that silently did nothing on every screen but one.
     pub fn for_output(path: &Path, output: Option<&str>) -> Result<Self, LoadError> {
         let Some(output) = output else {
             return Config::load(path);
@@ -730,8 +661,7 @@ impl Config {
         path.parent().unwrap_or(Path::new(".")).join("monitors")
     }
 
-    /// Serializes the whole config to `path`, creating its directory. Used only to seed a fresh install; edits
-    /// to an existing file go through [`save_section`](Self::save_section), which preserves formatting.
+    /// Serializes the whole config to `path`, creating its directory. Used only to seed a fresh install; edits to an existing file go through [`save_section`](Self::save_section), which preserves formatting.
     fn write_to(&self, path: &Path) {
         let Ok(text) = toml::to_string_pretty(self) else {
             return;
@@ -742,9 +672,7 @@ impl Config {
         let _ = std::fs::write(path, text);
     }
 
-    /// [`load`](Self::load) with the starter config as the fallback. For call sites with nothing better to fall
-    /// back to (a panel building itself, a test); the running shell uses `load` so it can keep its last good
-    /// config instead.
+    /// [`load`](Self::load) with the starter config as the fallback. For call sites with nothing better to fall back to (a panel building itself, a test); the running shell uses `load` so it can keep its last good config instead.
     pub fn load_or_default(path: &Path) -> Self {
         Config::load(path).unwrap_or_else(|e| {
             tracing::warn!("{e}; using the starter config");

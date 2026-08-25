@@ -2,8 +2,7 @@
 use crate::form::{PLACEMENTS, opt_string, parse_f32, parse_u32, persist, source};
 use ::config::{ClockPlacement, DesktopClockConfig, WidgetsConfig};
 
-// Its own section rather than rows inside `[widgets]`: it is a nested table, and one Save writing both would
-// mean every clock tweak rewrote the visualiser's settings with it.
+// Its own section rather than rows inside `[widgets]`: it is a nested table, and one Save writing both would mean every clock tweak rewrote the visualiser's settings with it.
 let (config, path) = source();
 let c = &config.widgets.clock;
 let base = config.widgets.clone();

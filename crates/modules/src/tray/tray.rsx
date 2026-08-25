@@ -11,8 +11,7 @@ let filter_config = config.clone();
 let items = signal(visible(&tray::current().unwrap_or_default(), &config));
 let listed = items.read_only();
 
-// Disabled costs nothing: without the subscription the service never starts, so no watcher name is claimed
-// and no thread runs.
+// Disabled costs nothing: without the subscription the service never starts, so no watcher name is claimed and no thread runs.
 if config.enabled {
     platform_wayland::watch(tray::subscribe, move |all: Vec<TrayItem>| {
         items.set(visible(&all, &filter_config))

@@ -1,8 +1,6 @@
 //! Which module has a hover card, and what builds it.
 //!
-//! The third half of the composition root, beside [`crate::core::registry`] and [`crate::core::panels`]: the
-//! popout is one surface that opens under whichever chip was hovered, and this is where it learns what to draw
-//! there without naming a module itself.
+//! The third half of the composition root, beside [`crate::core::registry`] and [`crate::core::panels`]: the popout is one surface that opens under whichever chip was hovered, and this is where it learns what to draw there without naming a module itself.
 
 use ui::popouts::PopoutRegistry;
 

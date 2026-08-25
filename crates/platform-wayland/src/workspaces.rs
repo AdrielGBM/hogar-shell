@@ -1,23 +1,12 @@
 //! Workspaces over `ext-workspace-v1`: what exists, which one is active, and the outputs each sits on.
 //!
-//! The reading a bar needs, from the compositor rather than from one compositor's IPC. Hyprland, Niri, Sway,
-//! labwc, dwl and COSMIC all speak this; a shell that reads `hyprctl workspaces` instead works on exactly one.
+//! The reading a bar needs, from the compositor rather than from one compositor's IPC. Hyprland, Niri, Sway, labwc, dwl and COSMIC all speak this; a shell that reads `hyprctl workspaces` instead works on exactly one.
 //!
-//! **What the protocol does not carry, and no amount of care here will produce.** A workspace handle reports a
-//! name, optional coordinates, a state (active, urgent, hidden) and what may be requested of it. It does *not*
-//! report how many windows are on the workspace, which applications those are, or a numeric id — and
-//! `ext-foreign-toplevel-list-v1` cannot fill any of them either, because a toplevel handle never says which
-//! workspace it belongs to. Anything a bar draws from window occupancy therefore has a compositor-specific
-//! source or no source at all, and the caller decides which. This module reports only what was actually said.
+//! **What the protocol does not carry, and no amount of care here will produce.** A workspace handle reports a name, optional coordinates, a state (active, urgent, hidden) and what may be requested of it. It does *not* report how many windows are on the workspace, which applications those are, or a numeric id — and `ext-foreign-toplevel-list-v1` cannot fill any of them either, because a toplevel handle never says which workspace it belongs to. Anything a bar draws from window occupancy therefore has a compositor-specific source or no source at all, and the caller decides which. This module reports only what was actually said.
 //!
-//! **A watcher is a connection and a thread of its own**, not a second consumer of the driver's loop: the driver
-//! only exists inside a running shell, and a workspace reading is wanted by anything from a bar to a one-shot
-//! IPC command. It starts on the first [`watch`] and stops when the last registration is retired, which for a
-//! bar module is the moment a reload takes it off the bar.
+//! **A watcher is a connection and a thread of its own**, not a second consumer of the driver's loop: the driver only exists inside a running shell, and a workspace reading is wanted by anything from a bar to a one-shot IPC command. It starts on the first [`watch`] and stops when the last registration is retired, which for a bar module is the moment a reload takes it off the bar.
 //!
-//! **Stopping is bounded by the next event**, the same bound a polling producer has on its next turn: the
-//! thread is asleep in `poll` until the compositor says something, and gives itself up when it wakes. Between
-//! those it is resident but not running.
+//! **Stopping is bounded by the next event**, the same bound a polling producer has on its next turn: the thread is asleep in `poll` until the compositor says something, and gives itself up when it wakes. Between those it is resident but not running.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -44,8 +33,7 @@ use wayland_protocols::ext::workspace::v1::client::{
 /// The global a compositor advertises when it can answer any of this.
 pub const WORKSPACE_INTERFACE: &str = "ext_workspace_manager_v1";
 
-/// The `wl_output` version that names an output. Below it a connector name is not knowable from `wl_output`
-/// alone, so a workspace comes back with no outputs rather than with a wrong one.
+/// The `wl_output` version that names an output. Below it a connector name is not knowable from `wl_output` alone, so a workspace comes back with no outputs rather than with a wrong one.
 const OUTPUT_NAME_SINCE: u32 = 4;
 
 const STATE_ACTIVE: u32 = 1;
@@ -55,9 +43,7 @@ const CAN_ACTIVATE: u32 = 1;
 
 /// Names one workspace for [`activate`], for as long as that workspace exists.
 ///
-/// Deliberately opaque: the protocol's own `id` is an optional string that Hyprland does not send at all, and a
-/// workspace's *name* is neither unique across groups nor stable. What is unambiguous is the protocol object,
-/// and this is its identity.
+/// Deliberately opaque: the protocol's own `id` is an optional string that Hyprland does not send at all, and a workspace's *name* is neither unique across groups nor stable. What is unambiguous is the protocol object, and this is its identity.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WorkspaceId(u32);
 
@@ -67,11 +53,9 @@ pub struct Workspace {
     pub id: WorkspaceId,
     /// Human-readable and meant for display. Hyprland sends the workspace number here.
     pub name: String,
-    /// The compositor's own ordering, when it arranges workspaces in a grid at all. One dimension on Hyprland,
-    /// carrying the workspace number; empty on a compositor that numbers workspaces without geometry.
+    /// The compositor's own ordering, when it arranges workspaces in a grid at all. One dimension on Hyprland, carrying the workspace number; empty on a compositor that numbers workspaces without geometry.
     pub coordinates: Vec<u32>,
-    /// The outputs of the group this workspace belongs to. Empty while it belongs to none — the protocol
-    /// creates workspaces unassigned — and on a compositor whose `wl_output` predates version 4.
+    /// The outputs of the group this workspace belongs to. Empty while it belongs to none — the protocol creates workspaces unassigned — and on a compositor whose `wl_output` predates version 4.
     pub outputs: Vec<String>,
     pub active: bool,
     pub urgent: bool,
@@ -91,33 +75,25 @@ struct Registration {
 
 static HANDLERS: Mutex<Vec<Registration>> = Mutex::new(Vec::new());
 static LATEST: Mutex<Vec<Workspace>> = Mutex::new(Vec::new());
-/// The live watcher's channel, and `None` whenever none is running — which is what lets a later [`watch`] start
-/// a fresh thread rather than register with one that has already gone.
+/// The live watcher's channel, and `None` whenever none is running — which is what lets a later [`watch`] start a fresh thread rather than register with one that has already gone.
 static REQUESTS: Mutex<Option<Sender<Request>>> = Mutex::new(None);
-/// Set when starting finds no compositor or no workspace protocol. Without it a caller on a compositor that
-/// cannot answer would open a connection on every `watch`, since no watcher is left behind to say it failed.
+/// Set when starting finds no compositor or no workspace protocol. Without it a caller on a compositor that cannot answer would open a connection on every `watch`, since no watcher is left behind to say it failed.
 static UNSUPPORTED: AtomicBool = AtomicBool::new(false);
 
 enum Request {
     Activate(WorkspaceId),
 }
 
-/// Whether the compositor lists workspaces at all, asked over a connection of its own so it answers outside a
-/// running shell. `None` means no compositor could be reached, which is not the same as one without workspaces.
+/// Whether the compositor lists workspaces at all, asked over a connection of its own so it answers outside a running shell. `None` means no compositor could be reached, which is not the same as one without workspaces.
 pub fn workspaces_supported() -> Option<bool> {
     crate::globals::advertises(WORKSPACE_INTERFACE)
 }
 
-/// Registers `on_change` for the workspace list, starting the watcher on first use and keeping it for as long
-/// as `interest` is alive.
+/// Registers `on_change` for the workspace list, starting the watcher on first use and keeping it for as long as `interest` is alive.
 ///
-/// Returns false when the compositor does not implement the protocol, in which case `on_change` is never
-/// called and the caller is expected to have another route. A handler registered after the watcher is already
-/// running is handed the current list immediately, so a late subscriber is not blind until something moves.
+/// Returns false when the compositor does not implement the protocol, in which case `on_change` is never called and the caller is expected to have another route. A handler registered after the watcher is already running is handed the current list immediately, so a late subscriber is not blind until something moves.
 ///
-/// The channel slot is held across both the start and the registration, and taken again by [`retire`]: that
-/// overlap is what stops a `watch` landing on a watcher already on its way out, which would leave the caller
-/// registered with a thread about to return and never called again.
+/// The channel slot is held across both the start and the registration, and taken again by [`retire`]: that overlap is what stops a `watch` landing on a watcher already on its way out, which would leave the caller registered with a thread about to return and never called again.
 pub fn watch(interest: &Interest, on_change: impl FnMut(&[Workspace]) + Send + 'static) -> bool {
     let mut handler: Handler = Box::new(on_change);
     let mut slot = REQUESTS.lock().unwrap();
@@ -142,8 +118,7 @@ pub fn current() -> Vec<Workspace> {
 
 /// Asks the compositor to activate a workspace, reporting whether the request could be sent.
 ///
-/// Sent, not honoured: the protocol makes no promise that a workspace activates, and the compositor answers by
-/// publishing a new state rather than by replying. A caller wanting to know watches for it.
+/// Sent, not honoured: the protocol makes no promise that a workspace activates, and the compositor answers by publishing a new state rather than by replying. A caller wanting to know watches for it.
 pub fn activate(id: WorkspaceId) -> bool {
     let slot = REQUESTS.lock().unwrap();
     slot.as_ref()
@@ -152,8 +127,7 @@ pub fn activate(id: WorkspaceId) -> bool {
 
 /// The channel to talk to the watcher over, starting one if none is running.
 ///
-/// Takes the slot the caller already holds rather than locking again, because [`watch`] has to keep that lock
-/// across registering — see there.
+/// Takes the slot the caller already holds rather than locking again, because [`watch`] has to keep that lock across registering — see there.
 fn watcher(slot: &mut Option<Sender<Request>>) -> Option<Sender<Request>> {
     if let Some(requests) = slot.as_ref() {
         return Some(requests.clone());
@@ -179,10 +153,7 @@ fn anyone_listening() -> bool {
 
 /// Gives up the watcher slot, for a thread about to return.
 ///
-/// Answering `true` is final: the caller returns and its connection goes, so the slot has to be free before
-/// that or the next [`watch`] would register with a thread that will never call it. Answering `false` is a
-/// `watch` having landed since the last registration went — it is already in the list, and retiring now would
-/// leave it registered with nothing running.
+/// Answering `true` is final: the caller returns and its connection goes, so the slot has to be free before that or the next [`watch`] would register with a thread that will never call it. Answering `false` is a `watch` having landed since the last registration went — it is already in the list, and retiring now would leave it registered with nothing running.
 fn retire() -> bool {
     let mut slot = REQUESTS.lock().unwrap();
     if !HANDLERS.lock().unwrap().is_empty() {
@@ -192,16 +163,13 @@ fn retire() -> bool {
     true
 }
 
-/// Gives the slot up whatever is registered, for a watcher whose connection has failed under it. Leaving the
-/// sender behind would have every later `activate` report success into a channel nobody reads, and leave the
-/// registrations waiting on a thread that has gone.
+/// Gives the slot up whatever is registered, for a watcher whose connection has failed under it. Leaving the sender behind would have every later `activate` report success into a channel nobody reads, and leave the registrations waiting on a thread that has gone.
 fn forget() {
     *REQUESTS.lock().unwrap() = None;
     HANDLERS.lock().unwrap().clear();
 }
 
-/// Connects, binds, and hands the loop to a thread. Binding happens here rather than there so the answer to
-/// "does this compositor list workspaces" is known by the time [`watch`] returns.
+/// Connects, binds, and hands the loop to a thread. Binding happens here rather than there so the answer to "does this compositor list workspaces" is known by the time [`watch`] returns.
 fn start() -> Option<Sender<Request>> {
     let connection = Connection::connect_to_env().ok()?;
     let (globals, queue) = registry_queue_init::<Watcher>(&connection).ok()?;
@@ -270,9 +238,7 @@ fn run(
         if event_loop.dispatch(None, &mut watcher).is_err() {
             break;
         }
-        // Asked after a dispatch rather than after a publish: a registration is retired by whoever made it,
-        // which is not something this thread is told about, so the only sound moment to look is every time it
-        // wakes. That is also the whole of what bounds teardown — see the module doc.
+        // Asked after a dispatch rather than after a publish: a registration is retired by whoever made it, which is not something this thread is told about, so the only sound moment to look is every time it wakes. That is also the whole of what bounds teardown — see the module doc.
         if !anyone_listening() && retire() {
             return;
         }
@@ -295,8 +261,7 @@ struct Entry {
     capabilities: u32,
 }
 
-/// Everything the events accumulate, with no protocol object of its own — which is what lets the reading this
-/// module exists to produce be checked without a compositor.
+/// Everything the events accumulate, with no protocol object of its own — which is what lets the reading this module exists to produce be checked without a compositor.
 #[derive(Default)]
 struct State {
     /// Connector names by protocol object id, which is how a group's `output_enter` names one.
@@ -326,15 +291,12 @@ impl Watcher {
             return;
         };
         handle.activate();
-        // Every request in this protocol is staged until a commit, and a request made outside the loop's own
-        // dispatch sits in the outgoing buffer until something flushes it.
+        // Every request in this protocol is staged until a commit, and a request made outside the loop's own dispatch sits in the outgoing buffer until something flushes it.
         self.manager.commit();
         let _ = self.connection.flush();
     }
 
-    /// Publishes the whole list, on `done` and never before it: the protocol batches a change that spans several
-    /// objects — deactivating one workspace and activating another — and publishing per event would put a bar
-    /// through a frame with no active workspace at all.
+    /// Publishes the whole list, on `done` and never before it: the protocol batches a change that spans several objects — deactivating one workspace and activating another — and publishing per event would put a bar through a frame with no active workspace at all.
     fn publish(&self) {
         let snapshot = self.state.snapshot();
         *LATEST.lock().unwrap() = snapshot.clone();
@@ -350,8 +312,7 @@ impl Watcher {
 }
 
 impl State {
-    /// The outputs of whichever group holds `workspace`, named. A workspace belongs to at most one group, and
-    /// to none at all between being created and being assigned.
+    /// The outputs of whichever group holds `workspace`, named. A workspace belongs to at most one group, and to none at all between being created and being assigned.
     fn outputs_of(&self, workspace: u32) -> Vec<String> {
         self.groups
             .values()
@@ -366,8 +327,7 @@ impl State {
             .unwrap_or_default()
     }
 
-    /// Ordered by the compositor's own coordinates, then by name — a `HashMap` order would reshuffle the bar on
-    /// every publish. Numeric order is the caller's business: `name` is a string, and "10" sorts before "2".
+    /// Ordered by the compositor's own coordinates, then by name — a `HashMap` order would reshuffle the bar on every publish. Numeric order is the caller's business: `name` is a string, and "10" sorts before "2".
     fn snapshot(&self) -> Vec<Workspace> {
         let mut workspaces: Vec<Workspace> = self
             .workspaces
@@ -519,8 +479,7 @@ impl Dispatch<wl_output::WlOutput, ()> for Watcher {
     }
 }
 
-/// A monitor plugged in after the watcher started still has to be nameable, or every workspace on it comes back
-/// with no output and a per-monitor bar shows nothing.
+/// A monitor plugged in after the watcher started still has to be nameable, or every workspace on it comes back with no output and a per-monitor bar shows nothing.
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Watcher {
     fn event(
         state: &mut Self,
@@ -554,16 +513,11 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Watcher {
 mod tests {
     use super::*;
 
-    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the
-    /// watcher has to *stop* when the last registration is retired, and give its slot back so that the next
-    /// [`watch`] starts a fresh one rather than registering with a thread on its way out.
+    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the watcher has to *stop* when the last registration is retired, and give its slot back so that the next [`watch`] starts a fresh one rather than registering with a thread on its way out.
     ///
-    /// One test rather than several because they all move the same statics, and split across `cargo test`'s
-    /// threads they would take turns wrecking each other's world.
+    /// One test rather than several because they all move the same statics, and split across `cargo test`'s threads they would take turns wrecking each other's world.
     ///
-    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live
-    /// test below registers with a real watcher, so "nothing is registered" is false through no fault of the
-    /// code, and emptying the registry to make it true would retire the watcher out from under it.
+    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live test below registers with a real watcher, so "nothing is registered" is false through no fault of the code, and emptying the registry to make it true would retire the watcher out from under it.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
         if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
@@ -581,8 +535,7 @@ mod tests {
         assert!(anyone_listening(), "a live registration is listening");
         assert!(!retire(), "something is registered, so the watcher stays");
 
-        // Retired by whoever registered, and dropped without ever being called again — which is the whole
-        // reason the answer lives beside the handler instead of in what it returns.
+        // Retired by whoever registered, and dropped without ever being called again — which is the whole reason the answer lives beside the handler instead of in what it returns.
         interest.retire();
         assert!(!anyone_listening(), "a retired registration was kept");
         assert!(
@@ -603,9 +556,7 @@ mod tests {
         assert_eq!(coordinates(&[1, 0, 0]), Vec::<u32>::new());
     }
 
-    /// The bits a bar reads, and the one that must not be confused with occupancy: `hidden` is the compositor
-    /// asking that a workspace not be drawn, which is not the same as it having no windows — a question this
-    /// protocol does not answer at all.
+    /// The bits a bar reads, and the one that must not be confused with occupancy: `hidden` is the compositor asking that a workspace not be drawn, which is not the same as it having no windows — a question this protocol does not answer at all.
     #[test]
     fn the_state_bits_are_independent() {
         let entry = |state: u32| Entry {
@@ -627,9 +578,7 @@ mod tests {
         );
     }
 
-    /// Hyprland's own reading, captured from a live 0.56.1 session: one group per output, no `id` event at all,
-    /// one coordinate carrying the workspace number, and `activate` missing from the capabilities of whichever
-    /// workspace is already active.
+    /// Hyprland's own reading, captured from a live 0.56.1 session: one group per output, no `id` event at all, one coordinate carrying the workspace number, and `activate` missing from the capabilities of whichever workspace is already active.
     fn hyprland_state() -> State {
         let mut state = State::default();
         state.names.insert(3, "eDP-1".to_string());
@@ -689,8 +638,7 @@ mod tests {
         );
     }
 
-    /// The protocol creates a workspace before assigning it to a group, and a bar filtering per monitor has to
-    /// survive the gap rather than dropping the workspace or inventing an output for it.
+    /// The protocol creates a workspace before assigning it to a group, and a bar filtering per monitor has to survive the gap rather than dropping the workspace or inventing an output for it.
     #[test]
     fn a_workspace_in_no_group_has_no_outputs() {
         let mut state = hyprland_state();
@@ -709,8 +657,7 @@ mod tests {
         assert!(orphan.active, "and everything else about it still reads");
     }
 
-    /// A group whose output the client never bound — `wl_output` below version 4 — names nothing rather than
-    /// reporting a placeholder a per-monitor filter would then match against.
+    /// A group whose output the client never bound — `wl_output` below version 4 — names nothing rather than reporting a placeholder a per-monitor filter would then match against.
     #[test]
     fn an_unnamed_output_is_absent_rather_than_guessed() {
         let mut state = hyprland_state();
@@ -718,16 +665,11 @@ mod tests {
         assert!(state.snapshot().iter().all(|w| w.outputs.is_empty()));
     }
 
-    /// The half no fixture can prove: that the watcher reads a real compositor, and that activating over the
-    /// protocol actually moves it.
+    /// The half no fixture can prove: that the watcher reads a real compositor, and that activating over the protocol actually moves it.
     ///
-    /// Needs a live session, so it is opt-in the way the clipboard and capture round-trips are:
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland workspaces -- --nocapture --test-threads=1`
+    /// Needs a live session, so it is opt-in the way the clipboard and capture round-trips are: `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland workspaces -- --nocapture --test-threads=1`
     ///
-    /// **It switches workspace and switches back**, which is the only way to observe an activation: the protocol
-    /// answers a request with a new state, not with a reply. The workspace that was active when the test started
-    /// is restored before anything is asserted, so a failed expectation does not leave the desktop somewhere
-    /// else.
+    /// **It switches workspace and switches back**, which is the only way to observe an activation: the protocol answers a request with a new state, not with a reply. The workspace that was active when the test started is restored before anything is asserted, so a failed expectation does not leave the desktop somewhere else.
     #[test]
     fn the_watcher_reads_the_compositor_and_activation_moves_it() {
         use std::sync::mpsc;
@@ -777,8 +719,7 @@ mod tests {
             }
         }
         activate(was_active);
-        // Given back before asserting, and given time to land: a failing expectation must not be the reason the
-        // desktop is left on a workspace nobody asked for.
+        // Given back before asserting, and given time to land: a failing expectation must not be the reason the desktop is left on a workspace nobody asked for.
         std::thread::sleep(Duration::from_millis(300));
 
         assert_eq!(

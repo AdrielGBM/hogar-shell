@@ -1,21 +1,12 @@
 //! Every external thing hogar-shell needs, in one list.
 //!
-//! The shell reaches outside itself in five different ways — it runs programs, calls D-Bus peers, reads kernel
-//! interfaces, `dlopen`s libraries and binds Wayland protocols — and until this file existed each of those was
-//! described in three places that could disagree: the README's dependency table, the packaging metadata's
-//! optional-depends list, and the runtime check at the call site. Three copies of one fact means two of them
-//! are wrong the moment a dependency moves.
+//! The shell reaches outside itself in five different ways — it runs programs, calls D-Bus peers, reads kernel interfaces, `dlopen`s libraries and binds Wayland protocols — and until this file existed each of those was described in three places that could disagree: the README's dependency table, the packaging metadata's optional-depends list, and the runtime check at the call site. Three copies of one fact means two of them are wrong the moment a dependency moves.
 //!
-//! So the declaration is made **load-bearing** rather than documentary. [`output`] and [`available`] take a
-//! [`Dep`], not a program name, which means a program cannot be run without first having a row in [`ALL`] —
-//! and a row carries what the panel and the CLI need to say about it. A dependency added without a row is a
-//! compile error rather than a documentation drift, which is the whole point.
+//! So the declaration is made **load-bearing** rather than documentary. [`output`] and [`available`] take a [`Dep`], not a program name, which means a program cannot be run without first having a row in [`ALL`] — and a row carries what the panel and the CLI need to say about it. A dependency added without a row is a compile error rather than a documentation drift, which is the whole point.
 //!
-//! Lives in `util` because it has to sit below everything that reaches outside: the callers are spread across
-//! this crate and `services`, and `util` is the only crate under both.
+//! Lives in `util` because it has to sit below everything that reaches outside: the callers are spread across this crate and `services`, and `util` is the only crate under both.
 //!
-//! Nothing here probes at startup. A probe costs a process start or a bus round trip, and the answer is only
-//! wanted when something asks — the panel, the CLI, or a service deciding whether to bother starting.
+//! Nothing here probes at startup. A probe costs a process start or a bus round trip, and the answer is only wanted when something asks — the panel, the CLI, or a service deciding whether to bother starting.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,14 +15,12 @@ use std::time::Duration;
 
 use crate::process;
 
-/// How long a probe may take before it counts as absent. Generous for a bus round trip, mean enough that
-/// probing the whole list cannot become a visible pause.
+/// How long a probe may take before it counts as absent. Generous for a bus round trip, mean enough that probing the whole list cannot become a visible pause.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// One external thing the shell can reach for.
 ///
-/// The variants are the *identity*; everything else about them lives in [`ALL`]. Adding one without adding its
-/// row there fails `every_dep_has_exactly_one_row`.
+/// The variants are the *identity*; everything else about them lives in [`ALL`]. Adding one without adding its row there fails `every_dep_has_exactly_one_row`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Dep {
     // Programs.
@@ -73,46 +62,28 @@ pub enum Dep {
 /// How a dependency is found, which is also how it is probed.
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
-    /// A program on `PATH`. Probed by running it — usually with `--version`, because "is it on the path" and
-    /// "does it run on this machine" are different questions and only the second one matters.
+    /// A program on `PATH`. Probed by running it — usually with `--version`, because "is it on the path" and "does it run on this machine" are different questions and only the second one matters.
     Program {
         name: &'static str,
         probe: &'static [&'static str],
     },
-    /// A well-known D-Bus name. Probed by asking the broker who owns it, *and* whether it is activatable: a
-    /// service that starts on demand is present even while nothing is running.
+    /// A well-known D-Bus name. Probed by asking the broker who owns it, *and* whether it is activatable: a service that starts on demand is present even while nothing is running.
     Bus { name: &'static str, system: bool },
-    /// A kernel interface. Probed by whether the directory exists and has anything in it — `/sys/class/backlight`
-    /// exists on a desktop with no backlight at all, and an empty one means the same as an absent one here.
+    /// A kernel interface. Probed by whether the directory exists and has anything in it — `/sys/class/backlight` exists on a desktop with no backlight at all, and an empty one means the same as an absent one here.
     Kernel { path: &'static str },
-    /// A shared library opened at runtime, so no linker records it and `ldd` cannot see it. Probed by opening
-    /// it, in the same order and with the same names the real loader uses.
+    /// A shared library opened at runtime, so no linker records it and `ldd` cannot see it. Probed by opening it, in the same order and with the same names the real loader uses.
     ///
-    /// Bare sonames come first, so the loader answers with whatever the running system linked against —
-    /// including, on a packaged build, the binary's own RUNPATH. The absolute paths after them are not
-    /// belt-and-braces: **a store-based distribution keeps libraries under hashed paths and leaves nothing on
-    /// the loader's default search path**, so a `cargo`-built shell finds no bare soname at all on a machine
-    /// where the library plainly works. NixOS's system profile and its driver directory are the stable names
-    /// there — symlinks into the current generation, so they survive a rebuild and a garbage collection in a
-    /// way a store path pinned in a config would not.
+    /// Bare sonames come first, so the loader answers with whatever the running system linked against — including, on a packaged build, the binary's own RUNPATH. The absolute paths after them are not belt-and-braces: **a store-based distribution keeps libraries under hashed paths and leaves nothing on the loader's default search path**, so a `cargo`-built shell finds no bare soname at all on a machine where the library plainly works. NixOS's system profile and its driver directory are the stable names there — symlinks into the current generation, so they survive a rebuild and a garbage collection in a way a store path pinned in a config would not.
     Library { sonames: &'static [&'static str] },
-    /// A Wayland protocol, probed by asking the compositor's registry for its interfaces by name. Present only
-    /// when *every* one of them is: `ext-image-copy-capture` is two globals — a capture manager and the factory
-    /// that makes the sources it takes — and a compositor carrying one without the other can capture nothing.
+    /// A Wayland protocol, probed by asking the compositor's registry for its interfaces by name. Present only when *every* one of them is: `ext-image-copy-capture` is two globals — a capture manager and the factory that makes the sources it takes — and a compositor carrying one without the other can capture nothing.
     ///
-    /// Named rather than given a probe function on purpose: the crate's own `lock_supported` and
-    /// `idle_supported` read state the *driver* owns, so outside a running shell they answer `false` for a
-    /// compositor that implements the protocol perfectly well — which is the one case a dependency report
-    /// exists to serve.
+    /// Named rather than given a probe function on purpose: the crate's own `lock_supported` and `idle_supported` read state the *driver* owns, so outside a running shell they answer `false` for a compositor that implements the protocol perfectly well — which is the one case a dependency report exists to serve.
     Protocol { interfaces: &'static [&'static str] },
 }
 
 /// Whether the shell can run at all without it.
 ///
-/// Exactly one honest meaning: **`Required` is "the process does not start"**. Everything else is `Optional` by
-/// construction, because no feature may hard-require a daemon that is not already a dependency without a
-/// graceful degraded path. A module that looks empty without something is not a reason to call it required —
-/// that is what [`Entry::without`] is for.
+/// Exactly one honest meaning: **`Required` is "the process does not start"**. Everything else is `Optional` by construction, because no feature may hard-require a daemon that is not already a dependency without a graceful degraded path. A module that looks empty without something is not a reason to call it required — that is what [`Entry::without`] is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Need {
     Required,
@@ -143,8 +114,7 @@ impl Entry {
     }
 }
 
-/// Every external dependency, in the order a reader wants them: what the shell cannot start without, then the
-/// things people actually go looking for when a feature is missing.
+/// Every external dependency, in the order a reader wants them: what the shell cannot start without, then the things people actually go looking for when a feature is missing.
 pub const ALL: &[Entry] = &[
     Entry {
         dep: Dep::LayerShell,
@@ -473,10 +443,7 @@ pub fn entry(dep: Dep) -> &'static Entry {
 
 /// What a probe found — three answers, not two.
 ///
-/// `Unknown` is the one that earns its keep. A Wayland protocol can only be asked of a compositor, so from a
-/// bare CLI on a machine with no session there is nothing to ask; reporting that as `Absent` would tell a user
-/// their compositor lacks a protocol it may implement perfectly well. The same rule the GPU service follows —
-/// a driver that publishes no counter reads as unknown, never as zero.
+/// `Unknown` is the one that earns its keep. A Wayland protocol can only be asked of a compositor, so from a bare CLI on a machine with no session there is nothing to ask; reporting that as `Absent` would tell a user their compositor lacks a protocol it may implement perfectly well. The same rule the GPU service follows — a driver that publishes no counter reads as unknown, never as zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presence {
     Present,
@@ -498,9 +465,7 @@ pub struct Status {
 }
 
 impl Status {
-    /// Whether this is something the user should be told is wrong: a missing optional dependency is a choice,
-    /// a missing required one is a broken install. An `Unknown` is neither — it is a question this process
-    /// could not ask.
+    /// Whether this is something the user should be told is wrong: a missing optional dependency is a choice, a missing required one is a broken install. An `Unknown` is neither — it is a question this process could not ask.
     pub fn is_a_problem(&self) -> bool {
         self.presence == Presence::Absent && entry(self.dep).need == Need::Required
     }
@@ -510,11 +475,9 @@ static PROBED: RwLock<Option<HashMap<Dep, Presence>>> = RwLock::new(None);
 
 /// Whether `dep` is on this machine, probing once and remembering the answer.
 ///
-/// **Never call this from the UI thread.** A probe is a process start or a bus round trip; the whole reason
-/// [`process::output`] exists is that neither may happen on the thread composing a frame.
+/// **Never call this from the UI thread.** A probe is a process start or a bus round trip; the whole reason [`process::output`] exists is that neither may happen on the thread composing a frame.
 ///
-/// An `Unknown` is cached like any other answer: asking again in the same process would ask the same absent
-/// compositor. [`refresh`] is what reconsiders.
+/// An `Unknown` is cached like any other answer: asking again in the same process would ask the same absent compositor. [`refresh`] is what reconsiders.
 pub fn probe(dep: Dep) -> Presence {
     if let Ok(guard) = PROBED.read()
         && let Some(cache) = guard.as_ref()
@@ -541,10 +504,7 @@ pub fn snapshot() -> Vec<Status> {
 
 /// Probes on a thread of its own and sends one report. The producer half of a `watch`, for the settings page.
 ///
-/// Re-probes rather than reading the cache, because the gesture that reaches this is a user opening the page
-/// to find out what is missing — quite possibly having just installed something. A probe of the whole list is
-/// a second or two of process starts and bus round trips, which is exactly why it cannot happen on the thread
-/// composing the frame.
+/// Re-probes rather than reading the cache, because the gesture that reaches this is a user opening the page to find out what is missing — quite possibly having just installed something. A probe of the whole list is a second or two of process starts and bus round trips, which is exactly why it cannot happen on the thread composing the frame.
 pub fn report(tx: platform_wayland::EventSender<Vec<Status>>) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-deps".to_string())
@@ -572,18 +532,15 @@ fn run_probe(entry: &Entry) -> Presence {
     match entry.kind {
         Kind::Program { name, probe } => found(process::available(name, probe, PROBE_TIMEOUT)),
         Kind::Bus { name, system } => bus_name_exists(name, system),
-        // Present *and* non-empty: `/sys/class/backlight` exists on a desktop with no backlight behind it, and
-        // an empty directory means exactly what an absent one does to every caller here.
+        // Present *and* non-empty: `/sys/class/backlight` exists on a desktop with no backlight behind it, and an empty directory means exactly what an absent one does to every caller here.
         Kind::Kernel { path } => found(
             Path::new(path)
                 .read_dir()
                 .is_ok_and(|mut entries| entries.next().is_some()),
         ),
-        // SAFETY: the library is opened and dropped without a symbol being taken out of it — a probe only ever
-        // asks whether the loader can find it.
+        // SAFETY: the library is opened and dropped without a symbol being taken out of it — a probe only ever asks whether the loader can find it.
         Kind::Library { .. } => found(unsafe { open_library(entry.dep, None, Ok) }.is_some()),
-        // The only kind that can answer `Unknown`: with no compositor to ask, "does it advertise this" has no
-        // answer, and inventing `Absent` would blame the compositor for this process having no session.
+        // The only kind that can answer `Unknown`: with no compositor to ask, "does it advertise this" has no answer, and inventing `Absent` would blame the compositor for this process having no session.
         Kind::Protocol { interfaces } => match platform_wayland::advertises_all(interfaces) {
             Some(yes) => found(yes),
             None => Presence::Unknown,
@@ -593,12 +550,9 @@ fn run_probe(entry: &Entry) -> Presence {
 
 /// Whether anything owns `name`, or could be started to.
 ///
-/// Both halves matter: most desktop services are D-Bus activatable, so "nobody owns it right now" is not the
-/// same as "it is not installed" — asking only the first would report a perfectly good fprintd as missing
-/// until something woke it.
+/// Both halves matter: most desktop services are D-Bus activatable, so "nobody owns it right now" is not the same as "it is not installed" — asking only the first would report a perfectly good fprintd as missing until something woke it.
 fn bus_name_exists(name: &str, system: bool) -> Presence {
-    // No bus to ask is the protocol case again: a machine with no session bus has not told us the peer is
-    // missing, only that nothing here could ask.
+    // No bus to ask is the protocol case again: a machine with no session bus has not told us the peer is missing, only that nothing here could ask.
     let Ok(connection) = (if system {
         zbus::blocking::Connection::system()
     } else {
@@ -628,9 +582,7 @@ fn bus_name_exists(name: &str, system: bool) -> Presence {
 
 /// Runs a declared program and returns its standard output.
 ///
-/// The only way to run one. Taking a [`Dep`] rather than a name is what makes the list in this file complete
-/// by construction: a program with no row cannot be reached from here, and a row carries everything the
-/// dependency panel needs to say about it.
+/// The only way to run one. Taking a [`Dep`] rather than a name is what makes the list in this file complete by construction: a program with no row cannot be reached from here, and a row carries everything the dependency panel needs to say about it.
 pub fn output(dep: Dep, args: &[&str], timeout: Duration) -> Option<String> {
     let program = entry(dep).program()?;
     process::output(program, args, timeout)
@@ -638,15 +590,12 @@ pub fn output(dep: Dep, args: &[&str], timeout: Duration) -> Option<String> {
 
 /// Whether a declared dependency is usable — the question a service asks before bothering to start.
 ///
-/// Flattens `Unknown` to `false` on purpose, and only here: a caller deciding whether to shell out needs a
-/// yes or a no, and "I could not tell" has to mean "do not try". The three-state answer is for the *report*,
-/// where the distinction is the whole value.
+/// Flattens `Unknown` to `false` on purpose, and only here: a caller deciding whether to shell out needs a yes or a no, and "I could not tell" has to mean "do not try". The three-state answer is for the *report*, where the distinction is the whole value.
 pub fn available(dep: Dep) -> bool {
     probe(dep).is_present()
 }
 
-/// Where a declared library might be, in the order the loader should be asked — empty for a row that is not a
-/// library. For the one caller that has to *name* what it tried in a message a user will read.
+/// Where a declared library might be, in the order the loader should be asked — empty for a row that is not a library. For the one caller that has to *name* what it tried in a message a user will read.
 pub fn library_names(dep: Dep) -> &'static [&'static str] {
     match entry(dep).kind {
         Kind::Library { sonames } => sonames,
@@ -656,21 +605,15 @@ pub fn library_names(dep: Dep) -> &'static [&'static str] {
 
 /// Opens a declared library and builds something out of its symbols, trying each candidate name in turn.
 ///
-/// The library twin of [`command`], and load-bearing for the same reason: taking a [`Dep`] rather than a
-/// soname is what stops a second copy of a candidate list existing somewhere else, which is exactly how
-/// `libpam`'s list came to be written twice and NVML's not to be declared at all.
+/// The library twin of [`command`], and load-bearing for the same reason: taking a [`Dep`] rather than a soname is what stops a second copy of a candidate list existing somewhere else, which is exactly how `libpam`'s list came to be written twice and NVML's not to be declared at all.
 ///
-/// `build` receives the opened library and returns the caller's own handle, holding it so the symbols stay
-/// mapped. Returning `Err` rejects *that* candidate and moves to the next, which is what lets a caller refuse
-/// a library that opens but has no usable symbols — or one whose own initialiser fails.
+/// `build` receives the opened library and returns the caller's own handle, holding it so the symbols stay mapped. Returning `Err` rejects *that* candidate and moves to the next, which is what lets a caller refuse a library that opens but has no usable symbols — or one whose own initialiser fails.
 ///
-/// `preferred` is tried ahead of the row, for the single case where a user can point at a library the row
-/// cannot know about: `[lock] pam_library`.
+/// `preferred` is tried ahead of the row, for the single case where a user can point at a library the row cannot know about: `[lock] pam_library`.
 ///
 /// # Safety
 ///
-/// Opening a shared object runs its initialisers, and the symbols `build` takes out of it are trusted to match
-/// the signatures the caller declares — neither is something the type system checks.
+/// Opening a shared object runs its initialisers, and the symbols `build` takes out of it are trusted to match the signatures the caller declares — neither is something the type system checks.
 pub unsafe fn open_library<T>(
     dep: Dep,
     preferred: Option<&str>,
@@ -693,9 +636,7 @@ pub unsafe fn open_library<T>(
     None
 }
 
-/// A [`Command`](std::process::Command) for a declared program, for the callers that must own the child rather
-/// than wait for its output: a graph monitor that streams for the life of the shell, or a recorder that runs
-/// until it is stopped.
+/// A [`Command`](std::process::Command) for a declared program, for the callers that must own the child rather than wait for its output: a graph monitor that streams for the life of the shell, or a recorder that runs until it is stopped.
 ///
 /// `None` for a row that is not a program, which is what stops a bus name or a sysfs path being spawned.
 pub fn command(dep: Dep) -> Option<std::process::Command> {
@@ -706,8 +647,7 @@ pub fn command(dep: Dep) -> Option<std::process::Command> {
 mod tests {
     use super::*;
 
-    /// The guard that makes [`entry`] total, and the reason adding a `Dep` without a row is a test failure
-    /// rather than a panic in front of a user.
+    /// The guard that makes [`entry`] total, and the reason adding a `Dep` without a row is a test failure rather than a panic in front of a user.
     #[test]
     fn every_dep_has_exactly_one_row() {
         for entry in ALL {
@@ -725,8 +665,7 @@ mod tests {
                 "{} must say what it is for and what breaks without it",
                 entry.id
             );
-            // The panel prints these as sentences beside each other; an id that is not a package-ish name is a
-            // row a user cannot act on.
+            // The panel prints these as sentences beside each other; an id that is not a package-ish name is a row a user cannot act on.
             assert!(
                 entry
                     .id
@@ -746,8 +685,7 @@ mod tests {
         }
     }
 
-    /// "Required" has one meaning — the process does not start — so the list of them must stay tiny and
-    /// deliberate. Growing it is a decision someone makes here rather than something a green run hides.
+    /// "Required" has one meaning — the process does not start — so the list of them must stay tiny and deliberate. Growing it is a decision someone makes here rather than something a green run hides.
     #[test]
     fn required_means_the_shell_does_not_start() {
         let required: Vec<&str> = ALL
@@ -772,8 +710,7 @@ mod tests {
         assert_eq!(output(Dep::BlueZ, &[], Duration::from_millis(1)), None);
     }
 
-    /// A kernel interface that exists but is empty answers the same as one that is absent, because that is
-    /// what it means to every caller: a desktop with no backlight has the directory and nothing in it.
+    /// A kernel interface that exists but is empty answers the same as one that is absent, because that is what it means to every caller: a desktop with no backlight has the directory and nothing in it.
     #[test]
     fn an_empty_kernel_directory_reads_as_absent() {
         let absent = Entry {
@@ -802,17 +739,11 @@ mod tests {
         );
     }
 
-    /// A registry is only the source of truth if it cannot be bypassed, and in Rust nothing stops a new call
-    /// site reaching for the standard library directly — at which point the dependency panel goes on
-    /// cheerfully reporting a list that is missing what the shell just failed to find.
+    /// A registry is only the source of truth if it cannot be bypassed, and in Rust nothing stops a new call site reaching for the standard library directly — at which point the dependency panel goes on cheerfully reporting a list that is missing what the shell just failed to find.
     ///
-    /// Two front doors, one rule. Programs go through [`command`], which takes a [`Dep`]; libraries go through
-    /// [`open_library`], which takes one too. Both guards live here rather than beside the code they police,
-    /// because what they protect is this file's completeness.
+    /// Two front doors, one rule. Programs go through [`command`], which takes a [`Dep`]; libraries go through [`open_library`], which takes one too. Both guards live here rather than beside the code they police, because what they protect is this file's completeness.
     ///
-    /// One spelling is allowed past the process guard beyond `process`'s own: `process::command(…)` at a site
-    /// that runs a command the **user** wrote — a launcher action, a scheme hook, the configured annotator or
-    /// `howdy` line. Those have no row because there is nothing stable to put in one.
+    /// One spelling is allowed past the process guard beyond `process`'s own: `process::command(…)` at a site that runs a command the **user** wrote — a launcher action, a scheme hook, the configured annotator or `howdy` line. Those have no row because there is nothing stable to put in one.
     #[test]
     fn nothing_reaches_outside_this_process_without_a_row() {
         for (needle, exempt, fix) in [
@@ -835,8 +766,7 @@ mod tests {
         }
     }
 
-    /// Walks the workspace's own sources for `needle`, skipping `exempt`, this file — which holds every needle
-    /// as a literal — and the transpiler's output, which is generated rather than written.
+    /// Walks the workspace's own sources for `needle`, skipping `exempt`, this file — which holds every needle as a literal — and the transpiler's output, which is generated rather than written.
     fn sources_containing(needle: &str, exempt: &str) -> Vec<String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -878,8 +808,7 @@ mod tests {
         offenders
     }
 
-    /// Not an assertion about this machine — only that probing every row answers, in order, without panicking
-    /// on a kind whose probe is missing.
+    /// Not an assertion about this machine — only that probing every row answers, in order, without panicking on a kind whose probe is missing.
     #[test]
     fn every_row_can_be_probed() {
         let statuses = snapshot();

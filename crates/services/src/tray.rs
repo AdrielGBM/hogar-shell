@@ -1,16 +1,8 @@
 //! The system tray, as a StatusNotifierItem host.
 //!
-//! Two D-Bus roles in one service. The shell *owns* `org.kde.StatusNotifierWatcher` — the registry every tray
-//! application looks for before it will show itself — and it *is* a host, registering
-//! `org.kde.StatusNotifierHost-<pid>` so applications that stay hidden until a host exists (most of them) come
-//! out. When another shell already owns the watcher, this degrades to a plain client: the item list is then
-//! read off that watcher's property instead of the local registry, and everything downstream is identical.
+//! Two D-Bus roles in one service. The shell *owns* `org.kde.StatusNotifierWatcher` — the registry every tray application looks for before it will show itself — and it *is* a host, registering `org.kde.StatusNotifierHost-<pid>` so applications that stay hidden until a host exists (most of them) come out. When another shell already owns the watcher, this degrades to a plain client: the item list is then read off that watcher's property instead of the local registry, and everything downstream is identical.
 //!
-//! Three threads, because the two roles must not block each other: the watcher connection parks on its object
-//! server, a signal reader parks on one `MessageIterator`, and a refresher owns the connection that actually
-//! reads item properties. Registrations and signals both land as a ping on the refresher's channel, so no
-//! interface handler ever makes a blocking call — doing that from inside zbus's own executor is how a tray
-//! deadlocks the moment a slow application registers.
+//! Three threads, because the two roles must not block each other: the watcher connection parks on its object server, a signal reader parks on one `MessageIterator`, and a refresher owns the connection that actually reads item properties. Registrations and signals both land as a ping on the refresher's channel, so no interface handler ever makes a blocking call — doing that from inside zbus's own executor is how a tray deadlocks the moment a slow application registers.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
@@ -30,15 +22,10 @@ const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 const ITEM_IFACE: &str = "org.kde.StatusNotifierItem";
 const DEFAULT_ITEM_PATH: &str = "/StatusNotifierItem";
 
-/// Bursts are normal — an application emits `NewIcon`, `NewToolTip` and `NewStatus` back to back on a single
-/// state change — so the refresher waits this long after a ping and drains whatever else arrived, turning a
-/// burst into one re-read instead of three.
+/// Bursts are normal — an application emits `NewIcon`, `NewToolTip` and `NewStatus` back to back on a single state change — so the refresher waits this long after a ping and drains whatever else arrived, turning a burst into one re-read instead of three.
 const COALESCE: Duration = Duration::from_millis(40);
 
-/// A tray application can wedge somewhere no signal reaches — a GPU driver deadlock will do it — and then it
-/// accepts a method call and never answers. Without a bound, the refresher parks on that one application and
-/// every *other* icon stops updating with it. Applied to every connection that calls into an application, so a
-/// process that will never reply costs one slow refresh rather than the whole tray.
+/// A tray application can wedge somewhere no signal reaches — a GPU driver deadlock will do it — and then it accepts a method call and never answers. Without a bound, the refresher parks on that one application and every *other* icon stops updating with it. Applied to every connection that calls into an application, so a process that will never reply costs one slow refresh rather than the whole tray.
 const METHOD_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Whether each item implements `Activate`, keyed by [`item_key`]. See [`implements_activate`].
@@ -70,8 +57,7 @@ impl Status {
     }
 }
 
-/// An icon an application handed over as raw pixels rather than a name. Behind an `Arc` because every publish
-/// clones the whole item list, and a 48×48 RGBA buffer per item is not worth copying on each redraw.
+/// An icon an application handed over as raw pixels rather than a name. Behind an `Arc` because every publish clones the whole item list, and a 48×48 RGBA buffer per item is not worth copying on each redraw.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pixmap {
     pub width: u32,
@@ -92,9 +78,7 @@ pub struct TrayItem {
     pub status: Status,
     pub icon_name: String,
     pub attention_icon_name: String,
-    /// A private icon directory the application ships (`IconThemePath`, a KDE extension). Several applications
-    /// name an icon that exists nowhere in the user's theme and point here instead; without it they render
-    /// blank.
+    /// A private icon directory the application ships (`IconThemePath`, a KDE extension). Several applications name an icon that exists nowhere in the user's theme and point here instead; without it they render blank.
     pub icon_theme_path: String,
     pub pixmap: Option<Arc<Pixmap>>,
     pub attention_pixmap: Option<Arc<Pixmap>>,
@@ -104,16 +88,13 @@ pub struct TrayItem {
     pub item_is_menu: bool,
     /// Whether the application actually implements `Activate`.
     ///
-    /// Not a formality: everything built on libappindicator — Steam among them — implements only `Scroll` and
-    /// `SecondaryActivate` and expects all interaction to go through its menu. Calling `Activate` there returns
-    /// `UnknownMethod` and the icon looks inert, so the click has to know beforehand which verb the item speaks.
+    /// Not a formality: everything built on libappindicator — Steam among them — implements only `Scroll` and `SecondaryActivate` and expects all interaction to go through its menu. Calling `Activate` there returns `UnknownMethod` and the icon looks inert, so the click has to know beforehand which verb the item speaks.
     pub has_activate: bool,
     pub tooltip: String,
 }
 
 impl TrayItem {
-    /// The icon reference to draw: the attention icon while the item is asking for attention, else its normal
-    /// one.
+    /// The icon reference to draw: the attention icon while the item is asking for attention, else its normal one.
     pub fn icon_reference(&self) -> &str {
         if self.status == Status::NeedsAttention && !self.attention_icon_name.is_empty() {
             &self.attention_icon_name
@@ -131,8 +112,7 @@ impl TrayItem {
         }
     }
 
-    /// What a tooltip or a hover popout says: the item's tooltip, falling back to its title, then its id — so
-    /// there is always something to identify it by.
+    /// What a tooltip or a hover popout says: the item's tooltip, falling back to its title, then its id — so there is always something to identify it by.
     pub fn label(&self) -> &str {
         for candidate in [&self.tooltip, &self.title, &self.id] {
             if !candidate.trim().is_empty() {
@@ -143,12 +123,9 @@ impl TrayItem {
     }
 }
 
-/// Splits the string an application passes to `RegisterStatusNotifierItem` into the bus name and object path
-/// to talk to it on.
+/// Splits the string an application passes to `RegisterStatusNotifierItem` into the bus name and object path to talk to it on.
 ///
-/// The spec says "service name", applications disagree: KDE's own libraries pass a bare bus name, GTK's
-/// AppIndicator passes an object path and expects the sender to be used as the bus, and a few pass
-/// `bus/path` outright. All three appear in the wild, so all three are accepted.
+/// The spec says "service name", applications disagree: KDE's own libraries pass a bare bus name, GTK's AppIndicator passes an object path and expects the sender to be used as the bus, and a few pass `bus/path` outright. All three appear in the wild, so all three are accepted.
 fn split_service(service: &str, sender: &str) -> Option<(String, String)> {
     let service = service.trim();
     if service.is_empty() {
@@ -171,9 +148,7 @@ fn item_key(bus: &str, path: &str) -> String {
     format!("{bus}{path}")
 }
 
-/// Repacks the spec's `IconPixmap` entry — ARGB32 in network (big-endian) byte order — into the RGBA8 every
-/// renderer here expects. `None` when the declared size doesn't match the bytes, which is a malformed item
-/// rather than something to draw garbage for.
+/// Repacks the spec's `IconPixmap` entry — ARGB32 in network (big-endian) byte order — into the RGBA8 every renderer here expects. `None` when the declared size doesn't match the bytes, which is a malformed item rather than something to draw garbage for.
 fn pixmap_from_argb(width: i32, height: i32, argb: &[u8]) -> Option<Pixmap> {
     let width = u32::try_from(width).ok()?;
     let height = u32::try_from(height).ok()?;
@@ -192,8 +167,7 @@ fn pixmap_from_argb(width: i32, height: i32, argb: &[u8]) -> Option<Pixmap> {
     })
 }
 
-/// The largest pixmap an application offers, since a bar scales down far better than up. `IconPixmap` is
-/// `a(iiay)`: a list of (width, height, ARGB32 bytes) ordered however the application felt like.
+/// The largest pixmap an application offers, since a bar scales down far better than up. `IconPixmap` is `a(iiay)`: a list of (width, height, ARGB32 bytes) ordered however the application felt like.
 fn largest_pixmap(value: &Value<'_>) -> Option<Arc<Pixmap>> {
     let Value::Array(entries) = value else {
         return None;
@@ -220,8 +194,7 @@ fn largest_pixmap(value: &Value<'_>) -> Option<Arc<Pixmap>> {
         .map(Arc::new)
 }
 
-/// The `ToolTip` property, whose useful part is buried: it is `(sa(iiay)ss)` — icon name, icon pixmaps, title,
-/// body — and the title is what a one-line label wants.
+/// The `ToolTip` property, whose useful part is buried: it is `(sa(iiay)ss)` — icon name, icon pixmaps, title, body — and the title is what a one-line label wants.
 fn tooltip_text(value: &Value<'_>) -> String {
     let Value::Structure(fields) = value else {
         return String::new();
@@ -241,12 +214,7 @@ fn tooltip_text(value: &Value<'_>) -> String {
 
 /// Whether the item's interface declares `Activate`, read from its introspection XML.
 ///
-/// A substring check rather than an XML parse: the one fact needed is whether one method name is declared, and
-/// the alternative is a parser dependency for a question that fits in a `contains`. A method that is absent
-/// here is absent for good — an item does not grow one at runtime.
-/// Cached per item, because the answer cannot change while the item lives and the refresher runs on every icon
-/// blink — introspecting each one again every time would be a round trip per item per refresh, into exactly the
-/// applications most likely to be slow. Pruned by [`forget_departed`] so it cannot outgrow the tray.
+/// A substring check rather than an XML parse: the one fact needed is whether one method name is declared, and the alternative is a parser dependency for a question that fits in a `contains`. A method that is absent here is absent for good — an item does not grow one at runtime. Cached per item, because the answer cannot change while the item lives and the refresher runs on every icon blink — introspecting each one again every time would be a round trip per item per refresh, into exactly the applications most likely to be slow. Pruned by [`forget_departed`] so it cannot outgrow the tray.
 fn implements_activate(conn: &Connection, bus: &str, path: &str) -> bool {
     let key = item_key(bus, path);
     if let Some(known) = ACTIVATE_CACHE.lock().unwrap().get(&key) {
@@ -277,8 +245,7 @@ fn introspect_activate(conn: &Connection, bus: &str, path: &str) -> bool {
     }
 }
 
-/// Drops cache entries for items that are no longer registered, so a session that opens and closes tray
-/// applications all day doesn't accumulate them.
+/// Drops cache entries for items that are no longer registered, so a session that opens and closes tray applications all day doesn't accumulate them.
 fn forget_departed(live: &[(String, String)]) {
     let mut cache = ACTIVATE_CACHE.lock().unwrap();
     if cache.len() <= live.len() {
@@ -297,8 +264,7 @@ fn read_item(conn: &Connection, bus: &str, path: &str) -> Option<TrayItem> {
         .ok()?
         .build()
         .ok()?;
-    // One round-trip for every property instead of one per property: a tray with a slow application in it
-    // should not cost a dozen sequential calls each time it blinks.
+    // One round-trip for every property instead of one per property: a tray with a slow application in it should not cost a dozen sequential calls each time it blinks.
     let all: HashMap<String, zbus::zvariant::OwnedValue> =
         props.get_all(ITEM_IFACE.try_into().ok()?).ok()?;
 
@@ -340,8 +306,7 @@ fn read_item(conn: &Connection, bus: &str, path: &str) -> Option<TrayItem> {
     })
 }
 
-/// The registry behind the watcher interface. Shared with the interface object, which only ever mutates the
-/// service list and pings the refresher — never touches the bus.
+/// The registry behind the watcher interface. Shared with the interface object, which only ever mutates the service list and pings the refresher — never touches the bus.
 #[derive(Default)]
 struct Registry {
     services: Mutex<Vec<(String, String)>>,
@@ -358,8 +323,7 @@ impl Registry {
         true
     }
 
-    /// Drops every item owned by `bus`, for a tray application that exited without unregistering — which is the
-    /// normal case, since a crashed or killed process never gets to.
+    /// Drops every item owned by `bus`, for a tray application that exited without unregistering — which is the normal case, since a crashed or killed process never gets to.
     fn remove_owner(&self, bus: &str) -> bool {
         let mut services = self.services.lock().unwrap();
         let before = services.len();
@@ -408,9 +372,7 @@ impl WatcherIface {
 
     #[zbus(property)]
     fn is_status_notifier_host_registered(&self) -> bool {
-        // The shell is itself a host, so this is true from the moment the watcher exists. Applications gate
-        // showing themselves on it, and answering `false` until some *other* host appears would hide the tray
-        // from the only shell that can draw it.
+        // The shell is itself a host, so this is true from the moment the watcher exists. Applications gate showing themselves on it, and answering `false` until some *other* host appears would hide the tray from the only shell that can draw it.
         true
     }
 
@@ -431,9 +393,7 @@ fn run(out: &Arc<Broadcast<Vec<TrayItem>>>) {
     out.publish(Vec::new());
 
     let registry = Arc::new(Registry::default());
-    // Bounded and `try_send`: a ping is "something changed", so a full queue already carries that message and
-    // dropping the extra one costs nothing. It also means an interface handler can never block on a slow
-    // refresher.
+    // Bounded and `try_send`: a ping is "something changed", so a full queue already carries that message and dropping the extra one costs nothing. It also means an interface handler can never block on a slow refresher.
     let (ping, pings) = sync_channel::<()>(8);
 
     let owned = own_watcher(Arc::clone(&registry), ping.clone());
@@ -447,8 +407,7 @@ fn run(out: &Arc<Broadcast<Vec<TrayItem>>>) {
     let local = owned.then(|| Arc::clone(&registry));
     let out = Arc::clone(out);
     let mut last: Vec<TrayItem> = Vec::new();
-    // The first pass happens without waiting for a ping, so a shell started after the tray applications still
-    // finds them.
+    // The first pass happens without waiting for a ping, so a shell started after the tray applications still finds them.
     loop {
         let items = read_all(&conn, local.as_deref());
         if items != last {
@@ -464,8 +423,7 @@ fn run(out: &Arc<Broadcast<Vec<TrayItem>>>) {
     }
 }
 
-/// Claims the watcher name and serves the registry on it. `false` when another shell got there first, which is
-/// not an error — the tray then follows that watcher instead of competing with it.
+/// Claims the watcher name and serves the registry on it. `false` when another shell got there first, which is not an error — the tray then follows that watcher instead of competing with it.
 fn own_watcher(registry: Arc<Registry>, ping: SyncSender<()>) -> bool {
     let built = zbus::blocking::connection::Builder::session()
         .and_then(|b| b.name(WATCHER_NAME))
@@ -476,8 +434,7 @@ fn own_watcher(registry: Arc<Registry>, ping: SyncSender<()>) -> bool {
             let _ = std::thread::Builder::new()
                 .name("hogar-shell-tray-watcher".to_string())
                 .spawn(move || {
-                    // The object server runs on the connection's own executor; this thread exists only to keep
-                    // the connection — and therefore the name — alive for the process.
+                    // The object server runs on the connection's own executor; this thread exists only to keep the connection — and therefore the name — alive for the process.
                     let _conn = conn;
                     loop {
                         std::thread::park();
@@ -489,13 +446,9 @@ fn own_watcher(registry: Arc<Registry>, ping: SyncSender<()>) -> bool {
     }
 }
 
-/// Registers the shell as a tray host. Applications commonly stay invisible until a host exists, so this is
-/// what makes icons appear at all — including when another shell owns the watcher.
+/// Registers the shell as a tray host. Applications commonly stay invisible until a host exists, so this is what makes icons appear at all — including when another shell owns the watcher.
 fn register_as_host(conn: &Connection) {
-    // zbus warns that this claims a name with no object server behind it, and that is correct and intended: a
-    // host name is a presence marker, not an endpoint. Applications look for one before they will show
-    // themselves, and the traffic runs the other way — the host calls items, and the watcher only tracks that
-    // the name exists. Serving an empty object here to quiet the warning would add an interface nobody calls.
+    // zbus warns that this claims a name with no object server behind it, and that is correct and intended: a host name is a presence marker, not an endpoint. Applications look for one before they will show themselves, and the traffic runs the other way — the host calls items, and the watcher only tracks that the name exists. Serving an empty object here to quiet the warning would add an interface nobody calls.
     let name = format!("org.kde.StatusNotifierHost-{}", std::process::id());
     let Ok(host) =
         zbus::blocking::connection::Builder::session().and_then(|b| b.name(name.clone()))
@@ -522,8 +475,7 @@ fn register_as_host(conn: &Connection) {
     }
 }
 
-/// Wakes the refresher on anything that can change what the tray shows: an item's own `New*` signals, the
-/// watcher's registration signals (ours or another shell's), and a bus name vanishing.
+/// Wakes the refresher on anything that can change what the tray shows: an item's own `New*` signals, the watcher's registration signals (ours or another shell's), and a bus name vanishing.
 fn spawn_signal_reader(ping: SyncSender<()>) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-tray-signals".to_string())
@@ -577,9 +529,7 @@ fn owner_rule() -> Option<zbus::MatchRule<'static>> {
         .map(|b| b.build())
 }
 
-/// The services the watcher knows about: the local registry when this shell owns the watcher, else the other
-/// watcher's property. Reading our own property over the bus would mean calling into our own object server
-/// from outside it, so the local path is both faster and safer.
+/// The services the watcher knows about: the local registry when this shell owns the watcher, else the other watcher's property. Reading our own property over the bus would mean calling into our own object server from outside it, so the local path is both faster and safer.
 fn registered_services(conn: &Connection, local: Option<&Registry>) -> Vec<(String, String)> {
     if let Some(registry) = local {
         return registry.snapshot();
@@ -604,8 +554,7 @@ fn registered_services(conn: &Connection, local: Option<&Registry>) -> Vec<(Stri
         .collect()
 }
 
-/// Forgets items whose application is gone. Only meaningful for the local registry — another shell's watcher
-/// prunes its own.
+/// Forgets items whose application is gone. Only meaningful for the local registry — another shell's watcher prunes its own.
 fn prune_dead(conn: &Connection, local: Option<&Registry>) {
     let Some(registry) = local else { return };
     let Ok(dbus) = DBusProxy::new(conn) else {
@@ -622,8 +571,7 @@ fn prune_dead(conn: &Connection, local: Option<&Registry>) {
     }
 }
 
-/// Every registered item, read fresh. An item that fails to answer is dropped rather than shown stale: it is
-/// either mid-exit or broken, and a dead icon that still takes a click is worse than a missing one.
+/// Every registered item, read fresh. An item that fails to answer is dropped rather than shown stale: it is either mid-exit or broken, and a dead icon that still takes a click is worse than a missing one.
 fn read_all(conn: &Connection, local: Option<&Registry>) -> Vec<TrayItem> {
     let services = registered_services(conn, local);
     forget_departed(&services);
@@ -641,14 +589,12 @@ pub fn current() -> Option<Vec<TrayItem>> {
     TRAY.current()
 }
 
-/// Hands the module a list of items without starting the host — no D-Bus name is claimed and no thread runs, so
-/// what a `[preview]` seeds is what it draws. See [`util::broadcast::Service::seed`].
+/// Hands the module a list of items without starting the host — no D-Bus name is claimed and no thread runs, so what a `[preview]` seeds is what it draws. See [`util::broadcast::Service::seed`].
 pub fn seed(items: Vec<TrayItem>) {
     TRAY.seed(items);
 }
 
-/// Calls `method` on an item, off the UI thread. Every tray interaction is a round-trip to another application,
-/// which may be busy; none of them may run on the frame.
+/// Calls `method` on an item, off the UI thread. Every tray interaction is a round-trip to another application, which may be busy; none of them may run on the frame.
 fn invoke(item: &TrayItem, method: &'static str, args: (i32, i32)) {
     let bus = item.bus.clone();
     let path = item.path.clone();
@@ -667,8 +613,7 @@ fn invoke(item: &TrayItem, method: &'static str, args: (i32, i32)) {
         });
 }
 
-/// A primary click. The coordinates are the spec's hint for where a menu should pop up; applications that
-/// ignore them (most) simply toggle their window.
+/// A primary click. The coordinates are the spec's hint for where a menu should pop up; applications that ignore them (most) simply toggle their window.
 pub fn activate(item: &TrayItem, x: i32, y: i32) {
     invoke(item, "Activate", (x, y));
 }
@@ -681,8 +626,7 @@ pub fn context_menu(item: &TrayItem, x: i32, y: i32) {
     invoke(item, "ContextMenu", (x, y));
 }
 
-/// The wheel over an icon, forwarded as the spec's `Scroll(delta, orientation)` — which is how a volume applet
-/// in the tray responds to scrolling.
+/// The wheel over an icon, forwarded as the spec's `Scroll(delta, orientation)` — which is how a volume applet in the tray responds to scrolling.
 pub fn scroll(item: &TrayItem, delta: i32, horizontal: bool) {
     let bus = item.bus.clone();
     let path = item.path.clone();

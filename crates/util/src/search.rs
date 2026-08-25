@@ -1,8 +1,6 @@
 //! One ranking implementation for every list the shell filters.
 //!
-//! The launcher, the icon picker, a wifi list and a settings search all want the same thing: given what the
-//! user typed so far, order these candidates by how well they match. Sharing one scorer means they agree —
-//! typing `ff` finds Firefox in all of them or in none, rather than each list having its own idea.
+//! The launcher, the icon picker, a wifi list and a settings search all want the same thing: given what the user typed so far, order these candidates by how well they match. Sharing one scorer means they agree — typing `ff` finds Firefox in all of them or in none, rather than each list having its own idea.
 
 /// How a query is matched against candidates.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,11 +12,9 @@ pub enum Mode {
     Substring,
 }
 
-/// Points for a match that starts at the beginning of the candidate — `fir` should rank Firefox above
-/// "Backup Firmware".
+/// Points for a match that starts at the beginning of the candidate — `fir` should rank Firefox above "Backup Firmware".
 const PREFIX_BONUS: i32 = 40;
-/// Points for a character that lands at a word boundary, which is what makes acronyms (`vsc` → `Visual Studio
-/// Code`) outrank incidental letter runs.
+/// Points for a character that lands at a word boundary, which is what makes acronyms (`vsc` → `Visual Studio Code`) outrank incidental letter runs.
 const BOUNDARY_BONUS: i32 = 18;
 /// Points for a character immediately after the previous match, so contiguous runs beat scattered hits.
 const ADJACENT_BONUS: i32 = 12;
@@ -27,8 +23,7 @@ const GAP_PENALTY: i32 = 2;
 
 /// Scores `candidate` against `query`, or `None` when it doesn't match at all.
 ///
-/// Matching is case-insensitive; a longer candidate is penalised slightly so that between two equally good
-/// matches the shorter, more specific one wins.
+/// Matching is case-insensitive; a longer candidate is penalised slightly so that between two equally good matches the shorter, more specific one wins.
 pub fn score(candidate: &str, query: &str, mode: Mode) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
@@ -68,9 +63,7 @@ fn fuzzy_score(haystack: &[char], needle: &[char]) -> Option<i32> {
     let mut previous: Option<usize> = None;
 
     for want in needle {
-        // Greedy left-to-right: the first available position for each query character. Not optimal in the
-        // general case, but it is O(n) and matches how people read a list — the earliest hit is the one they
-        // expect to be highlighted.
+        // Greedy left-to-right: the first available position for each query character. Not optimal in the general case, but it is O(n) and matches how people read a list — the earliest hit is the one they expect to be highlighted.
         let found = haystack[at..].iter().position(|c| c == want)? + at;
         total += 10;
         if is_boundary(haystack, found) {
@@ -88,8 +81,7 @@ fn fuzzy_score(haystack: &[char], needle: &[char]) -> Option<i32> {
     Some(total - length_penalty(haystack.len()))
 }
 
-/// Ranks `items` against `query`, dropping non-matches. `key` yields the text to match; `weight` adds a
-/// caller-supplied bias — the launcher passes launch frequency, so familiar apps float up among equals.
+/// Ranks `items` against `query`, dropping non-matches. `key` yields the text to match; `weight` adds a caller-supplied bias — the launcher passes launch frequency, so familiar apps float up among equals.
 pub fn rank<T, K, W>(items: Vec<T>, query: &str, mode: Mode, key: K, weight: W) -> Vec<T>
 where
     K: Fn(&T) -> String,
@@ -146,8 +138,7 @@ mod tests {
 
     #[test]
     fn word_boundaries_make_acronyms_win() {
-        // The point of the boundary bonus: `vsc` should find the editor, not a word that happens to contain
-        // those letters scattered through it.
+        // The point of the boundary bonus: `vsc` should find the editor, not a word that happens to contain those letters scattered through it.
         let acronym = fuzzy("Visual Studio Code", "vsc").unwrap();
         let scattered = fuzzy("vertical scrollbar container", "vsc").unwrap();
         assert!(
@@ -182,8 +173,7 @@ mod tests {
             Some(&"Backup Firmware"),
             "the mid-word match sinks below both prefix matches: {ranked:?}"
         );
-        // `Firefox` and `Files` score identically here — both a contiguous prefix, both short enough that the
-        // length penalty rounds to zero — so the tie falls back to input order rather than to anything implicit.
+        // `Firefox` and `Files` score identically here — both a contiguous prefix, both short enough that the length penalty rounds to zero — so the tie falls back to input order rather than to anything implicit.
         assert_eq!(ranked[0], "Firefox");
         assert_eq!(ranked[1], "Files");
 

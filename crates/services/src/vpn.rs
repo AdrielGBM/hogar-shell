@@ -1,12 +1,8 @@
 //! VPN tunnels: what is configured, what is up, and switching between the two.
 //!
-//! Two sources, because a desktop has two kinds of tunnel and they know nothing about each other.
-//! NetworkManager owns the ones with a profile — OpenVPN, WireGuard imported into NM, corporate IPsec — and
-//! reports them over D-Bus. Raw `wg-quick` interfaces owned by systemd or a script are invisible there and show
-//! up only in the kernel, under `/sys/class/net/<iface>` with a `wireguard` device type.
+//! Two sources, because a desktop has two kinds of tunnel and they know nothing about each other. NetworkManager owns the ones with a profile — OpenVPN, WireGuard imported into NM, corporate IPsec — and reports them over D-Bus. Raw `wg-quick` interfaces owned by systemd or a script are invisible there and show up only in the kernel, under `/sys/class/net/<iface>` with a `wireguard` device type.
 //!
-//! Both are listed, tagged with where they came from, and toggled through whichever mechanism owns them.
-//! Anything else would leave half a user's tunnels unlistable depending on how they set them up.
+//! Both are listed, tagged with where they came from, and toggled through whichever mechanism owns them. Anything else would leave half a user's tunnels unlistable depending on how they set them up.
 
 use std::collections::HashMap;
 use std::fs;
@@ -38,8 +34,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTION_TIMEOUT: Duration = Duration::from_secs(60);
 const COALESCE: Duration = Duration::from_millis(120);
 
-/// How often the kernel side is re-read. WireGuard interfaces appear and disappear with no event source at
-/// all, so this is a poll — but only of a directory listing, and only while something is subscribed.
+/// How often the kernel side is re-read. WireGuard interfaces appear and disappear with no event source at all, so this is a poll — but only of a directory listing, and only while something is subscribed.
 const KERNEL_POLL: Duration = Duration::from_secs(5);
 
 /// Who owns a tunnel, which decides how it is switched.
@@ -117,8 +112,7 @@ fn profile(conn: &Connection, path: &str) -> Option<(String, String)> {
     Some((id, kind))
 }
 
-/// Whether a NetworkManager connection type is a tunnel. `vpn` covers every plugin (OpenVPN, OpenConnect,
-/// IPsec); `wireguard` is its own type because NetworkManager implements it natively rather than as a plugin.
+/// Whether a NetworkManager connection type is a tunnel. `vpn` covers every plugin (OpenVPN, OpenConnect, IPsec); `wireguard` is its own type because NetworkManager implements it natively rather than as a plugin.
 fn is_tunnel(kind: &str) -> bool {
     matches!(kind, "vpn" | "wireguard")
 }
@@ -174,10 +168,7 @@ fn read_networkmanager(conn: &Connection) -> Vec<Tunnel> {
 
 /// WireGuard interfaces the kernel knows about but NetworkManager does not.
 ///
-/// `/sys/class/net/<iface>/uevent` carries `DEVTYPE=wireguard`, which is the kernel's own answer and needs no
-/// name-shape guessing — an interface called `wg0` might be anything, and a tunnel might be called `office`.
-/// An interface only counts as up when it is actually carrying traffic, which for WireGuard means `operstate`
-/// reads `unknown` (it is point-to-point and never reports `up`) *and* the link is not down.
+/// `/sys/class/net/<iface>/uevent` carries `DEVTYPE=wireguard`, which is the kernel's own answer and needs no name-shape guessing — an interface called `wg0` might be anything, and a tunnel might be called `office`. An interface only counts as up when it is actually carrying traffic, which for WireGuard means `operstate` reads `unknown` (it is point-to-point and never reports `up`) *and* the link is not down.
 fn read_kernel(known: &[Tunnel]) -> Vec<Tunnel> {
     let Ok(entries) = fs::read_dir(NET_DIR) else {
         return Vec::new();
@@ -238,8 +229,7 @@ fn run(out: &Arc<Broadcast<Vpn>>) {
     if conn.is_some() && watch_signals(tx.clone()).is_none() {
         tracing::warn!("vpn: no NetworkManager signals; the list will only refresh on the timer");
     }
-    // The kernel side has no event source, so a slow timer covers it — and doubles as the fallback that keeps
-    // the list live on a machine with no NetworkManager at all.
+    // The kernel side has no event source, so a slow timer covers it — and doubles as the fallback that keeps the list live on a machine with no NetworkManager at all.
     let _ = std::thread::Builder::new()
         .name("hogar-shell-vpn-poll".to_string())
         .spawn(move || {
@@ -318,8 +308,7 @@ pub fn set_active(id: &str, up: bool) {
         Owner::NetworkManager => act("switching an NM tunnel", move || {
             switch_networkmanager(&tunnel, up)
         }),
-        // `wg-quick` needs root, so this goes through the same detached shell every other launch uses rather
-        // than pretending the shell can raise an interface itself.
+        // `wg-quick` needs root, so this goes through the same detached shell every other launch uses rather than pretending the shell can raise an interface itself.
         Owner::Kernel => act("switching a wg-quick tunnel", move || {
             let verb = if up { "up" } else { "down" };
             crate::apps::run_detached(format!("wg-quick {verb} {}", tunnel.name));
@@ -361,8 +350,7 @@ fn switch_networkmanager(tunnel: &Tunnel, up: bool) {
     }
 }
 
-/// The *active-connection* object for a saved profile. Deactivation takes that, not the profile itself — the
-/// profile is the recipe, the active connection is the running instance.
+/// The *active-connection* object for a saved profile. Deactivation takes that, not the profile itself — the profile is the recipe, the active connection is the running instance.
 fn active_handle(conn: &Connection, profile_path: &str) -> Option<OwnedObjectPath> {
     let value = property(conn, NM_PATH, NM_IFACE, "ActiveConnections")?;
     let actives = Vec::<OwnedObjectPath>::try_from(value).ok()?;
@@ -414,8 +402,7 @@ mod tests {
 
     #[test]
     fn a_kernel_tunnel_is_not_listed_twice_when_networkmanager_owns_it() {
-        // NetworkManager names its WireGuard connections after the interface it creates, so without this the
-        // same tunnel appears once per source — with two different switches, one of which would not work.
+        // NetworkManager names its WireGuard connections after the interface it creates, so without this the same tunnel appears once per source — with two different switches, one of which would not work.
         let from_nm = vec![tunnel("wg0", true, Owner::NetworkManager)];
         assert!(
             read_kernel(&from_nm).iter().all(|t| t.name != "wg0"),

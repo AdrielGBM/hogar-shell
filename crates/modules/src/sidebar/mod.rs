@@ -1,10 +1,6 @@
 //! The notification centre: a full-height surface that is the home for what has arrived and what can be switched.
 //!
-//! The bell drawer is a *glance* — it hangs off its chip, it is as tall as its content, and it closes when you
-//! look away. This is the other thing: it takes the whole edge, it scrolls, and it is where a user goes to work
-//! through a morning's notifications. It hosts the utilities panel's own toggles rather than a second set of
-//! them, which is the whole reason the two were built together: two independent copies of "turn Wi-Fi off" would
-//! drift the day one of them gained a toggle.
+//! The bell drawer is a *glance* — it hangs off its chip, it is as tall as its content, and it closes when you look away. This is the other thing: it takes the whole edge, it scrolls, and it is where a user goes to work through a morning's notifications. It hosts the utilities panel's own toggles rather than a second set of them, which is the whole reason the two were built together: two independent copies of "turn Wi-Fi off" would drift the day one of them gained a toggle.
 
 use std::sync::Arc;
 
@@ -21,13 +17,9 @@ use ui::scale::{corner, space};
 
 pub const ID: &str = "sidebar";
 
-/// Opens the centre, or closes it if it is up. Registered with the shell's surface registry under [`ID`], so a
-/// press on the bell, `hogar-shell notifs center` and a keybind all reach the same surface rather than stacking
-/// copies of it.
+/// Opens the centre, or closes it if it is up. Registered with the shell's surface registry under [`ID`], so a press on the bell, `hogar-shell notifs center` and a keybind all reach the same surface rather than stacking copies of it.
 ///
-/// A standing window, not a glance: opening it takes the screen from whatever drawer was up — including the
-/// bell's own, which is the same notifications seen the other way — and nothing takes it away again but the
-/// user. Opening a drawer afterwards leaves it exactly where it was.
+/// A standing window, not a glance: opening it takes the screen from whatever drawer was up — including the bell's own, which is the same notifications seen the other way — and nothing takes it away again but the user. Opening a drawer afterwards leaves it exactly where it was.
 pub fn toggle() {
     surfaces::shell::toggle_standing_window(ID, open_sidebar);
 }
@@ -55,9 +47,7 @@ fn open_sidebar() -> SurfaceToken {
     .open()
 }
 
-/// A dock: spans its edge over the windows, at the shared panel margin off them. The zone a dock takes is
-/// zero, not -1 — the compositor has already cleared the bars, and the margin is the only extra distance a
-/// panel of any kind puts between itself and them.
+/// A dock: spans its edge over the windows, at the shared panel margin off them. The zone a dock takes is zero, not -1 — the compositor has already cleared the bars, and the margin is the only extra distance a panel of any kind puts between itself and them.
 fn placement(config: &Config, output: Option<String>) -> Placement {
     let sidebar = &config.sidebar;
     Placement::dock("hogar-shell-sidebar", sidebar.edge, sidebar.thickness())
@@ -84,9 +74,7 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
             .width(SizeDimension::Percent(1.0)),
         children,
     )?;
-    // Scrolled, because a morning's notifications are taller than any screen — the one thing the bell drawer,
-    // which sizes to its content, cannot do. Kept: this surface is rebuilt by any config edit, and a history
-    // that jumped back to the newest card each time would lose whatever the reader had scrolled down to.
+    // Scrolled, because a morning's notifications are taller than any screen — the one thing the bell drawer, which sizes to its content, cannot do. Kept: this surface is rebuilt by any config edit, and a history that jumped back to the newest card each time would lose whatever the reader had scrolled down to.
     let scroll = LayoutScrollArea::new_kept(
         "sidebar.history",
         LayoutStyle::new()
@@ -107,10 +95,7 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// The title and the way out.
 ///
-/// The close button is not decoration: a surface docked to an edge has no "outside" for a press to land in, and
-/// this one takes no keyboard on purpose — a centre held open while the user works must not keep focus away from
-/// what they are typing in — so Escape never reaches it either. Without the ✕ the only way to dismiss it is the
-/// IPC command that opened it, which is not a way a user has.
+/// The close button is not decoration: a surface docked to an edge has no "outside" for a press to land in, and this one takes no keyboard on purpose — a centre held open while the user works must not keep focus away from what they are typing in — so Escape never reaches it either. Without the ✕ the only way to dismiss it is the IPC command that opened it, which is not a way a user has.
 fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let title = Text::auto(
         || telar::t!("sidebar.title"),
@@ -133,8 +118,7 @@ fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
         vec![glyph],
     )?
     .hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
-    // Through the registry rather than `request_close`, so `panel list` and a second `notifs center` agree with
-    // what is on screen the moment the button is pressed.
+    // Through the registry rather than `request_close`, so `panel list` and a second `notifs center` agree with what is on screen the moment the button is pressed.
     .on_press(close);
 
     Ok(Box::new(Container::new(
@@ -192,9 +176,7 @@ mod tests {
         assert_eq!(huge.thickness(), 1200);
     }
 
-    /// The regression this exists for: the centre shipped with no way to dismiss it. It is docked to an edge, so
-    /// there is no outside to press, and it takes no keyboard, so Escape never arrives — the ✕ is the only way
-    /// out a user has, and it must be in the tree.
+    /// The regression this exists for: the centre shipped with no way to dismiss it. It is docked to an edge, so there is no outside to press, and it takes no keyboard, so Escape never arrives — the ✕ is the only way out a user has, and it must be in the tree.
     #[test]
     fn the_header_carries_the_only_way_out() {
         telar::reset_layout_runtime();

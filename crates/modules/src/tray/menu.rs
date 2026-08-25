@@ -1,8 +1,6 @@
 //! The popup menu behind a tray icon.
 //!
-//! A real layer-shell surface rather than an in-surface overlay: a bar is only its own thickness tall, so a
-//! menu drawn inside it would be clipped to a sliver. The anchoring is
-//! [`shared::anchor`](ui::anchor), shared with the hover popouts.
+//! A real layer-shell surface rather than an in-surface overlay: a bar is only its own thickness tall, so a menu drawn inside it would be clipped to a sliver. The anchoring is [`shared::anchor`](ui::anchor), shared with the hover popouts.
 
 use std::cell::RefCell;
 
@@ -20,21 +18,17 @@ use ui::panel::{PanelSurface, content_radius, panel_fill};
 use ui::placement::{OffChip, Placement};
 use ui::scale::{corner, space};
 
-/// The shell's id for the menu surface. One at a time: a second tray menu on screen would be two context
-/// menus at once, which no desktop does.
+/// The shell's id for the menu surface. One at a time: a second tray menu on screen would be two context menus at once, which no desktop does.
 const SURFACE_ID: &str = "tray-menu";
 
-/// Fixed rather than content-derived, so the anchoring maths knows the width before the menu is laid out and
-/// can keep it on screen. A tray menu is a list of short labels; letting it size to its longest one would make
-/// every application's menu a different width.
+/// Fixed rather than content-derived, so the anchoring maths knows the width before the menu is laid out and can keep it on screen. A tray menu is a list of short labels; letting it size to its longest one would make every application's menu a different width.
 const MENU_WIDTH: f32 = 260.0;
 
 const ROW_HEIGHT: f32 = 30.0;
 const SEPARATOR_HEIGHT: f32 = 9.0;
 
 thread_local! {
-    /// Which item's menu is showing, so a second click on the same chip closes it while a click on another
-    /// chip switches. Driver-thread only, like the rest of the surface bookkeeping.
+    /// Which item's menu is showing, so a second click on the same chip closes it while a click on another chip switches. Driver-thread only, like the rest of the surface bookkeeping.
     static OPEN_FOR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
@@ -45,12 +39,9 @@ pub fn close() {
 
 /// Opens `item`'s menu under its chip, or closes it if that same menu is already up.
 ///
-/// The layout is fetched on a worker thread and the surface opened from the handler, which
-/// [`platform_wayland::watch`] runs on the driver thread — the only place a surface may be opened. Doing the
-/// round trip inline would stall the frame on however long another application takes to answer.
+/// The layout is fetched on a worker thread and the surface opened from the handler, which [`platform_wayland::watch`] runs on the driver thread — the only place a surface may be opened. Doing the round trip inline would stall the frame on however long another application takes to answer.
 pub fn toggle(item: &TrayItem, chip: Rect, env: SurfaceEnv) {
-    // Both halves matter: `OPEN_FOR` alone would still name this item after the menu was dismissed by a click
-    // outside it, and the next click on the same chip would read as "close" and do nothing.
+    // Both halves matter: `OPEN_FOR` alone would still name this item after the menu was dismissed by a click outside it, and the next click on the same chip would read as "close" and do nothing.
     let already_open = surfaces::shell::window_is_open(SURFACE_ID)
         && OPEN_FOR.with(|o| o.borrow().as_deref() == Some(item.key.as_str()));
     close();
@@ -80,8 +71,7 @@ pub fn toggle(item: &TrayItem, chip: Rect, env: SurfaceEnv) {
             };
             // Along a horizontal bar the menu's extent is its fixed width; along a vertical one it would be its height, which is content-derived and unknown before layout.
             let span = (!env.edge.is_vertical()).then_some(MENU_WIDTH);
-            // The placement is built from the bar's own env, so the menu already resolves against the bar its
-            // chip sits on — its radius and fill match the drawer that chip would have opened.
+            // The placement is built from the bar's own env, so the menu already resolves against the bar its chip sits on — its radius and fill match the drawer that chip would have opened.
             let placement = Placement::off_chip(OffChip::Panel, &env, Some(chip), span);
             let (bus, path) = (event_bus.clone(), event_path.clone());
             surfaces::shell::toggle_window(SURFACE_ID, move || {
@@ -121,8 +111,7 @@ fn menu_view(
     Ok(Box::new(panel))
 }
 
-/// Renders a level of the menu. A submenu is expanded inline, one indent deeper, rather than flying out into a
-/// second surface: it keeps every row reachable in one place, and a tray menu is rarely more than two deep.
+/// Renders a level of the menu. A submenu is expanded inline, one indent deeper, rather than flying out into a second surface: it keeps every row reachable in one place, and a tray menu is rarely more than two deep.
 fn rows_for(
     items: &[MenuItem],
     bus: &str,
@@ -163,8 +152,7 @@ fn separator_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(holder))
 }
 
-/// The tick a toggled row carries. A radio and a checkbox are different promises — one of a set versus on/off —
-/// so they get different glyphs rather than one shared dot.
+/// The tick a toggled row carries. A radio and a checkbox are different promises — one of a set versus on/off — so they get different glyphs rather than one shared dot.
 fn toggle_glyph(toggle: Toggle) -> Option<&'static str> {
     match toggle {
         Toggle::None => None,
@@ -211,8 +199,7 @@ fn row(
         )?);
     }
 
-    // The row's own half of the panel's inset, so a label lands exactly where a drawer's content does. A
-    // submenu is expanded in place, so each level adds its indent on top of that.
+    // The row's own half of the panel's inset, so a label lands exactly where a drawer's content does. A submenu is expanded in place, so each level adds its indent on top of that.
     let indent = space::md() + depth as f32 * 14.0;
     let style = LayoutStyle::new()
         .flex_row()
@@ -231,8 +218,7 @@ fn row(
         content,
     )?;
 
-    // A row that opens a submenu is already showing it (submenus expand inline), and a disabled one is a
-    // label — neither is pressable, so neither gets hover feedback that promises otherwise.
+    // A row that opens a submenu is already showing it (submenus expand inline), and a disabled one is a label — neither is pressable, so neither gets hover feedback that promises otherwise.
     if item.is_actionable() {
         let (bus, path, id) = (bus.to_string(), path.to_string(), item.id);
         container = container

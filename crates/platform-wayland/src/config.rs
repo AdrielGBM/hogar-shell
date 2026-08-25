@@ -16,18 +16,14 @@ pub struct LayerConfig {
     pub reserve_only: bool,
     /// Empty input region routes pointer/touch through to surfaces beneath.
     pub input_transparent: bool,
-    /// Carves the input region from the surface's interactive widgets each frame (via `telar::interactive_rects`):
-    /// pointer input lands on pressable content, everything else falls through. For click-through overlays with
-    /// tappable parts, such as notification popups. Takes precedence over `input_transparent`.
+    /// Carves the input region from the surface's interactive widgets each frame (via `telar::interactive_rects`): pointer input lands on pressable content, everything else falls through. For click-through overlays with tappable parts, such as notification popups. Takes precedence over `input_transparent`.
     pub interactive_input_region: bool,
 }
 
 impl LayerConfig {
-    /// What a live surface has to renegotiate to go from this configuration to `next` — only the fields that
-    /// actually differ, so a surface asking the compositor for the state it is already in never commits.
+    /// What a live surface has to renegotiate to go from this configuration to `next` — only the fields that actually differ, so a surface asking the compositor for the state it is already in never commits.
     ///
-    /// The fields left out are the ones a surface is *created* with and cannot change: its output, its
-    /// namespace, whether it is a reservation strip, and how its input region is decided.
+    /// The fields left out are the ones a surface is *created* with and cannot change: its output, its namespace, whether it is a reservation strip, and how its input region is decided.
     pub fn delta(&self, next: &LayerConfig) -> SurfaceUpdate {
         SurfaceUpdate {
             size: (self.size != next.size).then_some(next.size),

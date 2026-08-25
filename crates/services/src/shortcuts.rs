@@ -1,17 +1,10 @@
 //! Global shortcuts, registered on the desktop portal so the compositor can bind them by name.
 //!
-//! Keybinds already work without this — `bind = SUPER, N, exec, hogar-shell panel toggle notifications` spawns the
-//! client, which talks to the running shell over its socket. What that costs is a process launch per press: a fork,
-//! an exec, a dynamic link and a connect, to deliver one line the shell answers in microseconds. A portal shortcut
-//! is the same line delivered over a connection that is already open.
+//! Keybinds already work without this — `bind = SUPER, N, exec, hogar-shell panel toggle notifications` spawns the client, which talks to the running shell over its socket. What that costs is a process launch per press: a fork, an exec, a dynamic link and a connect, to deliver one line the shell answers in microseconds. A portal shortcut is the same line delivered over a connection that is already open.
 //!
-//! The trade is that the *binding* moves out of the shell's hands. hogar-shell says "I have an action called
-//! `launcher`"; the compositor decides which keys reach it, and the user writes `bind = SUPER, SPACE, global,
-//! hogar-shell:launcher`. That is the point of the portal — one place that knows every application's shortcuts, so
-//! two applications cannot silently claim the same chord.
+//! The trade is that the *binding* moves out of the shell's hands. hogar-shell says "I have an action called `launcher`"; the compositor decides which keys reach it, and the user writes `bind = SUPER, SPACE, global, hogar-shell:launcher`. That is the point of the portal — one place that knows every application's shortcuts, so two applications cannot silently claim the same chord.
 //!
-//! **Entirely optional.** No portal, no session, a portal that refuses: the service logs once and retires, and
-//! every `exec, hogar-shell …` bind keeps working exactly as before. Nothing else in the shell asks it anything.
+//! **Entirely optional.** No portal, no session, a portal that refuses: the service logs once and retires, and every `exec, hogar-shell …` bind keeps working exactly as before. Nothing else in the shell asks it anything.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -28,23 +21,19 @@ const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const SHORTCUTS: &str = "org.freedesktop.portal.GlobalShortcuts";
 const REQUEST: &str = "org.freedesktop.portal.Request";
 
-/// How long a portal call may take before the service gives up. A portal that never answers must not leave a
-/// thread parked for the process's life — the same rule every other D-Bus integration here follows.
+/// How long a portal call may take before the service gives up. A portal that never answers must not leave a thread parked for the process's life — the same rule every other D-Bus integration here follows.
 const PORTAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One action the compositor can bind, and the request line it runs.
 ///
-/// The ids are deliberately the *actions a user binds a key to*, not a mirror of the IPC table: `hogar-shell
-/// audio set 40` is a scripting command, not a shortcut, and offering every command here would bury the six
-/// that anyone actually binds. `description` is what the compositor's own settings UI shows.
+/// The ids are deliberately the *actions a user binds a key to*, not a mirror of the IPC table: `hogar-shell audio set 40` is a scripting command, not a shortcut, and offering every command here would bury the six that anyone actually binds. `description` is what the compositor's own settings UI shows.
 pub struct Shortcut {
     pub id: &'static str,
     pub description: &'static str,
     pub command: &'static str,
 }
 
-/// Every action registered with the portal. Adding one here is all it takes; the user then binds it with
-/// `bind = <mods>, <key>, global, <appid>:<id>`.
+/// Every action registered with the portal. Adding one here is all it takes; the user then binds it with `bind = <mods>, <key>, global, <appid>:<id>`.
 pub const SHORTCUT_TABLE: &[Shortcut] = &[
     Shortcut {
         id: "launcher",
@@ -111,9 +100,7 @@ fn command_for(id: &str) -> Option<&'static str> {
         .map(|s| s.command)
 }
 
-/// The producer for `platform_wayland::watch`: registers the shortcuts, then turns every `Activated` signal
-/// into the same [`Request`] the socket would have delivered, so a shortcut and a `hogar-shell …` invocation run
-/// through one code path and cannot drift apart.
+/// The producer for `platform_wayland::watch`: registers the shortcuts, then turns every `Activated` signal into the same [`Request`] the socket would have delivered, so a shortcut and a `hogar-shell …` invocation run through one code path and cannot drift apart.
 pub fn serve(tx: EventSender<Request>) {
     let Some(conn) = Connection::session().ok() else {
         tracing::info!(
@@ -165,10 +152,7 @@ pub fn serve(tx: EventSender<Request>) {
 
 /// The `(session, shortcut id)` an `Activated` signal names, or `None` if it is not one this can read.
 ///
-/// The whole body has to be named even though only two of it are wanted: the signal is `osta{sv}` — session,
-/// id, an event timestamp, and options — and deserializing into a shorter tuple is a signature mismatch, not a
-/// truncation. It fails on every activation, silently, which is exactly the kind of bug that looks like "the
-/// shortcut does nothing" and sends you hunting in the compositor.
+/// The whole body has to be named even though only two of it are wanted: the signal is `osta{sv}` — session, id, an event timestamp, and options — and deserializing into a shorter tuple is a signature mismatch, not a truncation. It fails on every activation, silently, which is exactly the kind of bug that looks like "the shortcut does nothing" and sends you hunting in the compositor.
 fn activation(message: &zbus::Message) -> Option<(OwnedObjectPath, String)> {
     let body = message.body();
     let (session, id, _timestamp, _options): (
@@ -182,10 +166,7 @@ fn activation(message: &zbus::Message) -> Option<(OwnedObjectPath, String)> {
 
 /// Creates a portal session and binds every shortcut in the table to it, answering with the session path.
 ///
-/// The portal's request/response pattern in full: a method returns a `Request` object path and the *real*
-/// answer arrives later as a `Response` signal on it. The subscription therefore has to exist before the call
-/// is made — subscribing after it returns is a race the portal wins on a warm cache, and the answer is simply
-/// missed.
+/// The portal's request/response pattern in full: a method returns a `Request` object path and the *real* answer arrives later as a `Response` signal on it. The subscription therefore has to exist before the call is made — subscribing after it returns is a race the portal wins on a warm cache, and the answer is simply missed.
 fn register(conn: &Connection) -> Option<OwnedObjectPath> {
     let proxy = Proxy::new(conn, PORTAL, PORTAL_PATH, SHORTCUTS).ok()?;
 
@@ -219,9 +200,7 @@ fn register(conn: &Connection) -> Option<OwnedObjectPath> {
     Some(session)
 }
 
-/// Calls a portal method and waits for the `Response` signal its `Request` object carries, returning the
-/// results map. `None` on any failure, including a portal that answers with a non-zero response code — which is
-/// what a user declining the permission dialog looks like.
+/// Calls a portal method and waits for the `Response` signal its `Request` object carries, returning the results map. `None` on any failure, including a portal that answers with a non-zero response code — which is what a user declining the permission dialog looks like.
 fn call_and_wait(
     conn: &Connection,
     proxy: &Proxy,

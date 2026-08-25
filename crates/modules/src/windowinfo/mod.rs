@@ -1,14 +1,8 @@
 //! What the compositor knows about the focused window, and the four things worth doing to it.
 //!
-//! The details were already in the client list; what this panel adds is the preview and the actions. The preview
-//! is a real capture of the window's own rectangle, taken on a producer thread on a period from
-//! `[utilities] window_preview_ms` — a screen copy per refresh is not something to do on the frame, and a
-//! preview that re-read the screen every frame would cost more than the panel drawing it.
+//! The details were already in the client list; what this panel adds is the preview and the actions. The preview is a real capture of the window's own rectangle, taken on a producer thread on a period from `[utilities] window_preview_ms` — a screen copy per refresh is not something to do on the frame, and a preview that re-read the screen every frame would cost more than the panel drawing it.
 //!
-//! The actions are Hyprland dispatchers. Each is *verified* rather than trusted: `hl.dsp.window.<action>` will
-//! not say what arguments it takes — called outside a dispatch it refuses to build at all — so the service tries
-//! a shape and checks whether the compositor's own client list moved. Closing is the exception: it gets one
-//! attempt, because trying a second spelling of a close is how the wrong window gets closed twice.
+//! The actions are Hyprland dispatchers. Each is *verified* rather than trusted: `hl.dsp.window.<action>` will not say what arguments it takes — called outside a dispatch it refuses to build at all — so the service tries a shape and checks whether the compositor's own client list moved. Closing is the exception: it gets one attempt, because trying a second spelling of a close is how the wrong window gets closed twice.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -53,8 +47,7 @@ pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
         .map(|env| env.config.utilities.window_preview_interval())
         .unwrap_or(Some(Duration::from_secs(1)));
 
-    // The focused window, live: the panel follows focus rather than pinning whatever was focused when it opened,
-    // which is what makes it usable for looking at one window after another.
+    // The focused window, live: the panel follows focus rather than pinning whatever was focused when it opened, which is what makes it usable for looking at one window after another.
     let focused = signal(current_focus());
     let sink = focused.clone();
     platform_wayland::watch(hyprland::subscribe_clients, move |_: Vec<Client>| {
@@ -100,8 +93,7 @@ pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// The focused window as the compositor's own client list describes it, so the geometry the preview crops and
-/// the facts the rows print come from one reading.
+/// The focused window as the compositor's own client list describes it, so the geometry the preview crops and the facts the rows print come from one reading.
 fn current_focus() -> Option<Client> {
     let dir = hyprland::socket_dir()?;
     let address = hyprland::active_window(&dir).address;
@@ -114,8 +106,7 @@ fn current_focus() -> Option<Client> {
         .find(|client| client.address == address)
 }
 
-/// The live preview. `None` — no window, or a capture that failed — draws a placeholder rather than a gap, the
-/// same rule the shell's other pictures follow.
+/// The live preview. `None` — no window, or a capture that failed — draws a placeholder rather than a gap, the same rule the shell's other pictures follow.
 fn preview(
     interval: Option<Duration>,
     theme: NordTheme,
@@ -138,8 +129,7 @@ fn preview(
                 .unwrap_or_else(|| Arc::new(ImageData::new(Vec::new(), 0, 0)))
         },
         || ImageFilter::Linear,
-        // Contained, not cropped: a preview is for recognising the window, and a cover crop of a tall window
-        // shows a strip of its middle.
+        // Contained, not cropped: a preview is for recognising the window, and a cover crop of a tall window shows a strip of its middle.
         || ObjectFit::Contain,
     )?;
 
@@ -155,9 +145,7 @@ fn preview(
 
 /// Captures the focused window's rectangle on `interval`, or once when there is none.
 ///
-/// A producer, not a timer on the UI thread: each turn is a compositor round trip plus a copy of the whole
-/// window. The loop ends when `send` fails, which is how it learns the panel closed — the same contract every
-/// other producer here follows.
+/// A producer, not a timer on the UI thread: each turn is a compositor round trip plus a copy of the whole window. The loop ends when `send` fails, which is how it learns the panel closed — the same contract every other producer here follows.
 fn capture_loop(tx: EventSender<Option<Arc<ImageData>>>, interval: Option<Duration>) {
     loop {
         if !tx.send(window_frame()) {
@@ -191,8 +179,7 @@ fn window_frame() -> Option<Arc<ImageData>> {
 
 /// The facts, in the order someone debugging a window rule wants them.
 ///
-/// Each row names its own key literally: `t!` resolves at compile time — which is what lets the analyzer catch a
-/// missing translation — so a loop over a list of key *strings* would not compile.
+/// Each row names its own key literally: `t!` resolves at compile time — which is what lets the analyzer catch a missing translation — so a loop over a list of key *strings* would not compile.
 fn details(
     focused: telar::ReadSignal<Option<Client>>,
     theme: NordTheme,
@@ -246,8 +233,7 @@ fn details(
     )?))
 }
 
-/// Everything about a window that is a flag rather than a value, in one line — and never blank, so the row
-/// always says something.
+/// Everything about a window that is a flag rather than a value, in one line — and never blank, so the row always says something.
 fn state_line(client: &Client) -> String {
     let mut states = Vec::new();
     if client.floating {
@@ -323,8 +309,7 @@ fn actions(
 
 /// The workspaces this window can be moved to, as the compositor currently lists them.
 ///
-/// The existing workspaces rather than a fixed 1–10: a dispatcher can create a workspace on demand, but a row of
-/// ten numbers on a session that uses three is a row of buttons that mean nothing.
+/// The existing workspaces rather than a fixed 1–10: a dispatcher can create a workspace on demand, but a row of ten numbers on a session that uses three is a row of buttons that mean nothing.
 fn workspace_row(
     focused: telar::ReadSignal<Option<Client>>,
     theme: NordTheme,
@@ -374,8 +359,7 @@ fn workspace_row(
     )?))
 }
 
-/// Runs a dispatcher off the UI thread. Each of these verifies itself by re-reading the client list, which is a
-/// socket round trip — cheap, but not something to do inside a press handler on the frame.
+/// Runs a dispatcher off the UI thread. Each of these verifies itself by re-reading the client list, which is a socket round trip — cheap, but not something to do inside a press handler on the frame.
 fn act(action: impl FnOnce(&std::path::Path) + Send + 'static) {
     let _ = std::thread::Builder::new()
         .name("hogar-shell-window-act".to_string())
@@ -474,8 +458,7 @@ mod tests {
 
     #[test]
     fn the_preview_takes_one_still_when_the_refresh_is_switched_off() {
-        // `window_preview_ms = 0` is a machine on battery: one capture, then nothing. The loop has to end rather
-        // than fall through to a zero sleep, which would spin a capture per turn.
+        // `window_preview_ms = 0` is a machine on battery: one capture, then nothing. The loop has to end rather than fall through to a zero sleep, which would spin a capture per turn.
         let off = config::UtilitiesConfig {
             window_preview_ms: 0,
             ..config::UtilitiesConfig::default()

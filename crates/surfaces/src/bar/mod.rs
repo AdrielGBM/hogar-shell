@@ -16,8 +16,7 @@ use ui::module::{
 };
 use ui::{ModuleShellProps, module_shell};
 
-/// The bar the running config draws, for [`crate::preview`] — every chip the user put on it, in the zones and
-/// the shape they configured, against the registry the app installed.
+/// The bar the running config draws, for [`crate::preview`] — every chip the user put on it, in the zones and the shape they configured, against the registry the app installed.
 pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let env = ui::preview::bar_chip();
     let theme = env.config.resolve_theme();
@@ -93,9 +92,7 @@ enum Granularity {
     Chip,
 }
 
-/// What a bar paints its own background with: the token at `[bars] opacity`, or nothing at all while a frame
-/// is up, because the frame draws the ring covering exactly these strips and two fills stacking is a darker
-/// band along every edge they share.
+/// What a bar paints its own background with: the token at `[bars] opacity`, or nothing at all while a frame is up, because the frame draws the ring covering exactly these strips and two fills stacking is a darker band along every edge they share.
 fn bar_fill(config: &Config, token: Color) -> Color {
     if config.shape.frame {
         return Color::TRANSPARENT;
@@ -111,8 +108,7 @@ fn build_whole_bar(
     ctx: &ModuleCtx,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let Chrome { edge, shape, theme } = *chrome;
-    // With a frame up, the ring it draws already fills the strip this bar sits in. Painting again on top is
-    // what made two translucent fills stack and darken along the edges the two share.
+    // With a frame up, the ring it draws already fills the strip this bar sits in. Painting again on top is what made two translucent fills stack and darken along the edges the two share.
     let base = bar_fill(config, theme.base);
     let spacing = shape.spacing;
     let mut slots = Vec::with_capacity(3);
@@ -190,14 +186,9 @@ fn build_units(
 
 /// Shared surface panel behind a zone's modules (sections mode); children STRETCH with no inner padding so a filled chip reaches the panel edges instead of leaving a thin sliver.
 ///
-/// It is never longer than the zone holding it. Sized from its content instead, a panel behind more chips than
-/// the zone can take ran past the cut and was clipped square there — so the section ended in a flat grey stub
-/// with nothing drawn on it, which reads as a hole in the bar rather than as a section that ran out of room.
-/// Giving up the length it cannot use puts its own rounded end back at the cut, and the chips that overflow it
-/// are the clip's business, as they already were.
+/// It is never longer than the zone holding it. Sized from its content instead, a panel behind more chips than the zone can take ran past the cut and was clipped square there — so the section ended in a flat grey stub with nothing drawn on it, which reads as a hole in the bar rather than as a section that ran out of room. Giving up the length it cannot use puts its own rounded end back at the cut, and the chips that overflow it are the clip's business, as they already were.
 ///
-/// It packs its chips the way its zone does, for the same reason: what a shortened panel pushes out has to go
-/// out the end nearest the centre, not spill from both at once.
+/// It packs its chips the way its zone does, for the same reason: what a shortened panel pushes out has to go out the end nearest the centre, not spill from both at once.
 fn unit(
     edge: Edge,
     in_zone: Zone,
@@ -225,26 +216,13 @@ fn unit(
 
 /// One of a bar's three zones.
 ///
-/// The centre keeps its own size and the two sides split everything else (`flex-basis: 0`), which is what puts
-/// the centre on the middle of the *bar*. Sizing all three from their content plus an equal share of the slack
-/// centres it on the leftover space instead — so it slid sideways every time a chip next to it changed width,
-/// and the chip that does that constantly is the window title.
+/// The centre keeps its own size and the two sides split everything else (`flex-basis: 0`), which is what puts the centre on the middle of the *bar*. Sizing all three from their content plus an equal share of the slack centres it on the leftover space instead — so it slid sideways every time a chip next to it changed width, and the chip that does that constantly is the window title.
 ///
-/// A side that outgrows its half is cut off at the centre's edge rather than allowed to push: the minimum
-/// along the bar is zero, so the zone keeps its half whatever it holds, and the clip stops the overflow from
-/// being drawn — or clicked — over the centre. The chip that reaches the boundary is cut mid-way, which is
-/// what says "there is more here" better than a chip that vanishes whole, and the ones past it never appear.
-/// Their zone is justified towards its outer end, so what gets cut is always the side nearest the centre.
+/// A side that outgrows its half is cut off at the centre's edge rather than allowed to push: the minimum along the bar is zero, so the zone keeps its half whatever it holds, and the clip stops the overflow from being drawn — or clicked — over the centre. The chip that reaches the boundary is cut mid-way, which is what says "there is more here" better than a chip that vanishes whole, and the ones past it never appear. Their zone is justified towards its outer end, so what gets cut is always the side nearest the centre.
 ///
-/// The clip runs along the bar only. Across it a chip is routinely a shade wider than the strip its zone was
-/// given — the padded box is narrower than the bar, and a square chip is sized from the bar itself — so cutting
-/// on that axis too shaved the edge off every one of them, which is a rounded pill with its corners sanded flat
-/// and an icon missing its outermost pixels.
+/// The clip runs along the bar only. Across it a chip is routinely a shade wider than the strip its zone was given — the padded box is narrower than the bar, and a square chip is sized from the bar itself — so cutting on that axis too shaved the edge off every one of them, which is a rounded pill with its corners sanded flat and an icon missing its outermost pixels.
 ///
-/// A side stops `spacing` short of the centre, so the cut edge never lands flush against the centre's first
-/// chip: a sliced chip touching a whole one reads as one wide chip with a seam, where the same slice with air
-/// after it reads as what it is. The margin comes out of the free space both sides divide, so it costs the
-/// centre nothing and leaves it exactly where it was.
+/// A side stops `spacing` short of the centre, so the cut edge never lands flush against the centre's first chip: a sliced chip touching a whole one reads as one wide chip with a seam, where the same slice with air after it reads as what it is. The margin comes out of the free space both sides divide, so it costs the centre nothing and leaves it exactly where it was.
 fn zone(
     edge: Edge,
     in_zone: Zone,
@@ -282,24 +260,11 @@ fn zone(
     Ok(Box::new(ClippedItem::along(Box::new(zone), clip)))
 }
 
-/// An invisible box wrapped around a module's own content to carry what its chip cannot: a wheel handler for a
-/// self-managed module (which has no [`module_shell`] to put one on), and the pointer tracking behind a hover
-/// popout. Both live here rather than on the chip so a self-managed module gets them on the same terms as any
-/// other; the wrapper shrink-wraps its child, so the rect it tracks is the chip's own.
+/// An invisible box wrapped around a module's own content to carry what its chip cannot: a wheel handler for a self-managed module (which has no [`module_shell`] to put one on), and the pointer tracking behind a hover popout. Both live here rather than on the chip so a self-managed module gets them on the same terms as any other; the wrapper shrink-wraps its child, so the rect it tracks is the chip's own.
 ///
-/// `cross` is what the wrapper would otherwise silently change. A chip is a direct zone child under
-/// `AlignItems::STRETCH`, so it fills the bar's thickness; a wrapper that centred it instead would shrink every
-/// popout-bearing chip to its content. A self-managed module lays itself out and is centred, as it was before
-/// any wrapper existed.
+/// `cross` is what the wrapper would otherwise silently change. A chip is a direct zone child under `AlignItems::STRETCH`, so it fills the bar's thickness; a wrapper that centred it instead would shrink every popout-bearing chip to its content. A self-managed module lays itself out and is centred, as it was before any wrapper existed.
 ///
-/// It runs along the bar for the same reason [`zone`] does. A wrapper fixed to a row applies `cross` across the
-/// *screen's* vertical, so on a left or right bar it stretched each chip's height — which is already its
-/// content — and left its width free: every wrapped chip then sat at its own content width, ragged against the
-/// bar's inner edge, with the wide ones running off the screen. Thirteen chips carry a popout, so on a vertical
-/// bar that was most of them.
-/// `elastic` is the chip's own, forwarded. The wrapper is what the zone actually sizes, so a rigid one around
-/// an elastic chip is a chip that never gets the chance to give anything up — and both modules whose label
-/// elides carry a popout, which is to say both of them are wrapped.
+/// It runs along the bar for the same reason [`zone`] does. A wrapper fixed to a row applies `cross` across the *screen's* vertical, so on a left or right bar it stretched each chip's height — which is already its content — and left its width free: every wrapped chip then sat at its own content width, ragged against the bar's inner edge, with the wide ones running off the screen. Thirteen chips carry a popout, so on a vertical bar that was most of them. `elastic` is the chip's own, forwarded. The wrapper is what the zone actually sizes, so a rigid one around an elastic chip is a chip that never gets the chance to give anything up — and both modules whose label elides carry a popout, which is to say both of them are wrapped.
 fn chip_wrapper(
     content: Box<dyn LayoutItem>,
     module_id: &str,
@@ -338,8 +303,7 @@ fn chip_wrapper(
 
 /// The drag-to-open gesture for a chip, when it has a panel to open and the gesture is switched on.
 ///
-/// Only a module whose click *opens a panel* gets one: dragging a volume chip has nothing to open, and arming
-/// a gesture that can only do nothing would still cancel the tap that does something.
+/// Only a module whose click *opens a panel* gets one: dragging a volume chip has nothing to open, and arming a gesture that can only do nothing would still cancel the tap that does something.
 fn drag_open_for(id: &str, def: Option<&ModuleDef>, edge: Edge) -> Option<DragOpen> {
     if !matches!(def?.click, Some(ModuleClick::Panel)) {
         return None;
@@ -360,9 +324,7 @@ fn axis(style: LayoutStyle, edge: Edge) -> LayoutStyle {
     }
 }
 
-/// Builds each entry's content and wraps it in its base container. The variant and accent come from the entry
-/// when it names them and from `[modules.<id>]` otherwise, which is what lets the same module sit on a bar
-/// twice looking different.
+/// Builds each entry's content and wraps it in its base container. The variant and accent come from the entry when it names them and from `[modules.<id>]` otherwise, which is what lets the same module sit on a bar twice looking different.
 fn build_items(
     config: &Config,
     entries: &[ModuleEntry],
@@ -492,8 +454,7 @@ mod tests {
             const { std::cell::RefCell::new(None) };
     }
 
-    /// A module whose own content will give up width if anything above it lets the pressure through, and says
-    /// how much it kept — the probe for whether a chip's elasticity survives the wrappers around it.
+    /// A module whose own content will give up width if anything above it lets the pressure through, and says how much it kept — the probe for whether a chip's elasticity survives the wrappers around it.
     fn stretchy(_ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let item = StyledContainer::new(
             LayoutStyle::new()
@@ -541,10 +502,7 @@ mod tests {
 
     /// A module no zone names costs nothing at all.
     ///
-    /// The registry holds every module the shell ships, so a build that walked *it* rather than the zones would
-    /// construct a chip nobody asked for — and constructing a chip is what subscribes it, which turns an unused
-    /// module into a running service. That is the residency half of the rule, reached through the one door that
-    /// makes it invisible: the widget tree, where an extra chip is off-screen rather than wrong.
+    /// The registry holds every module the shell ships, so a build that walked *it* rather than the zones would construct a chip nobody asked for — and constructing a chip is what subscribes it, which turns an unused module into a running service. That is the residency half of the rule, reached through the one door that makes it invisible: the widget tree, where an extra chip is off-screen rather than wrong.
     #[test]
     fn a_module_no_zone_names_is_never_built() {
         let mut registry = ModuleRegistry::new();
@@ -573,10 +531,7 @@ mod tests {
         );
     }
 
-    /// A chip that carries a hover popout is wrapped in an extra box to track the pointer. That box sits
-    /// between the zone and the chip, so a press has to pass through it — and a wrapper that swallowed one
-    /// would leave every popout-bearing chip (volume, brightness, media, mic, battery) looking dead to a
-    /// click while still opening its card on hover.
+    /// A chip that carries a hover popout is wrapped in an extra box to track the pointer. That box sits between the zone and the chip, so a press has to pass through it — and a wrapper that swallowed one would leave every popout-bearing chip (volume, brightness, media, mic, battery) looking dead to a click while still opening its card on hover.
     #[test]
     fn a_popout_wrapper_lets_a_click_through_to_the_chip() {
         use std::cell::Cell;
@@ -669,10 +624,7 @@ mod tests {
 
     /// The centre zone is centred on the bar, whatever the chips beside it are doing.
     ///
-    /// The regression is the one thing a bar cannot get away with: all three zones took their content width
-    /// plus an equal share of the slack, so the centre sat on the middle of the *leftover* space. Every chip
-    /// that changes width slid it — and the window title changes width on every focus change, which walked the
-    /// clock and the launcher sideways all day.
+    /// The regression is the one thing a bar cannot get away with: all three zones took their content width plus an equal share of the slack, so the centre sat on the middle of the *leftover* space. Every chip that changes width slid it — and the window title changes width on every focus change, which walked the clock and the launcher sideways all day.
     #[test]
     fn the_centre_holds_still_while_a_side_chip_changes_width() {
         const BAR: f32 = 1920.0;
@@ -731,9 +683,7 @@ mod tests {
 
     /// What is cut off stops a chip's width of air short of the centre, on both sides.
     ///
-    /// Measured on a bar whose own layout puts nothing between the zones (`bar` mode), which is the case with
-    /// no gap to hide behind: a slice that ends flush against the centre's first chip reads as one wide chip
-    /// with a seam down it rather than as a chip that ran out of room.
+    /// Measured on a bar whose own layout puts nothing between the zones (`bar` mode), which is the case with no gap to hide behind: a slice that ends flush against the centre's first chip reads as one wide chip with a seam down it rather than as a chip that ran out of room.
     #[test]
     fn a_cut_side_stops_a_gap_short_of_the_centre() {
         const BAR: f32 = 1920.0;
@@ -812,11 +762,7 @@ mod tests {
 
     /// The elastic chip's give reaches it through everything the bar wraps it in.
     ///
-    /// Elasticity is a property of a chain: the zone, the popout wrapper, the chip shell and the label all have
-    /// to agree to give, and any one of them holding firm makes the whole thing rigid while every part of it
-    /// still looks right on its own. The wrapper was exactly that — `flex-shrink: 0`, and both modules whose
-    /// label elides carry a popout, so it would have made the elide unreachable in the shell while the chip's
-    /// own test passed.
+    /// Elasticity is a property of a chain: the zone, the popout wrapper, the chip shell and the label all have to agree to give, and any one of them holding firm makes the whole thing rigid while every part of it still looks right on its own. The wrapper was exactly that — `flex-shrink: 0`, and both modules whose label elides carry a popout, so it would have made the elide unreachable in the shell while the chip's own test passed.
     #[test]
     fn an_elastic_chip_gives_way_through_the_wrappers_around_it() {
         let kept = |module: &str| {
@@ -863,12 +809,7 @@ mod tests {
 
     /// A module that draws past its zone is cut by the zone, and knows nothing about it.
     ///
-    /// The point is where the rule lives. A self-managed module lays itself out — `workspaces` paints a column
-    /// of pills whose length is the number of workspaces and the icons on them — and it has no idea what else
-    /// is on the bar or where the centre begins. So the cut cannot be its job, or it would be every module's
-    /// job: the zone it sits in publishes a clip, and whatever runs past it stops being drawn. This module is
-    /// the awkward shape that proves it — self-managed *and* scrollable, so it reaches the zone through the
-    /// wrapper rather than directly, exactly as `workspaces` does.
+    /// The point is where the rule lives. A self-managed module lays itself out — `workspaces` paints a column of pills whose length is the number of workspaces and the icons on them — and it has no idea what else is on the bar or where the centre begins. So the cut cannot be its job, or it would be every module's job: the zone it sits in publishes a clip, and whatever runs past it stops being drawn. This module is the awkward shape that proves it — self-managed *and* scrollable, so it reaches the zone through the wrapper rather than directly, exactly as `workspaces` does.
     #[test]
     fn a_module_that_overruns_its_zone_is_cut_by_the_zone_and_never_by_itself() {
         const RUN: f32 = 900.0;
@@ -951,11 +892,7 @@ mod tests {
 
     /// The air at a cut is the same in every mode.
     ///
-    /// The zone-level test above pins it to one `spacing`; this one is about the two mechanisms that were both
-    /// trying to provide it. `sections` and `chips` laid their zones out with a gap between them, and the sides
-    /// hold one of their own — so those two modes opened twice the air at exactly the place a side is cut, a
-    /// visible hole where every other join on the bar has one chip's worth. `bar` mode, with no gap of its own,
-    /// looked right the whole time, which is what kept it hidden.
+    /// The zone-level test above pins it to one `spacing`; this one is about the two mechanisms that were both trying to provide it. `sections` and `chips` laid their zones out with a gap between them, and the sides hold one of their own — so those two modes opened twice the air at exactly the place a side is cut, a visible hole where every other join on the bar has one chip's worth. `bar` mode, with no gap of its own, looked right the whole time, which is what kept it hidden.
     #[test]
     fn the_air_at_a_cut_does_not_depend_on_the_mode() {
         const BAR: f32 = 1920.0;
@@ -1022,10 +959,7 @@ mod tests {
 
     /// A section's panel is never longer than the zone it sits in.
     ///
-    /// It used to be sized from its content, so a zone holding more chips than fit drew its panel past the cut
-    /// and had it clipped square there: the section ended in a flat grey stub with nothing on it — the chip
-    /// that stub belonged to being off past the boundary — which reads as a hole in the bar rather than as a
-    /// section that ran out of room. The clip was doing its job; the panel was lying about its length.
+    /// It used to be sized from its content, so a zone holding more chips than fit drew its panel past the cut and had it clipped square there: the section ended in a flat grey stub with nothing on it — the chip that stub belonged to being off past the boundary — which reads as a hole in the bar rather than as a section that ran out of room. The clip was doing its job; the panel was lying about its length.
     #[test]
     fn a_section_panel_is_no_longer_than_the_zone_it_fills() {
         const BAR: f32 = 1920.0;
@@ -1145,17 +1079,11 @@ mod tests {
 
     /// Every chip fills the bar's thickness, whichever edge it is on.
     ///
-    /// The regression: the wrapper a popout-bearing chip sits in was fixed to a row, so on a left or right bar
-    /// it stretched the chip's height (already its content) and left the width free. Each wrapped chip then
-    /// took its own content width, ragged against the bar's inner edge, and the wide ones ran off the screen.
-    /// Building proves none of that — the wrapper builds happily either way — so this lays a real bar out and
-    /// measures the chips.
+    /// The regression: the wrapper a popout-bearing chip sits in was fixed to a row, so on a left or right bar it stretched the chip's height (already its content) and left the width free. Each wrapped chip then took its own content width, ragged against the bar's inner edge, and the wide ones ran off the screen. Building proves none of that — the wrapper builds happily either way — so this lays a real bar out and measures the chips.
     #[test]
     fn a_wrapped_chip_fills_the_bar_thickness_on_a_vertical_bar() {
         let side = 44.0;
-        // A chip wider than the bar is the case that shows the bug: a clock, a window title, a netspeed
-        // readout. Its own width is content-driven, so only `align-items: stretch` on the right axis reins
-        // it in.
+        // A chip wider than the bar is the case that shows the bug: a clock, a window title, a netspeed readout. Its own width is content-driven, so only `align-items: stretch` on the right axis reins it in.
         let content_width = 120.0;
 
         for edge in [Edge::Left, Edge::Top] {

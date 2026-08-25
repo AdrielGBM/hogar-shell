@@ -1,10 +1,6 @@
 //! The network: a dependency-free link verdict, and the full NetworkManager view on top of it.
 //!
-//! Two layers on purpose. [`read`] answers "am I online, and over what" from sysfs alone — no NetworkManager,
-//! no D-Bus, correct on a machine running `systemd-networkd` or nothing at all — and it is what the bar chip
-//! and the status cluster draw. Everything a *panel* needs (an SSID, the networks in range, whether they are
-//! saved, and the calls that join one) only NetworkManager knows, so it lives in the [`Wifi`] service beside
-//! it and simply reports `available: false` where NM is not running.
+//! Two layers on purpose. [`read`] answers "am I online, and over what" from sysfs alone — no NetworkManager, no D-Bus, correct on a machine running `systemd-networkd` or nothing at all — and it is what the bar chip and the status cluster draw. Everything a *panel* needs (an SSID, the networks in range, whether they are saved, and the calls that join one) only NetworkManager knows, so it lives in the [`Wifi`] service beside it and simply reports `available: false` where NM is not running.
 //!
 //! Keeping them apart is what makes the chip survive a machine without NM instead of going blank on it.
 
@@ -42,13 +38,11 @@ const NM_DEVICE_TYPE_WIFI: u32 = 2;
 /// Poll used only when NetworkManager isn't on the bus and there is nothing to subscribe to.
 const FALLBACK_POLL: Duration = Duration::from_secs(5);
 
-/// Joining a network is a negotiation with a peer — DHCP, an authentication round-trip — so it gets far longer
-/// than a property read, which is a local call to a daemon that is either answering or wedged.
+/// Joining a network is a negotiation with a peer — DHCP, an authentication round-trip — so it gets far longer than a property read, which is a local call to a daemon that is either answering or wedged.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// A scan republishes a signal strength per visible network, which is exactly the burst a coalescing refresher
-/// exists to fold into one re-read.
+/// A scan republishes a signal strength per visible network, which is exactly the burst a coalescing refresher exists to fold into one re-read.
 const COALESCE: Duration = Duration::from_millis(150);
 const WIRELESS_STATUS: &str = "/proc/net/wireless";
 /// `/proc/net/wireless` reports link quality on a 0–70 scale on most drivers; used to normalise it to a percentage.
@@ -140,8 +134,7 @@ fn wifi_signal(iface: &str) -> Option<i32> {
     None
 }
 
-/// How a network is protected. The distinctions that matter to someone choosing one: whether it needs a
-/// password at all, whether it needs a *company's* login, and whether the encryption is one to avoid.
+/// How a network is protected. The distinctions that matter to someone choosing one: whether it needs a password at all, whether it needs a *company's* login, and whether the encryption is one to avoid.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Security {
     #[default]
@@ -160,9 +153,7 @@ impl Security {
         !matches!(self, Self::Open)
     }
 
-    /// Whether the shell can join this on its own. Enterprise needs a certificate and an identity that belong
-    /// in NetworkManager's own editor, so the panel sends the user there instead of asking for a password that
-    /// would not be enough.
+    /// Whether the shell can join this on its own. Enterprise needs a certificate and an identity that belong in NetworkManager's own editor, so the panel sends the user there instead of asking for a password that would not be enough.
     pub fn joinable_with_a_password(self) -> bool {
         !matches!(self, Self::Enterprise)
     }
@@ -181,10 +172,7 @@ impl Security {
 
 /// Reads the security in force from an access point's three flag words.
 ///
-/// The strongest key management on offer wins, because that is what a client will actually negotiate: an AP
-/// advertising both WPA2 and WPA3 is a WPA3 network to anything that can speak it. `PRIVACY` without any key
-/// management at all is the signature of WEP — the only case where the absence of the newer fields is itself
-/// the answer.
+/// The strongest key management on offer wins, because that is what a client will actually negotiate: an AP advertising both WPA2 and WPA3 is a WPA3 network to anything that can speak it. `PRIVACY` without any key management at all is the signature of WEP — the only case where the absence of the newer fields is itself the answer.
 fn security_from_flags(flags: u32, wpa: u32, rsn: u32) -> Security {
     const PRIVACY: u32 = 0x1;
     const KEY_MGMT_PSK: u32 = 0x100;
@@ -234,8 +222,7 @@ impl AccessPoint {
     }
 }
 
-/// The wireless radio and what it can see. `available` is false when NetworkManager isn't running or the
-/// machine has no wireless device — which is what lets a panel say so instead of showing an empty list.
+/// The wireless radio and what it can see. `available` is false when NetworkManager isn't running or the machine has no wireless device — which is what lets a panel say so instead of showing an empty list.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Wifi {
     pub available: bool,
@@ -250,9 +237,7 @@ pub struct Wifi {
     pub ethernet: Option<String>,
 }
 
-/// What a one-glyph indicator needs, without the scan list behind it. `Copy`, so a chip can hold it in a
-/// signal and read it with a plain `get` — reading a signal inside another's `with` is a re-entrant borrow of
-/// the reactive runtime, and it panics.
+/// What a one-glyph indicator needs, without the scan list behind it. `Copy`, so a chip can hold it in a signal and read it with a plain `get` — reading a signal inside another's `with` is a re-entrant borrow of the reactive runtime, and it panics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WifiStatus {
     pub available: bool,
@@ -284,9 +269,7 @@ impl Wifi {
 
     /// The strongest access point for each SSID, active first, then saved, then by signal.
     ///
-    /// Deduplicating by name is the whole difference between a usable list and a scan dump: a mesh or a
-    /// repeater publishes the same SSID from every radio it owns, and an office can show the same name a dozen
-    /// times. A user picks a *network*, not a radio.
+    /// Deduplicating by name is the whole difference between a usable list and a scan dump: a mesh or a repeater publishes the same SSID from every radio it owns, and an office can show the same name a dozen times. A user picks a *network*, not a radio.
     pub fn networks(&self) -> Vec<AccessPoint> {
         let mut best: Vec<AccessPoint> = Vec::new();
         for point in &self.points {
@@ -354,9 +337,7 @@ fn paths_property(conn: &Connection, path: &str, iface: &str, name: &str) -> Vec
         .collect()
 }
 
-/// An SSID is a byte string, not text: the spec allows any 32 bytes, and a router configured in a non-UTF-8
-/// locale will happily broadcast them. Lossy decoding keeps such a network listed (and joinable, since the
-/// actions key on the object path) rather than dropping it.
+/// An SSID is a byte string, not text: the spec allows any 32 bytes, and a router configured in a non-UTF-8 locale will happily broadcast them. Lossy decoding keeps such a network listed (and joinable, since the actions key on the object path) rather than dropping it.
 fn ssid_of(conn: &Connection, path: &str) -> String {
     let bytes = property(conn, path, AP_IFACE, "Ssid")
         .and_then(|v| Vec::<u8>::try_from(v).ok())
@@ -419,8 +400,7 @@ fn saved_connection(conn: &Connection, ssid: &str) -> Option<String> {
         .map(|path| path.as_str().to_string())
 }
 
-/// The full wireless picture in one pass: the radio switch, the wireless and wired devices, every access point
-/// the device can currently see, and which of them are already saved.
+/// The full wireless picture in one pass: the radio switch, the wireless and wired devices, every access point the device can currently see, and which of them are already saved.
 fn read_wifi(conn: &Connection) -> Wifi {
     let devices = paths_property(conn, NM_PATH, NM_IFACE, "Devices");
     if devices.is_empty() && !bool_property(conn, NM_PATH, NM_IFACE, "NetworkingEnabled") {
@@ -492,8 +472,7 @@ fn read_wifi(conn: &Connection) -> Wifi {
 
 static WIFI: Service<Wifi> = Service::new("hogar-shell-wifi", run_wifi);
 
-/// The `[network]` settings, or the defaults outside a started shell. Read through the cross-thread snapshot:
-/// the rescan timer runs on the producer, which cannot see the driver thread's copy.
+/// The `[network]` settings, or the defaults outside a started shell. Read through the cross-thread snapshot: the rescan timer runs on the producer, which cannot see the driver thread's copy.
 fn settings() -> NetworkConfig {
     config::shared_config()
         .map(|c| c.network)
@@ -512,9 +491,7 @@ fn run_wifi(out: &Arc<Broadcast<Wifi>>) {
     if watch_nm_signals(tx.clone()).is_none() {
         tracing::warn!("wifi: no NetworkManager signals; the list will only refresh on rescan");
     }
-    // A rescan on a timer, because an access point that goes away emits nothing: NetworkManager ages it out of
-    // its own list, and only a fresh scan notices. The interval is config, since a laptop in a café wants a
-    // faster one than a desktop that never moves.
+    // A rescan on a timer, because an access point that goes away emits nothing: NetworkManager ages it out of its own list, and only a fresh scan notices. The interval is config, since a laptop in a café wants a faster one than a desktop that never moves.
     let rescan = tx.clone();
     let _ = std::thread::Builder::new()
         .name("hogar-shell-wifi-rescan".to_string())
@@ -556,9 +533,7 @@ fn watch_nm_signals(ping: SyncSender<()>) -> Option<()> {
     Some(())
 }
 
-/// Registers `tx` for the wireless view — unless `[network] enabled` is off, in which case no D-Bus
-/// connection, no rescan timer and no thread are created. Guarded here rather than inside the producer
-/// because `Service` spawns on first touch, so a check further in would still cost a thread.
+/// Registers `tx` for the wireless view — unless `[network] enabled` is off, in which case no D-Bus connection, no rescan timer and no thread are created. Guarded here rather than inside the producer because `Service` spawns on first touch, so a check further in would still cost a thread.
 pub fn subscribe_wifi(tx: EventSender<Wifi>) {
     if !settings().enabled {
         return;
@@ -573,8 +548,7 @@ pub fn current_wifi() -> Option<Wifi> {
     WIFI.current()
 }
 
-/// The connection every mutation goes through, kept for the process so an activation is not racing its own
-/// connection teardown.
+/// The connection every mutation goes through, kept for the process so an activation is not racing its own connection teardown.
 fn control() -> Option<&'static Connection> {
     static CONTROL: std::sync::OnceLock<Option<Connection>> = std::sync::OnceLock::new();
     CONTROL
@@ -626,9 +600,7 @@ pub fn toggle_wifi() {
 
 /// How long after a scan request the UI keeps saying it is scanning.
 ///
-/// NetworkManager publishes no "scanning" property — only `LastScan`, a timestamp — and results trickle in as
-/// signals over several seconds. Timing out from the request is the honest approximation: it is what the shell
-/// actually knows, and a spinner that stops on its own beats one waiting for an event that never arrives.
+/// NetworkManager publishes no "scanning" property — only `LastScan`, a timestamp — and results trickle in as signals over several seconds. Timing out from the request is the honest approximation: it is what the shell actually knows, and a spinner that stops on its own beats one waiting for an event that never arrives.
 const SCAN_WINDOW: Duration = Duration::from_secs(6);
 
 static SCAN_STARTED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
@@ -641,8 +613,7 @@ fn scan_in_flight() -> bool {
         .is_some_and(|at| at.elapsed() < SCAN_WINDOW)
 }
 
-/// Asks NetworkManager to scan. Results arrive as signals, not as a reply — `RequestScan` returns as soon as
-/// the scan is queued — so there is nothing to wait for here.
+/// Asks NetworkManager to scan. Results arrive as signals, not as a reply — `RequestScan` returns as soon as the scan is queued — so there is nothing to wait for here.
 pub fn request_scan() {
     let Some(device) = current_wifi()
         .filter(|w| w.available && w.enabled)
@@ -675,8 +646,7 @@ pub fn request_scan() {
     });
 }
 
-/// Joins the network at `path`. A saved connection is activated as-is; anything else is created, which is where
-/// `password` is needed. An open network takes `None`.
+/// Joins the network at `path`. A saved connection is activated as-is; anything else is created, which is where `password` is needed. An open network takes `None`.
 pub fn connect(path: &str, password: Option<String>) {
     let Some(state) = current_wifi() else { return };
     let Some(point) = state.point(path).cloned() else {
@@ -705,9 +675,7 @@ pub fn connect(path: &str, password: Option<String>) {
     });
 }
 
-/// Builds the minimum connection NetworkManager needs for a new network and activates it in one call, which is
-/// what `AddAndActivateConnection` exists for — adding then activating would leave a half-configured
-/// connection behind whenever the second step failed.
+/// Builds the minimum connection NetworkManager needs for a new network and activates it in one call, which is what `AddAndActivateConnection` exists for — adding then activating would leave a half-configured connection behind whenever the second step failed.
 fn add_and_activate(
     conn: &Connection,
     point: &AccessPoint,
@@ -728,8 +696,7 @@ fn add_and_activate(
 
     if let Some(password) = password.filter(|p| !p.is_empty()) {
         let mut security: HashMap<&str, Value> = HashMap::new();
-        // `wpa-psk` covers WPA, WPA2 and — as far as the key material goes — a WPA3 transition network;
-        // NetworkManager upgrades to SAE itself when the AP requires it.
+        // `wpa-psk` covers WPA, WPA2 and — as far as the key material goes — a WPA3 transition network; NetworkManager upgrades to SAE itself when the AP requires it.
         security.insert("key-mgmt", Value::from("wpa-psk"));
         security.insert("psk", Value::from(password.to_string()));
         settings.insert("802-11-wireless-security", security);
@@ -795,24 +762,20 @@ pub fn disconnect() {
 
 static NETWORK: Service<Network> = Service::new("hogar-shell-network", run);
 
-/// Registers `tx` for live network state, starting the single shared producer on first use. Called from a bar
-/// chip's `watch` producer.
+/// Registers `tx` for live network state, starting the single shared producer on first use. Called from a bar chip's `watch` producer.
 pub fn subscribe(tx: EventSender<Network>) {
     NETWORK.subscribe(tx);
 }
 
 fn run(out: &Arc<Broadcast<Network>>) {
     out.publish(read());
-    // sysfs stays the source of truth — it needs no NetworkManager and is already covered by tests — while
-    // NetworkManager is used purely as the trigger telling us when it is worth re-reading.
+    // sysfs stays the source of truth — it needs no NetworkManager and is already covered by tests — while NetworkManager is used purely as the trigger telling us when it is worth re-reading.
     if watch_network_manager(out).is_none() {
         poll_fallback(out);
     }
 }
 
-/// Blocks on every `PropertiesChanged` NetworkManager emits, on any of its objects: the manager's own state
-/// (connect/disconnect, primary connection type) and each access point's signal strength. One subscription
-/// therefore covers both what the icon's shape shows and how full its arc is, with no polling.
+/// Blocks on every `PropertiesChanged` NetworkManager emits, on any of its objects: the manager's own state (connect/disconnect, primary connection type) and each access point's signal strength. One subscription therefore covers both what the icon's shape shows and how full its arc is, with no polling.
 fn watch_network_manager(out: &Broadcast<Network>) -> Option<()> {
     let conn = Connection::system().ok()?;
     let rule = zbus::MatchRule::builder()
@@ -827,8 +790,7 @@ fn watch_network_manager(out: &Broadcast<Network>) -> Option<()> {
     let signals = MessageIterator::for_match_rule(rule, &conn, None).ok()?;
     let mut last = read();
     for _ in signals {
-        // Strength updates are chatty and mostly land in the same display bucket, so only a reading that
-        // actually differs is worth waking every surface for.
+        // Strength updates are chatty and mostly land in the same display bucket, so only a reading that actually differs is worth waking every surface for.
         let current = read();
         if current != last {
             last = current;

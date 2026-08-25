@@ -1,17 +1,8 @@
 //! What the config says should be on screen, and keeping the screen in step with it.
 //!
-//! The shell puts up five kinds of surface on its own: a wallpaper, the widgets drawn over it, a bar per edge,
-//! the invisible strip each bar reserves, and the frame ring. Which of them exist, how big they are and where
-//! they sit are all answers to the config, and the config is a file the user edits while the shell is running
-//! — so this module holds both halves: [`plan`], which reads the config as a set of surfaces, and
-//! [`Surfaces`], which owns the live ones and brings them in line with a new plan.
+//! The shell puts up five kinds of surface on its own: a wallpaper, the widgets drawn over it, a bar per edge, the invisible strip each bar reserves, and the frame ring. Which of them exist, how big they are and where they sit are all answers to the config, and the config is a file the user edits while the shell is running — so this module holds both halves: [`plan`], which reads the config as a set of surfaces, and [`Surfaces`], which owns the live ones and brings them in line with a new plan.
 //!
-//! **A reload reuses, it does not replace.** Every surface here has a [`Key`] that survives an edit — what it
-//! is, and which screen it is on — so a config change reaches the surface that is already up: its layer-shell
-//! state is renegotiated in place and its content is built again on the same surface. A surface is created
-//! only when the config asks for one that is not there (a bar given its first module, a monitor plugged in)
-//! and destroyed only when the config stops asking for it. Nothing blinks in between, which is what makes
-//! editing the config with the settings window open bearable.
+//! **A reload reuses, it does not replace.** Every surface here has a [`Key`] that survives an edit — what it is, and which screen it is on — so a config change reaches the surface that is already up: its layer-shell state is renegotiated in place and its content is built again on the same surface. A surface is created only when the config asks for one that is not there (a bar given its first module, a monitor plugged in) and destroyed only when the config stops asking for it. Nothing blinks in between, which is what makes editing the config with the settings window open bearable.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -26,25 +17,20 @@ use crate::widgets::WidgetsApp;
 use config::{Config, Edge};
 use ui::placement::Placement;
 
-/// What a shell-owned surface is for. Its whole identity beyond the screen it is on — two surfaces with the
-/// same role on the same output are the same surface, before and after any edit.
+/// What a shell-owned surface is for. Its whole identity beyond the screen it is on — two surfaces with the same role on the same output are the same surface, before and after any edit.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Role {
     Wallpaper,
-    /// What is drawn on the desktop rather than behind it — the clock face, the visualiser. Its own surface, so
-    /// a widget that repaints with the music does not repaint the wallpaper under it.
+    /// What is drawn on the desktop rather than behind it — the clock face, the visualiser. Its own surface, so a widget that repaints with the music does not repaint the wallpaper under it.
     Widgets,
     Bar(Edge),
-    /// The invisible strip that carves an edge's space out of the screen. A separate surface from the bar it
-    /// reserves for, so the two are reconciled independently — an auto-hiding bar keeps its ring's strip while
-    /// giving up its own.
+    /// The invisible strip that carves an edge's space out of the screen. A separate surface from the bar it reserves for, so the two are reconciled independently — an auto-hiding bar keeps its ring's strip while giving up its own.
     Reserve(Edge),
     Frame,
 }
 
 impl Role {
-    /// Whether this surface draws anything. A reservation strip is an exclusive zone and a transparent buffer,
-    /// so there is nothing in it for a config change to rebuild.
+    /// Whether this surface draws anything. A reservation strip is an exclusive zone and a transparent buffer, so there is nothing in it for a config change to rebuild.
     fn draws(self) -> bool {
         !matches!(self, Role::Reserve(_))
     }
@@ -57,8 +43,7 @@ struct Key {
     role: Role,
 }
 
-/// One surface the config calls for: what it is, how the compositor should place it, and the config its
-/// content resolves against — the global one merged with this monitor's override.
+/// One surface the config calls for: what it is, how the compositor should place it, and the config its content resolves against — the global one merged with this monitor's override.
 struct Planned {
     key: Key,
     layer: LayerConfig,
@@ -67,9 +52,7 @@ struct Planned {
 
 /// What a reconcile does to the surfaces that stay.
 ///
-/// A config edit changes what a bar draws, so every surface that survives it builds again. A monitor being
-/// plugged in does not: rebuilding the other screens' bars for it would throw away their state to redraw
-/// exactly what was already there.
+/// A config edit changes what a bar draws, so every surface that survives it builds again. A monitor being plugged in does not: rebuilding the other screens' bars for it would throw away their state to redraw exactly what was already there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Content {
     Rebuild,
@@ -82,8 +65,7 @@ pub struct Surfaces {
     live: Vec<(Key, Live)>,
 }
 
-/// What adopting a surface actually did to it: renegotiated its layer-shell state with the compositor, rebuilt
-/// its content, both, or — for a strip that neither draws nor moved — neither.
+/// What adopting a surface actually did to it: renegotiated its layer-shell state with the compositor, rebuilt its content, both, or — for a strip that neither draws nor moved — neither.
 struct Adopted {
     renegotiated: bool,
     rebuilt: bool,
@@ -97,12 +79,9 @@ struct Live {
 }
 
 impl Surfaces {
-    /// Brings the screen in line with `config`: renegotiates and rebuilds what is already up, opens what the
-    /// config newly asks for, and drops what it no longer does.
+    /// Brings the screen in line with `config`: renegotiates and rebuilds what is already up, opens what the config newly asks for, and drops what it no longer does.
     ///
-    /// Closing runs first so an edge that lost its bar gives its exclusive zone back before the surfaces that
-    /// stay are measured against it — otherwise every one of them would be configured once against the old
-    /// zone and again a frame later.
+    /// Closing runs first so an edge that lost its bar gives its exclusive zone back before the surfaces that stay are measured against it — otherwise every one of them would be configured once against the old zone and again a frame later.
     pub fn reconcile(
         &mut self,
         path: &Path,
@@ -116,10 +95,7 @@ impl Surfaces {
         self.live.retain(|(key, _)| wanted.contains(key));
         let closed = before - self.live.len();
 
-        // Layer-shell stacks surfaces of one layer in the order they were created, so a surface created under
-        // one that already exists would come out on top of it — a wallpaper switched on while the frame ring
-        // is up would cover the ring. Whatever the plan puts *after* a newly created surface in the same layer
-        // on the same screen is therefore created again, in its place in the order.
+        // Layer-shell stacks surfaces of one layer in the order they were created, so a surface created under one that already exists would come out on top of it — a wallpaper switched on while the frame ring is up would cover the ring. Whatever the plan puts *after* a newly created surface in the same layer on the same screen is therefore created again, in its place in the order.
         let mut restacking: HashSet<(Option<String>, Layer)> = HashSet::new();
         let (mut opened, mut renegotiated, mut rebuilt) = (0, 0, 0);
         for planned in plan {
@@ -142,9 +118,7 @@ impl Surfaces {
                 }
             }
         }
-        // What the pass did to the screen, in one line, at a level the user already sees. A change that reaches
-        // the config but not the screen is either a surface that was not rebuilt or one the compositor did not
-        // act on, and those are indistinguishable without this. Per-surface detail is a `debug!` below.
+        // What the pass did to the screen, in one line, at a level the user already sees. A change that reaches the config but not the screen is either a surface that was not rebuilt or one the compositor did not act on, and those are indistinguishable without this. Per-surface detail is a `debug!` below.
         tracing::info!(
             surfaces = self.live.len(),
             opened,
@@ -173,8 +147,7 @@ impl Surfaces {
         self.live.iter().map(|(key, _)| key.role).collect()
     }
 
-    /// The cell a live surface reads its config from, which is the identity a test compares: the same cell
-    /// before and after an edit means the same surface.
+    /// The cell a live surface reads its config from, which is the identity a test compares: the same cell before and after an edit means the same surface.
     #[cfg(test)]
     fn config_of(&self, role: Role) -> Option<config::LiveConfig> {
         self.live
@@ -230,8 +203,7 @@ impl Live {
         }
     }
 
-    /// Takes on what the plan now says this surface should be: the config its content resolves against, the
-    /// layer-shell state the compositor holds for it, and — for a config change — a rebuild of its content.
+    /// Takes on what the plan now says this surface should be: the config its content resolves against, the layer-shell state the compositor holds for it, and — for a config change — a rebuild of its content.
     fn adopt(&mut self, planned: Planned, content: Content) -> Adopted {
         self.config.set(planned.config);
         let change = self.layer.delta(&planned.layer);
@@ -263,9 +235,7 @@ fn plan(path: &Path, config: &Arc<Config>, outputs: &[OutputDescriptor]) -> Vec<
     outputs
         .iter()
         .flat_map(|out| {
-            // Every surface on this output resolves against the same merged config, so a per-monitor override
-            // reaches the bar, its reservation strip, the wallpaper and the frame together — a bar sized by one
-            // config and a reservation strip sized by another would carve the wrong zone out of the screen.
+            // Every surface on this output resolves against the same merged config, so a per-monitor override reaches the bar, its reservation strip, the wallpaper and the frame together — a bar sized by one config and a reservation strip sized by another would carve the wrong zone out of the screen.
             let config = output_config(path, config, out.name.as_deref());
             if let Some(name) = out.name.as_deref() {
                 config::set_output_config(name, Arc::clone(&config));
@@ -275,8 +245,7 @@ fn plan(path: &Path, config: &Arc<Config>, outputs: &[OutputDescriptor]) -> Vec<
         .collect()
 }
 
-/// One output's surfaces, in stacking order within each layer: the wallpaper first so it sits at the bottom of
-/// the background layer, then its widgets over it, then the frame ring and the bars on the chrome layer.
+/// One output's surfaces, in stacking order within each layer: the wallpaper first so it sits at the bottom of the background layer, then its widgets over it, then the frame ring and the bars on the chrome layer.
 fn plan_output(config: &Arc<Config>, output: Option<&str>) -> Vec<Planned> {
     let mut planned = Vec::new();
     let mut push = |role: Role, placement: Placement| {
@@ -296,11 +265,7 @@ fn plan_output(config: &Arc<Config>, output: Option<&str>) -> Vec<Planned> {
     if config.widgets.is_enabled() {
         push(Role::Widgets, widgets_placement(config, output));
     }
-    // Before the bars, and on their layer rather than the wallpaper's. The ring *is* the bars' own edge
-    // continued around the screen, so it has to be where they are: on the background it was painted behind
-    // every window, which left the strip a framed bar draws nothing in showing the app through it. Before
-    // them, because the ring covers exactly the strips the bars occupy — drawn after, it would paint over
-    // the chips in `chips` and `sections` mode.
+    // Before the bars, and on their layer rather than the wallpaper's. The ring *is* the bars' own edge continued around the screen, so it has to be where they are: on the background it was painted behind every window, which left the strip a framed bar draws nothing in showing the app through it. Before them, because the ring covers exactly the strips the bars occupy — drawn after, it would paint over the chips in `chips` and `sections` mode.
     if config.shape.frame {
         push(Role::Frame, frame_placement(config, output));
     }
@@ -309,10 +274,7 @@ fn plan_output(config: &Arc<Config>, output: Option<&str>) -> Vec<Planned> {
             continue;
         }
         push(Role::Bar(edge), bar_placement(config, edge, output));
-        // Driven off what the edge reserves rather than off whether its bar hides: an auto-hidden bar under
-        // `[shape] frame` still reserves its ring, and an edge that reserves nothing gets no strip at all
-        // rather than one sized zero — a mapped surface with an empty exclusive zone is still a surface for the
-        // compositor to configure and the driver to drive.
+        // Driven off what the edge reserves rather than off whether its bar hides: an auto-hidden bar under `[shape] frame` still reserves its ring, and an edge that reserves nothing gets no strip at all rather than one sized zero — a mapped surface with an empty exclusive zone is still a surface for the compositor to configure and the driver to drive.
         if config.edge_reserved(edge) > 0 {
             push(
                 Role::Reserve(edge),
@@ -323,9 +285,7 @@ fn plan_output(config: &Arc<Config>, output: Option<&str>) -> Vec<Planned> {
     planned
 }
 
-/// The config `output` runs under: its `monitors/<output>/config.toml` merged over the global one, falling back
-/// to the global config when it has no override or that override will not parse. A broken per-monitor file
-/// costs that one screen its overrides and a log line, never the whole shell's layout.
+/// The config `output` runs under: its `monitors/<output>/config.toml` merged over the global one, falling back to the global config when it has no override or that override will not parse. A broken per-monitor file costs that one screen its overrides and a log line, never the whole shell's layout.
 fn output_config(path: &Path, global: &Arc<Config>, output: Option<&str>) -> Arc<Config> {
     let Some(output) = output else {
         return Arc::clone(global);
@@ -339,8 +299,7 @@ fn output_config(path: &Path, global: &Arc<Config>, output: Option<&str>) -> Arc
     }
 }
 
-/// The layer the shell's own chrome sits on: `Overlay` keeps the bars above a fullscreen window when
-/// `[general] show_over_fullscreen` asks for it, `Top` (the default) lets fullscreen cover them.
+/// The layer the shell's own chrome sits on: `Overlay` keeps the bars above a fullscreen window when `[general] show_over_fullscreen` asks for it, `Top` (the default) lets fullscreen cover them.
 fn chrome_layer(config: &Config) -> Layer {
     if config.general.show_over_fullscreen {
         Layer::Overlay
@@ -349,12 +308,9 @@ fn chrome_layer(config: &Config) -> Layer {
     }
 }
 
-/// A bar: spans its edge, reserves nothing of its own (its strip does that), and sits on whichever layer
-/// `[general] show_over_fullscreen` asks for.
+/// A bar: spans its edge, reserves nothing of its own (its strip does that), and sits on whichever layer `[general] show_over_fullscreen` asks for.
 ///
-/// An auto-hidden bar is created at its hidden margin — off its own edge but for its peek strip — rather than
-/// being placed on screen and moved a frame later, which the user would see as a bar that flashes on at every
-/// reload before deciding to leave.
+/// An auto-hidden bar is created at its hidden margin — off its own edge but for its peek strip — rather than being placed on screen and moved a frame later, which the user would see as a bar that flashes on at every reload before deciding to leave.
 fn bar_placement(config: &Config, edge: Edge, output: Option<&str>) -> Placement {
     let shown = config::bar_margin_for(config, edge);
     let margin = if config.bar_is_persistent(edge) {
@@ -379,11 +335,7 @@ fn wallpaper_placement(output: Option<&str>) -> Placement {
 
 /// The desktop's widgets: the area the bars left free, over the wallpaper and under every window.
 ///
-/// The placement is the whole design. `Placement::desktop` respects the bars' exclusive zones where the
-/// wallpaper opts out of them, so the compositor hands this surface the hole the bars leave rather than the
-/// screen — no arithmetic here, and it follows a bar appearing or an edge being emptied on its own. The margin
-/// on top is the gap every panel keeps off its edge, read per edge so the widgets sit exactly where an
-/// application's window would.
+/// The placement is the whole design. `Placement::desktop` respects the bars' exclusive zones where the wallpaper opts out of them, so the compositor hands this surface the hole the bars leave rather than the screen — no arithmetic here, and it follows a bar appearing or an edge being emptied on its own. The margin on top is the gap every panel keeps off its edge, read per edge so the widgets sit exactly where an application's window would.
 fn widgets_placement(config: &Config, output: Option<&str>) -> Placement {
     let gap = |edge| config.panel_gap(edge) as i32;
     Placement::desktop("hogar-shell-widgets")
@@ -398,9 +350,7 @@ fn widgets_placement(config: &Config, output: Option<&str>) -> Placement {
 
 /// The frame ring: the same full-screen click-through shape as the wallpaper, on the *bars'* layer.
 ///
-/// It is the bars' own edge continued around the screen — under `[shape] frame` a bar paints no background at
-/// all and the ring draws that strip instead — so a ring on the background layer is a bar that disappears
-/// behind whatever window is under it. Click-through, so sharing the bars' layer costs the bars nothing.
+/// It is the bars' own edge continued around the screen — under `[shape] frame` a bar paints no background at all and the ring draws that strip instead — so a ring on the background layer is a bar that disappears behind whatever window is under it. Click-through, so sharing the bars' layer costs the bars nothing.
 fn frame_placement(config: &Config, output: Option<&str>) -> Placement {
     Placement::backdrop("hogar-shell-frame")
         .layer(chrome_layer(config))
@@ -451,10 +401,7 @@ mod tests {
 
     /// The ring belongs on the bars' layer, not the wallpaper's.
     ///
-    /// It shipped on the background, which looked right on an empty desktop and was wrong the moment a window
-    /// covered it: a framed bar paints no background of its own — the ring draws that strip — so the strip
-    /// showed the *application* through, and there was nothing on the bar's layer for a compositor blur rule to
-    /// find either.
+    /// It shipped on the background, which looked right on an empty desktop and was wrong the moment a window covered it: a framed bar paints no background of its own — the ring draws that strip — so the strip showed the *application* through, and there was nothing on the bar's layer for a compositor blur rule to find either.
     #[test]
     fn the_frame_ring_sits_with_the_bars_rather_than_behind_the_windows() {
         let framed = config("[shape]\nframe=true\n[bars.top]\ncenter=[\"clock\"]\n");
@@ -466,8 +413,7 @@ mod tests {
         };
         assert_eq!(layer_of(Role::Frame), layer_of(Role::Bar(Edge::Top)));
 
-        // And it follows the bars when they move over a fullscreen window, or it would be left behind on a
-        // layer they no longer share.
+        // And it follows the bars when they move over a fullscreen window, or it would be left behind on a layer they no longer share.
         let over = config(
             "[general]\nshow_over_fullscreen=true\n[shape]\nframe=true\n[bars.top]\ncenter=[\"clock\"]\n",
         );
@@ -488,10 +434,7 @@ mod tests {
 
     /// The widgets surface exists on its own terms, and is placed against the space the bars left.
     ///
-    /// Both halves are the point of splitting it off the wallpaper. A clock is not a reason to paint the
-    /// desktop, so the two surfaces are asked for separately — and where the wallpaper opts out of every
-    /// exclusive zone to take the screen, this one respects them, which is what makes the compositor size it to
-    /// the hole the bars leave instead of this file working that out by hand.
+    /// Both halves are the point of splitting it off the wallpaper. A clock is not a reason to paint the desktop, so the two surfaces are asked for separately — and where the wallpaper opts out of every exclusive zone to take the screen, this one respects them, which is what makes the compositor size it to the hole the bars leave instead of this file working that out by hand.
     #[test]
     fn the_widgets_surface_is_asked_for_on_its_own_and_measures_what_the_bars_left() {
         let widgets_only =
@@ -543,9 +486,7 @@ mod tests {
         assert_eq!(planned(&floating, Role::Widgets).margin, (14, 14, 14, 14));
     }
 
-    /// `[shape] inactive_size` is what an edge with nothing on it is worth: the strip it reserves, the surface
-    /// its empty bar takes, and the ring the frame draws there. All three follow an edit to it, or the space
-    /// the windows are kept out of and the ring painted in it disagree about where the screen ends.
+    /// `[shape] inactive_size` is what an edge with nothing on it is worth: the strip it reserves, the surface its empty bar takes, and the ring the frame draws there. All three follow an edit to it, or the space the windows are kept out of and the ring painted in it disagree about where the screen ends.
     #[test]
     fn inactive_size_resizes_every_surface_on_an_empty_edge() {
         let thin = config("[shape]\nframe=true\ninactive_size=8\n[bars.top]\ncenter=[\"clock\"]\n");
@@ -575,8 +516,7 @@ mod tests {
         );
     }
 
-    /// `[shape] frame` gives every edge a thickness of its own, so all four bars exist whatever is on them —
-    /// which is why turning a module off there is a re-render and not a surface being destroyed.
+    /// `[shape] frame` gives every edge a thickness of its own, so all four bars exist whatever is on them — which is why turning a module off there is a re-render and not a surface being destroyed.
     #[test]
     fn a_frame_puts_a_surface_on_every_edge() {
         let framed =
@@ -615,8 +555,7 @@ mod tests {
 
     /// The whole point of the reconcile: an edit reaches the surfaces that are already up.
     ///
-    /// Reusing is not a detail of how it is implemented — it is what the user sees. A bar replaced by a new bar
-    /// is a bar that blinks off and on at every keystroke in the settings window, which is what this used to do.
+    /// Reusing is not a detail of how it is implemented — it is what the user sees. A bar replaced by a new bar is a bar that blinks off and on at every keystroke in the settings window, which is what this used to do.
     #[test]
     fn an_edit_reuses_the_surfaces_that_stay_and_only_adds_or_drops_at_the_edges() {
         let path = Path::new("config.toml");
@@ -685,15 +624,10 @@ mod tests {
 
     /// A monitor that goes away takes its surfaces with it.
     ///
-    /// The other way a surface stops being wanted: not the config dropping it, but the screen it was on. The
-    /// plan is built from the outputs it is handed, so an output that stops being one has nothing planned
-    /// against it — and everything the plan does not name is dropped, per-output surfaces included. Left
-    /// behind, they would be layer surfaces on a screen the compositor no longer has.
+    /// The other way a surface stops being wanted: not the config dropping it, but the screen it was on. The plan is built from the outputs it is handed, so an output that stops being one has nothing planned against it — and everything the plan does not name is dropped, per-output surfaces included. Left behind, they would be layer surfaces on a screen the compositor no longer has.
     #[test]
     fn a_disconnected_output_takes_its_surfaces_with_it() {
-        // A real path, unlike the relative one the other tests hand over: a *named* output sends the reconcile
-        // through `Config::for_output`, which falls back to `Config::load` — and loading a config that is not
-        // there writes a starter one, next to whatever the path pointed at.
+        // A real path, unlike the relative one the other tests hand over: a *named* output sends the reconcile through `Config::for_output`, which falls back to `Config::load` — and loading a config that is not there writes a starter one, next to whatever the path pointed at.
         let dir = std::env::temp_dir().join(format!("hogar-shell-outputs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let path = dir.join("config.toml");

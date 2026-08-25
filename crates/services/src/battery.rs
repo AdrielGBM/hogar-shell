@@ -95,8 +95,7 @@ fn run_battery(service: &Arc<Broadcast<Battery>>) {
     if let Some(b) = read() {
         service.publish(b);
     }
-    // UPower's DisplayDevice `PropertiesChanged` for sub-second plug/unplug (it only triggers; sysfs holds the
-    // authoritative values); slow sysfs poll when UPower/DBus is unavailable.
+    // UPower's DisplayDevice `PropertiesChanged` for sub-second plug/unplug (it only triggers; sysfs holds the authoritative values); slow sysfs poll when UPower/DBus is unavailable.
     if watch_upower(service).is_none() {
         poll_fallback(service);
     }
@@ -131,8 +130,7 @@ fn poll_fallback(service: &Broadcast<Battery>) {
     }
 }
 
-/// Registers `tx` (bound to a bar's event loop) for live battery readings and sends the current one, spinning up
-/// the single shared UPower/sysfs source on first use. Called from a bar chip's `watch` producer.
+/// Registers `tx` (bound to a bar's event loop) for live battery readings and sends the current one, spinning up the single shared UPower/sysfs source on first use. Called from a bar chip's `watch` producer.
 pub fn subscribe(tx: EventSender<Battery>) {
     BATTERY.subscribe(tx);
 }
@@ -231,9 +229,7 @@ fn poll_details_fallback(tx: &EventSender<BatteryDetails>) {
     }
 }
 
-/// The charge a crossing test compares against when there is nothing to compare to yet — no previous reading,
-/// or the machine was on mains. Nothing has been warned about at this charge, so unplugging a laptop that is
-/// already at 15 % raises the 20 % warning immediately rather than waiting for a threshold it has passed.
+/// The charge a crossing test compares against when there is nothing to compare to yet — no previous reading, or the machine was on mains. Nothing has been warned about at this charge, so unplugging a laptop that is already at 15 % raises the 20 % warning immediately rather than waiting for a threshold it has passed.
 const NOTHING_WARNED_YET: i32 = i32::MAX;
 
 fn previous_level(previous: Option<Battery>) -> i32 {
@@ -243,14 +239,12 @@ fn previous_level(previous: Option<Battery>) -> i32 {
     }
 }
 
-/// Whether the charge just crossed *down* through `threshold`. A level that merely sits below it does not
-/// count, which is what stops a laptop parked at 19 % from warning on every reading.
+/// Whether the charge just crossed *down* through `threshold`. A level that merely sits below it does not count, which is what stops a laptop parked at 19 % from warning on every reading.
 fn crossed_down(previous: Option<Battery>, now: Battery, threshold: i32) -> bool {
     !now.charging && threshold > 0 && previous_level(previous) > threshold && now.level <= threshold
 }
 
-/// The warning to raise for a change from `previous` to `now`: the most severe threshold the charge has just
-/// crossed. A drop straight from 30 % to 5 % raises one notification, not one per level passed.
+/// The warning to raise for a change from `previous` to `now`: the most severe threshold the charge has just crossed. A drop straight from 30 % to 5 % raises one notification, not one per level passed.
 pub fn warning_for(
     previous: Option<Battery>,
     now: Battery,
@@ -263,16 +257,13 @@ pub fn warning_for(
 }
 
 thread_local! {
-    // The reading the last crossing test was made against. A thread-local because `on_reading` runs on the
-    // driver thread, the one place the live config is readable.
+    // The reading the last crossing test was made against. A thread-local because `on_reading` runs on the driver thread, the one place the live config is readable.
     static LAST: Cell<Option<Battery>> = const { Cell::new(None) };
 }
 
-/// Raises the configured low-battery warning as the charge crosses a threshold, and runs `[battery]
-/// critical_action` once it drops to `critical_level`.
+/// Raises the configured low-battery warning as the charge crosses a threshold, and runs `[battery] critical_action` once it drops to `critical_level`.
 ///
-/// Installed on the driver thread by the shell's startup path rather than run inside the producer: the
-/// producer thread has neither the live config nor a way to reach the notification daemon's surface.
+/// Installed on the driver thread by the shell's startup path rather than run inside the producer: the producer thread has neither the live config nor a way to reach the notification daemon's surface.
 pub fn on_reading(reading: Battery) {
     let previous = LAST.replace(Some(reading));
     let Some(config) = config::config() else {
@@ -362,8 +353,7 @@ mod tests {
             warning_for(Some(discharging(30)), charging, &levels).is_none(),
             "a battery on mains is not a problem however low it is"
         );
-        // Unplugging at a charge already under the threshold warns straight away rather than waiting for a
-        // crossing that has already happened.
+        // Unplugging at a charge already under the threshold warns straight away rather than waiting for a crossing that has already happened.
         assert_eq!(
             warning_for(Some(charging), discharging(15), &levels).map(|w| w.level),
             Some(20)

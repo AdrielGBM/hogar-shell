@@ -22,9 +22,7 @@ let save: Box<dyn Fn()> = Box::new({
         dangerous.clone(),
     );
     move || {
-        // Merged into the file as it is now, because the applications page owns the other half of this same
-        // `[launcher]` table. A snapshot taken when the form was built would quietly revert a favourite marked
-        // since — see `persist_with`.
+        // Merged into the file as it is now, because the applications page owns the other half of this same `[launcher]` table. A snapshot taken when the form was built would quietly revert a favourite marked since — see `persist_with`.
         persist_with(&path, "launcher", |current| LauncherConfig {
             width: parse_u32(&width.peek(), base.width),
             height: parse_u32(&height.peek(), base.height),

@@ -12,8 +12,7 @@ pub(crate) const LOCK: Target = Target {
             help: "lock the session",
             run: |_| {
                 use services::lock;
-                // Refused up front rather than after the screen is covered: a lock this shell cannot
-                // undo is the one failure the user has no way out of.
+                // Refused up front rather than after the screen is covered: a lock this shell cannot undo is the one failure the user has no way out of.
                 lock::can_lock()?;
                 lock::lock();
                 Ok("locking".to_string())
@@ -55,8 +54,7 @@ pub(crate) const LOCK: Target = Target {
                     Ok(()) => "supported".to_string(),
                     Err(reason) => reason,
                 };
-                // Three columns because the middle one is the honest answer: between asking and being
-                // granted, the desktop may still be on screen.
+                // Three columns because the middle one is the honest answer: between asking and being granted, the desktop may still be on screen.
                 Ok(format!(
                     "{}\t{}\t{supported}",
                     on_off(state.locked),
@@ -186,8 +184,7 @@ pub(crate) const WIFI: Target = Target {
             help: "the radio state, the network joined and its signal",
             run: |_| {
                 use services::network;
-                // `enabled = false` and "no NetworkManager" both yield nothing here, and telling a user the
-                // daemon is missing when they switched the section off themselves sends them hunting.
+                // `enabled = false` and "no NetworkManager" both yield nothing here, and telling a user the daemon is missing when they switched the section off themselves sends them hunting.
                 let wifi = network::current_wifi()
                     .ok_or("[network] enabled is false, or NetworkManager is not running")?;
                 let wifi = if wifi.available {

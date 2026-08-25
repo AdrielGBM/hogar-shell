@@ -1,5 +1,4 @@
-//! The widgets a form of repeating rows is built from — a table with an add button, a delete per row,
-//! and the pills a membership list is edited through.
+//! The widgets a form of repeating rows is built from — a table with an add button, a delete per row, and the pills a membership list is edited through.
 
 use std::rc::Rc;
 use ui::scale::{corner, paint, space};
@@ -13,16 +12,11 @@ use crate::form::*;
 use config::theme::NordTheme;
 use ui::icon::icon_view;
 
-/// K13, second half: a `[[list]]` of config tables, edited as rows with an Add button and a remove control on
-/// each — `[[battery.warn_levels]]` and `[[idle.stages]]`.
+/// K13, second half: a `[[list]]` of config tables, edited as rows with an Add button and a remove control on each — `[[battery.warn_levels]]` and `[[idle.stages]]`.
 ///
-/// Two pieces of state, deliberately. The *order* is a signal, so adding or removing a row redraws the list.
-/// The *values* are a plain map behind an `Rc`, because a row's fields change on every keystroke and a signal
-/// there would rebuild the row being typed into — the trap every keyed list in this shell documents.
+/// Two pieces of state, deliberately. The *order* is a signal, so adding or removing a row redraws the list. The *values* are a plain map behind an `Rc`, because a row's fields change on every keystroke and a signal there would rebuild the row being typed into — the trap every keyed list in this shell documents.
 ///
-/// Rows are keyed on a synthetic id rather than on their index. An index-keyed list reuses row 1's widgets for
-/// what used to be row 2 when row 1 is deleted, because the key it reconciles on did not change: the user
-/// deletes one warning and the form quietly shows them another one's values under the first one's heading.
+/// Rows are keyed on a synthetic id rather than on their index. An index-keyed list reuses row 1's widgets for what used to be row 2 when row 1 is deleted, because the key it reconciles on did not change: the user deletes one warning and the form quietly shows them another one's values under the first one's heading.
 pub(crate) struct TableList<T> {
     order: RwSignal<Vec<u64>>,
     values: Rc<std::cell::RefCell<std::collections::HashMap<u64, T>>>,
@@ -106,8 +100,7 @@ impl<T: Clone + 'static> TableList<T> {
 
 /// A text field bound to one field of a [`TableList`] entry, writing back on every keystroke.
 ///
-/// Returns the effect for the row to hold: a bare `effect(…)` statement runs once and stops, which looks like
-/// a field that accepts the first character and then ignores the rest of the word.
+/// Returns the effect for the row to hold: a bare `effect(…)` statement runs once and stops, which looks like a field that accepts the first character and then ignores the rest of the word.
 pub(crate) fn bound_field<T: Clone + 'static>(
     label: impl Fn() -> String + 'static,
     list: &TableList<T>,
@@ -191,8 +184,7 @@ pub(crate) fn toggle_membership(list: RwSignal<Vec<String>>, id: String) -> impl
     }
 }
 
-/// A square icon button that reads as on or off — the row-sized form of [`toggle_field`], which is a labelled
-/// row and far too wide to put two of on every application.
+/// A square icon button that reads as on or off — the row-sized form of [`toggle_field`], which is a labelled row and far too wide to put two of on every application.
 pub(crate) fn toggle_pill(
     glyph: &'static str,
     on: bool,
@@ -224,9 +216,7 @@ pub(crate) fn toggle_pill(
 mod tests {
     use super::*;
     use config::IdleStage;
-    /// The bug an index-keyed list would ship: deleting one entry has to take *that* entry's values with it,
-    /// and leave every other row still holding its own. Nothing about the rendered form says which is which,
-    /// so it is only visible as a user finding someone else's numbers in the box they were editing.
+    /// The bug an index-keyed list would ship: deleting one entry has to take *that* entry's values with it, and leave every other row still holding its own. Nothing about the rendered form says which is which, so it is only visible as a user finding someone else's numbers in the box they were editing.
     #[test]
     fn removing_one_entry_leaves_the_others_holding_their_own_values() {
         telar::reset_runtime();

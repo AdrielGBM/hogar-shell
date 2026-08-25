@@ -2,24 +2,15 @@
 //!
 //! Two rules are encoded here, both learned the hard way.
 //!
-//! **Read the value out before mapping it.** `with` holds the reactive runtime's borrow for as long as its
-//! closure runs, so a nested read panics with `RefCell already borrowed`. The nested read is rarely visible:
-//! `t!` reads the locale signal, so any closure translating its own string is one. It is not a compile error
-//! and it does not fire until the surface is built. Reading the locale still happens inside `map`, which is
-//! what makes a derived label re-render on a live language switch.
+//! **Read the value out before mapping it.** `with` holds the reactive runtime's borrow for as long as its closure runs, so a nested read panics with `RefCell already borrowed`. The nested read is rarely visible: `t!` reads the locale signal, so any closure translating its own string is one. It is not a compile error and it does not fire until the surface is built. Reading the locale still happens inside `map`, which is what makes a derived label re-render on a live language switch.
 //!
-//! **A derivation is a [`Memo`], never a signal written by an effect.** `telar::effect` hands back a handle whose
-//! `Drop` deregisters the effect, so `let _ = effect(…)` runs exactly once and then stops — the derived value is
-//! seeded correctly and never moves again, which looks like a working card until you watch it. A `Memo` is
-//! `Rc`-backed and lives as long as the closure reading it, so the widget that draws the value is what keeps
-//! the derivation alive, with nothing for a caller to remember.
+//! **A derivation is a [`Memo`], never a signal written by an effect.** `telar::effect` hands back a handle whose `Drop` deregisters the effect, so `let _ = effect(…)` runs exactly once and then stops — the derived value is seeded correctly and never moves again, which looks like a working card until you watch it. A `Memo` is `Rc`-backed and lives as long as the closure reading it, so the widget that draws the value is what keeps the derivation alive, with nothing for a caller to remember.
 
 pub use telar::{Source, derive, derive_pair};
 
 use telar::{Memo, memo};
 
-/// A value a surface reads and re-reads: derived from a service, or fixed for the life of the surface. One type
-/// for both so a card takes one kind of argument rather than two.
+/// A value a surface reads and re-reads: derived from a service, or fixed for the life of the surface. One type for both so a card takes one kind of argument rather than two.
 pub type Live<T> = Memo<T>;
 
 /// A value that never changes while the surface is up — a device name, a configured step, a mount point.
@@ -68,8 +59,7 @@ mod tests {
         assert_eq!(label.get(), "11+");
     }
 
-    /// The regression this module exists for. Deriving through a signal written by an effect seeds correctly
-    /// and then goes dead the moment the handle drops, which is what every hover popout used to do.
+    /// The regression this module exists for. Deriving through a signal written by an effect seeds correctly and then goes dead the moment the handle drops, which is what every hover popout used to do.
     #[test]
     fn a_derivation_outlives_the_call_that_made_it() {
         telar::reset_runtime();

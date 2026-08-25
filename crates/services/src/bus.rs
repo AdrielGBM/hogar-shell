@@ -1,12 +1,8 @@
 //! One D-Bus connection per (bus, method timeout) instead of one per call.
 //!
-//! Opening a connection is not cheap: a socket, an auth handshake, an executor thread and a message queue. A
-//! service that opens one inside a poll loop or a click handler pays that several times a second, and every
-//! live connection costs a thread whose allocations glibc scatters across its own malloc arena.
+//! Opening a connection is not cheap: a socket, an auth handshake, an executor thread and a message queue. A service that opens one inside a poll loop or a click handler pays that several times a second, and every live connection costs a thread whose allocations glibc scatters across its own malloc arena.
 //!
-//! The timeout is part of the key because it is a per-connection setting in zbus and the services mean
-//! different things by it — a tray read gives up after 2 s, a VPN action is allowed 60 s. Collapsing those onto
-//! one connection would silently retime every call made through it.
+//! The timeout is part of the key because it is a per-connection setting in zbus and the services mean different things by it — a tray read gives up after 2 s, a VPN action is allowed 60 s. Collapsing those onto one connection would silently retime every call made through it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -36,8 +32,7 @@ pub fn system(timeout: Option<Duration>) -> Option<Connection> {
 
 /// The shared session-bus connection for `timeout`, or `None` when the bus is unreachable.
 ///
-/// Not for a connection that owns a well-known name or serves objects — those are the connection's identity on
-/// the bus, so the notification server and the tray watcher/host keep their own.
+/// Not for a connection that owns a well-known name or serves objects — those are the connection's identity on the bus, so the notification server and the tray watcher/host keep their own.
 pub fn session(timeout: Option<Duration>) -> Option<Connection> {
     shared(Kind::Session, timeout)
 }

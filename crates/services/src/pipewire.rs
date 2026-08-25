@@ -1,16 +1,10 @@
 //! The audio graph as one shared source, read from PipeWire itself.
 //!
-//! This replaces a `wpctl` fork every two seconds. Two things were wrong with that beyond the cost: a poll
-//! answers one question per fork, so a level the user changed from another mixer took up to two seconds to
-//! reach the bar; and `wpctl get-volume` returns a single number, which is why the shell could show a level
-//! and a mute state and nothing else — no device list, no per-application stream.
+//! This replaces a `wpctl` fork every two seconds. Two things were wrong with that beyond the cost: a poll answers one question per fork, so a level the user changed from another mixer took up to two seconds to reach the bar; and `wpctl get-volume` returns a single number, which is why the shell could show a level and a mute state and nothing else — no device list, no per-application stream.
 //!
-//! `pw-dump --monitor` is the whole graph, once, and then a line per change. One subprocess for the shell,
-//! parsed on one thread, published as one snapshot. `wpctl` stays for *mutations*: it already resolves
-//! `@DEFAULT_AUDIO_SINK@` and does the volume curve, and writing was never the part that needed fixing.
+//! `pw-dump --monitor` is the whole graph, once, and then a line per change. One subprocess for the shell, parsed on one thread, published as one snapshot. `wpctl` stays for *mutations*: it already resolves `@DEFAULT_AUDIO_SINK@` and does the volume curve, and writing was never the part that needed fixing.
 //!
-//! A machine with no PipeWire publishes nothing at all, which is the same thing the poll did when `wpctl` was
-//! missing — every consumer already treats `None` as "no audio here".
+//! A machine with no PipeWire publishes nothing at all, which is the same thing the poll did when `wpctl` was missing — every consumer already treats `None` as "no audio here".
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -24,12 +18,10 @@ use util::deps::{self, Dep};
 
 use util::broadcast::{Broadcast, Service};
 
-/// How long to wait before re-attaching after the monitor exits. Only ever reached when PipeWire itself
-/// restarted, which is when the shell most needs to come back rather than stay blank.
+/// How long to wait before re-attaching after the monitor exits. Only ever reached when PipeWire itself restarted, which is when the shell most needs to come back rather than stay blank.
 const REATTACH: Duration = Duration::from_secs(3);
 
-/// What a node is to a mixer. Everything else in the graph — ports, links, the MIDI bridge, the dummy driver —
-/// is not something a user adjusts, so it never reaches a snapshot.
+/// What a node is to a mixer. Everything else in the graph — ports, links, the MIDI bridge, the dummy driver — is not something a user adjusts, so it never reaches a snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
     /// An output device: speakers, headphones, an HDMI port.
@@ -78,17 +70,12 @@ pub struct Node {
     pub level: i32,
     /// Whether this node is silenced, by *either* of the two mutes PipeWire keeps.
     ///
-    /// The node carries one; the card its node sits on carries another, per route, and they are independent —
-    /// a laptop's mic-mute key and several mixers set the route's while leaving the node's alone. Reading only
-    /// the node meant the shell drew a live microphone for one that was off. [`Mirror::snapshot`] folds the
-    /// route's in before anything sees this, so a consumer asks "is it silenced" and never has to know there
-    /// were two answers.
+    /// The node carries one; the card its node sits on carries another, per route, and they are independent — a laptop's mic-mute key and several mixers set the route's while leaving the node's alone. Reading only the node meant the shell drew a live microphone for one that was off. [`Mirror::snapshot`] folds the route's in before anything sees this, so a consumer asks "is it silenced" and never has to know there were two answers.
     pub muted: bool,
 }
 
 impl Node {
-    /// What to call this node on screen: the application's name for a stream, the device description for a
-    /// device, and never an empty string — a row with no label is a row a user cannot choose between.
+    /// What to call this node on screen: the application's name for a stream, the device description for a device, and never an empty string — a row with no label is a row a user cannot choose between.
     pub fn label(&self) -> String {
         for candidate in [&self.app, &self.description, &self.name] {
             let candidate = candidate.trim();
@@ -150,17 +137,9 @@ static LAST: Mutex<Option<Graph>> = Mutex::new(None);
 
 /// Registers `handler` on the audio graph, attaching to PipeWire on first use.
 ///
-/// The same shape the Hyprland event stream uses, and for the same reason: `pw-dump --monitor` is one
-/// subprocess and one parse, and every derived reading — the default sink's level, the microphone, a device
-/// list, a per-application stream — comes off the same batches. A monitor per consumer would be a subprocess
-/// per consumer on top of the shared-source design that already rules out one per bar.
+/// The same shape the Hyprland event stream uses, and for the same reason: `pw-dump --monitor` is one subprocess and one parse, and every derived reading — the default sink's level, the microphone, a device list, a per-application stream — comes off the same batches. A monitor per consumer would be a subprocess per consumer on top of the shared-source design that already rules out one per bar.
 pub fn on_graph(mut handler: GraphHandler) {
-    // **A late registration is handed the graph as it stands.** `pw-dump --monitor` speaks only when something
-    // changes, so a handler attached after the monitor was already running heard nothing at all until the user
-    // happened to move a slider somewhere else — the default sink's level, the microphone, every reading
-    // derived from this one stream, silently absent on a machine whose audio was simply sitting still. It is
-    // the contract `Service::subscribe` already keeps for its subscribers, and it was the one thing missing
-    // here.
+    // **A late registration is handed the graph as it stands.** `pw-dump --monitor` speaks only when something changes, so a handler attached after the monitor was already running heard nothing at all until the user happened to move a slider somewhere else — the default sink's level, the microphone, every reading derived from this one stream, silently absent on a machine whose audio was simply sitting still. It is the contract `Service::subscribe` already keeps for its subscribers, and it was the one thing missing here.
     if let Some(graph) = LAST.lock().unwrap().clone() {
         handler(&graph);
     }
@@ -174,8 +153,7 @@ pub fn on_graph(mut handler: GraphHandler) {
 
 static GRAPH: Service<Graph> = Service::new("hogar-shell-pipewire-graph", run_graph);
 
-/// Mirrors the shared stream into a broadcast, so a surface can `watch` the graph like any other service. The
-/// producer registers and returns; the handler owns the `Arc`, so no thread parks here.
+/// Mirrors the shared stream into a broadcast, so a surface can `watch` the graph like any other service. The producer registers and returns; the handler owns the `Arc`, so no thread parks here.
 fn run_graph(service: &Arc<Broadcast<Graph>>) {
     let published = Arc::clone(service);
     on_graph(Box::new(move |graph| published.publish(graph.clone())));
@@ -190,8 +168,7 @@ pub fn current() -> Option<Graph> {
     GRAPH.current()
 }
 
-/// Publishes a graph the shell itself just caused, so a chip moves on the same frame instead of waiting for
-/// the monitor to report back. The reading that follows reconciles whatever PipeWire actually accepted.
+/// Publishes a graph the shell itself just caused, so a chip moves on the same frame instead of waiting for the monitor to report back. The reading that follows reconciles whatever PipeWire actually accepted.
 pub fn publish(graph: Graph) {
     GRAPH.publish(graph);
 }
@@ -204,9 +181,7 @@ fn run() {
                 attached = true;
                 tracing::warn!("pw-dump exited; re-attaching to the audio graph");
             }
-            // Nothing to attach to and nothing that will change that: a machine without PipeWire is not one
-            // that grows it while the shell runs, so retrying forever would just fork a doomed process a
-            // thousand times a day. Retiring here is what a shell with no audio at all already does.
+            // Nothing to attach to and nothing that will change that: a machine without PipeWire is not one that grows it while the shell runs, so retrying forever would just fork a doomed process a thousand times a day. Retiring here is what a shell with no audio at all already does.
             Err(e) if !attached => {
                 tracing::info!("no PipeWire audio graph ({e}); the audio modules will stay empty");
                 return;
@@ -219,8 +194,7 @@ fn run() {
 
 /// Runs one `pw-dump --monitor` to completion, publishing a snapshot per batch that changed something.
 ///
-/// `--raw` is what makes this streamable: it prints one JSON array per line — the whole graph first, then a
-/// batch per change — so a line is a complete message and no bracket counting is needed.
+/// `--raw` is what makes this streamable: it prints one JSON array per line — the whole graph first, then a batch per change — so a line is a complete message and no bracket counting is needed.
 fn monitor() -> std::io::Result<()> {
     let mut child = deps::command(Dep::PwDump)
         .ok_or_else(|| std::io::Error::other("pw-dump has no row"))?
@@ -243,8 +217,7 @@ fn monitor() -> std::io::Result<()> {
         let graph = mirror.snapshot();
         if graph != published {
             published = graph.clone();
-            // Kept before the handlers run, so one registering from another thread mid-batch replays this
-            // rather than the batch before it.
+            // Kept before the handlers run, so one registering from another thread mid-batch replays this rather than the batch before it.
             *LAST.lock().unwrap() = Some(graph.clone());
             for handler in HANDLERS.lock().unwrap().iter_mut() {
                 handler(&graph);
@@ -257,26 +230,20 @@ fn monitor() -> std::io::Result<()> {
 
 /// The graph as the shell currently believes it to be.
 ///
-/// Kept as parsed nodes rather than raw JSON: a batch carries each changed object's *complete* `info`, so an
-/// update is a replacement and there is nothing to merge — but it also carries objects of every type, and
-/// holding onto the ports, links and clients would be most of the memory for none of the answers.
+/// Kept as parsed nodes rather than raw JSON: a batch carries each changed object's *complete* `info`, so an update is a replacement and there is nothing to merge — but it also carries objects of every type, and holding onto the ports, links and clients would be most of the memory for none of the answers.
 #[derive(Default)]
 struct Mirror {
     nodes: HashMap<u32, Node>,
-    /// Route mutes, keyed by `(device.id, card.profile.device)` — the card's own mute, which is what a
-    /// laptop's mic-mute key sets and about which the node's own `mute` says nothing.
+    /// Route mutes, keyed by `(device.id, card.profile.device)` — the card's own mute, which is what a laptop's mic-mute key sets and about which the node's own `mute` says nothing.
     route_mutes: HashMap<(u32, u32), bool>,
-    /// Which route each node sits on, so [`snapshot`](Self::snapshot) can join the two. Kept beside the nodes
-    /// rather than on `Node`, because which card route a node belongs to is how this mirror answers "is it
-    /// muted" and not something a consumer of a reading has any use for.
+    /// Which route each node sits on, so [`snapshot`](Self::snapshot) can join the two. Kept beside the nodes rather than on `Node`, because which card route a node belongs to is how this mirror answers "is it muted" and not something a consumer of a reading has any use for.
     node_routes: HashMap<u32, (u32, u32)>,
     default_sink: String,
     default_source: String,
 }
 
 impl Mirror {
-    /// Applies one batch. Returns whether anything the shell draws could have changed, so a graph full of link
-    /// and port churn — which is most of what a busy machine emits — costs a parse and nothing more.
+    /// Applies one batch. Returns whether anything the shell draws could have changed, so a graph full of link and port churn — which is most of what a busy machine emits — costs a parse and nothing more.
     fn apply(&mut self, line: &str) -> bool {
         let Ok(Value::Array(batch)) = serde_json::from_str::<Value>(line) else {
             return false;
@@ -287,13 +254,11 @@ impl Mirror {
                 continue;
             };
             let id = id as u32;
-            // A removed object arrives as its id with a null `info` — an application closing, a device
-            // unplugged. Nothing else distinguishes it from an update.
+            // A removed object arrives as its id with a null `info` — an application closing, a device unplugged. Nothing else distinguishes it from an update.
             if object.get("info").is_some_and(Value::is_null) {
                 self.node_routes.remove(&id);
                 touched |= self.nodes.remove(&id).is_some();
-                // A card going away takes its routes with it, or a re-plugged device inherits the mute state
-                // of the one before it.
+                // A card going away takes its routes with it, or a re-plugged device inherits the mute state of the one before it.
                 let had_routes = self.route_mutes.keys().any(|(device, _)| *device == id);
                 self.route_mutes.retain(|(device, _), _| *device != id);
                 touched |= had_routes;
@@ -322,8 +287,7 @@ impl Mirror {
                 };
                 changed
             }
-            // A node the shell does not adjust, or one whose params have not arrived yet. Dropping a
-            // previously-known node here matters: a stream keeps its id while its media class is rewritten.
+            // A node the shell does not adjust, or one whose params have not arrived yet. Dropping a previously-known node here matters: a stream keeps its id while its media class is rewritten.
             None => {
                 self.node_routes.remove(&id);
                 self.nodes.remove(&id).is_some()
@@ -331,12 +295,9 @@ impl Mirror {
         }
     }
 
-    /// Records the card's per-route mutes. A `Device` object carries one `Route` per jack, each naming the
-    /// `device` index its nodes report as `card.profile.device` — so the pair `(card id, route device)` is
-    /// what joins a route to the node it silences.
+    /// Records the card's per-route mutes. A `Device` object carries one `Route` per jack, each naming the `device` index its nodes report as `card.profile.device` — so the pair `(card id, route device)` is what joins a route to the node it silences.
     ///
-    /// A device whose `Route` params have not arrived yet leaves the map alone rather than clearing it: an
-    /// update about something else on the card is not a statement that nothing is muted.
+    /// A device whose `Route` params have not arrived yet leaves the map alone rather than clearing it: an update about something else on the card is not a statement that nothing is muted.
     fn apply_device(&mut self, id: u32, object: &Value) -> bool {
         let Some(routes) = object
             .get("info")
@@ -363,8 +324,7 @@ impl Mirror {
         changed
     }
 
-    /// PipeWire keeps the default device in a metadata object rather than on the node, because "default" is a
-    /// property of the session and not of the hardware. It names the node, not its id.
+    /// PipeWire keeps the default device in a metadata object rather than on the node, because "default" is a property of the session and not of the hardware. It names the node, not its id.
     fn apply_metadata(&mut self, object: &Value) -> bool {
         if object
             .get("props")
@@ -400,8 +360,7 @@ impl Mirror {
     }
 
     fn snapshot(&self) -> Graph {
-        // The route's mute is folded in here, once, rather than at each of the places that ask whether
-        // something is silenced. Either mute silences the node, so the effective answer is their `or`.
+        // The route's mute is folded in here, once, rather than at each of the places that ask whether something is silenced. Either mute silences the node, so the effective answer is their `or`.
         let mut nodes: Vec<Node> = self
             .nodes
             .values()
@@ -415,8 +374,7 @@ impl Mirror {
                 node
             })
             .collect();
-        // Stable order, so a redraw never reshuffles a device list under the pointer. Ids ascend with
-        // creation, which puts the machine's own devices above the applications that came later.
+        // Stable order, so a redraw never reshuffles a device list under the pointer. Ids ascend with creation, which puts the machine's own devices above the applications that came later.
         nodes.sort_by_key(|node| node.id);
         Graph {
             nodes,
@@ -464,16 +422,13 @@ fn parse_node(id: u32, object: &Value) -> Option<Node> {
     })
 }
 
-/// The `(device.id, card.profile.device)` pair naming this node's route on its card, or `None` for a stream —
-/// which belongs to an application rather than to hardware and has no route to be muted by.
+/// The `(device.id, card.profile.device)` pair naming this node's route on its card, or `None` for a stream — which belongs to an application rather than to hardware and has no route to be muted by.
 fn route_key(object: &Value) -> Option<(u32, u32)> {
     let props = object.get("info")?.get("props")?;
     number(props, "device.id").zip(number(props, "card.profile.device"))
 }
 
-/// A `props` value that is a number, whatever JSON type it arrived as — PipeWire writes these as bare numbers
-/// in `pw-dump` but as strings through some of its other paths, and a route join that silently misses is a
-/// mute that silently does not apply.
+/// A `props` value that is a number, whatever JSON type it arrived as — PipeWire writes these as bare numbers in `pw-dump` but as strings through some of its other paths, and a route join that silently misses is a mute that silently does not apply.
 fn number(props: &Value, key: &str) -> Option<u32> {
     let value = props.get(key)?;
     value
@@ -482,9 +437,7 @@ fn number(props: &Value, key: &str) -> Option<u32> {
         .and_then(|n| u32::try_from(n).ok())
 }
 
-/// The volume entry of a node's `Props`, which is **not always the first**: `params.Props` carries a second
-/// entry holding `cardName`/`device`/`deviceName` and no volume at all. Taking `.first()` worked only because
-/// PipeWire happens to emit them in this order.
+/// The volume entry of a node's `Props`, which is **not always the first**: `params.Props` carries a second entry holding `cardName`/`device`/`deviceName` and no volume at all. Taking `.first()` worked only because PipeWire happens to emit them in this order.
 fn volume_props(info: &Value) -> Option<&Value> {
     info.get("params")?
         .get("Props")?
@@ -495,12 +448,9 @@ fn volume_props(info: &Value) -> Option<&Value> {
 
 /// The node's level on the curve a user has seen everywhere else.
 ///
-/// PipeWire stores a linear amplitude, and every mixer on the machine — `wpctl`, pavucontrol, anything built on
-/// PulseAudio's API — shows its cube root: 40% on screen is 0.064 in the graph. Reading `channelVolumes` as a
-/// percentage would have the shell report 6% for a sink every other tool calls 40%.
+/// PipeWire stores a linear amplitude, and every mixer on the machine — `wpctl`, pavucontrol, anything built on PulseAudio's API — shows its cube root: 40% on screen is 0.064 in the graph. Reading `channelVolumes` as a percentage would have the shell report 6% for a sink every other tool calls 40%.
 ///
-/// The loudest channel rather than the first: a node with one channel turned down is not at that channel's
-/// level, and a balance a user set elsewhere should not read as the volume having dropped.
+/// The loudest channel rather than the first: a node with one channel turned down is not at that channel's level, and a balance a user set elsewhere should not read as the volume having dropped.
 fn level_of(props: &Value) -> i32 {
     let loudest = props
         .get("channelVolumes")
@@ -529,8 +479,7 @@ mod tests {
                  "node.description":"Built-in Audio"},
         "params":{"Props":[{"channelVolumes":[0.064012,0.064012],"mute":false}]}}}]"#;
 
-    /// The shapes below are copied from a live `pw-dump` (PipeWire 1.6.8), not invented: a source node that
-    /// names its card and route, and the card carrying the mute that node knows nothing about.
+    /// The shapes below are copied from a live `pw-dump` (PipeWire 1.6.8), not invented: a source node that names its card and route, and the card carrying the mute that node knows nothing about.
     const MIC: &str = r#"[{"id":55,"type":"PipeWire:Interface:Node","info":{
         "props":{"media.class":"Audio/Source","node.name":"alsa_input.analog-stereo",
                  "node.description":"Microphone","device.id":47,"card.profile.device":0},
@@ -546,8 +495,7 @@ mod tests {
             {"index":1,"device":3,"direction":"Output","name":"analog-output-speaker",
              "props":{"mute":false}}]}}}]"#;
 
-    /// The bug this exists for: a laptop's mic-mute key sets the *card route's* mute and leaves the node's
-    /// alone, so a shell reading only the node drew a live microphone for one that was switched off.
+    /// The bug this exists for: a laptop's mic-mute key sets the *card route's* mute and leaves the node's alone, so a shell reading only the node drew a live microphone for one that was switched off.
     #[test]
     fn a_route_mute_silences_the_node_sitting_on_it() {
         let mut mirror = Mirror::default();
@@ -569,8 +517,7 @@ mod tests {
         );
     }
 
-    /// The output route on the same card is muted independently; joining on the card alone rather than on
-    /// `(card, route device)` would have one jack's mute silence the other's.
+    /// The output route on the same card is muted independently; joining on the card alone rather than on `(card, route device)` would have one jack's mute silence the other's.
     #[test]
     fn a_route_only_mutes_the_device_index_it_names() {
         let mut mirror = Mirror::default();
@@ -583,8 +530,7 @@ mod tests {
         );
     }
 
-    /// `params.Props` carries a second entry with no volume in it. Reading `.first()` worked only because
-    /// PipeWire happens to emit the volume entry first; nothing promises that order.
+    /// `params.Props` carries a second entry with no volume in it. Reading `.first()` worked only because PipeWire happens to emit the volume entry first; nothing promises that order.
     #[test]
     fn the_volume_entry_is_found_wherever_it_sits_in_props() {
         let reordered = batch(
@@ -727,9 +673,7 @@ mod tests {
         assert!(stream.kind.is_stream());
     }
 
-    /// Parses this machine's actual graph. Gated because it shells out — the suite must stay hermetic — but it
-    /// is the only check that the shapes above still match what `pw-dump` emits, which is a contract PipeWire
-    /// owns and can change under us.
+    /// Parses this machine's actual graph. Gated because it shells out — the suite must stay hermetic — but it is the only check that the shapes above still match what `pw-dump` emits, which is a contract PipeWire owns and can change under us.
     ///
     /// `HOGAR_SHELL_PIPEWIRE_LIVE=1 cargo test -p hogar-shell --lib live_graph -- --nocapture`
     #[test]
@@ -784,10 +728,7 @@ mod tests {
 
     /// **A handler that arrives after the monitor is given the graph as it stands.**
     ///
-    /// `pw-dump --monitor` speaks only when something changes, so a reading derived from it — the default
-    /// sink's level, the microphone — was silently absent on a machine whose audio was sitting still: the
-    /// handler had been registered and simply never called. `volume get` answered "no audio sink available"
-    /// about a machine with one, and went on answering it until someone happened to move a slider elsewhere.
+    /// `pw-dump --monitor` speaks only when something changes, so a reading derived from it — the default sink's level, the microphone — was silently absent on a machine whose audio was sitting still: the handler had been registered and simply never called. `volume get` answered "no audio sink available" about a machine with one, and went on answering it until someone happened to move a slider elsewhere.
     #[test]
     fn a_handler_registered_after_the_first_batch_is_replayed_the_last_one() {
         use std::sync::atomic::{AtomicUsize, Ordering};

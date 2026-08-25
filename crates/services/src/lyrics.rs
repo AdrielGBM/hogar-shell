@@ -1,12 +1,8 @@
 //! Timed lyrics for whatever is playing.
 //!
-//! Not a `Service`, for the same reason cover art is not one: this is a *request* keyed by the track, answered
-//! once and cached, not a reading of the system that changes under you. So it goes through `shared::asset` — the
-//! view asks, gets a signal, and a worker looks on disk and then, if allowed, online. Both of those would stall
-//! the frame if they happened where they were asked from.
+//! Not a `Service`, for the same reason cover art is not one: this is a *request* keyed by the track, answered once and cached, not a reading of the system that changes under you. So it goes through `shared::asset` — the view asks, gets a signal, and a worker looks on disk and then, if allowed, online. Both of those would stall the frame if they happened where they were asked from.
 //!
-//! Local files win over the network, always: a `.lrc` next to the track is what the user chose to keep, and it
-//! needs no permission, no connection and no waiting.
+//! Local files win over the network, always: a `.lrc` next to the track is what the user chose to keep, and it needs no permission, no connection and no waiting.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -25,8 +21,7 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// LRCLIB asks callers to identify themselves, which is the whole of its rate-limiting policy.
 const USER_AGENT: &str = concat!("hogar-shell/", env!("CARGO_PKG_VERSION"));
 
-/// One line, and when it is sung. `at` is microseconds from the start of the track, which is the unit MPRIS
-/// reports its position in — so the comparison the view makes every tick needs no conversion.
+/// One line, and when it is sung. `at` is microseconds from the start of the track, which is the unit MPRIS reports its position in — so the comparison the view makes every tick needs no conversion.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Line {
     pub at: i64,
@@ -35,8 +30,7 @@ pub struct Line {
 
 /// What identifies a track for the purpose of finding its words.
 ///
-/// The player's bus is deliberately not part of it: the same song played by a different program has the same
-/// lyrics, and keying on the player would fetch them twice.
+/// The player's bus is deliberately not part of it: the same song played by a different program has the same lyrics, and keying on the player would fetch them twice.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Track {
     pub artist: String,
@@ -80,8 +74,7 @@ fn local_file(url: &str) -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
-/// Percent-decoding, the same shape cover art needs for the same reason: players emit encoded URLs, and a track in
-/// a folder with a space resolves to a path that does not exist unless this runs.
+/// Percent-decoding, the same shape cover art needs for the same reason: players emit encoded URLs, and a track in a folder with a space resolves to a path that does not exist unless this runs.
 fn percent_decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -103,11 +96,7 @@ fn percent_decode(text: &str) -> Option<String> {
 
 /// Parses an LRC file into timed lines, in order.
 ///
-/// The format is loose in practice, so this reads what players actually write: several timestamps on one line (a
-/// chorus, written once and played four times), `[offset:±ms]` for a file that runs early, `mm:ss.xx` with
-/// hundredths or `mm:ss.xxx` with milliseconds, and metadata tags (`[ti:]`, `[ar:]`) that are not lines at all.
-/// An unsynced file — plain text with no timestamps — yields nothing rather than a wall of untimed words, since a
-/// view that highlights the current line has nothing to do with one.
+/// The format is loose in practice, so this reads what players actually write: several timestamps on one line (a chorus, written once and played four times), `[offset:±ms]` for a file that runs early, `mm:ss.xx` with hundredths or `mm:ss.xxx` with milliseconds, and metadata tags (`[ti:]`, `[ar:]`) that are not lines at all. An unsynced file — plain text with no timestamps — yields nothing rather than a wall of untimed words, since a view that highlights the current line has nothing to do with one.
 pub fn parse(text: &str) -> Vec<Line> {
     let mut lines: Vec<Line> = Vec::new();
     let mut offset_micros: i64 = 0;
@@ -118,8 +107,7 @@ pub fn parse(text: &str) -> Vec<Line> {
         }
         let mut stamps: Vec<i64> = Vec::new();
         let mut rest = raw;
-        // `end` is where the `]` sits inside the *stripped* body, so `1..=end` is exactly the tag's own text and
-        // `end + 2` is the first character after the bracket.
+        // `end` is where the `]` sits inside the *stripped* body, so `1..=end` is exactly the tag's own text and `end + 2` is the first character after the bracket.
         while let Some(end) = rest.strip_prefix('[').and_then(|body| body.find(']')) {
             let tag = &rest[1..=end];
             rest = &rest[end + 2..];
@@ -148,8 +136,7 @@ pub fn parse(text: &str) -> Vec<Line> {
             });
         }
     }
-    // Sorted because a repeated chorus writes its stamps out of order by construction, and stable so two lines
-    // sharing a timestamp keep the order the file put them in.
+    // Sorted because a repeated chorus writes its stamps out of order by construction, and stable so two lines sharing a timestamp keep the order the file put them in.
     lines.sort_by_key(|line| line.at);
     lines
 }
@@ -164,9 +151,7 @@ fn timestamp(tag: &str) -> Option<i64> {
     };
     let seconds: i64 = seconds.trim().parse().ok()?;
     let fraction = fraction.trim();
-    // The fraction is scaled by how many digits it has, not by a fixed unit: files in the wild write tenths,
-    // hundredths and milliseconds in the same field, and reading `.5` as five milliseconds puts a line half a
-    // second early.
+    // The fraction is scaled by how many digits it has, not by a fixed unit: files in the wild write tenths, hundredths and milliseconds in the same field, and reading `.5` as five milliseconds puts a line half a second early.
     let sub_micros = if fraction.is_empty() {
         0
     } else {
@@ -179,8 +164,7 @@ fn timestamp(tag: &str) -> Option<i64> {
 
 /// Which line is being sung at `position` (microseconds): the last one that has started.
 ///
-/// `None` before the first line, which is the instrumental opening most songs have — a view that highlighted line
-/// one through it would be wrong for the first twenty seconds of a lot of music.
+/// `None` before the first line, which is the instrumental opening most songs have — a view that highlighted line one through it would be wrong for the first twenty seconds of a lot of music.
 pub fn active(lines: &[Line], position: i64) -> Option<usize> {
     lines
         .iter()
@@ -219,8 +203,7 @@ pub fn of(player: &Player) -> ReadSignal<Load<Vec<Line>>> {
         let Some(store) = borrow.as_ref() else {
             return telar::signal(Load::Missing).read_only();
         };
-        // `at_hand` is deliberately nothing: even the local path involves reading a directory, and a track change
-        // must not do that on the frame that draws it.
+        // `at_hand` is deliberately nothing: even the local path involves reading a directory, and a track change must not do that on the frame that draws it.
         store.get(track, |_| None)
     })
 }
@@ -254,9 +237,7 @@ fn find(track: &Track) -> Option<Vec<Line>> {
 
 /// The `.lrc` for `track`, looked for where a person would have put it.
 ///
-/// Next to the audio file first — that is where every tagger and every download writes it — then in the configured
-/// library under the two names a human would choose. The library scan is a last resort and case-insensitive,
-/// because "Artist - Title.lrc" is a name typed by hand.
+/// Next to the audio file first — that is where every tagger and every download writes it — then in the configured library under the two names a human would choose. The library scan is a last resort and case-insensitive, because "Artist - Title.lrc" is a name typed by hand.
 fn local_lyrics(track: &Track, library: &Path) -> Option<PathBuf> {
     if let Some(file) = &track.file {
         let sibling = file.with_extension("lrc");
@@ -307,9 +288,7 @@ fn sanitise(name: &str) -> String {
 
 /// Asks LRCLIB for synced lyrics.
 ///
-/// A public, free, no-key service whose whole purpose is this question, and whose answer is one JSON object — so
-/// this needs no client library, just the request and the one field that matters. A miss is a 404, which is an
-/// answer rather than an error.
+/// A public, free, no-key service whose whole purpose is this question, and whose answer is one JSON object — so this needs no client library, just the request and the one field that matters. A miss is a 404, which is an answer rather than an error.
 fn fetch_online(track: &Track) -> Option<Vec<Line>> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(FETCH_TIMEOUT))
@@ -411,8 +390,7 @@ mod tests {
 
     #[test]
     fn a_file_with_no_timings_is_not_lyrics_this_view_can_use() {
-        // Plain text, which is what an unsynced download looks like. A view that highlights the current line has
-        // nothing to do with it, and half a screen of untimed words would read as a bug.
+        // Plain text, which is what an unsynced download looks like. A view that highlights the current line has nothing to do with it, and half a screen of untimed words would read as a bug.
         assert!(parse("First line\nSecond line").is_empty());
         assert!(parse("").is_empty());
         assert!(parse("[ti:Only metadata]\n[ar:Nobody]").is_empty());
@@ -420,8 +398,7 @@ mod tests {
 
     #[test]
     fn an_empty_line_keeps_its_timing() {
-        // A gap between verses is written as a timestamp with nothing after it, and dropping it would make the
-        // previous line stay highlighted through the instrumental break.
+        // A gap between verses is written as a timestamp with nothing after it, and dropping it would make the previous line stay highlighted through the instrumental break.
         let lines = parse("[00:10.00]Words\n[00:14.00]\n[00:20.00]More");
         assert_eq!(lines.len(), 3);
         assert!(lines[1].text.is_empty());

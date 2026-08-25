@@ -18,8 +18,7 @@ use util::paths;
 use util::picture;
 use util::reactive::derive;
 
-/// A month grid is at most six rows of seven — February starting on the last column of the week is the case
-/// that needs the sixth.
+/// A month grid is at most six rows of seven — February starting on the last column of the week is the case that needs the sixth.
 const WEEKS: u32 = 6;
 const CELL_HEIGHT: f32 = 30.0;
 const AVATAR: f32 = 56.0;
@@ -32,8 +31,7 @@ pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
     ])
 }
 
-/// F2. The same `[clock]` config that drives the bar chip, given the room the bar does not have: the time at
-/// display size, the date under it whether or not the chip was asked to show one.
+/// F2. The same `[clock]` config that drives the bar chip, given the room the bar does not have: the time at display size, the date under it whether or not the chip was asked to show one.
 fn clock_card(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let for_tick = config.clone();
     let now = signal(Local::now());
@@ -73,9 +71,7 @@ fn clock_card(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutIte
 
 /// F3. The month, navigable, with today marked.
 ///
-/// The grid is a keyed list over the anchor rather than a tree rebuilt in place, because that is what makes
-/// stepping a month a rebuild of the cells and nothing else — the heading, the weekday row and the card around
-/// them are laid out once and stay.
+/// The grid is a keyed list over the anchor rather than a tree rebuilt in place, because that is what makes stepping a month a rebuild of the cells and nothing else — the heading, the weekday row and the card around them are laid out once and stay.
 fn calendar_card(
     config: &DashboardConfig,
     theme: NordTheme,
@@ -207,9 +203,7 @@ fn month_grid(
     )?))
 }
 
-/// One day. A date outside the month being shown is drawn muted rather than blanked: the leading and trailing
-/// days are what make the week rows line up, and a reader looking at "the 1st is a Wednesday" needs to see the
-/// Monday and Tuesday it follows.
+/// One day. A date outside the month being shown is drawn muted rather than blanked: the leading and trailing days are what make the week rows line up, and a reader looking at "the 1st is a Wednesday" needs to see the Monday and Tuesday it follows.
 fn day_cell(
     date: NaiveDate,
     month: NaiveDate,
@@ -269,8 +263,7 @@ fn user_card(
             AVATAR,
         )?,
     };
-    // F4a: the picture is the control. A press opens the browser below it, which is the only affordance the
-    // card has room for and the only one a user would look for — nothing else on this card is pressable.
+    // F4a: the picture is the control. A press opens the browser below it, which is the only affordance the card has room for and the only one a user would look for — nothing else on this card is pressable.
     let open = picking.clone();
     let avatar: Box<dyn LayoutItem> = Box::new(
         StyledContainer::new(
@@ -300,8 +293,7 @@ fn user_card(
         move || theme.text_style(FontRole::Caption, theme.subtle),
     )?;
 
-    // Uptime rides the shared clock rather than arming a ticker of its own; it changes once a minute, and the
-    // second boundary is already being published to every surface.
+    // Uptime rides the shared clock rather than arming a ticker of its own; it changes once a minute, and the second boundary is already being published to every surface.
     let now = signal(Local::now());
     let sink = now.clone();
     platform_wayland::watch(clock::subscribe, move |t| sink.set(t));
@@ -341,8 +333,7 @@ fn user_card(
     )
 }
 
-/// How many entries the avatar browser draws at once, and how large each thumbnail is. The same bound, and the
-/// same reason, as the launcher's wallpaper grid: `ReactiveList` builds a widget per tile up front.
+/// How many entries the avatar browser draws at once, and how large each thumbnail is. The same bound, and the same reason, as the launcher's wallpaper grid: `ReactiveList` builds a widget per tile up front.
 const PICKER_ENTRIES: usize = 120;
 const PICKER_TILE: f32 = 64.0;
 
@@ -356,19 +347,14 @@ struct Choice {
 
 /// F4a: the file picker the shell did not have.
 ///
-/// Deliberately not a portal dialog — that is another process and another toolkit on screen — and deliberately
-/// not a second surface: a dashboard page already *is* the surface, and a picker that opened its own would have
-/// to be anchored, dismissed and kept on the right monitor for a job that is one press long. It browses instead
-/// of asking for a path, because a user who could type the path already has `[dashboard] avatar`.
+/// Deliberately not a portal dialog — that is another process and another toolkit on screen — and deliberately not a second surface: a dashboard page already *is* the surface, and a picker that opened its own would have to be anchored, dismissed and kept on the right monitor for a job that is one press long. It browses instead of asking for a path, because a user who could type the path already has `[dashboard] avatar`.
 fn avatar_picker(
     start: PathBuf,
     picking: RwSignal<bool>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let folder = signal(start);
-    // A one-item keyed list over the open flag, which is how this shell expresses a reactive `if`: the browser
-    // is *built* when it opens and torn down when it closes, so a card that is not picking an avatar costs
-    // exactly what it did before this landed rather than carrying a hidden subtree.
+    // A one-item keyed list over the open flag, which is how this shell expresses a reactive `if`: the browser is *built* when it opens and torn down when it closes, so a card that is not picking an avatar costs exactly what it did before this landed rather than carrying a hidden subtree.
     let open = picking.read_only();
     Ok(Box::new(ReactiveList::new(
         move || vec![open.get()],
@@ -454,8 +440,7 @@ fn browser(
     )?))
 }
 
-/// What a folder offers: its sub-folders, then the pictures in it, each alphabetical. Hidden entries are left
-/// out — a picture someone chose to hide is not one they are looking for here.
+/// What a folder offers: its sub-folders, then the pictures in it, each alphabetical. Hidden entries are left out — a picture someone chose to hide is not one they are looking for here.
 fn entries_in(folder: &Path) -> Vec<Choice> {
     let Ok(read) = std::fs::read_dir(folder) else {
         return Vec::new();
@@ -490,9 +475,7 @@ fn entries_in(folder: &Path) -> Vec<Choice> {
     folders
 }
 
-/// The formats `shared::picture` can decode. Stated here rather than read from `[wallpaper] extensions`,
-/// which is about what counts as a wallpaper — a user who narrows their wallpaper library to `png` has not
-/// said anything about which pictures may be their face.
+/// The formats `shared::picture` can decode. Stated here rather than read from `[wallpaper] extensions`, which is about what counts as a wallpaper — a user who narrows their wallpaper library to `png` has not said anything about which pictures may be their face.
 fn is_picture(path: &Path) -> bool {
     let Some(extension) = path.extension().map(|e| e.to_string_lossy().to_lowercase()) else {
         return false;
@@ -553,8 +536,7 @@ fn choice_tile(
     Ok(Box::new(tile))
 }
 
-/// Writes the chosen picture to `[dashboard] avatar`, which the config watcher then applies — the same route
-/// the settings panel's Save takes, so one path leads to a reload and one look for the change.
+/// Writes the chosen picture to `[dashboard] avatar`, which the config watcher then applies — the same route the settings panel's Save takes, so one path leads to a reload and one look for the change.
 fn set_avatar(path: &Path) {
     let Some(config) = config::config() else {
         return;
@@ -568,10 +550,7 @@ fn set_avatar(path: &Path) {
     }
 }
 
-/// The first image that exists, in the order a desktop conventionally writes them: the user's own `~/.face`
-/// first, then whatever their display manager put in AccountsService.
-/// Where the user's picture is: the `[dashboard] avatar` override, else the conventional places a desktop
-/// keeps one. Shared with the lock screen so the two never disagree about whose face this is.
+/// The first image that exists, in the order a desktop conventionally writes them: the user's own `~/.face` first, then whatever their display manager put in AccountsService. Where the user's picture is: the `[dashboard] avatar` override, else the conventional places a desktop keeps one. Shared with the lock screen so the two never disagree about whose face this is.
 pub fn avatar_path(config: &DashboardConfig) -> Option<PathBuf> {
     let configured = config.avatar.trim();
     if !configured.is_empty() {
@@ -608,8 +587,7 @@ fn read_uptime() -> Option<u64> {
     Some(seconds.max(0.0) as u64)
 }
 
-/// The coarsest two units that still say something: days and hours once a machine has been up a day, hours and
-/// minutes below that. A seconds field on an uptime is noise that changes while you read it.
+/// The coarsest two units that still say something: days and hours once a machine has been up a day, hours and minutes below that. A seconds field on an uptime is noise that changes while you read it.
 fn duration_label(seconds: u64) -> String {
     let (days, hours, minutes) = (
         seconds / 86_400,
@@ -642,8 +620,7 @@ fn shift_months(anchor: NaiveDate, months: i32) -> NaiveDate {
 
 /// The date the grid's first cell shows: the configured first day of the week on or before the 1st.
 fn grid_start(month: NaiveDate, first: Weekday) -> NaiveDate {
-    // `+ 7` before the modulo: these indices are unsigned, so subtracting a later weekday from an earlier one
-    // wraps to four billion and the grid starts on the wrong day rather than obviously breaking.
+    // `+ 7` before the modulo: these indices are unsigned, so subtracting a later weekday from an earlier one wraps to four billion and the grid starts on the wrong day rather than obviously breaking.
     let offset = (month.weekday().num_days_from_monday() + 7 - first.num_days_from_monday()) % 7;
     month
         .checked_sub_days(Days::new(offset as u64))
@@ -655,8 +632,7 @@ fn shift_weekday(first: Weekday, offset: u32) -> Weekday {
     Weekday::try_from(index as u8).unwrap_or(Weekday::Mon)
 }
 
-/// One `t!` per weekday rather than a key built from the name: the macro checks its key against the catalogs at
-/// compile time, and a computed key would opt out of that.
+/// One `t!` per weekday rather than a key built from the name: the macro checks its key against the catalogs at compile time, and a computed key would opt out of that.
 pub(super) fn weekday_label(day: Weekday) -> String {
     match day {
         Weekday::Mon => telar::t!("dashboard.weekday.mon"),
@@ -694,8 +670,7 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).expect("a real date")
     }
 
-    /// The avatar is a bitmap in a pressable box, which is two things that position themselves — so the one
-    /// question worth measuring is whether it ends up inside the card at all.
+    /// The avatar is a bitmap in a pressable box, which is two things that position themselves — so the one question worth measuring is whether it ends up inside the card at all.
     #[test]
     fn the_avatar_sits_inside_its_card() {
         use telar::{AvailableSpace, compute_layout, new_container, track_layout};

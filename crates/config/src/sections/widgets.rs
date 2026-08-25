@@ -1,18 +1,14 @@
 //! `[widgets]` — what the shell draws on the desktop itself.
 //!
-//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
+//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use serde::{Deserialize, Serialize};
 
 use crate::sections::*;
 
-/// Widgets drawn on the desktop, on a surface of their own: a clock face, an audio visualiser. All off by
-/// default, and the surface exists only while one of them is on.
+/// Widgets drawn on the desktop, on a surface of their own: a clock face, an audio visualiser. All off by default, and the surface exists only while one of them is on.
 ///
-/// **Not the wallpaper.** The wallpaper covers the whole screen under every window; this sits in what the bars
-/// left free, so a widget lines up with the applications rather than with the screen — and a visualiser that
-/// repaints with the music repaints that area instead of the whole screen behind it.
+/// **Not the wallpaper.** The wallpaper covers the whole screen under every window; this sits in what the bars left free, so a widget lines up with the applications rather than with the screen — and a visualiser that repaints with the music repaints that area instead of the whole screen behind it.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct WidgetsConfig {
@@ -100,12 +96,9 @@ impl ClockPlacement {
     }
 }
 
-/// The audio visualiser drawn on the desktop (`[widgets.visualiser]`), along one edge of the widget area. Off
-/// by default, and it costs nothing while it is: nothing captures audio until a surface subscribes.
+/// The audio visualiser drawn on the desktop (`[widgets.visualiser]`), along one edge of the widget area. Off by default, and it costs nothing while it is: nothing captures audio until a surface subscribes.
 ///
-/// What the bars *are* — how many, how smooth, how loud — is `[visualiser]`, shared with every other consumer.
-/// This section is only the look, so turning the count up here would be turning it up on the media card too,
-/// which is why it is not a key here.
+/// What the bars *are* — how many, how smooth, how loud — is `[visualiser]`, shared with every other consumer. This section is only the look, so turning the count up here would be turning it up on the media card too, which is why it is not a key here.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct DesktopVisualiserConfig {
@@ -145,8 +138,7 @@ impl Default for DesktopVisualiserConfig {
 }
 
 impl DesktopVisualiserConfig {
-    /// How far the bars reach, bounded: a reach of zero is a row that cannot be seen, and one taller than any
-    /// screen is a wallpaper made of bars.
+    /// How far the bars reach, bounded: a reach of zero is a row that cannot be seen, and one taller than any screen is a wallpaper made of bars.
     pub fn reach_px(&self) -> f32 {
         self.reach.clamp(8, 2000) as f32
     }
@@ -177,9 +169,7 @@ impl DesktopVisualiserConfig {
     }
 }
 
-/// A clock drawn on the desktop (`[widgets.clock]`), the way a lock screen or a phone's home screen shows one.
-/// Off by default. `format`/`date_format` fall back to `[clock]`, so the desktop face and the bar chip read the
-/// same unless one is deliberately given its own.
+/// A clock drawn on the desktop (`[widgets.clock]`), the way a lock screen or a phone's home screen shows one. Off by default. `format`/`date_format` fall back to `[clock]`, so the desktop face and the bar chip read the same unless one is deliberately given its own.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct DesktopClockConfig {
@@ -190,8 +180,7 @@ pub struct DesktopClockConfig {
     pub scale: f32,
     /// How far the face is kept from the edges of the widget area, in px.
     pub margin: u32,
-    /// Draw the face in the theme's base colour instead of its text colour — for a pale wallpaper, where light
-    /// text disappears.
+    /// Draw the face in the theme's base colour instead of its text colour — for a pale wallpaper, where light text disappears.
     pub invert: bool,
     pub show_date: bool,
     /// Overrides `[clock] format` for the desktop face only. A desktop clock usually wants `%H:%M` where the bar chip wants seconds.
@@ -228,8 +217,7 @@ impl Default for DesktopClockConfig {
 }
 
 impl DesktopClockConfig {
-    /// The `strftime` pattern the face renders: its own override, else `[clock]`'s answer without seconds — a
-    /// desktop clock that ticks every second is a surface that repaints every second.
+    /// The `strftime` pattern the face renders: its own override, else `[clock]`'s answer without seconds — a desktop clock that ticks every second is a surface that repaints every second.
     pub fn time_format<'a>(&'a self, clock: &'a ClockConfig) -> &'a str {
         if let Some(format) = &self.format {
             return format;
@@ -248,8 +236,7 @@ impl DesktopClockConfig {
         self.date_format.as_deref().unwrap_or(&clock.date_format)
     }
 
-    /// The plate's fill, bounded so `background = true` cannot resolve to an invisible plate or a fully opaque
-    /// one the user did not ask for.
+    /// The plate's fill, bounded so `background = true` cannot resolve to an invisible plate or a fully opaque one the user did not ask for.
     pub fn plate_opacity(&self) -> f32 {
         if self.background_opacity.is_finite() {
             self.background_opacity.clamp(0.05, 1.0)

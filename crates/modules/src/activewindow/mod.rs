@@ -4,10 +4,7 @@ use services::hyprland::{self, ActiveWindow};
 
 /// The text the chip shows: the window's title, or its class when it has no title.
 ///
-/// Whole, however long it is. What fits is a question about pixels, and it is answered where the pixels are: the
-/// chip yields width when its side of the bar is short of it and the label elides to what is left. Cutting to a
-/// character count here answered a different question — it took the same 60 characters off a title with a whole
-/// empty bar beside it as off one with none, and 60 "W" are twice the width of 60 "i".
+/// Whole, however long it is. What fits is a question about pixels, and it is answered where the pixels are: the chip yields width when its side of the bar is short of it and the label elides to what is left. Cutting to a character count here answered a different question — it took the same 60 characters off a title with a whole empty bar beside it as off one with none, and 60 "W" are twice the width of 60 "i".
 pub fn label(window: &ActiveWindow) -> String {
     if window.title.is_empty() {
         window.class.clone()
@@ -16,22 +13,16 @@ pub fn label(window: &ActiveWindow) -> String {
     }
 }
 
-/// The label in `compact` mode: the app's class rather than the document title, which is what fits on a narrow
-/// bar and stays stable while the user moves around inside one app.
+/// The label in `compact` mode: the app's class rather than the document title, which is what fits on a narrow bar and stays stable while the user moves around inside one app.
 pub fn compact_label(window: &ActiveWindow) -> String {
     window.class.clone()
 }
 
-/// The chip's leading (or trailing) visual: the focused application's own artwork at `size`, or an empty box
-/// when its class has no installed icon.
+/// The chip's leading (or trailing) visual: the focused application's own artwork at `size`, or an empty box when its class has no installed icon.
 ///
-/// A function rather than a bound widget because the view places it on one of two sides depending on
-/// `inverted`, and a `widget` binding is a *value* — placeable once. Each `build` site calls this and gets its
-/// own node, which is the rule the view DSL documents.
+/// A function rather than a bound widget because the view places it on one of two sides depending on `inverted`, and a `widget` binding is a *value* — placeable once. Each `build` site calls this and gets its own node, which is the rule the view DSL documents.
 ///
-/// The air between icon and title is this slot's own margin rather than the row's gap: the slot is rebuilt for
-/// every focused class, and a class that resolves to nothing has to cost nothing — a row gap would still be
-/// spent on the empty box, indenting the title of every app with no installed icon.
+/// The air between icon and title is this slot's own margin rather than the row's gap: the slot is rebuilt for every focused class, and a class that resolves to nothing has to cost nothing — a row gap would still be spent on the empty box, indenting the title of every app with no installed icon.
 pub fn icon_slot(
     class: &str,
     size: f32,
@@ -52,8 +43,7 @@ pub fn icon_slot(
     Ok(telar::box_item(telar::Container::new(style, vec![icon])?))
 }
 
-/// Focuses the window the chip is showing — clicking the title takes you back to it, which is what the chip
-/// looks like it should do.
+/// Focuses the window the chip is showing — clicking the title takes you back to it, which is what the chip looks like it should do.
 pub fn focus_active() {
     hyprland::focus_active_window();
 }
@@ -86,9 +76,7 @@ mod tests {
 
     /// An icon-bearing app is spaced off its title; an app with no installed icon costs nothing at all.
     ///
-    /// The spacing is the slot's own margin rather than a gap on the row, and this is why: the slot is rebuilt
-    /// for every focused class, so on the class that resolves to nothing it is an empty box — and a row gap
-    /// would still be spent on it, indenting the title of every app the icon theme does not know.
+    /// The spacing is the slot's own margin rather than a gap on the row, and this is why: the slot is rebuilt for every focused class, so on the class that resolves to nothing it is an empty box — and a row gap would still be spent on it, indenting the title of every app the icon theme does not know.
     #[test]
     fn the_icon_carries_the_air_between_it_and_the_title_and_a_missing_one_carries_none() {
         // An absolute path is a reference `resolve_app_icon` takes as-is, so this needs no installed theme.
@@ -138,8 +126,7 @@ mod tests {
         );
     }
 
-    /// However long a title runs, it reaches the chip whole — the elide is what shortens it, at the width it
-    /// actually has, and a count of characters cutting it first would take the room away before then.
+    /// However long a title runs, it reaches the chip whole — the elide is what shortens it, at the width it actually has, and a count of characters cutting it first would take the room away before then.
     #[test]
     fn a_long_title_is_handed_over_untouched() {
         let long =

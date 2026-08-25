@@ -218,8 +218,7 @@ pub(crate) const NIGHTLIGHT: Target = Target {
     ],
 };
 
-/// A temperature the protocol can actually act on, refused by name rather than clamped: a caller that typed
-/// 400 meant something, and silently warming to 1000 would hide the typo behind a screen that went orange.
+/// A temperature the protocol can actually act on, refused by name rather than clamped: a caller that typed 400 meant something, and silently warming to 1000 would hide the typo behind a screen that went orange.
 fn temperature(value: &str) -> Result<u32, String> {
     let kelvin: u32 = value
         .trim_end_matches(['k', 'K'])
@@ -236,8 +235,7 @@ fn temperature(value: &str) -> Result<u32, String> {
     Ok(kelvin)
 }
 
-/// Why a night light did nothing, told apart: a compositor without the protocol is a different problem from a
-/// compositor that has it and handed the gamma to something else.
+/// Why a night light did nothing, told apart: a compositor without the protocol is a different problem from a compositor that has it and handed the gamma to something else.
 fn refused() -> String {
     match services::nightlight::supported() {
         Some(true) => {
@@ -310,8 +308,7 @@ pub(crate) const BRIGHTNESS: Target = Target {
                     services::brightness::set_output(&output, level);
                 }
                 modules::osd::show_brightness();
-                // The applied value, not the requested one: `set 150` puts the panel at 100, and a script that
-                // reads the reply back is owed the level the screen is actually at.
+                // The applied value, not the requested one: `set 150` puts the panel at 100, and a script that reads the reply back is owed the level the screen is actually at.
                 Ok(level.clamp(0, 100).to_string())
             },
         },
@@ -409,8 +406,7 @@ pub(crate) const WALLPAPER: Target = Target {
             run: |args| {
                 use services::wallpaper;
                 let path = util::paths::expand_tilde(std::path::Path::new(arg(args, 0, "path")?));
-                // Checked here rather than left to the surface: a `set` that answered `ok` and changed
-                // nothing because the file is gone is the one reply a script cannot act on.
+                // Checked here rather than left to the surface: a `set` that answered `ok` and changed nothing because the file is gone is the one reply a script cannot act on.
                 if !path.is_file() {
                     return Err(format!("'{}' is not a file", path.display()));
                 }
@@ -428,9 +424,7 @@ pub(crate) const WALLPAPER: Target = Target {
                 let config = config::config().ok_or("the shell is not running")?;
                 let output = target_output(args.first().copied())?;
                 let showing = wallpaper::current_image(&config, output.as_deref());
-                // Named, because the folder is the thing that is wrong nine times out of ten — it defaults
-                // to `$XDG_PICTURES_DIR/Wallpapers` and a user whose collection is one directory over has
-                // no way to tell an empty folder from the wrong one.
+                // Named, because the folder is the thing that is wrong nine times out of ten — it defaults to `$XDG_PICTURES_DIR/Wallpapers` and a user whose collection is one directory over has no way to tell an empty folder from the wrong one.
                 let picked = wallpaper::random(showing.as_deref()).ok_or_else(|| {
                     format!(
                         "no images in {} (set [paths] wallpapers)",

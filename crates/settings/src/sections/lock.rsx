@@ -4,8 +4,7 @@ use ::config::LockConfig;
 
 let (config, path) = source();
 let l = &config.lock;
-// The keys not on the form — the library path, the biometric budgets, the weather and resource rows — are
-// carried through unchanged, so saving here never quietly drops a setting the panel has no row for.
+// The keys not on the form — the library path, the biometric budgets, the weather and resource rows — are carried through unchanged, so saving here never quietly drops a setting the panel has no row for.
 let base = l.clone();
 let pam_service = signal(l.pam_service.clone());
 let max_tries = signal(l.max_tries.to_string());

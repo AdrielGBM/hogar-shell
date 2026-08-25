@@ -8,8 +8,7 @@ use telar::WindowRoot;
 use super::{AutoHide, build_bar};
 
 pub struct BarApp {
-    /// Read at every build rather than held: this surface outlives the config it was first drawn from, and a
-    /// reload rebuilds it in place from whatever is in here now.
+    /// Read at every build rather than held: this surface outlives the config it was first drawn from, and a reload rebuilds it in place from whatever is in here now.
     pub config: config::LiveConfig,
     pub edge: Edge,
     /// The monitor this bar surface lives on; threaded into `SurfaceEnv` so its panels open on the same screen.

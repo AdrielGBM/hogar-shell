@@ -16,10 +16,7 @@ use services::notifications::{self, Notification, SharedSnapshot, Snapshot, Urge
 use ui::panel::{card_gap, panel_fill};
 use ui::scale::space;
 
-/// Parses the freedesktop notification body's limited HTML markup into styled runs for a [`RichText`]: `<b>`/
-/// `<strong>` bold, `<i>`/`<em>` italic, `<a href>` links (painted `link_color`), `<br>` a newline, and an
-/// `<img>`'s `alt` text. Each run carries its own weight/slant/colour; unknown tags are dropped, keeping their
-/// inner text, and entities are decoded per segment.
+/// Parses the freedesktop notification body's limited HTML markup into styled runs for a [`RichText`]: `<b>`/ `<strong>` bold, `<i>`/`<em>` italic, `<a href>` links (painted `link_color`), `<br>` a newline, and an `<img>`'s `alt` text. Each run carries its own weight/slant/colour; unknown tags are dropped, keeping their inner text, and entities are decoded per segment.
 fn body_runs(markup: &str, text_color: Color, link_color: Color) -> Vec<TextRun> {
     let mut runs: Vec<TextRun> = Vec::new();
     let mut current = String::new();
@@ -50,8 +47,7 @@ fn body_runs(markup: &str, text_color: Color, link_color: Color) -> Vec<TextRun>
             }
             continue;
         }
-        // A style-changing tag ends the current run before the new style takes effect. `kind`: 0 bold, 1
-        // italic, 2 link — chosen so the counter can be bumped after the borrow of `current` ends.
+        // A style-changing tag ends the current run before the new style takes effect. `kind`: 0 bold, 1 italic, 2 link — chosen so the counter can be bumped after the borrow of `current` ends.
         let (kind, delta): (u8, i32) = match lower.as_str() {
             "b" | "strong" => (0, 1),
             "/b" | "/strong" => (0, -1),
@@ -168,8 +164,7 @@ fn decode_entities(text: &str) -> String {
 
 /// The width a card is drawn at inside the history panel, which is what the swipe threshold is a fraction of.
 ///
-/// The panel's own, not the column's: a card in the bell drawer is as wide as the drawer, and the column it also
-/// appears in is sized by `[stack] width`. One number could only be right in one of the two places.
+/// The panel's own, not the column's: a card in the bell drawer is as wide as the drawer, and the column it also appears in is sized by `[stack] width`. One number could only be right in one of the two places.
 const PANEL_CARD_WIDTH: f32 = 380.0;
 
 fn urgency_color(urgency: Urgency, theme: &NordTheme) -> Color {
@@ -186,10 +181,7 @@ pub(crate) fn popping(
     cfg: &NotificationsConfig,
     fullscreen: bool,
 ) -> Vec<Notification> {
-    // Do-Not-Disturb is not asked about here, and deliberately: the daemon already answered it by recording the
-    // notification as not popping — when it arrived under DND, and when DND was switched on over it. Asking a
-    // second time would be a second owner of one rule, and the one that let a suppressed notification come back
-    // the moment the toggle went off.
+    // Do-Not-Disturb is not asked about here, and deliberately: the daemon already answered it by recording the notification as not popping — when it arrived under DND, and when DND was switched on over it. Asking a second time would be a second owner of one rule, and the one that let a suppressed notification come back the moment the toggle went off.
     //
     // Only fresh arrivals pop up; notifications restored from persisted history stay in the panel, unpopped.
     let mut list: Vec<Notification> = snapshot
@@ -201,9 +193,7 @@ pub(crate) fn popping(
     if fullscreen {
         list.retain(|n| cfg.fullscreen.allows(n.urgency));
     }
-    // Neither ordered nor capped here any more: the column these join orders every card it holds by arrival and
-    // caps the lot at `[stack] max_visible`, and a notification queue trimmed twice would hide cards the column
-    // had already made room for.
+    // Neither ordered nor capped here any more: the column these join orders every card it holds by arrival and caps the lot at `[stack] max_visible`, and a notification queue trimmed twice would hide cards the column had already made room for.
     list
 }
 
@@ -214,9 +204,7 @@ pub(crate) fn is_critical(notification: &Notification) -> bool {
 
 /// Whether the focused window is covering the screen, as a value the popup stack re-reads.
 ///
-/// Two subscriptions rather than one: `j/clients` carries each window's fullscreen flag but not which one has
-/// focus, and `j/activewindow` the reverse. Neither is opened while the policy is `on`, since nothing would
-/// read the answer — a shell that never suppresses a popup should not be listening to the compositor for it.
+/// Two subscriptions rather than one: `j/clients` carries each window's fullscreen flag but not which one has focus, and `j/activewindow` the reverse. Neither is opened while the policy is `on`, since nothing would read the answer — a shell that never suppresses a popup should not be listening to the compositor for it.
 fn fullscreen_focus(cfg: &NotificationsConfig) -> Option<Memo<bool>> {
     if cfg.fullscreen == FullscreenPopups::On {
         return None;
@@ -243,18 +231,14 @@ fn fullscreen_focus(cfg: &NotificationsConfig) -> Option<Memo<bool>> {
     }))
 }
 
-/// Everything a card needs beyond the notification itself, so the popup stack and the history panel draw the
-/// same card from the same `[notifications]` settings instead of each carrying its own arguments.
+/// Everything a card needs beyond the notification itself, so the popup stack and the history panel draw the same card from the same `[notifications]` settings instead of each carrying its own arguments.
 #[derive(Clone, Copy)]
 struct CardStyle {
     theme: NordTheme,
     radius: f32,
     /// What the card paints behind itself.
     ///
-    /// Two answers, because a card is two different things. On the popup surface it *is* the panel — nothing
-    /// else is on that surface — so it takes `[panels] opacity` and the compositor's blur has something to
-    /// show through. In the history it sits inside a panel that is already translucent, and a second
-    /// translucent layer over the first would only make the card harder to read than the drawer under it.
+    /// Two answers, because a card is two different things. On the popup surface it *is* the panel — nothing else is on that surface — so it takes `[panels] opacity` and the compositor's blur has something to show through. In the history it sits inside a panel that is already translucent, and a second translucent layer over the first would only make the card harder to read than the drawer under it.
     fill: Color,
     /// The body's line cap, or `None` for the whole body (`open_expanded`).
     body_lines: Option<u16>,
@@ -265,9 +249,7 @@ struct CardStyle {
 }
 
 impl CardStyle {
-    /// A card inside a panel: solid against the translucent surface it sits on. `width` is asked for because the
-    /// swipe threshold is a fraction of it, and a card is drawn at the panel's width in one place and the
-    /// column's in the other.
+    /// A card inside a panel: solid against the translucent surface it sits on. `width` is asked for because the swipe threshold is a fraction of it, and a card is drawn at the panel's width in one place and the column's in the other.
     fn new(
         cfg: &NotificationsConfig,
         stack: &StackConfig,
@@ -295,8 +277,7 @@ impl CardStyle {
     }
 }
 
-/// The `default` action's key, when the notification declares one — the spec's convention for what the
-/// notification is *for* (open the message, the download, the calendar entry) rather than one of its buttons.
+/// The `default` action's key, when the notification declares one — the spec's convention for what the notification is *for* (open the message, the download, the calendar entry) rather than one of its buttons.
 fn default_action_key(notification: &Notification) -> Option<String> {
     notification
         .actions
@@ -351,8 +332,7 @@ fn notification_card(
         )?;
         column.push(Box::new(body_text));
     }
-    // Shown wherever the card is interactive (the panel, and now popups via their carved input region): an
-    // action pill hit-tests before the card, so tapping one invokes it while tapping elsewhere dismisses.
+    // Shown wherever the card is interactive (the panel, and now popups via their carved input region): an action pill hit-tests before the card, so tapping one invokes it while tapping elsewhere dismisses.
     if dismiss.is_some()
         && let Some(actions) = action_buttons(notification, theme)?
     {
@@ -368,9 +348,7 @@ fn notification_card(
     )?;
 
     let mut children: Vec<Box<dyn LayoutItem>> = vec![leading, Box::new(text_column)];
-    // The one control that *deletes* rather than retires, and the only reason a notification card carries a
-    // corner the other two do not: swiping puts a notification in the history, and there has to be a way to say
-    // "and I do not want it there either". A toast and an OSD have no history to be kept out of.
+    // The one control that *deletes* rather than retires, and the only reason a notification card carries a corner the other two do not: swiping puts a notification in the history, and there has to be a way to say "and I do not want it there either". A toast and an OSD have no history to be kept out of.
     if dismiss.is_some() {
         children.push(close_button(notification.id, theme)?);
     }
@@ -403,12 +381,9 @@ fn notification_card(
     Ok(Box::new(card))
 }
 
-/// The ✕ in a card's corner: the one gesture that takes a notification out of the history rather than putting
-/// it there. Hit-tests before the card body, like an action pill, so pressing it never also runs the default
-/// action underneath.
+/// The ✕ in a card's corner: the one gesture that takes a notification out of the history rather than putting it there. Hit-tests before the card body, like an action pill, so pressing it never also runs the default action underneath.
 fn close_button(id: u32, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    // `x`, not `close`: lucide has no icon by that name, and the store spends eight fetches finding out before
-    // settling into the missing-glyph placeholder. The sidebar and the note card already ask for the right one.
+    // `x`, not `close`: lucide has no icon by that name, and the store spends eight fetches finding out before settling into the missing-glyph placeholder. The sidebar and the note card already ask for the right one.
     let glyph = ui::icon::icon_view(|| "x".to_string(), move || theme.muted, CLOSE_GLYPH)?;
     Ok(box_item(
         StyledContainer::new(
@@ -423,13 +398,10 @@ fn close_button(id: u32, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layout
     ))
 }
 
-/// The ✕'s glyph size. Small enough to read as a corner affordance rather than a second action, large enough
-/// that a pointer finds it — this is the only control on the card with no forgiving body around it.
+/// The ✕'s glyph size. Small enough to read as a corner affordance rather than a second action, large enough that a pointer finds it — this is the only control on the card with no forgiving body around it.
 const CLOSE_GLYPH: f32 = 14.0;
 
-/// A card's list key. Keyed on what it *draws*, not on the notification's identity: a sender that edits a
-/// notification in place (`replaces_id`) keeps its id while the summary and body turn over entirely, and a key
-/// of just the id would leave the old card on screen.
+/// A card's list key. Keyed on what it *draws*, not on the notification's identity: a sender that edits a notification in place (`replaces_id`) keeps its id while the summary and body turn over entirely, and a key of just the id would leave the old card on screen.
 pub(crate) fn card_key(notification: &Notification) -> String {
     format!(
         "{}\u{1}{}\u{1}{}",
@@ -437,8 +409,7 @@ pub(crate) fn card_key(notification: &Notification) -> String {
     )
 }
 
-/// The card's leading visual, in freedesktop priority: the notification's own raw image, then its resolved
-/// application icon, else the urgency dot.
+/// The card's leading visual, in freedesktop priority: the notification's own raw image, then its resolved application icon, else the urgency dot.
 fn leading_visual(
     notification: &Notification,
     accent: Color,
@@ -464,14 +435,12 @@ fn leading_visual(
     Ok(Box::new(dot))
 }
 
-/// The resolved application icon as a 36px visual — an untinted SVG (keeping the app's own colours) or its
-/// raster pixels — or `None` when the reference is empty or can't be resolved.
+/// The resolved application icon as a 36px visual — an untinted SVG (keeping the app's own colours) or its raster pixels — or `None` when the reference is empty or can't be resolved.
 fn app_icon_visual(reference: &str) -> Result<Option<Box<dyn LayoutItem>>, LayoutError> {
     ui::icon::app_icon_view(reference, 36.0)
 }
 
-/// A wrapping row of the notification's non-default actions, or `None` when it has none. Tapping one invokes
-/// it (emitting `ActionInvoked`) and closes the notification.
+/// A wrapping row of the notification's non-default actions, or `None` when it has none. Tapping one invokes it (emitting `ActionInvoked`) and closes the notification.
 fn action_buttons(
     notification: &Notification,
     theme: NordTheme,
@@ -519,9 +488,7 @@ fn action_pill(
     Ok(Box::new(pill))
 }
 
-/// Builds the reactive card stack from a snapshot signal. Split out so tests can drive it with a fixed snapshot instead of a live subscription.
-/// One notification as the column draws it: the same card the history panel shows, at the column's width and
-/// standalone — nothing is behind it but the desktop.
+/// Builds the reactive card stack from a snapshot signal. Split out so tests can drive it with a fixed snapshot instead of a live subscription. One notification as the column draws it: the same card the history panel shows, at the column's width and standalone — nothing is behind it but the desktop.
 pub(crate) fn popup_card(
     notification: &Notification,
     theme: NordTheme,
@@ -541,8 +508,7 @@ pub(crate) fn popup_card(
     )
 }
 
-/// Whether the focused window is covering the screen, as a value the column re-reads. `None` when the policy
-/// never suppresses anything, so a shell that would not act on the answer does not listen for it.
+/// Whether the focused window is covering the screen, as a value the column re-reads. `None` when the policy never suppresses anything, so a shell that would not act on the answer does not listen for it.
 pub(crate) fn covering_focus(cfg: &NotificationsConfig) -> Option<Memo<bool>> {
     fullscreen_focus(cfg)
 }
@@ -699,8 +665,7 @@ fn pill_button(
     Ok(Box::new(pill))
 }
 
-/// One row of the history panel. Grouping turns a flat list of cards into a list of *rows*, so one keyed list
-/// still draws the whole panel — a header, the cards under it, and the row that reveals the rest.
+/// One row of the history panel. Grouping turns a flat list of cards into a list of *rows*, so one keyed list still draws the whole panel — a header, the cards under it, and the row that reveals the rest.
 enum HistoryRow {
     Group {
         app: String,
@@ -716,8 +681,7 @@ enum HistoryRow {
     },
 }
 
-/// Every row's list key, on the same rule as [`card_key`]: a header redraws when its count, mute or expansion
-/// changes, so all three belong in the key.
+/// Every row's list key, on the same rule as [`card_key`]: a header redraws when its count, mute or expansion changes, so all three belong in the key.
 fn row_key(row: &HistoryRow) -> String {
     match row {
         HistoryRow::Group {
@@ -737,9 +701,7 @@ fn row_key(row: &HistoryRow) -> String {
 
 /// Lays the history out newest-first, grouped by application when `[notifications] group_by_app` asks for it.
 ///
-/// A group is ordered by its most recent notification rather than by name, so the application that just spoke
-/// is at the top; within it the cards run newest-first like everything else. `expanded` names the groups the
-/// user has opened — it is the panel's own state, not the daemon's, so closing the drawer forgets it.
+/// A group is ordered by its most recent notification rather than by name, so the application that just spoke is at the top; within it the cards run newest-first like everything else. `expanded` names the groups the user has opened — it is the panel's own state, not the daemon's, so closing the drawer forgets it.
 fn history_rows(
     snapshot: &Snapshot,
     cfg: &NotificationsConfig,
@@ -833,8 +795,7 @@ fn history_list(
             } => expander_row(app, hidden, expanded, toggle.clone(), theme),
         }
     };
-    // Gap on the list itself (which lays the cards out); the wrapper only pins the full width so the
-    // percent-width cards resolve against it.
+    // Gap on the list itself (which lays the cards out); the wrapper only pins the full width so the percent-width cards resolve against it.
     let list = ReactiveList::new(source, row_key, build, card_gap())?;
     let column = Container::new(
         LayoutStyle::new()
@@ -845,8 +806,7 @@ fn history_list(
     Ok(Box::new(column))
 }
 
-/// Flips one group open or shut. The panel's own state, keyed by application name — the same key the rows are
-/// grouped by, so a group that disappears takes its entry with it the next time the panel is built.
+/// Flips one group open or shut. The panel's own state, keyed by application name — the same key the rows are grouped by, so a group that disappears takes its entry with it the next time the panel is built.
 fn toggle_group(expanded: &RwSignal<BTreeSet<String>>, app: &str) {
     let app = app.to_string();
     expanded.update(|open| {
@@ -856,8 +816,7 @@ fn toggle_group(expanded: &RwSignal<BTreeSet<String>>, app: &str) {
     });
 }
 
-/// A group's header: which application, how many it has waiting, and the two things worth doing to all of them
-/// at once — muting the sender, and clearing the group. Tapping the header itself opens or shuts the group.
+/// A group's header: which application, how many it has waiting, and the two things worth doing to all of them at once — muting the sender, and clearing the group. Tapping the header itself opens or shuts the group.
 fn group_header(
     app: String,
     count: usize,
@@ -955,8 +914,7 @@ fn expander_row(
     Ok(Box::new(row))
 }
 
-/// A glyph that does one thing, sized to the caption text it sits beside. Its own box so the tap target is
-/// bigger than the glyph, and so a press on it hit-tests before the header row it sits inside.
+/// A glyph that does one thing, sized to the caption text it sits beside. Its own box so the tap target is bigger than the glyph, and so a press on it hit-tests before the header row it sits inside.
 fn icon_button(
     glyph: &'static str,
     tint: Color,
@@ -974,8 +932,7 @@ fn icon_button(
     Ok(Box::new(button))
 }
 
-/// Four notifications as a daemon would hold them, for the two previews below: a threaded pair with actions, a
-/// critical one and a low one, so every urgency and both card shapes are on the page.
+/// Four notifications as a daemon would hold them, for the two previews below: a threaded pair with actions, a critical one and a low one, so every urgency and both card shapes are on the page.
 fn sample_snapshot() -> Snapshot {
     let mk = |id: u32, app: &str, summary: &str, body: &str, urgency: Urgency| Notification {
         id,
@@ -1135,8 +1092,7 @@ mod tests {
 
     /// What pops is decided here; how many of them fit and what order they sit in is the column's.
     ///
-    /// This used to reverse, float `critical` to the top and truncate to `max_visible` as well — a queue trimmed
-    /// on its way into a column that trims again would hide cards the column had already made room for.
+    /// This used to reverse, float `critical` to the top and truncate to `max_visible` as well — a queue trimmed on its way into a column that trims again would hide cards the column had already made room for.
     #[test]
     fn dnd_hides_everything_and_the_rest_is_handed_over_untrimmed() {
         let cfg = NotificationsConfig::default();
@@ -1151,15 +1107,12 @@ mod tests {
             "every popping notification is handed over; the column caps them"
         );
 
-        // Do-Not-Disturb is not asserted here any more: the daemon records a suppressed notification as not
-        // popping, so `dnd: true` with `popup: true` is a state that cannot occur. What it *does* mean is
-        // checked where it is decided — see `services::notifications`.
+        // Do-Not-Disturb is not asserted here any more: the daemon records a suppressed notification as not popping, so `dnd: true` with `popup: true` is a state that cannot occur. What it *does* mean is checked where it is decided — see `services::notifications`.
     }
 
     #[test]
     fn restored_history_stays_in_the_panel_and_never_pops_up() {
-        // One restored (non-popping) and one fresh notification: only the fresh one becomes a popup, while the
-        // history panel (which reads all of `active`) still holds both.
+        // One restored (non-popping) and one fresh notification: only the fresh one becomes a popup, while the history panel (which reads all of `active`) still holds both.
         let restored = Notification {
             popup: false,
             ..note(1, "a", Urgency::Normal)
@@ -1344,9 +1297,7 @@ mod tests {
         assert_eq!(default_action_key(&with(&[])), None);
     }
 
-    /// Every row type runs closures nothing else does — a group header reads the theme and the locale, an
-    /// expander formats a count through `t!`. Only building the panel runs them, which is the only way the
-    /// re-entrant-borrow trap (a second signal read inside another's `with`) ever shows up.
+    /// Every row type runs closures nothing else does — a group header reads the theme and the locale, an expander formats a count through `t!`. Only building the panel runs them, which is the only way the re-entrant-borrow trap (a second signal read inside another's `with`) ever shows up.
     #[test]
     fn the_history_panel_builds_grouped_and_flat() {
         let snapshot = signal(Arc::new(Snapshot {

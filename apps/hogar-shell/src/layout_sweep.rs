@@ -1,34 +1,12 @@
 //! Every preview, laid out on all four edges in all three shape modes, measured rather than merely built.
 //!
-//! `cargo telar test` renders each preview once and fails on a panic or a layout error, which is
-//! `assert!(build().is_ok())` — and that passes for every layout bug this tree has actually had: a result list
-//! laid out 612×**0** because a `max_height` is not a height, a wallpaper row measuring shorter than the tiles
-//! inside it, an avatar drawn outside its scrolling viewport. Each was found by looking at a picture, and each
-//! is a fact about *geometry*, which is why this measures the draw commands instead of comparing stored images:
-//! a baseline would also have to be told apart from a font that shaped differently on the machine running it,
-//! and a suite that cries wolf is one people delete.
+//! `cargo telar test` renders each preview once and fails on a panic or a layout error, which is `assert!(build().is_ok())` — and that passes for every layout bug this tree has actually had: a result list laid out 612×**0** because a `max_height` is not a height, a wallpaper row measuring shorter than the tiles inside it, an avatar drawn outside its scrolling viewport. Each was found by looking at a picture, and each is a fact about *geometry*, which is why this measures the draw commands instead of comparing stored images: a baseline would also have to be told apart from a font that shaped differently on the machine running it, and a suite that cries wolf is one people delete.
 //!
-//! The twelve combinations are the shell's own hard rule — every surface and every module works on all four
-//! edges and in `bar`, `sections` and `chips` — so a module only ever looked at on a top bar is exactly where a
-//! shape bug survives.
+//! The twelve combinations are the shell's own hard rule — every surface and every module works on all four edges and in `bar`, `sections` and `chips` — so a module only ever looked at on a top bar is exactly where a shape bug survives.
 //!
-//! **"Did the preview draw anything at all?" took a correction to become askable.** It reported 79 of 456
-//! combinations blank, and the reading taken from that was that `battery`, `brightness`, `mic`, `network`,
-//! `volume` and `lockstatus` have no reading on a machine with no battery and no PipeWire — a hardware-dependent
-//! answer, and so a flaky assertion. That was wrong twice over: those chips draw their glyph at a fallback level
-//! and are on screen, and what was blank was the *accounting*. Every icon is an SVG, an SVG is a `Path`, and
-//! only boxes were counted — so a chip whose whole content is an icon was invisible to this file rather than
-//! measured by it. [`paints`] counts artwork too, which makes the question machine-independent rather than
-//! merely askable.
+//! **"Did the preview draw anything at all?" took a correction to become askable.** It reported 79 of 456 combinations blank, and the reading taken from that was that `battery`, `brightness`, `mic`, `network`, `volume` and `lockstatus` have no reading on a machine with no battery and no PipeWire — a hardware-dependent answer, and so a flaky assertion. That was wrong twice over: those chips draw their glyph at a fallback level and are on screen, and what was blank was the *accounting*. Every icon is an SVG, an SVG is a `Path`, and only boxes were counted — so a chip whose whole content is an icon was invisible to this file rather than measured by it. [`paints`] counts artwork too, which makes the question machine-independent rather than merely askable.
 //!
-//! **What this cannot ask: *"did anything draw outside its surface?"* — the avatar bug.** Not for the reason
-//! it looks like. Draw rects being pre-transform is twelve lines of matrix stack, which telar already owns in
-//! `DrawState` and merely does not re-export; and content legitimately below the fold has a clean discriminator,
-//! since a scroll area emits a viewport and being outside one is what scrolling means, so a draw that nothing is
-//! clipping has no such reading. What blocks it is that **a preview has no bounds to be outside of**:
-//! `PreviewSurface` is a sizing hint rather than a viewport — `surfaces::preview` gives the bar 940 × its
-//! thickness on purpose — and entries stack their variants well past it. Measured, the check calls every such
-//! gallery a fault. Asking it needs real surfaces, which a sweep over previews does not have.
+//! **What this cannot ask: *"did anything draw outside its surface?"* — the avatar bug.** Not for the reason it looks like. Draw rects being pre-transform is twelve lines of matrix stack, which telar already owns in `DrawState` and merely does not re-export; and content legitimately below the fold has a clean discriminator, since a scroll area emits a viewport and being outside one is what scrolling means, so a draw that nothing is clipping has no such reading. What blocks it is that **a preview has no bounds to be outside of**: `PreviewSurface` is a sizing hint rather than a viewport — `surfaces::preview` gives the bar 940 × its thickness on purpose — and entries stack their variants well past it. Measured, the check calls every such gallery a fault. Asking it needs real surfaces, which a sweep over previews does not have.
 
 #![cfg(test)]
 
@@ -41,22 +19,18 @@ use telar::{
 
 use config::{BarConfig, Config, Edge, Shape};
 
-/// The page a preview is measured on when it is a tree rather than a surface. Wide enough that a bar-width
-/// module is not the thing under test.
+/// The page a preview is measured on when it is a tree rather than a surface. Wide enough that a bar-width module is not the thing under test.
 const PAGE: (f32, f32) = (1000.0, 760.0);
 
-/// Below this a rect is not something a user can see. Text shaping and fractional layout both land a fraction
-/// under a whole pixel routinely, so the question asked is "did this collapse", not "is this exact".
+/// Below this a rect is not something a user can see. Text shaping and fractional layout both land a fraction under a whole pixel routinely, so the question asked is "did this collapse", not "is this exact".
 const COLLAPSED: f32 = 0.5;
 
 const MODES: [Shape; 3] = [Shape::Bar, Shape::Sections, Shape::Chips];
 
-/// The world one combination builds against. Deliberately [`Config::starter`] rather than the user's file: a
-/// sweep that read `~/.config/hogar-shell/config.toml` would measure a different shell on every machine.
+/// The world one combination builds against. Deliberately [`Config::starter`] rather than the user's file: a sweep that read `~/.config/hogar-shell/config.toml` would measure a different shell on every machine.
 fn seed_world(edge: Edge, mode: Shape) {
     let mut config = Config::starter();
-    // `starter` puts its modules on the top bar and `drawn_edge` reports the first non-empty one, so moving them
-    // wholesale is what makes a chip believe it is on the edge under test.
+    // `starter` puts its modules on the top bar and `drawn_edge` reports the first non-empty one, so moving them wholesale is what makes a chip believe it is on the edge under test.
     let bar = std::mem::take(&mut config.bars.top);
     *match edge {
         Edge::Top => &mut config.bars.top,
@@ -97,14 +71,9 @@ fn measure(entry: &PreviewEntry) -> Result<Vec<DrawCommand>, LayoutError> {
     Ok(tree.commands().to_vec())
 }
 
-/// The **layout box** a command is answerable for, and whether it has any content to put there — an empty
-/// `Text` shapes to nothing and is the one zero-area draw that is not a fault. `Line` and `Path` carry artwork
-/// rather than a box, and the matrix and layer markers cover nothing of their own.
+/// The **layout box** a command is answerable for, and whether it has any content to put there — an empty `Text` shapes to nothing and is the one zero-area draw that is not a fault. `Line` and `Path` carry artwork rather than a box, and the matrix and layer markers cover nothing of their own.
 ///
-/// Deliberately narrower than [`paints`]: what this returns is measured against [`COLLAPSED`], and only a box
-/// the layout produced can be said to have collapsed. An icon's own geometry is the artwork's business — a
-/// signal-strength glyph draws its bars as filled slivers a third of a pixel wide, and there is nothing wrong
-/// with that.
+/// Deliberately narrower than [`paints`]: what this returns is measured against [`COLLAPSED`], and only a box the layout produced can be said to have collapsed. An icon's own geometry is the artwork's business — a signal-strength glyph draws its bars as filled slivers a third of a pixel wide, and there is nothing wrong with that.
 fn painted_rect(command: &DrawCommand) -> Option<Rect> {
     match command {
         DrawCommand::Rect { rect, .. } | DrawCommand::Image { rect, .. } => Some(*rect),
@@ -112,8 +81,7 @@ fn painted_rect(command: &DrawCommand) -> Option<Rect> {
         DrawCommand::RichText { rect, runs, .. } => {
             runs.iter().any(|run| !run.text.is_empty()).then_some(*rect)
         }
-        // A viewport clipped to nothing is the canonical shape of the bug this file exists for: the content
-        // inside keeps its own honest rects and is cut away wholesale, so only the clip itself shows the fault.
+        // A viewport clipped to nothing is the canonical shape of the bug this file exists for: the content inside keeps its own honest rects and is cut away wholesale, so only the clip itself shows the fault.
         DrawCommand::PushClip { rect, .. } => Some(*rect),
         _ => None,
     }
@@ -121,10 +89,7 @@ fn painted_rect(command: &DrawCommand) -> Option<Rect> {
 
 /// Whether this command puts ink on the screen at all.
 ///
-/// Wider than [`painted_rect`] by exactly the two commands that carry artwork: every icon in the shell is a
-/// path, and an `icon_glyph` chip — `battery`, `volume`, `network`, `mic`, `brightness`, `lockstatus` — draws
-/// nothing else. Counting only boxes made those modules invisible to this file rather than measured by it,
-/// which is why "did this draw anything" reported them blank on a machine where they render perfectly.
+/// Wider than [`painted_rect`] by exactly the two commands that carry artwork: every icon in the shell is a path, and an `icon_glyph` chip — `battery`, `volume`, `network`, `mic`, `brightness`, `lockstatus` — draws nothing else. Counting only boxes made those modules invisible to this file rather than measured by it, which is why "did this draw anything" reported them blank on a machine where they render perfectly.
 fn paints(command: &DrawCommand) -> bool {
     match command {
         DrawCommand::Path { data, .. } => data.bounds().is_some(),
@@ -133,15 +98,9 @@ fn paints(command: &DrawCommand) -> bool {
     }
 }
 
-/// The world a sweep seeds is process-global — the config, the theme, the default font family, the icon
-/// store — so two sweeps running at once measure each other's edge and shape. Three `#[test]` functions call
-/// this, and cargo runs them in parallel: the reading that came back was `activewindow` drawing nothing on ten
-/// combinations, roughly every other run, because it had been laid out against a bar some other test had just
-/// moved to a different edge.
+/// The world a sweep seeds is process-global — the config, the theme, the default font family, the icon store — so two sweeps running at once measure each other's edge and shape. Three `#[test]` functions call this, and cargo runs them in parallel: the reading that came back was `activewindow` drawing nothing on ten combinations, roughly every other run, because it had been laid out against a bar some other test had just moved to a different edge.
 ///
-/// The guard lives here rather than in each test so a sweep added later inherits it. Poisoning is ignored on
-/// purpose: a panicking test leaves the world half-set, and the next sweep re-seeds it from scratch before it
-/// measures anything.
+/// The guard lives here rather than in each test so a sweep added later inherits it. Poisoning is ignored on purpose: a panicking test leaves the world half-set, and the next sweep re-seeds it from scratch before it measures anything.
 static WORLD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn sweep(mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
@@ -163,8 +122,7 @@ fn sweep(mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand
     }
 }
 
-/// Twelve times what `cargo telar test` covers: it renders each preview in whatever shape the config happens to
-/// carry, and every combination it does not render is one where a build or a layout can fail unseen.
+/// Twelve times what `cargo telar test` covers: it renders each preview in whatever shape the config happens to carry, and every combination it does not render is one where a build or a layout can fail unseen.
 #[test]
 fn every_preview_lays_out_on_every_edge_and_shape() {
     let (mut checked, mut broken) = (0usize, Vec::new());
@@ -186,9 +144,7 @@ fn every_preview_lays_out_on_every_edge_and_shape() {
     );
 }
 
-/// The regression net proper. A draw command with no area is content the user cannot see, and it is what every
-/// layout bug in this tree's history looked like from underneath — the tree built, the pass succeeded, and the
-/// thing measured to nothing.
+/// The regression net proper. A draw command with no area is content the user cannot see, and it is what every layout bug in this tree's history looked like from underneath — the tree built, the pass succeeded, and the thing measured to nothing.
 #[test]
 fn nothing_a_preview_draws_collapses_to_nothing() {
     let mut collapsed = Vec::new();
@@ -219,9 +175,7 @@ fn nothing_a_preview_draws_collapses_to_nothing() {
     );
 }
 
-/// The failure a collapsed rect cannot show: not a draw with no area, but no draw at all. A module that
-/// vanishes leaves nothing behind to measure, so the only question that catches it is asked of the whole
-/// combination rather than of any one command.
+/// The failure a collapsed rect cannot show: not a draw with no area, but no draw at all. A module that vanishes leaves nothing behind to measure, so the only question that catches it is asked of the whole combination rather than of any one command.
 #[test]
 fn every_preview_draws_something() {
     let mut blank = Vec::new();

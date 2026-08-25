@@ -1,7 +1,6 @@
 //! Every bar, and every chip a bar can carry.
 //!
-//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine
-//! decides the length of. The static-shape forms are `.rsx` components beside this file.
+//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
 use std::rc::Rc;
 use ui::scale::space;
@@ -44,18 +43,13 @@ fn bar_signals(bar: &BarConfig) -> BarSignals {
 
 /// K3: one bar's three zones, edited as draggable module pills.
 ///
-/// What this replaces is three comma-separated text fields of desktop ids — a control that required knowing
-/// every module's spelling, gave no way to see what was available, and turned "put the clock on the other end"
-/// into two careful edits. A pill can be dragged anywhere in any of the three zones, dropped to reorder, and
-/// dismissed with its own ✕; the palette underneath is every module the shell registers.
+/// What this replaces is three comma-separated text fields of desktop ids — a control that required knowing every module's spelling, gave no way to see what was available, and turned "put the clock on the other end" into two careful edits. A pill can be dragged anywhere in any of the three zones, dropped to reorder, and dismissed with its own ✕; the palette underneath is every module the shell registers.
 ///
-/// The entries are carried whole rather than by id, which is what keeps `{ id = "clock", accent = "red" }`
-/// intact across a reorder — the thing the CSV field had to reconstruct by claiming entries by name.
+/// The entries are carried whole rather than by id, which is what keeps `{ id = "clock", accent = "red" }` intact across a reorder — the thing the CSV field had to reconstruct by claiming entries by name.
 #[derive(Clone)]
 struct ZoneEditor {
     zones: [RwSignal<Vec<ModuleEntry>>; 3],
-    /// Where each pill and each zone row was laid out. A drop is resolved against the pointer's actual
-    /// position, so dragging a pill onto another zone's *empty* space works as well as onto a pill in it.
+    /// Where each pill and each zone row was laid out. A drop is resolved against the pointer's actual position, so dragging a pill onto another zone's *empty* space works as well as onto a pill in it.
     rects: PillRects,
     /// Which zone the palette adds to, so pressing a module is one press rather than a press and a drag.
     target: RwSignal<usize>,
@@ -117,10 +111,7 @@ impl ZoneEditor {
 
     /// Where a drop at `point` (surface coordinates) lands: the pill under it, else the zone row it is over.
     fn drop_target(&self, point: (f32, f32)) -> Option<(usize, usize)> {
-        // Read the three lengths once, and use them to ignore the rects of pills that are no longer there. A
-        // zone that went from three pills to two leaves `(zone, 2)` in the map pointing at a destroyed
-        // widget's rect, and nothing about that entry says so — it would go on winning drops over the area it
-        // used to occupy, ahead of whichever live pill the map happened to be walked to second.
+        // Read the three lengths once, and use them to ignore the rects of pills that are no longer there. A zone that went from three pills to two leaves `(zone, 2)` in the map pointing at a destroyed widget's rect, and nothing about that entry says so — it would go on winning drops over the area it used to occupy, ahead of whichever live pill the map happened to be walked to second.
         let lengths = [
             self.zones[0].peek().len(),
             self.zones[1].peek().len(),
@@ -137,8 +128,7 @@ impl ZoneEditor {
                 continue;
             }
             if *index == ZONE_ROW {
-                // Held rather than returned: a pill's own rect is inside its row's, and the pill is the more
-                // precise answer whichever order the map happens to be walked in.
+                // Held rather than returned: a pill's own rect is inside its row's, and the pill is the more precise answer whichever order the map happens to be walked in.
                 row = Some((*zone, lengths[*zone]));
                 continue;
             }
@@ -211,8 +201,7 @@ fn zone_row(
             .flex_grow(1.0)
             .min_width(0.0),
         move || source.get().into_iter().enumerate().collect(),
-        // Keyed on the position *and* the id: a reorder has to redraw both pills that swapped, and a list
-        // keyed on the id alone would leave them where they were.
+        // Keyed on the position *and* the id: a reorder has to redraw both pills that swapped, and a list keyed on the id alone would leave them where they were.
         |(index, entry): &(usize, ModuleEntry)| format!("{index}|{}", entry.id),
         move |(index, entry): (usize, ModuleEntry)| {
             module_pill(zone, index, entry, list_editor.clone(), theme)
@@ -293,8 +282,7 @@ fn module_pill(
 
     let dropped = editor.clone();
     let pill = pill.on_drag_end(move |x, y| {
-        // The gesture reports where the pointer is *inside the pill*; the drop is about where that is on the
-        // surface, so the pill's own origin has to be added back before anything can be hit-tested.
+        // The gesture reports where the pointer is *inside the pill*; the drop is about where that is on the surface, so the pill's own origin has to be added back before anything can be hit-tested.
         let origin = rect.peek();
         let point = (origin.x + x, origin.y + y);
         if let Some(target) = dropped.drop_target(point) {
@@ -304,8 +292,7 @@ fn module_pill(
     Ok(Box::new(pill))
 }
 
-/// Every module the shell registers, as something to press. The add half of K3: the CSV field it replaces
-/// required knowing a module existed before it could be typed.
+/// Every module the shell registers, as something to press. The add half of K3: the CSV field it replaces required knowing a module existed before it could be typed.
 fn module_palette(
     editor: &ZoneEditor,
     theme: NordTheme,
@@ -416,9 +403,7 @@ pub(crate) fn bars_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// `[modules.<id>]`: the per-module presentation overrides.
 ///
-/// Keyed on the registry rather than on what the bars currently use, so a module can be styled before it is
-/// placed — the alternative would be a user having to add a chip, save, reopen the page and only then be able
-/// to give it an accent.
+/// Keyed on the registry rather than on what the bars currently use, so a module can be styled before it is placed — the alternative would be a user having to add a chip, save, reopen the page and only then be able to give it an accent.
 pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let (config, path) = crate::form::source();
     let theme = telar::use_theme::<NordTheme>();
@@ -499,8 +484,7 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                         width: opt_u32(&entry.width.peek()),
                         height: opt_u32(&entry.height.peek()),
                     };
-                    // A module left entirely at its defaults gets no table at all, so the file keeps only the
-                    // overrides a user actually made rather than thirty empty sections.
+                    // A module left entirely at its defaults gets no table at all, so the file keeps only the overrides a user actually made rather than thirty empty sections.
                     if is_default_override(&value) {
                         None
                     } else {
@@ -662,9 +646,7 @@ mod tests {
         assert_eq!(editor.entries(2), vec![ModuleEntry::bare("notes")]);
     }
 
-    /// A removed pill leaves its rect behind, and nothing about the entry says the widget is gone. Without the
-    /// length check, that ghost goes on winning drops over the area it used to occupy — ahead of whichever
-    /// live pill the map happened to be walked to second, which makes it look intermittent.
+    /// A removed pill leaves its rect behind, and nothing about the entry says the widget is gone. Without the length check, that ghost goes on winning drops over the area it used to occupy — ahead of whichever live pill the map happened to be walked to second, which makes it look intermittent.
     #[test]
     fn a_removed_pill_does_not_keep_catching_drops() {
         telar::reset_runtime();

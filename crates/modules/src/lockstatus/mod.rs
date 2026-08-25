@@ -5,8 +5,7 @@ use telar::{Color, LayoutError, LayoutItem, ReadSignal};
 use config::LockStatusConfig;
 use services::lockkeys::LockKeys;
 
-/// Which lock an indicator stands for. Doubles as the reactive list's key, so one indicator appearing or
-/// going away never rebuilds the other.
+/// Which lock an indicator stands for. Doubles as the reactive list's key, so one indicator appearing or going away never rebuilds the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Lock {
     Caps,
@@ -29,8 +28,7 @@ impl Lock {
     }
 }
 
-/// The indicators to draw: the ones `[lock_status]` enables, minus the idle ones when `hide_inactive` asks for
-/// a bar that only speaks up while a lock is actually engaged.
+/// The indicators to draw: the ones `[lock_status]` enables, minus the idle ones when `hide_inactive` asks for a bar that only speaks up while a lock is actually engaged.
 pub fn shown(keys: LockKeys, config: LockStatusConfig) -> Vec<Lock> {
     [(Lock::Caps, config.caps), (Lock::Num, config.num)]
         .into_iter()
@@ -42,11 +40,7 @@ pub fn shown(keys: LockKeys, config: LockStatusConfig) -> Vec<Lock> {
 
 /// One indicator glyph, tinted live from the lock state.
 ///
-/// Built here rather than in the view because the view's `for` is reactive: it constructs each item afresh
-/// whenever that lock comes back, so its content has to be an expression (`build`) rather than a widget bound
-/// once in `[logic]`. Engaged takes the chip's own foreground, so it reads at full strength under every
-/// container variant; idle recedes to `idle` rather than vanishing, which keeps the module visible — and the
-/// bar's width stable — as soon as it is added.
+/// Built here rather than in the view because the view's `for` is reactive: it constructs each item afresh whenever that lock comes back, so its content has to be an expression (`build`) rather than a widget bound once in `[logic]`. Engaged takes the chip's own foreground, so it reads at full strength under every container variant; idle recedes to `idle` rather than vanishing, which keeps the module visible — and the bar's width stable — as soon as it is added.
 pub fn indicator(
     lock: Lock,
     keys: ReadSignal<LockKeys>,

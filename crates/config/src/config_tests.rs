@@ -1,5 +1,4 @@
-//! What `config.toml` has to keep doing: the defaults, the monitor overrides, and the resolution rules a
-//! surface reads through.
+//! What `config.toml` has to keep doing: the defaults, the monitor overrides, and the resolution rules a surface reads through.
 
 #[cfg(test)]
 mod tests {
@@ -66,9 +65,7 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
         assert_eq!(back.start, cfg.bars.top.start);
     }
 
-    /// `[launcher]` carries both an array of tables (`actions`) and a map (`icons`), and TOML requires every
-    /// scalar to be emitted before either. Field order on the struct is what decides that, so a key added in
-    /// the wrong place turns every launcher save into a serialize error the user only sees in the log.
+    /// `[launcher]` carries both an array of tables (`actions`) and a map (`icons`), and TOML requires every scalar to be emitted before either. Field order on the struct is what decides that, so a key added in the wrong place turns every launcher save into a serialize error the user only sees in the log.
     #[test]
     fn a_launcher_with_actions_and_icon_overrides_still_serialises() {
         let mut icons = HashMap::new();
@@ -145,11 +142,7 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
 
     #[test]
     fn saving_a_section_keeps_its_sub_tables_under_it_instead_of_scattering_them() {
-        // What this catches is not a parse failure — the scattered file still parses, which is why nothing saw
-        // it. Saving `[theme]` printed `[theme.export]` between `[panels]` and `[bars.top]`, put
-        // `[theme.fonts.title]` inside the bar definitions, and left `[theme]` itself *after* its own children.
-        // For a function whose whole promise is "preserving every other section, key order, and comment", that
-        // is the failure.
+        // What this catches is not a parse failure — the scattered file still parses, which is why nothing saw it. Saving `[theme]` printed `[theme.export]` between `[panels]` and `[bars.top]`, put `[theme.fonts.title]` inside the bar definitions, and left `[theme]` itself *after* its own children. For a function whose whole promise is "preserving every other section, key order, and comment", that is the failure.
         let dir =
             std::env::temp_dir().join(format!("hogar-shell-save-order-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -288,8 +281,7 @@ end = ["battery", "volume"]
         let parsed: Config = toml::from_str(&text).expect("starter re-parses");
         assert_eq!(parsed.panels.drawer.width, starter.panels.drawer.width);
         assert_eq!(parsed.panels.float.width, starter.panels.float.width);
-        // An unset coordinate is the one field type TOML has no value for, so it is the one that would break
-        // the write of a fresh config rather than merely round-trip oddly.
+        // An unset coordinate is the one field type TOML has no value for, so it is the one that would break the write of a fresh config rather than merely round-trip oddly.
         assert_eq!(parsed.weather.latitude, None);
         assert_eq!(
             parsed.weather.refresh_minutes,
@@ -305,13 +297,10 @@ end = ["battery", "volume"]
         assert_eq!(parsed.media.seek_seconds, starter.media.seek_seconds);
     }
 
-    /// A6: every section that can start a background producer carries `enabled`, defaults it to on, and reads
-    /// it back off a written config. A section that gained a service but not the flag would have no way to be
-    /// switched off short of removing the module from the bar.
+    /// A6: every section that can start a background producer carries `enabled`, defaults it to on, and reads it back off a written config. A section that gained a service but not the flag would have no way to be switched off short of removing the module from the bar.
     #[test]
     fn every_service_section_can_be_switched_off() {
-        // Each section's own `Default`, not `Config::default()` — the latter is all-empty by design, since it
-        // is what backs serde's missing-field fill.
+        // Each section's own `Default`, not `Config::default()` — the latter is all-empty by design, since it is what backs serde's missing-field fill.
         for on in [
             NetworkConfig::default().enabled,
             BluetoothConfig::default().enabled,
@@ -410,8 +399,7 @@ end = ["battery", "volume"]
 
     #[test]
     fn panel_margin_is_a_uniform_gap_and_never_double_counts_the_bar() {
-        // The reservation strip already offsets a panel (exclusive_zone=0) past the bar, so the margin is just
-        // the gap — adding the bar's reserved thickness here too would put the panel at double the distance.
+        // The reservation strip already offsets a panel (exclusive_zone=0) past the bar, so the margin is just the gap — adding the bar's reserved thickness here too would put the panel at double the distance.
         let floating: Config =
             toml::from_str("[shape]\ngap=8\n[bars.top]\nsize=34\ncenter=[\"clock\"]\n").unwrap();
         assert_eq!(floating.panel_gap(Edge::Top), 8);
@@ -433,8 +421,7 @@ end = ["battery", "volume"]
             "a panel floats off the bar by exactly what the bar floats off the screen"
         );
 
-        // `[panels] gap` used to pin a fixed distance regardless of the bar. It is gone, and a file that still
-        // names it changes nothing: the derivation is the whole rule.
+        // `[panels] gap` used to pin a fixed distance regardless of the bar. It is gone, and a file that still names it changes nothing: the derivation is the whole rule.
         let pinned: Config = toml::from_str(
             "[shape]\ngap=20\n[panels]\ngap=4\n[bars.top]\ncenter=[\"clock\"]\n[bars.bottom]\nstart=[\"clock\"]\n",
         )
@@ -586,9 +573,7 @@ end = ["battery", "volume"]
 
     #[test]
     fn a_section_holding_an_array_of_tables_survives_a_save() {
-        // `[[battery.warn_levels]]` is the first list-of-tables in the config, and TOML only accepts a table's
-        // scalar keys *before* its arrays of tables — a naive serializer would emit `critical_level` inside the
-        // last warning. Both the whole-file write and the format-preserving per-section save must get it right.
+        // `[[battery.warn_levels]]` is the first list-of-tables in the config, and TOML only accepts a table's scalar keys *before* its arrays of tables — a naive serializer would emit `critical_level` inside the last warning. Both the whole-file write and the format-preserving per-section save must get it right.
         let dir = std::env::temp_dir().join(format!("hogar-shell-aot-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
@@ -750,9 +735,7 @@ end = ["battery", "volume"]
             matches!(error, LoadError::Parse(_)),
             "the caller needs to distinguish a typo from a missing file"
         );
-        // `load_or_default` is the lossy convenience wrapper — it answers a typo with the starter bar, throwing
-        // the user's layout away. That is exactly why the running shell uses `load`: so it can keep the last
-        // config that worked and report the error instead.
+        // `load_or_default` is the lossy convenience wrapper — it answers a typo with the starter bar, throwing the user's layout away. That is exactly why the running shell uses `load`: so it can keep the last config that worked and report the error instead.
         let lossy = Config::load_or_default(&path);
         assert_eq!(
             lossy.bars.top.start,
@@ -1079,9 +1062,7 @@ accent = "orange"
         assert_eq!(absurd.resolve_theme().font(FontRole::Body), 200.0);
     }
 
-    /// One key for the whole shell, and no way to break it apart. `[bars] opacity` and `[panels] opacity`
-    /// existed and were removed: the only thing they bought was a drawer at an opacity the bar it hangs off
-    /// does not share, which nobody configures on purpose and which two settings drift into on their own.
+    /// One key for the whole shell, and no way to break it apart. `[bars] opacity` and `[panels] opacity` existed and were removed: the only thing they bought was a drawer at an opacity the bar it hangs off does not share, which nobody configures on purpose and which two settings drift into on their own.
     #[test]
     fn one_key_sets_the_opacity_of_every_surface() {
         let translucent = Config {
@@ -1115,8 +1096,7 @@ accent = "orange"
         assert_eq!(broken.opacity(), 1.0, "an unusable value is no value");
     }
 
-    /// A per-surface opacity key is gone rather than deprecated, and a file that still carries one must not
-    /// take the whole config down with it — an unknown key is ignored, so the shell comes up solid.
+    /// A per-surface opacity key is gone rather than deprecated, and a file that still carries one must not take the whole config down with it — an unknown key is ignored, so the shell comes up solid.
     #[test]
     fn a_config_still_naming_a_per_surface_opacity_still_loads() {
         let old: Config =
@@ -1131,10 +1111,7 @@ accent = "orange"
         assert_eq!(Config::starter().opacity(), 1.0);
     }
 
-    /// A surface declared opaque is cleared to a solid colour before anything draws, so declaring it while the
-    /// bar is translucent — or while a frame is painting the strip instead — is how an opacity setting does
-    /// nothing at all. Both cases were reachable: a side bar in `bar` mode under a frame stayed solid however
-    /// the opacity was set.
+    /// A surface declared opaque is cleared to a solid colour before anything draws, so declaring it while the bar is translucent — or while a frame is painting the strip instead — is how an opacity setting does nothing at all. Both cases were reachable: a side bar in `bar` mode under a frame stayed solid however the opacity was set.
     #[test]
     fn a_bar_that_is_not_solid_never_declares_an_opaque_surface() {
         let hugging = |toml: &str| toml::from_str::<Config>(toml).unwrap();
@@ -1261,8 +1238,7 @@ accent = "orange"
             NordTheme::in_mode("rose_pine_moon", Mode::Light),
             "rose-pine-dawn"
         );
-        // Nord has no light sibling anyone drew, and inventing one by inversion would be a palette its author
-        // never made.
+        // Nord has no light sibling anyone drew, and inventing one by inversion would be a palette its author never made.
         assert_eq!(NordTheme::in_mode("nord", Mode::Light), "nord");
         assert_eq!(
             NordTheme::in_mode("tokyo-night", Mode::Light),
@@ -1379,8 +1355,7 @@ accent = "orange"
 
     /// The two surfaces are asked for separately, which is the whole point of `[widgets]` being its own section.
     ///
-    /// A clock on a screen with no wallpaper is a clock, not a reason to paint the desktop; and a wallpaper is
-    /// not a reason to open the surface the visualiser repaints with the music.
+    /// A clock on a screen with no wallpaper is a clock, not a reason to paint the desktop; and a wallpaper is not a reason to open the surface the visualiser repaints with the music.
     #[test]
     fn the_widgets_surface_is_opened_by_its_own_widgets_and_by_nothing_else() {
         let papered: Config = toml::from_str("[background]\nimage = \"~/wall.png\"\n").unwrap();

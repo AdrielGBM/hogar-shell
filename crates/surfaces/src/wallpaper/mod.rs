@@ -1,15 +1,8 @@
 //! The background surface: the wallpaper and its transition.
 //!
-//! One surface per monitor, at the bottom of the background layer, painting the image the wallpaper service
-//! says this screen should show — cover-cropped over the theme's base colour. Nothing else: what is drawn *over*
-//! the desktop is [`crate::widgets`], on a surface of its own, so a widget that repaints with the music does not
-//! repaint a screen-sized photograph with it.
+//! One surface per monitor, at the bottom of the background layer, painting the image the wallpaper service says this screen should show — cover-cropped over the theme's base colour. Nothing else: what is drawn *over* the desktop is [`crate::widgets`], on a surface of its own, so a widget that repaints with the music does not repaint a screen-sized photograph with it.
 //!
-//! **The transition is why a wallpaper change is an event and not a rebuild.** A picture chosen at runtime is
-//! not a config edit — it is session state — and rebuilding the surface for it would be useless for a
-//! cross-fade anyway: a fresh tree has nothing left of the old image to fade *from*. So a runtime wallpaper
-//! change arrives as an event on the live surface, carrying an image the service already decoded off the UI
-//! thread, and the two layers are simply ping-ponged.
+//! **The transition is why a wallpaper change is an event and not a rebuild.** A picture chosen at runtime is not a config edit — it is session state — and rebuilding the surface for it would be useless for a cross-fade anyway: a fresh tree has nothing left of the old image to fade *from*. So a runtime wallpaper change arrives as an event on the live surface, carrying an image the service already decoded off the UI thread, and the two layers are simply ping-ponged.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -28,18 +21,15 @@ use config::{Config, WallpaperTransition};
 use services::wallpaper;
 use telar::WindowRoot;
 
-/// How far a wipe travels when the compositor has not said how wide this screen is. Only reached before the
-/// output list has been read, and a wipe that starts slightly off-screen is invisible either way.
+/// How far a wipe travels when the compositor has not said how wide this screen is. Only reached before the output list has been read, and a wipe that starts slightly off-screen is invisible either way.
 const FALLBACK_TRAVEL: f32 = 1920.0;
 
-/// Reading where the hand-over between the two image layers has got to, and moving it. `Rc` on the reading half
-/// because both layers hold one; `Box` on the writing half because only the frame consumer does.
+/// Reading where the hand-over between the two image layers has got to, and moving it. `Rc` on the reading half because both layers hold one; `Box` on the writing half because only the frame consumer does.
 type FadeControl = (Rc<dyn Fn() -> f32>, Box<dyn Fn(f32)>);
 
 /// Per-output wallpaper: a full-screen background surface painting the current image (cover-cropped, aspect preserved) over the theme's base colour, or just the base colour when no image resolves.
 pub struct WallpaperApp {
-    /// Read at every build rather than held: the surface outlives the config it was first drawn from, and a
-    /// reload rebuilds it in place from whatever is in here now.
+    /// Read at every build rather than held: the surface outlives the config it was first drawn from, and a reload rebuilds it in place from whatever is in here now.
     pub config: config::LiveConfig,
     /// The monitor this wallpaper covers, so a `[background.monitors]` entry can target it.
     pub output: Option<String>,
@@ -65,22 +55,19 @@ impl App for WallpaperApp {
     }
 }
 
-/// The desktop as this surface draws it — the configured image, cover-cropped and decoded for real — for
-/// [`crate::preview`].
+/// The desktop as this surface draws it — the configured image, cover-cropped and decoded for real — for [`crate::preview`].
 pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut config = config::config()
         .map(|live| (*live).clone())
         .unwrap_or_else(Config::starter);
     config.background.enabled = true;
-    // The settled desktop, not the crossfade into it: a preview captures a handful of frames, and a 600ms
-    // transition is still halfway through when the last of them is taken.
+    // The settled desktop, not the crossfade into it: a preview captures a handful of frames, and a 600ms transition is still halfway through when the last of them is taken.
     config.background.transition = WallpaperTransition::None;
     let app = WallpaperApp {
         config: Arc::new(config.clone()).into(),
         output: None,
     };
-    // No box of its own: the entry declares a `PreviewSurface`, which is what gives the image layers — absolutely
-    // positioned to fill their surface — something to fill.
+    // No box of its own: the entry declares a `PreviewSurface`, which is what gives the image layers — absolutely positioned to fill their surface — something to fill.
     Ok(app.content(&config))
 }
 
@@ -99,10 +86,7 @@ impl WallpaperApp {
 
     /// The two stacked image slots and the animation that hands the screen from one to the other.
     ///
-    /// A ping-pong rather than an "outgoing / incoming" pair: `fade` runs `0` → slot A visible, `1` → slot B
-    /// visible, and each new image lands in whichever slot is currently hidden. One animation, no bookkeeping
-    /// about which layer is on the way out, and an interrupted transition — a second change arriving mid-fade —
-    /// simply retargets from wherever it had got to instead of snapping.
+    /// A ping-pong rather than an "outgoing / incoming" pair: `fade` runs `0` → slot A visible, `1` → slot B visible, and each new image lands in whichever slot is currently hidden. One animation, no bookkeeping about which layer is on the way out, and an interrupted transition — a second change arriving mid-fade — simply retargets from wherever it had got to instead of snapping.
     fn image_layers(&self, config: &Config) -> Result<Option<Box<dyn LayoutItem>>, LayoutError> {
         let initial = wallpaper::current_image(config, self.output.as_deref());
         let first = initial
@@ -133,8 +117,7 @@ impl WallpaperApp {
         )?;
         let layer_b = image_layer(slot_b.read_only(), read_fade, 1.0, transition, travel)?;
 
-        // Which slot holds the newest image. A plain `Cell`: it only ever changes on the driver thread, from
-        // the consumer below, so a signal would buy reactivity that nothing reads.
+        // Which slot holds the newest image. A plain `Cell`: it only ever changes on the driver thread, from the consumer below, so a signal would buy reactivity that nothing reads.
         let showing_b = Rc::new(Cell::new(false));
         platform_wayland::watch(
             wallpaper::frames(self.output.clone(), initial),
@@ -158,11 +141,7 @@ impl WallpaperApp {
 
     /// How the layers are handed over: reading the current position, and moving it.
     ///
-    /// Two shapes behind one pair of closures. An animated transition drives an `Animated`, built at `0.0` and
-    /// retargeted — never at its destination, which would leave it inert. `transition = "none"` (and animation
-    /// switched off globally) drives a plain signal instead of an `Animated` with a zero-length tween, because a
-    /// tween that has no duration to divide by is a division waiting to happen, and "no transition" should not
-    /// go anywhere near the ticker.
+    /// Two shapes behind one pair of closures. An animated transition drives an `Animated`, built at `0.0` and retargeted — never at its destination, which would leave it inert. `transition = "none"` (and animation switched off globally) drives a plain signal instead of an `Animated` with a zero-length tween, because a tween that has no duration to divide by is a division waiting to happen, and "no transition" should not go anywhere near the ticker.
     fn fade_control(config: &Config) -> FadeControl {
         let instant = config.background.transition == WallpaperTransition::None
             || !config.animation.enabled
@@ -200,13 +179,9 @@ impl WallpaperApp {
 
 /// The picture this screen opens on, decoded at most once per file.
 ///
-/// A config reload rebuilds this surface's content, and a settings form applies itself while the user is still
-/// typing — so decoding the same file again on the UI thread would put a full image decode between every burst
-/// of keystrokes and the frame that answers it. One entry per screen, holding what that screen's live surface
-/// is already holding, and keyed by mtime as well as path so a picture overwritten in place still lands.
+/// A config reload rebuilds this surface's content, and a settings form applies itself while the user is still typing — so decoding the same file again on the UI thread would put a full image decode between every burst of keystrokes and the frame that answers it. One entry per screen, holding what that screen's live surface is already holding, and keyed by mtime as well as path so a picture overwritten in place still lands.
 ///
-/// Only the *opening* image comes through here: a wallpaper chosen at runtime arrives already decoded, off the
-/// UI thread, from the wallpaper service.
+/// Only the *opening* image comes through here: a wallpaper chosen at runtime arrives already decoded, off the UI thread, from the wallpaper service.
 fn decoded(output: Option<&str>, path: &Path) -> Option<Arc<ImageData>> {
     /// The picture a screen last opened on: which file, when it was written, and its pixels.
     type Opened = (PathBuf, SystemTime, Arc<ImageData>);
@@ -245,9 +220,7 @@ fn fill() -> LayoutStyle {
 
 /// One image slot: absolutely filling the surface, shown in proportion to how close `fade` is to `visible_at`.
 ///
-/// The image itself is rebuilt whenever the slot's signal changes — `Image::new` takes the data as a closure,
-/// so the layer is one node for the life of the surface and swapping the picture is a signal write, not a
-/// re-layout.
+/// The image itself is rebuilt whenever the slot's signal changes — `Image::new` takes the data as a closure, so the layer is one node for the life of the surface and swapping the picture is a signal write, not a re-layout.
 fn image_layer(
     slot: telar::ReadSignal<Option<Arc<ImageData>>>,
     fade: Rc<dyn Fn() -> f32>,
@@ -282,8 +255,7 @@ fn image_layer(
     });
 
     if transition == WallpaperTransition::Wipe {
-        // A wipe is the incoming layer sliding over the outgoing one, so only the layer being *left* moves —
-        // the arriving one has to end up at rest exactly where the other was.
+        // A wipe is the incoming layer sliding over the outgoing one, so only the layer being *left* moves — the arriving one has to end up at rest exactly where the other was.
         layer = layer.with_transform(move |_| {
             let distance = (fade() - visible_at).abs();
             (distance != 0.0).then_some([1.0, 0.0, 0.0, 1.0, distance * travel, 0.0])
@@ -294,8 +266,7 @@ fn image_layer(
 
 /// A single transparent pixel, stood in for an empty slot.
 ///
-/// Shared rather than built per call: `ImageData::new` mints a new id every time, and a slot that handed the
-/// renderer a fresh id on every frame would fill the texture cache with copies of nothing.
+/// Shared rather than built per call: `ImageData::new` mints a new id every time, and a slot that handed the renderer a fresh id on every frame would fill the texture cache with copies of nothing.
 fn blank() -> Arc<ImageData> {
     thread_local! {
         static BLANK: Arc<ImageData> = Arc::new(ImageData::new(vec![0, 0, 0, 0], 1, 1));

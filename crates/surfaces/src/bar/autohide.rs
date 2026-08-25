@@ -1,16 +1,8 @@
 //! `[bars.<edge>] persistent = false`: a bar that is only on screen when it is wanted.
 //!
-//! The bar is not hidden by drawing it somewhere else — it is *moved*. The layer surface sits at a negative
-//! margin on its own anchored edge, far enough off that only `[bars.<edge>] peek` logical pixels remain, and
-//! reveals itself by animating that margin back to the bar's usual gap. Two things follow from doing it that
-//! way. The bar takes no input over the strip it is not occupying, because it is genuinely not there — no input
-//! region to carve, nothing to get wrong. And the peek strip is the bar's own edge rather than a second surface
-//! that has to be kept in step with it, so there is one thing to place, one thing to reload, and one thing that
-//! can be hovered.
+//! The bar is not hidden by drawing it somewhere else — it is *moved*. The layer surface sits at a negative margin on its own anchored edge, far enough off that only `[bars.<edge>] peek` logical pixels remain, and reveals itself by animating that margin back to the bar's usual gap. Two things follow from doing it that way. The bar takes no input over the strip it is not occupying, because it is genuinely not there — no input region to carve, nothing to get wrong. And the peek strip is the bar's own edge rather than a second surface that has to be kept in step with it, so there is one thing to place, one thing to reload, and one thing that can be hovered.
 //!
-//! What tells it to move is the plainest possible signal: the compositor delivers `CursorEntered` and
-//! `CursorLeft` to the surface, and the only part of the surface the pointer can reach while it is hidden *is*
-//! the peek strip.
+//! What tells it to move is the plainest possible signal: the compositor delivers `CursorEntered` and `CursorLeft` to the surface, and the only part of the surface the pointer can reach while it is hidden *is* the peek strip.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -20,8 +12,7 @@ use telar::{Component, Effect, Event, EventResult, LayoutItem, NodeId, PointerBu
 
 use config::{Config, Edge};
 
-/// A layer-shell margin, as `(top, right, bottom, left)` logical pixels — the shape the compositor takes and
-/// the one thing this module passes around.
+/// A layer-shell margin, as `(top, right, bottom, left)` logical pixels — the shape the compositor takes and the one thing this module passes around.
 pub type Margin = (i32, i32, i32, i32);
 
 /// The margins an auto-hidden bar moves between.
@@ -34,9 +25,7 @@ pub struct RevealMargins {
 impl RevealMargins {
     /// The two positions of `edge`'s bar, derived from the margin it would have if it were persistent.
     ///
-    /// Only the anchored edge's own component moves: a top bar slides up, a left bar slides left, and the
-    /// insets that keep it clear of a perpendicular bar are the same either way. Anything else would make a
-    /// bar that shrinks as it hides rather than one that leaves.
+    /// Only the anchored edge's own component moves: a top bar slides up, a left bar slides left, and the insets that keep it clear of a perpendicular bar are the same either way. Anything else would make a bar that shrinks as it hides rather than one that leaves.
     pub fn new(config: &Config, edge: Edge, shown: Margin) -> Self {
         let off = config.bar_hidden_offset(edge);
         let (t, r, b, l) = shown;
@@ -49,9 +38,7 @@ impl RevealMargins {
         Self { hidden, shown }
     }
 
-    /// The margin at `reveal`, where 0 is hidden and 1 is fully out. Rounded rather than truncated so the two
-    /// ends are reached exactly — a bar that settles one pixel short of its gap is a bar that never quite
-    /// arrives.
+    /// The margin at `reveal`, where 0 is hidden and 1 is fully out. Rounded rather than truncated so the two ends are reached exactly — a bar that settles one pixel short of its gap is a bar that never quite arrives.
     pub fn at(&self, reveal: f32) -> Margin {
         let mix = |from: i32, to: i32| {
             (from as f32 + (to - from) as f32 * reveal.clamp(0.0, 1.0)).round() as i32
@@ -67,22 +54,14 @@ impl RevealMargins {
 
 /// Wraps a bar's content and moves the surface it is drawn on.
 ///
-/// **The margin is pushed from an effect, and it has to be.** The obvious place is `view` — the surface's
-/// position is part of what is being drawn — but the runner composes a frame only when the tree is *dirty*
-/// (`if !tree_dirty && !needs_keepalive { return }`), and a bar sliding in redraws nothing: its content is
-/// identical at every position. So `view` ran once, the animation ran to completion unread, and the bar never
-/// moved — while `motion_has_active()` held the loop at 60 fps doing nothing at all. An effect subscribed to
-/// the animation's own signal is re-run by the motion tick's flush whether or not anything repaints, which is
-/// exactly the shape of this: the compositor moves the surface, the renderer has nothing to say about it.
+/// **The margin is pushed from an effect, and it has to be.** The obvious place is `view` — the surface's position is part of what is being drawn — but the runner composes a frame only when the tree is *dirty* (`if !tree_dirty && !needs_keepalive { return }`), and a bar sliding in redraws nothing: its content is identical at every position. So `view` ran once, the animation ran to completion unread, and the bar never moved — while `motion_has_active()` held the loop at 60 fps doing nothing at all. An effect subscribed to the animation's own signal is re-run by the motion tick's flush whether or not anything repaints, which is exactly the shape of this: the compositor moves the surface, the renderer has nothing to say about it.
 ///
-/// The handle is held here because dropping it would deregister the effect — it would seed correctly, run
-/// once, and never fire again, which is the failure that looks like it works.
+/// The handle is held here because dropping it would deregister the effect — it would seed correctly, run once, and never fire again, which is the failure that looks like it works.
 pub struct AutoHide {
     content: Box<dyn LayoutItem>,
     reveal: Animated<f32>,
     show_on_hover: bool,
-    /// How far a press has to be pulled inward before it reveals the bar, for a pointer that cannot hover —
-    /// a touch screen. `None` switches the gesture off (`[panels] drag_threshold = 0`).
+    /// How far a press has to be pulled inward before it reveals the bar, for a pointer that cannot hover — a touch screen. `None` switches the gesture off (`[panels] drag_threshold = 0`).
     drag_threshold: Option<f32>,
     edge: Edge,
     dragging_from: Cell<Option<(f32, f32)>>,
@@ -132,16 +111,12 @@ impl AutoHide {
         self.reveal.retarget(0.0);
     }
 
-    /// The margin last pushed to the compositor, or `None` before the first frame. The one observable the
-    /// reveal has: `request_margin` reaches a live surface and nothing else, so a test drives the gesture and
-    /// the clock and reads the answer here.
+    /// The margin last pushed to the compositor, or `None` before the first frame. The one observable the reveal has: `request_margin` reaches a live surface and nothing else, so a test drives the gesture and the clock and reads the answer here.
     pub fn committed_margin(&self) -> Option<Margin> {
         self.committed.get()
     }
 
-    /// Whether a press that started at `from` and has reached `to` has been pulled far enough *into* the screen
-    /// to count as a reveal. Only travel along the bar's own axis counts, and only inward — a swipe along a
-    /// hidden top bar is a swipe, not a pull on it.
+    /// Whether a press that started at `from` and has reached `to` has been pulled far enough *into* the screen to count as a reveal. Only travel along the bar's own axis counts, and only inward — a swipe along a hidden top bar is a swipe, not a pull on it.
     fn pulled_inward(&self, from: (f32, f32), to: (f32, f32)) -> bool {
         let Some(threshold) = self.drag_threshold else {
             return false;
@@ -275,9 +250,7 @@ mod tests {
 
     /// The `[shape] frame` ring is not the bar, and an auto-hiding bar must not take it down with it.
     ///
-    /// The ring is drawn on the background layer, so it shows only where no window covers it. An auto-hidden
-    /// edge that reserved nothing at all let the windows tile straight over that edge's ring — three sides
-    /// framed and one not, which reads as the frame being broken rather than as the bar hiding.
+    /// The ring is drawn on the background layer, so it shows only where no window covers it. An auto-hidden edge that reserved nothing at all let the windows tile straight over that edge's ring — three sides framed and one not, which reads as the frame being broken rather than as the bar hiding.
     #[test]
     fn an_auto_hidden_bar_still_reserves_the_frame_ring_it_is_not() {
         let framed = config(
@@ -310,13 +283,9 @@ mod tests {
         );
     }
 
-    /// The reveal, driven the way the runner drives it: the pointer arrives, the clock advances, the reactive
-    /// runtime flushes — and **nothing repaints**, because a bar sliding in draws exactly what it drew before.
+    /// The reveal, driven the way the runner drives it: the pointer arrives, the clock advances, the reactive runtime flushes — and **nothing repaints**, because a bar sliding in draws exactly what it drew before.
     ///
-    /// That last part is the test. The first version of this pushed the margin from `view`, and it worked
-    /// perfectly here while doing nothing at all on screen: the runner composes a frame only when the tree is
-    /// dirty, so `view` ran once and the animation played out with no one reading it. Driving `tick` + flush
-    /// without a render is what makes this test able to fail the way the shell failed.
+    /// That last part is the test. The first version of this pushed the margin from `view`, and it worked perfectly here while doing nothing at all on screen: the runner composes a frame only when the tree is dirty, so `view` ran once and the animation played out with no one reading it. Driving `tick` + flush without a render is what makes this test able to fail the way the shell failed.
     #[test]
     fn the_pointer_arriving_moves_the_bar_and_leaving_puts_it_back() {
         use std::time::{Duration, Instant};

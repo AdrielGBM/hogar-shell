@@ -1,18 +1,12 @@
 //! Where a hosted surface sits, as the shell's own vocabulary.
 //!
-//! This lived in Telar until it was clear the framework never read most of it: of the eleven fields, the
-//! scaffold consumes five and the other six are carry-through that only this backend looks at. A framework
-//! type whose majority of fields the framework never reads is a backend's config struct wearing a framework's
-//! name — so it is here, beside `LayerConfig`, which is what it lowers to.
+//! This lived in Telar until it was clear the framework never read most of it: of the eleven fields, the scaffold consumes five and the other six are carry-through that only this backend looks at. A framework type whose majority of fields the framework never reads is a backend's config struct wearing a framework's name — so it is here, beside `LayerConfig`, which is what it lowers to.
 //!
-//! It sits in this crate rather than in `ui` because `ui` depends on *this* one: the producer is above the
-//! implementor, and the type has to be visible to both.
+//! It sits in this crate rather than in `ui` because `ui` depends on *this* one: the producer is above the implementor, and the type has to be visible to both.
 
 use std::time::Duration;
 
-/// What kind of secondary surface a placement describes. A backend maps the role to its own surface
-/// primitives (a layer-shell backend picks a layer + namespace; a windowed backend a child window or an
-/// in-window portal). Roles carry no behaviour of their own — the explicit [`SurfacePlacement`] fields do.
+/// What kind of secondary surface a placement describes. A backend maps the role to its own surface primitives (a layer-shell backend picks a layer + namespace; a windowed backend a child window or an in-window portal). Roles carry no behaviour of their own — the explicit [`SurfacePlacement`] fields do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceRole {
     /// A panel that slides off a bar/edge, dimming what's behind it.
@@ -23,19 +17,13 @@ pub enum SurfaceRole {
     Osd,
     /// A free-floating window with its own title/close affordances.
     Float,
-    /// A modal that owns the screen while it is up: a launcher, a command palette, a session menu. Unlike a
-    /// [`Drawer`](Self::Drawer) it isn't anchored to an edge, and unlike a [`Float`](Self::Float) it expects to
-    /// take the keyboard outright — the user is typing into it, not at whatever is behind it.
+    /// A modal that owns the screen while it is up: a launcher, a command palette, a session menu. Unlike a [`Drawer`](Self::Drawer) it isn't anchored to an edge, and unlike a [`Float`](Self::Float) it expects to take the keyboard outright — the user is typing into it, not at whatever is behind it.
     Overlay,
 }
 
 /// How much of the keyboard a surface needs.
 ///
-/// The distinction matters because it decides who receives a keystroke *before* any click. A panel with a text
-/// field can wait to be clicked into ([`OnDemand`](Self::OnDemand)); a launcher cannot — it opens on a keybind
-/// and the next keystroke is already its first search character, so it has to hold the keyboard from the moment
-/// it maps ([`Exclusive`](Self::Exclusive)). Asking for more than is needed is not free: a surface holding the
-/// keyboard takes it from the focused window.
+/// The distinction matters because it decides who receives a keystroke *before* any click. A panel with a text field can wait to be clicked into ([`OnDemand`](Self::OnDemand)); a launcher cannot — it opens on a keybind and the next keystroke is already its first search character, so it has to hold the keyboard from the moment it maps ([`Exclusive`](Self::Exclusive)). Asking for more than is needed is not free: a surface holding the keyboard takes it from the focused window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeyboardMode {
     /// Display-only; never takes keyboard focus.
@@ -72,19 +60,14 @@ pub enum SurfaceSize {
     Auto,
 }
 
-/// A backend-agnostic description of a secondary surface: where it sits, how big it is, and how it
-/// behaves (scrim, outside-dismiss, auto-timeout). The intent lives here; a backend derives its own
-/// surface config from it. Reusable by a windowed app (as an in-window portal) and by a shell (as a real
-/// layer-shell surface) alike.
+/// A backend-agnostic description of a secondary surface: where it sits, how big it is, and how it behaves (scrim, outside-dismiss, auto-timeout). The intent lives here; a backend derives its own surface config from it. Reusable by a windowed app (as an in-window portal) and by a shell (as a real layer-shell surface) alike.
 #[derive(Debug, Clone)]
 pub struct SurfacePlacement {
     pub role: SurfaceRole,
     pub anchor: SurfaceAnchor,
     pub align: SurfaceAlign,
     pub size: SurfaceSize,
-    /// Gap from the screen edges, as `(top, right, bottom, left)`. A full-screen scrim scaffold applies the
-    /// whole tuple as padding (so the panel floats off every edge, not just the anchored one); a
-    /// directly-anchored surface applies it as the compositor margin.
+    /// Gap from the screen edges, as `(top, right, bottom, left)`. A full-screen scrim scaffold applies the whole tuple as padding (so the panel floats off every edge, not just the anchored one); a directly-anchored surface applies it as the compositor margin.
     pub margin: (i32, i32, i32, i32),
     /// Dim (and, with `dismiss_on_outside`, capture) the area behind the panel.
     pub scrim: bool,
@@ -94,9 +77,7 @@ pub struct SurfacePlacement {
     pub timeout: Option<Duration>,
     /// The surface passes pointer input through to whatever is beneath it (a click-through OSD).
     pub input_transparent: bool,
-    /// How much of the keyboard the surface needs; a backend maps this to its own focus model (e.g. layer-shell
-    /// keyboard interactivity). Defaults to [`KeyboardMode::None`], so a panel is display-only and never steals
-    /// the keyboard.
+    /// How much of the keyboard the surface needs; a backend maps this to its own focus model (e.g. layer-shell keyboard interactivity). Defaults to [`KeyboardMode::None`], so a panel is display-only and never steals the keyboard.
     pub keyboard: KeyboardMode,
     /// The monitor to place the surface on by name; `None` = the active/default output.
     pub output: Option<String>,
@@ -119,8 +100,7 @@ impl SurfacePlacement {
         }
     }
 
-    /// A modal that owns the screen: centred, scrimmed, dismissed by a press outside, and holding the keyboard
-    /// from the moment it maps so the first keystroke after the keybind is already typed into it.
+    /// A modal that owns the screen: centred, scrimmed, dismissed by a press outside, and holding the keyboard from the moment it maps so the first keystroke after the keybind is already typed into it.
     pub fn overlay() -> Self {
         Self {
             scrim: true,
@@ -196,9 +176,7 @@ impl SurfacePlacement {
         self
     }
 
-    /// Opt the surface into focus-on-interaction, for panels that host editable text (a search box, a note
-    /// title). Sugar for [`keyboard_mode`](Self::keyboard_mode) with
-    /// [`OnDemand`](KeyboardMode::OnDemand)/[`None`](KeyboardMode::None).
+    /// Opt the surface into focus-on-interaction, for panels that host editable text (a search box, a note title). Sugar for [`keyboard_mode`](Self::keyboard_mode) with [`OnDemand`](KeyboardMode::OnDemand)/[`None`](KeyboardMode::None).
     pub fn keyboard(mut self, wants_keyboard: bool) -> Self {
         self.keyboard = if wants_keyboard {
             KeyboardMode::OnDemand
@@ -224,8 +202,7 @@ impl SurfacePlacement {
         self
     }
 
-    /// Whether the surface needs a full-viewport scaffold (to draw a scrim or catch outside presses)
-    /// rather than being anchored directly at its content size.
+    /// Whether the surface needs a full-viewport scaffold (to draw a scrim or catch outside presses) rather than being anchored directly at its content size.
     pub fn needs_scaffold(&self) -> bool {
         self.scrim || self.dismiss_on_outside
     }

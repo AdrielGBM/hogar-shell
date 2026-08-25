@@ -13,8 +13,7 @@ fn load_color(percent: Option<f32>, fg: Color) -> Color {
     }
 }
 
-// Intel publishes no utilisation counter and NVIDIA needs its own tool; a card that cannot answer draws a dash
-// rather than a 0% that reads as an idle GPU.
+// Intel publishes no utilisation counter and NVIDIA needs its own tool; a card that cannot answer draws a dash rather than a 0% that reads as an idle GPU.
 fn load_text(percent: Option<f32>) -> String {
     match percent {
         Some(p) => format!("{p:.0}%"),

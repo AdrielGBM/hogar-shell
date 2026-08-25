@@ -1,11 +1,8 @@
-//! The settings application's previews, registered in Rust because the page they open is assembled by
-//! [`crate::panel`] from a nav and a search rather than owned by one `.rsx` component. The forms on it are
-//! `.rsx`; the window around them is not.
+//! The settings application's previews, registered in Rust because the page they open is assembled by [`crate::panel`] from a nav and a search rather than owned by one `.rsx` component. The forms on it are `.rsx`; the window around them is not.
 
 use telar::{LayoutError, LayoutItem, PreviewEntry, PreviewSurface};
 
-/// The float this application opens in (`ui::placement::window`), so both previews are laid out at the size the
-/// user actually reads them at.
+/// The float this application opens in (`ui::placement::window`), so both previews are laid out at the size the user actually reads them at.
 const FLOAT: PreviewSurface = PreviewSurface {
     width: 920.0,
     height: 680.0,
@@ -35,15 +32,12 @@ pub fn entries() -> Vec<PreviewEntry> {
     ]
 }
 
-/// The panel opened on the applications page — the shell's one virtualised list, and the only place a preview
-/// can show that a window onto thousands of rows still draws the dozen that are on screen.
+/// The panel opened on the applications page — the shell's one virtualised list, and the only place a preview can show that a window onto thousands of rows still draws the dozen that are on screen.
 fn applications_page() -> Result<Box<dyn LayoutItem>, LayoutError> {
     page("applications")
 }
 
-/// The panel opened on a page of toggles. The application's first page is text fields and colour swatches, so
-/// previewing only that leaves every switch in the settings unseen — and they are the rows the catalogue's
-/// `toggle` draws.
+/// The panel opened on a page of toggles. The application's first page is text fields and colour swatches, so previewing only that leaves every switch in the settings unseen — and they are the rows the catalogue's `toggle` draws.
 fn switches_page() -> Result<Box<dyn LayoutItem>, LayoutError> {
     page("notifications")
 }

@@ -1,9 +1,6 @@
 //! The Media page: the track, the art, the playhead and the transport.
 //!
-//! The playhead is the one thing here the MPRIS service cannot broadcast: `Position` advances continuously and
-//! emits no change signal, so following it means asking, and asking on everyone's behalf would wake the whole
-//! shell several times a second for a number no bar chip shows. This page therefore owns the only ticker, at
-//! the rate `[dashboard] media_update_interval` sets, and it dies with the surface.
+//! The playhead is the one thing here the MPRIS service cannot broadcast: `Position` advances continuously and emits no change signal, so following it means asking, and asking on everyone's behalf would wake the whole shell several times a second for a number no bar chip shows. This page therefore owns the only ticker, at the rate `[dashboard] media_update_interval` sets, and it dies with the surface.
 
 use std::time::Duration;
 use ui::scale::{paint, space};
@@ -29,8 +26,7 @@ use util::reactive::{Live, derive, fixed, fixed_text};
 
 const COVER: f32 = 96.0;
 
-/// Clearance between the art's edge and the innermost bar of the visualiser ring, and how far the bars reach
-/// past it. Together they are how much wider the heading's first column gets when the ring is switched on.
+/// Clearance between the art's edge and the innermost bar of the visualiser ring, and how far the bars reach past it. Together they are how much wider the heading's first column gets when the ring is switched on.
 const RING_GAP: f32 = 6.0;
 const RING_REACH: f32 = 22.0;
 
@@ -70,8 +66,7 @@ pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
 
 /// One line of the lyrics card, or the one line it shows when there are none.
 ///
-/// A line carries the window it is sung in rather than the whole song: whether it is the current line is then a
-/// comparison against two numbers, instead of every line re-scanning the list on every tick of the playhead.
+/// A line carries the window it is sung in rather than the whole song: whether it is the current line is then a comparison against two numbers, instead of every line re-scanning the list on every tick of the playhead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LyricLine {
     Sung {
@@ -113,8 +108,7 @@ fn lyric_lines(lines: &[lyrics::Line], searching: bool) -> Vec<LyricLine> {
 
 /// The lyrics, with the line being sung now lit and scrolled to.
 ///
-/// The scroll area carries a definite height because it is a layout leaf — its content is laid out as its own root,
-/// so nothing inside it contributes to its size and a `max_height` alone would measure zero.
+/// The scroll area carries a definite height because it is a layout leaf — its content is laid out as its own root, so nothing inside it contributes to its size and a `max_height` alone would measure zero.
 fn lyrics_card(
     player: RwSignal<Player>,
     position: RwSignal<i64>,
@@ -129,8 +123,7 @@ fn lyrics_card(
             let source = {
                 let player = player.clone();
                 move || {
-                    // Read the track out of its cell first, then ask for its words: a signal read nested inside
-                    // another's borrow panics, and `lyrics::of` takes a signal of its own.
+                    // Read the track out of its cell first, then ask for its words: a signal read nested inside another's borrow panics, and `lyrics::of` takes a signal of its own.
                     let track = player.get();
                     let state = lyrics::of(&track).get();
                     let searching = state == Load::Loading;
@@ -163,9 +156,7 @@ fn lyrics_card(
                             now >= from && now < until
                         };
                         let row = lyric_row(text, is_current.clone(), theme)?;
-                        // Follow the song: the current line is brought into view, and only when it becomes the
-                        // current one, so a user who scrolled ahead is not fighting the card. Tied to the row,
-                        // since the list rebuilds these on every track change.
+                        // Follow the song: the current line is brought into view, and only when it becomes the current one, so a user who scrolled ahead is not fighting the card. Tied to the row, since the list rebuilds these on every track change.
                         let node = row.layout_node();
                         let viewport = viewport.clone();
                         let follow = telar::effect(move || {
@@ -195,10 +186,7 @@ fn lyrics_card(
         .build(theme)
 }
 
-/// One line of words. An empty line is a gap between verses and still takes its height, so the lines do not
-/// shuffle upwards while an instrumental break plays — but it is a *box* of that height rather than a `Text` of
-/// blank characters: a space has no outline, and asking the renderer to fill an empty path is how tiny-skia's
-/// "empty paths cannot be filled" warning gets emitted once per frame.
+/// One line of words. An empty line is a gap between verses and still takes its height, so the lines do not shuffle upwards while an instrumental break plays — but it is a *box* of that height rather than a `Text` of blank characters: a space has no outline, and asking the renderer to fill an empty path is how tiny-skia's "empty paths cannot be filled" warning gets emitted once per frame.
 fn lyric_row(
     text: String,
     is_current: impl Fn() -> bool + Clone + 'static,
@@ -288,9 +276,7 @@ fn now_playing(
 
 /// The cover, ringed by the visualiser when `[media] visualiser` asks for it.
 ///
-/// The ring is drawn *behind* the art in a box the art is centred in, so switching it on does not move the
-/// title beside it by a different amount than it moves the picture. Nothing subscribes to the spectrum unless
-/// the key is on, which is what keeps a media page from opening an audio capture nobody asked for.
+/// The ring is drawn *behind* the art in a box the art is centred in, so switching it on does not move the title beside it by a different amount than it moves the picture. Nothing subscribes to the spectrum unless the key is on, which is what keeps a media page from opening an audio capture nobody asked for.
 fn cover(
     player: RwSignal<Player>,
     config: &Config,
@@ -308,8 +294,7 @@ fn cover(
         move |spectrum: visualiser::Spectrum| sink.set(spectrum.bars),
     );
 
-    // No fade and no floor: a silent spectrum is every bar at zero length, which draws nothing. The ring
-    // hides itself by being made of the readings rather than by a rule about them.
+    // No fade and no floor: a silent spectrum is every bar at zero length, which draws nothing. The ring hides itself by being made of the readings rather than by a rule about them.
     let ring = widget::spectrum_ring(
         derive(bands.read_only(), |bars| bars),
         fixed(theme.accent),
@@ -336,9 +321,7 @@ fn cover(
     )?))
 }
 
-/// The art itself, or a placeholder while there is nothing to show. A keyed list over the resolved file rather
-/// than a plain image, so the art is decoded once per picture instead of once per repaint, and so the
-/// placeholder is swapped for the real thing when the download lands.
+/// The art itself, or a placeholder while there is nothing to show. A keyed list over the resolved file rather than a plain image, so the art is decoded once per picture instead of once per repaint, and so the placeholder is swapped for the real thing when the download lands.
 fn cover_art(
     player: RwSignal<Player>,
     theme: NordTheme,
@@ -357,8 +340,7 @@ fn cover_art(
     Ok(Box::new(rows))
 }
 
-/// The local file for an `artUrl`, starting a download the first time one is seen. Returns `None` while it is
-/// still coming, which the card draws as the placeholder rather than as a gap that pops.
+/// The local file for an `artUrl`, starting a download the first time one is seen. Returns `None` while it is still coming, which the card draws as the placeholder rather than as a gap that pops.
 fn art_file(url: &str) -> Option<String> {
     match art::art(url).get() {
         ArtState::Ready(path) => Some(path.to_string_lossy().into_owned()),
@@ -382,9 +364,7 @@ fn placeholder(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// A full-width playhead that seeks where it is pressed.
 ///
-/// The jump is expressed as a *relative* `Seek`, because the absolute `SetPosition` takes the track id from the
-/// metadata and refuses the call when it does not match — exactly the race a scrub hits when the track changes
-/// under it. Which is also why the current position has to be subtracted here rather than sent as-is.
+/// The jump is expressed as a *relative* `Seek`, because the absolute `SetPosition` takes the track id from the metadata and refuses the call when it does not match — exactly the race a scrub hits when the track changes under it. Which is also why the current position has to be subtracted here rather than sent as-is.
 fn scrubber(
     player: RwSignal<Player>,
     position: RwSignal<i64>,
@@ -532,8 +512,7 @@ fn transport(
     )?))
 }
 
-/// A control the player says it cannot honour recedes to muted rather than disappearing: a transport row that
-/// changes shape between tracks is harder to aim at than one whose buttons stay put.
+/// A control the player says it cannot honour recedes to muted rather than disappearing: a transport row that changes shape between tracks is harder to aim at than one whose buttons stay put.
 fn enabled(can: bool, theme: NordTheme) -> Color {
     if can { theme.text } else { theme.muted }
 }
@@ -585,8 +564,7 @@ fn non_empty(text: &str) -> String {
     }
 }
 
-/// Microseconds as `m:ss`, or `h:mm:ss` past an hour. A track with no reported length (a live stream) reads as
-/// `--:--` rather than as zero, which would claim it had just started.
+/// Microseconds as `m:ss`, or `h:mm:ss` past an hour. A track with no reported length (a live stream) reads as `--:--` rather than as zero, which would claim it had just started.
 fn clock_label(micros: i64) -> String {
     if micros <= 0 {
         return "--:--".to_string();
@@ -668,9 +646,7 @@ mod tests {
         );
     }
 
-    /// The card's closures only run when something builds them, and each reads a signal — the shape that panics on
-    /// a re-entrant borrow. Measured as well as built, because a scroll area is a layout leaf: it takes no size from
-    /// its content, so a viewport with no height of its own clips every line away (see the launcher's list).
+    /// The card's closures only run when something builds them, and each reads a signal — the shape that panics on a re-entrant borrow. Measured as well as built, because a scroll area is a layout leaf: it takes no size from its content, so a viewport with no height of its own clips every line away (see the launcher's list).
     #[test]
     fn the_lyrics_card_builds_with_a_viewport_that_has_a_size() {
         use telar::{AvailableSpace, compute_layout, new_container};
@@ -705,8 +681,7 @@ mod tests {
         assert!(rect.width > 0.0);
     }
 
-    /// The ring is drawn *behind* the art, so the thing that can go wrong is silent: the art keeps its size and
-    /// the bars are simply clipped away by a box that never grew. Measured, not built, for that reason.
+    /// The ring is drawn *behind* the art, so the thing that can go wrong is silent: the art keeps its size and the bars are simply clipped away by a box that never grew. Measured, not built, for that reason.
     #[test]
     fn the_cover_grows_by_the_ring_only_when_the_ring_is_on() {
         use telar::{AvailableSpace, compute_layout, new_container};

@@ -1,14 +1,8 @@
 //! Recording the screen, by driving a recorder that already exists.
 //!
-//! Unlike a screenshot, a recording is not something a shell can do itself: it is an encoder, a muxer and a
-//! frame pump, and every Wayland session already has one — `wf-recorder` or `gpu-screen-recorder`. So this
-//! service owns the *session* rather than the pixels: which backend, what it is recording, since when, and the
-//! one thing a wrapper must get right, which is stopping it properly. A recorder killed rather than interrupted
-//! leaves an unplayable file, so `stop` sends `SIGINT` and lets the encoder write its own trailer.
+//! Unlike a screenshot, a recording is not something a shell can do itself: it is an encoder, a muxer and a frame pump, and every Wayland session already has one — `wf-recorder` or `gpu-screen-recorder`. So this service owns the *session* rather than the pixels: which backend, what it is recording, since when, and the one thing a wrapper must get right, which is stopping it properly. A recorder killed rather than interrupted leaves an unplayable file, so `stop` sends `SIGINT` and lets the encoder write its own trailer.
 //!
-//! One process at a time, tracked by pid. The child is owned by a waiter thread rather than by whoever pressed
-//! stop, so a recorder that exits on its own — a full disk, a missing codec — updates the shell exactly like one
-//! the user stopped.
+//! One process at a time, tracked by pid. The child is owned by a waiter thread rather than by whoever pressed stop, so a recorder that exits on its own — a full disk, a missing codec — updates the shell exactly like one the user stopped.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -52,8 +46,7 @@ impl Backend {
             .find(|backend| backend.program() == id.trim())
     }
 
-    /// The container each backend writes. `wf-recorder` picks its muxer off the extension, and gpu-screen-recorder
-    /// defaults to mp4; asking for the one it already wants avoids a re-encode nobody asked for.
+    /// The container each backend writes. `wf-recorder` picks its muxer off the extension, and gpu-screen-recorder defaults to mp4; asking for the one it already wants avoids a re-encode nobody asked for.
     fn extension(self) -> &'static str {
         match self {
             Backend::WfRecorder => "mkv",
@@ -61,8 +54,7 @@ impl Backend {
         }
     }
 
-    /// Whether the backend can suspend a recording in place. Only gpu-screen-recorder can (`SIGUSR2`), so the UI
-    /// asks rather than offering a button that would do nothing.
+    /// Whether the backend can suspend a recording in place. Only gpu-screen-recorder can (`SIGUSR2`), so the UI asks rather than offering a button that would do nothing.
     pub fn can_pause(self) -> bool {
         matches!(self, Backend::GpuScreenRecorder)
     }
@@ -81,8 +73,7 @@ pub enum Scope {
     Area(Area),
 }
 
-/// The live recording, or the last one that finished. One value rather than two, because every surface asking
-/// about it wants the same three facts: whether it is running, for how long, and where the file is.
+/// The live recording, or the last one that finished. One value rather than two, because every surface asking about it wants the same three facts: whether it is running, for how long, and where the file is.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Recording {
     pub active: bool,
@@ -133,8 +124,7 @@ fn now() -> u64 {
 
 static STATE: Store<Recording> = Store::new(Recording::default);
 
-/// The running recorder's pid, or 0. Kept apart from the [`Child`] on purpose: the child is owned by the waiter
-/// thread, so stopping is a signal rather than a lock everyone has to take.
+/// The running recorder's pid, or 0. Kept apart from the [`Child`] on purpose: the child is owned by the waiter thread, so stopping is a signal rather than a lock everyone has to take.
 static PID: AtomicI32 = AtomicI32::new(0);
 
 pub fn subscribe(tx: EventSender<Recording>) {
@@ -145,8 +135,7 @@ pub fn current() -> Recording {
     STATE.get()
 }
 
-/// The backend a recording would use: the configured one when it is installed, else the first that is. `None`
-/// means neither is available, which is what greys the recorder controls out.
+/// The backend a recording would use: the configured one when it is installed, else the first that is. `None` means neither is available, which is what greys the recorder controls out.
 pub fn backend(config: &RecorderConfig) -> Option<Backend> {
     match Backend::from_id(&config.backend) {
         Some(wanted) => wanted.is_installed().then_some(wanted),
@@ -158,8 +147,7 @@ pub fn is_recording() -> bool {
     STATE.get().active
 }
 
-/// Starts recording `scope`. A no-op while one is already running — two recorders on one screen would fight over
-/// the encoder and produce two half files.
+/// Starts recording `scope`. A no-op while one is already running — two recorders on one screen would fight over the encoder and produce two half files.
 pub fn start(scope: Scope) {
     if is_recording() {
         return;
@@ -215,8 +203,7 @@ pub fn start(scope: Scope) {
     reap(child, config.notify);
 }
 
-/// Owns the child and publishes what it did when it exits — whether that was `stop`, a crash, or a full disk.
-/// The stderr it wrote is the message, since a recorder's own complaint is more useful than an exit code.
+/// Owns the child and publishes what it did when it exits — whether that was `stop`, a crash, or a full disk. The stderr it wrote is the message, since a recorder's own complaint is more useful than an exit code.
 fn reap(mut child: Child, notify: bool) {
     let stderr = child.stderr.take();
     let _ = std::thread::Builder::new()
@@ -236,8 +223,7 @@ fn reap(mut child: Child, notify: bool) {
                 state.active = false;
                 state.paused = false;
                 state.paused_since = None;
-                // A recorder interrupted with SIGINT reports a signal exit, which is what a clean stop looks
-                // like — so only a complaint on stderr is taken as a failure worth showing.
+                // A recorder interrupted with SIGINT reports a signal exit, which is what a clean stop looks like — so only a complaint on stderr is taken as a failure worth showing.
                 state.error = failed
                     .then(|| complaint.clone().unwrap_or_default())
                     .filter(|e| !e.is_empty());
@@ -257,8 +243,7 @@ fn reap(mut child: Child, notify: bool) {
         });
 }
 
-/// Stops the recording the way the encoder expects: `SIGINT`, which is what tells it to write its trailer and
-/// close the file. Killing it instead leaves a container with no index — a file that plays nowhere.
+/// Stops the recording the way the encoder expects: `SIGINT`, which is what tells it to write its trailer and close the file. Killing it instead leaves a container with no index — a file that plays nowhere.
 pub fn stop() {
     let pid = PID.load(Ordering::Relaxed);
     if pid == 0 {
@@ -271,8 +256,7 @@ pub fn toggle(scope: Scope) {
     if is_recording() { stop() } else { start(scope) }
 }
 
-/// Suspends or resumes a recording in place, on a backend that can. `wf-recorder` cannot, so this says so rather
-/// than stopping the recording the user asked to pause.
+/// Suspends or resumes a recording in place, on a backend that can. `wf-recorder` cannot, so this says so rather than stopping the recording the user asked to pause.
 pub fn toggle_pause() -> Result<bool, String> {
     let state = STATE.get();
     if !state.active {
@@ -304,9 +288,7 @@ pub fn toggle_pause() -> Result<bool, String> {
     Ok(paused)
 }
 
-/// The same message as a toast, for the user who wants the acknowledgement without a notification in their
-/// history. Gated by `[toasts.events] recording`, which is on by default — a recording that started silently is
-/// the one that runs for an hour unnoticed.
+/// The same message as a toast, for the user who wants the acknowledgement without a notification in their history. Gated by `[toasts.events] recording`, which is on by default — a recording that started silently is the one that runs for an hour unnoticed.
 fn toast(title: &str, body: &str) {
     let state = STATE.get();
     crate::toaster::post(
@@ -331,8 +313,7 @@ fn fail(reason: String) {
     crate::notifications::notify_local("hogar-shell", &telar::t!("recorder.failed_title"), &reason);
 }
 
-/// The backend's argument list. Split out and tested rather than built inline: this is the whole difference
-/// between the two recorders, and getting a flag wrong means a file the user finds out about after the meeting.
+/// The backend's argument list. Split out and tested rather than built inline: this is the whole difference between the two recorders, and getting a flag wrong means a file the user finds out about after the meeting.
 fn command_args(
     backend: Backend,
     scope: &Scope,
@@ -363,8 +344,7 @@ fn command_args(
                 }
             }
             if config.audio {
-                // `--audio=<device>` with a device, bare `--audio` without: passing an empty value makes
-                // wf-recorder look for a device literally called "".
+                // `--audio=<device>` with a device, bare `--audio` without: passing an empty value makes wf-recorder look for a device literally called "".
                 args.push(match config.audio_device.trim() {
                     "" => "--audio".to_string(),
                     device => format!("--audio={device}"),
@@ -435,12 +415,10 @@ impl Entry {
     }
 }
 
-/// Which extensions count as a recording. Anything else in the directory is the user's — a thumbnail, a note —
-/// and a list that offered to delete it would be a list nobody trusts.
+/// Which extensions count as a recording. Anything else in the directory is the user's — a thumbnail, a note — and a list that offered to delete it would be a list nobody trusts.
 const VIDEO: &[&str] = &["mp4", "mkv", "webm", "mov", "avi"];
 
-/// The recordings in `dir`, newest first, capped at `limit`. Read on demand rather than watched: a panel that is
-/// closed has no reason to hold an inotify handle, and the directory changes once per recording.
+/// The recordings in `dir`, newest first, capped at `limit`. Read on demand rather than watched: a panel that is closed has no reason to hold an inotify handle, and the directory changes once per recording.
 pub fn recordings(dir: &Path, limit: usize) -> Vec<Entry> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -473,8 +451,7 @@ pub fn recordings(dir: &Path, limit: usize) -> Vec<Entry> {
     found
 }
 
-/// Deletes a recording. Restricted to `dir` rather than taking any path: the caller is a UI list, and a delete
-/// button that could be handed an arbitrary path is a delete button that eventually is.
+/// Deletes a recording. Restricted to `dir` rather than taking any path: the caller is a UI list, and a delete button that could be handed an arbitrary path is a delete button that eventually is.
 pub fn delete(dir: &Path, path: &Path) -> Result<(), String> {
     if path.parent() != Some(dir) {
         return Err(format!(
@@ -491,8 +468,7 @@ fn file_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// Beside the state it reads rather than with the other glyphs, so the toast this service posts and the chip a
-/// bar draws take the same answer from one place without the service having to reach up for it.
+/// Beside the state it reads rather than with the other glyphs, so the toast this service posts and the chip a bar draws take the same answer from one place without the service having to reach up for it.
 pub fn glyph(active: bool) -> &'static str {
     if active { "circle-stop" } else { "video" }
 }
@@ -610,8 +586,7 @@ mod tests {
             "the forty paused seconds are not recorded"
         );
 
-        // Still paused: the current pause counts too, or the readout would keep climbing while nothing is being
-        // written.
+        // Still paused: the current pause counts too, or the readout would keep climbing while nothing is being written.
         let paused = Recording {
             paused: true,
             paused_since: Some(now() - 10),

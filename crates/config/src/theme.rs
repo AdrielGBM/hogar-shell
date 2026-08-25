@@ -15,13 +15,9 @@ pub enum FontRole {
     Display,
 }
 
-/// The metrics travel with the colours. Without them a catalogue component sizes itself from the trait's own
-/// defaults — 4px radius, 8px spacing, 14px text — which is a different design from the one the user
-/// configured, on the same screen as the bars that follow it.
+/// The metrics travel with the colours. Without them a catalogue component sizes itself from the trait's own defaults — 4px radius, 8px spacing, 14px text — which is a different design from the one the user configured, on the same screen as the bars that follow it.
 #[derive(Clone, Copy, ThemeTokens)]
-// Whichever of the theme's two foregrounds reads on the accent, rather than always the dark one: a light
-// accent takes `base`, a dark one takes `text`. A component that fills with `primary` and writes with
-// `on_primary` is otherwise unreadable on half the palettes this shell ships.
+// Whichever of the theme's two foregrounds reads on the accent, rather than always the dark one: a light accent takes `base`, a dark one takes `text`. A component that fills with `primary` and writes with `on_primary` is otherwise unreadable on half the palettes this shell ships.
 #[theme(on_primary = self.accent.most_readable(&[self.text, self.base]))]
 pub struct NordTheme {
     /// Base corner radius the theme rounds panels and bars to (the design default; `[shape]`/per-bar can override).
@@ -73,12 +69,9 @@ pub struct ThemeMeta {
     pub version: &'static str,
 }
 
-/// Every palette token, in the order an export lists them — the surfaces, the inks, the hues, the semantic
-/// four, then the highlights.
+/// Every palette token, in the order an export lists them — the surfaces, the inks, the hues, the semantic four, then the highlights.
 ///
-/// One list rather than four: the scheme exporter, the IPC palette dump, `[theme.colors]`'s editor and
-/// [`NordTheme::token`] all need the same names, and each copy that existed was a place a token added to the
-/// theme could go missing from without anything failing.
+/// One list rather than four: the scheme exporter, the IPC palette dump, `[theme.colors]`'s editor and [`NordTheme::token`] all need the same names, and each copy that existed was a place a token added to the theme could go missing from without anything failing.
 pub const THEME_TOKENS: &[&str] = &[
     "base",
     "surface",
@@ -126,8 +119,7 @@ pub const BUILT_IN_THEMES: &[&str] = &[
     "everforest",
 ];
 
-/// A theme name reduced to what identifies it, so `rose-pine`, `rose_pine` and `rosepine` are one theme and a
-/// user's separator preference never becomes a "unknown theme" warning.
+/// A theme name reduced to what identifies it, so `rose-pine`, `rose_pine` and `rosepine` are one theme and a user's separator preference never becomes a "unknown theme" warning.
 fn normalize(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_alphanumeric())
@@ -136,9 +128,7 @@ fn normalize(name: &str) -> String {
 }
 
 impl NordTheme {
-    /// The built-in palette for `name` (see [`BUILT_IN_THEMES`]); `custom` starts from nord for config to
-    /// override, `dynamic` likewise until [`Config::resolve_theme`](crate::Config::resolve_theme) substitutes
-    /// the wallpaper's own palette, and an unknown name falls back to nord with a warning.
+    /// The built-in palette for `name` (see [`BUILT_IN_THEMES`]); `custom` starts from nord for config to override, `dynamic` likewise until [`Config::resolve_theme`](crate::Config::resolve_theme) substitutes the wallpaper's own palette, and an unknown name falls back to nord with a warning.
     pub fn named(name: &str) -> Self {
         match normalize(name).as_str() {
             "nord" | "custom" | "dynamic" => Self::nord(),
@@ -162,10 +152,7 @@ impl NordTheme {
 
     /// The sibling of `name` in `mode`, or `name` itself when the family has no palette at that end.
     ///
-    /// A light/dark switch is a *family* choice, not a recolouring: Gruvbox Light is a designed palette, and
-    /// inverting Gruvbox Dark's ramp would produce something that is neither. A family with only one side —
-    /// Nord, Tokyo Night, Everforest — therefore keeps what it has rather than being forced through an
-    /// inversion its author never drew.
+    /// A light/dark switch is a *family* choice, not a recolouring: Gruvbox Light is a designed palette, and inverting Gruvbox Dark's ramp would produce something that is neither. A family with only one side — Nord, Tokyo Night, Everforest — therefore keeps what it has rather than being forced through an inversion its author never drew.
     pub fn in_mode(name: &str, mode: crate::scheme::Mode) -> &'static str {
         use crate::scheme::Mode;
         let normalized = normalize(name);
@@ -192,9 +179,7 @@ impl NordTheme {
         Self::canonical(sibling.unwrap_or(&normalized))
     }
 
-    /// A name as [`BUILT_IN_THEMES`] spells it, so [`in_mode`](Self::in_mode) hands back something a user can
-    /// read and `hogar-shell scheme set` accepts — not the separator-stripped form the lookup matches on. An
-    /// unknown name resolves to nord, which is where [`named`](Self::named) would send it anyway.
+    /// A name as [`BUILT_IN_THEMES`] spells it, so [`in_mode`](Self::in_mode) hands back something a user can read and `hogar-shell scheme set` accepts — not the separator-stripped form the lookup matches on. An unknown name resolves to nord, which is where [`named`](Self::named) would send it anyway.
     fn canonical(name: &str) -> &'static str {
         let normalized = normalize(name);
         BUILT_IN_THEMES
@@ -389,8 +374,7 @@ impl NordTheme {
         }
     }
 
-    /// Catppuccin Mocha — the darkest flavour. `cyan` carries the flavour's *sky*, since the shipped default
-    /// `[theme] accent = "cyan"` resolves through it; `accent` itself is *mauve*, the flavour's signature.
+    /// Catppuccin Mocha — the darkest flavour. `cyan` carries the flavour's *sky*, since the shipped default `[theme] accent = "cyan"` resolves through it; `accent` itself is *mauve*, the flavour's signature.
     pub fn catppuccin_mocha() -> Self {
         Self {
             radius: 12.0,
@@ -482,8 +466,7 @@ impl NordTheme {
         }
     }
 
-    /// Catppuccin Latte — the light flavour. Its surfaces run *darker* than the base, which is how a light
-    /// theme raises a panel off the page.
+    /// Catppuccin Latte — the light flavour. Its surfaces run *darker* than the base, which is how a light theme raises a panel off the page.
     pub fn catppuccin_latte() -> Self {
         Self {
             base: Color::from_rgb_u8(239, 241, 245),
@@ -705,16 +688,12 @@ impl NordTheme {
 
     /// A [`TextStyle`] carrying everything `[theme.fonts.<role>]` has to say — size, weight and slant.
     ///
-    /// The one way to start a text style, so a per-role override reaches every label instead of only the ones
-    /// that remembered to ask. A call site that chains `.with_weight(…)` afterwards still wins, which is what
-    /// keeps a deliberately bold heading bold when the body weight is lowered: that is emphasis relative to the
-    /// role, not the role itself.
+    /// The one way to start a text style, so a per-role override reaches every label instead of only the ones that remembered to ask. A call site that chains `.with_weight(…)` afterwards still wins, which is what keeps a deliberately bold heading bold when the body weight is lowered: that is emphasis relative to the role, not the role itself.
     pub fn text_style(&self, role: FontRole, paint: impl Into<telar::Paint>) -> TextStyle {
         self.text_style_at(role, paint, self.font(role))
     }
 
-    /// [`text_style`](Self::text_style) at a size the caller decides: the role still supplies weight and
-    /// slant, but not the size — a clock face scales with the surface it is drawn on, not with the body font.
+    /// [`text_style`](Self::text_style) at a size the caller decides: the role still supplies weight and slant, but not the size — a clock face scales with the surface it is drawn on, not with the body font.
     pub fn text_style_at(
         &self,
         role: FontRole,
@@ -762,8 +741,7 @@ impl NordTheme {
         self
     }
 
-    /// One token by name — the read half of [`with_color`](Self::with_color), and what lets a palette be drawn
-    /// as swatches, exported, or edited from [`THEME_TOKENS`] rather than as twenty-two hardcoded fields.
+    /// One token by name — the read half of [`with_color`](Self::with_color), and what lets a palette be drawn as swatches, exported, or edited from [`THEME_TOKENS`] rather than as twenty-two hardcoded fields.
     pub fn token(&self, name: &str) -> Color {
         match name {
             "base" => self.base,
@@ -817,9 +795,7 @@ impl Default for NordTheme {
 mod tests {
     use super::*;
 
-    /// A catalogue component asks the theme its questions through `ThemeTokens`, not through `NordTheme`, so a
-    /// metric this shell configures has to be answerable there — otherwise a `text_field` dropped into the
-    /// settings float rounds and spaces itself to telar's defaults while every bar on screen follows the theme.
+    /// A catalogue component asks the theme its questions through `ThemeTokens`, not through `NordTheme`, so a metric this shell configures has to be answerable there — otherwise a `text_field` dropped into the settings float rounds and spaces itself to telar's defaults while every bar on screen follows the theme.
     #[test]
     fn the_token_contract_answers_with_this_theme_s_own_metrics() {
         let theme = NordTheme::rose_pine();
@@ -834,8 +810,7 @@ mod tests {
         );
     }
 
-    /// Filling with `primary` and writing with `on_primary` has to stay readable on every palette, so the ink
-    /// is the more contrasting of the theme's two foregrounds rather than always its `base`.
+    /// Filling with `primary` and writing with `on_primary` has to stay readable on every palette, so the ink is the more contrasting of the theme's two foregrounds rather than always its `base`.
     #[test]
     fn on_primary_is_whichever_foreground_reads_on_the_accent() {
         for name in ["nord", "rose-pine-dawn", "catppuccin-latte", "gruvbox"] {
@@ -853,9 +828,7 @@ mod tests {
         }
     }
 
-    /// The two halves of the token table have to name the same tokens. A swatch drawn from a name `token`
-    /// does not know reads the accent, which is a preview that quietly shows the wrong colour rather than a
-    /// blank — so the guard is that every name `with_color` writes, `token` reads back.
+    /// The two halves of the token table have to name the same tokens. A swatch drawn from a name `token` does not know reads the accent, which is a preview that quietly shows the wrong colour rather than a blank — so the guard is that every name `with_color` writes, `token` reads back.
     #[test]
     fn every_token_reads_back_what_with_color_wrote() {
         let marker = Color::from_hex("#123456").expect("a hex colour");
@@ -996,8 +969,7 @@ mod tests {
 
     #[test]
     fn the_shipped_default_accent_resolves_through_every_theme() {
-        // `[theme] accent` defaults to "cyan", so a theme whose `cyan` token is its background would ship a
-        // shell with an invisible accent.
+        // `[theme] accent` defaults to "cyan", so a theme whose `cyan` token is its background would ship a shell with an invisible accent.
         for name in BUILT_IN_THEMES {
             let theme = NordTheme::named(name).with_accent("cyan");
             assert_ne!(

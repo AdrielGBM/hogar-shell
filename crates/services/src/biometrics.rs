@@ -1,13 +1,8 @@
 //! Unlocking without typing: a fingerprint through fprintd, and a face through Howdy.
 //!
-//! Both are *alternatives* to the password, never replacements. They run alongside the field, they stop the
-//! moment the screen unlocks, and each has its own attempt budget — after which the shell stops asking and
-//! leaves the password as the only way in. That ordering is the whole safety argument: a biometric that keeps
-//! retrying forever is a sensor an attacker can keep feeding.
+//! Both are *alternatives* to the password, never replacements. They run alongside the field, they stop the moment the screen unlocks, and each has its own attempt budget — after which the shell stops asking and leaves the password as the only way in. That ordering is the whole safety argument: a biometric that keeps retrying forever is a sensor an attacker can keep feeding.
 //!
-//! Neither is required. fprintd is a D-Bus service that simply is not on the bus without a reader; Howdy is a
-//! command that is not installed. In both cases the lock screen behaves as though the feature were switched
-//! off, which is what `[lock] fingerprint` / `howdy_command` also do explicitly.
+//! Neither is required. fprintd is a D-Bus service that simply is not on the bus without a reader; Howdy is a command that is not installed. In both cases the lock screen behaves as though the feature were switched off, which is what `[lock] fingerprint` / `howdy_command` also do explicitly.
 
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -27,9 +22,7 @@ const DEVICE_IFACE: &str = "net.reactivated.Fprint.Device";
 /// Claiming a reader talks to hardware and to polkit; a wedged one must not park the attempt thread forever.
 const METHOD_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Which run of the lock screen an attempt belongs to. A verification can be parked inside fprintd when the
-/// screen unlocks, and its late result must not unlock the *next* lock — so every attempt carries the
-/// generation it started in and a stale one is discarded.
+/// Which run of the lock screen an attempt belongs to. A verification can be parked inside fprintd when the screen unlocks, and its late result must not unlock the *next* lock — so every attempt carries the generation it started in and a stale one is discarded.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -53,15 +46,13 @@ pub fn start() {
     }
 }
 
-/// Ends every attempt in flight. A verification already inside fprintd cannot be interrupted from here, so the
-/// generation is bumped instead: whatever it eventually answers is answered for a lock that is over.
+/// Ends every attempt in flight. A verification already inside fprintd cannot be interrupted from here, so the generation is bumped instead: whatever it eventually answers is answered for a lock that is over.
 pub fn stop() {
     RUNNING.store(false, Ordering::Relaxed);
     GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Runs face unlock once, on demand — the lock screen's "try again" for a machine that did not want it
-/// triggered automatically.
+/// Runs face unlock once, on demand — the lock screen's "try again" for a machine that did not want it triggered automatically.
 pub fn retry_face() {
     let config = config::shared_config()
         .map(|c| c.lock.clone())
@@ -74,8 +65,7 @@ pub fn retry_face() {
     spawn("hogar-shell-howdy", move || run_face(generation, &howdy, 1));
 }
 
-/// Whether either method is configured at all, so the screen can offer them rather than showing a control
-/// that does nothing.
+/// Whether either method is configured at all, so the screen can offer them rather than showing a control that does nothing.
 pub fn offered(config: &LockConfig) -> (bool, bool) {
     (
         config.fingerprint && config.max_fprint_tries > 0,
@@ -98,8 +88,7 @@ fn connection() -> Option<Connection> {
     crate::bus::system(Some(METHOD_TIMEOUT))
 }
 
-/// The reader fprintd would use, or `None` on a machine with none — which is the ordinary case and not worth a
-/// warning on every lock.
+/// The reader fprintd would use, or `None` on a machine with none — which is the ordinary case and not worth a warning on every lock.
 fn default_device(conn: &Connection) -> Option<zbus::zvariant::OwnedObjectPath> {
     conn.call_method(
         Some(FPRINT),
@@ -116,9 +105,7 @@ fn default_device(conn: &Connection) -> Option<zbus::zvariant::OwnedObjectPath> 
 
 /// One reader, up to `max_tries` fingers.
 ///
-/// fprintd's verification is a claim, a start, a signal, and a stop — and the claim is exclusive, so it is
-/// released on every path out. A reader left claimed by a shell that unlocked is one no login screen can use
-/// afterwards.
+/// fprintd's verification is a claim, a start, a signal, and a stop — and the claim is exclusive, so it is released on every path out. A reader left claimed by a shell that unlocked is one no login screen can use afterwards.
 fn run_fingerprint(generation: u64, max_tries: u32) {
     let Some(conn) = connection() else {
         return;
@@ -171,8 +158,7 @@ fn run_fingerprint(generation: u64, max_tries: u32) {
     );
 }
 
-/// Starts one verification and parks on `VerifyStatus` until it resolves. `Some(true)` is a match, `Some(false)`
-/// a rejected finger worth retrying, `None` a reader that stopped answering.
+/// Starts one verification and parks on `VerifyStatus` until it resolves. `Some(true)` is a match, `Some(false)` a rejected finger worth retrying, `None` a reader that stopped answering.
 fn verify_once(conn: &Connection, path: &str, generation: u64) -> Option<bool> {
     let rule = zbus::MatchRule::builder()
         .msg_type(MessageType::Signal)
@@ -215,11 +201,9 @@ fn verify_once(conn: &Connection, path: &str, generation: u64) -> Option<bool> {
     verdict
 }
 
-/// Howdy, run as the command the config names with the user appended — the same contract Howdy's own PAM
-/// module uses: exit status 0 is a match, anything else is not.
+/// Howdy, run as the command the config names with the user appended — the same contract Howdy's own PAM module uses: exit status 0 is a match, anything else is not.
 ///
-/// A subprocess rather than a library because Howdy has no stable one, and off the UI thread with a bound on
-/// how long it may look: a camera that never resolves must not leave the screen saying "looking" forever.
+/// A subprocess rather than a library because Howdy has no stable one, and off the UI thread with a bound on how long it may look: a camera that never resolves must not leave the screen saying "looking" forever.
 fn run_face(generation: u64, command: &str, max_tries: u32) {
     let user = crate::pam::current_user();
     for attempt in 1..=max_tries {
@@ -244,8 +228,7 @@ fn run_face(generation: u64, command: &str, max_tries: u32) {
     lock::set_busy(None);
 }
 
-/// Runs the configured command once. `None` means it could not be started at all — an uninstalled Howdy, which
-/// is a reason to stop trying rather than to count a failed attempt.
+/// Runs the configured command once. `None` means it could not be started at all — an uninstalled Howdy, which is a reason to stop trying rather than to count a failed attempt.
 fn run_once(command: &str, user: &str) -> Option<bool> {
     let mut words = command.split_whitespace();
     let program = words.next()?;
@@ -282,8 +265,7 @@ mod tests {
         };
         assert_eq!(offered(&both), (true, true));
 
-        // A budget of zero is off, not unlimited — otherwise `max_*_tries = 0` would be the most permissive
-        // setting in the file rather than the most restrictive.
+        // A budget of zero is off, not unlimited — otherwise `max_*_tries = 0` would be the most permissive setting in the file rather than the most restrictive.
         let budgetless = LockConfig {
             fingerprint: true,
             max_fprint_tries: 0,
@@ -296,8 +278,7 @@ mod tests {
 
     #[test]
     fn an_attempt_from_a_previous_lock_is_never_honoured() {
-        // The case this guards: a finger presented as the screen unlocks, answered by fprintd afterwards. If
-        // generation were not checked, that answer would unlock whatever lock came next.
+        // The case this guards: a finger presented as the screen unlocks, answered by fprintd afterwards. If generation were not checked, that answer would unlock whatever lock came next.
         stop();
         let stale = GENERATION.load(Ordering::Relaxed);
         assert!(!current(stale), "nothing is current once the lock is over");
@@ -309,8 +290,7 @@ mod tests {
         stop();
     }
 
-    /// The command is never run here: a suite that executed `howdy_command` would be pointing the machine's
-    /// camera at whoever ran `cargo test`.
+    /// The command is never run here: a suite that executed `howdy_command` would be pointing the machine's camera at whoever ran `cargo test`.
     #[test]
     fn the_face_command_is_parsed_without_being_run() {
         assert!("".split_whitespace().next().is_none());

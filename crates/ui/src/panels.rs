@@ -1,15 +1,8 @@
 //! Which module id a panel surface fills itself from.
 //!
-//! A drawer, a float and the settings preview all show *a module's panel*, and none of them knows which module
-//! that is until it opens. The mapping used to be a `match` beside the drawer, which meant the surface that
-//! merely presents a panel had to name every module that has one — the one edge that stopped the surfaces
-//! being buildable without them. Registered instead, by whoever owns the module list.
+//! A drawer, a float and the settings preview all show *a module's panel*, and none of them knows which module that is until it opens. The mapping used to be a `match` beside the drawer, which meant the surface that merely presents a panel had to name every module that has one — the one edge that stopped the surfaces being buildable without them. Registered instead, by whoever owns the module list.
 //!
-//! The keyboard mode is registered with the builder rather than beside it, because the two cannot be allowed to
-//! drift: a panel that gains a text field and is not granted the keyboard is a field that cannot be typed into.
-//! Asking for it costs more than an unused capability — a layer surface granted keyboard focus takes it from
-//! the focused window, and the compositor re-focuses that window when the panel closes; a layout that follows
-//! focus moves the viewport on the way back — so a panel that only displays readings must not ask.
+//! The keyboard mode is registered with the builder rather than beside it, because the two cannot be allowed to drift: a panel that gains a text field and is not granted the keyboard is a field that cannot be typed into. Asking for it costs more than an unused capability — a layer surface granted keyboard focus takes it from the focused window, and the compositor re-focuses that window when the panel closes; a layout that follows focus moves the viewport on the way back — so a panel that only displays readings must not ask.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -22,16 +15,14 @@ pub type PanelBuilder = fn() -> Result<Box<dyn LayoutItem>, LayoutError>;
 pub struct PanelDef {
     pub build: PanelBuilder,
     pub keyboard: KeyboardMode,
-    /// What the panel keeps only while it is open, dropped when the user closes it. A reload never comes through
-    /// here — it leaves open panels alone — so this fires exactly on "the user is done with it".
+    /// What the panel keeps only while it is open, dropped when the user closes it. A reload never comes through here — it leaves open panels alone — so this fires exactly on "the user is done with it".
     pub on_close: Option<fn()>,
 }
 
 /// Every module that has a panel, and what opening it needs.
 pub struct PanelRegistry {
     panels: HashMap<String, PanelDef>,
-    /// What an unregistered module shows. A panel surface is opened before anything can check the id, so there
-    /// has to be something to draw.
+    /// What an unregistered module shows. A panel surface is opened before anything can check the id, so there has to be something to draw.
     fallback: PanelBuilder,
 }
 
@@ -54,8 +45,7 @@ impl PanelRegistry {
         );
     }
 
-    /// Registers what `id`'s panel forgets when the user closes it. Separate from [`Self::register`] because
-    /// only a panel that carries state across its own rebuilds has anything to drop.
+    /// Registers what `id`'s panel forgets when the user closes it. Separate from [`Self::register`] because only a panel that carries state across its own rebuilds has anything to drop.
     pub fn on_close(&mut self, id: &str, forget: fn()) {
         if let Some(def) = self.panels.get_mut(id) {
             def.on_close = Some(forget);
@@ -115,8 +105,7 @@ pub fn closed(module: &str) {
     }
 }
 
-/// Whether `module`'s panel needs the keyboard — because it hosts editable text, or because it is navigable
-/// with the arrow keys.
+/// Whether `module`'s panel needs the keyboard — because it hosts editable text, or because it is navigable with the arrow keys.
 pub fn wants_keyboard(module: &str) -> KeyboardMode {
     LIVE.with(|live| {
         live.borrow()

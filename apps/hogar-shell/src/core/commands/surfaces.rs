@@ -255,8 +255,7 @@ pub(crate) const TOAST: Target = Target {
                 if text.trim().is_empty() {
                     return Err("missing argument <text>".to_string());
                 }
-                // Under the config-reload event, which is the one that means "the shell itself is talking";
-                // a script's toast should be switchable off by the same key.
+                // Under the config-reload event, which is the one that means "the shell itself is talking"; a script's toast should be switchable off by the same key.
                 toaster::post(Event::ConfigLoaded, "info", text.clone(), String::new());
                 Ok(text)
             },

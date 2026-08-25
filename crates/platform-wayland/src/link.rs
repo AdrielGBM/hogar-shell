@@ -1,12 +1,6 @@
 //! The control channel between a live surface and whoever holds it.
 //!
-//! A layer surface used to be something the driver decided on its own: configured once when it was created and
-//! never renegotiated, and closed by a flag that tore it down on the next loop turn. All of it is here instead.
-//! A [`SurfaceLink`] is shared by the driver's surface entry and the `SurfaceHandle` its opener holds — one
-//! side asks, the other applies on its next turn — carrying three kinds of request: the [`SurfaceUpdate`] that
-//! renegotiates the surface's layer-shell state, a rebuild of its content, and the close. An [`ExitPlan`] is
-//! what the surface's own content registered for the moment it is asked to close, together with how long the
-//! driver must keep it mapped for that to be seen.
+//! A layer surface used to be something the driver decided on its own: configured once when it was created and never renegotiated, and closed by a flag that tore it down on the next loop turn. All of it is here instead. A [`SurfaceLink`] is shared by the driver's surface entry and the `SurfaceHandle` its opener holds — one side asks, the other applies on its next turn — carrying three kinds of request: the [`SurfaceUpdate`] that renegotiates the surface's layer-shell state, a rebuild of its content, and the close. An [`ExitPlan`] is what the surface's own content registered for the moment it is asked to close, together with how long the driver must keep it mapped for that to be seen.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,15 +10,11 @@ use crate::config::{Anchor, KeyboardInteractivity, Layer};
 
 /// A change to a live surface's layer-shell state — everything the protocol lets a mapped surface renegotiate.
 ///
-/// Every field is optional because they are asked for independently: a bar sliding out of view retargets only
-/// its margin, a float being dragged wider only its size, and an auto-hiding bar gives up its exclusive zone
-/// without touching either. What is *not* here is what a surface is created with and cannot change: its
-/// output, its namespace, and whether its input region is carved from its content.
+/// Every field is optional because they are asked for independently: a bar sliding out of view retargets only its margin, a float being dragged wider only its size, and an auto-hiding bar gives up its exclusive zone without touching either. What is *not* here is what a surface is created with and cannot change: its output, its namespace, and whether its input region is carved from its content.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SurfaceUpdate {
     pub size: Option<(u32, u32)>,
-    /// `(top, right, bottom, left)`, in logical pixels. Negative values push the surface off its own edge,
-    /// which is what leaves a hover strip of an auto-hidden bar on screen.
+    /// `(top, right, bottom, left)`, in logical pixels. Negative values push the surface off its own edge, which is what leaves a hover strip of an auto-hidden bar on screen.
     pub margin: Option<(i32, i32, i32, i32)>,
     pub exclusive_zone: Option<i32>,
     pub anchor: Option<Anchor>,
@@ -58,10 +48,7 @@ impl SurfaceUpdate {
         *self == Self::default()
     }
 
-    /// Folds a later request over an earlier one still waiting to be applied, field by field. Two requests
-    /// naming different fields have to *both* survive — a bar that gives up its exclusive zone and then slides
-    /// out in the same loop turn must do both — and two naming the same field resolve to the newer, which is
-    /// the whole point of coalescing an animation's frames into the one the driver will actually commit.
+    /// Folds a later request over an earlier one still waiting to be applied, field by field. Two requests naming different fields have to *both* survive — a bar that gives up its exclusive zone and then slides out in the same loop turn must do both — and two naming the same field resolve to the newer, which is the whole point of coalescing an animation's frames into the one the driver will actually commit.
     fn merge(&mut self, next: SurfaceUpdate) {
         self.size = next.size.or(self.size);
         self.margin = next.margin.or(self.margin);
@@ -72,8 +59,7 @@ impl SurfaceUpdate {
     }
 }
 
-/// The shared state behind a `SurfaceHandle`: whether the surface has been asked to close or to rebuild its
-/// content, and any layer-shell state waiting to be pushed to the compositor.
+/// The shared state behind a `SurfaceHandle`: whether the surface has been asked to close or to rebuild its content, and any layer-shell state waiting to be pushed to the compositor.
 #[derive(Default)]
 pub(crate) struct SurfaceLink {
     closing: AtomicBool,
@@ -90,9 +76,7 @@ impl SurfaceLink {
         self.closing.load(Ordering::Relaxed)
     }
 
-    /// Asks for the surface's content to be built again on the surface it is already running on. Idempotent:
-    /// several requests between two loop turns are one rebuild, which is what keeps a burst of config writes
-    /// from costing a burst of them.
+    /// Asks for the surface's content to be built again on the surface it is already running on. Idempotent: several requests between two loop turns are one rebuild, which is what keeps a burst of config writes from costing a burst of them.
     pub(crate) fn request_rebuild(&self) {
         self.rebuilding.store(true, Ordering::Relaxed);
     }
@@ -107,8 +91,7 @@ impl SurfaceLink {
         }
     }
 
-    /// The state to commit this turn, if any. Taking it is what keeps a surface that asks for the same size
-    /// every frame from committing one every frame.
+    /// The state to commit this turn, if any. Taking it is what keeps a surface that asks for the same size every frame from committing one every frame.
     pub(crate) fn take_update(&self) -> Option<SurfaceUpdate> {
         let mut pending = self.pending.lock().ok()?;
         let taken = std::mem::take(&mut *pending);
@@ -116,13 +99,9 @@ impl SurfaceLink {
     }
 }
 
-/// What a surface does when it is asked to close, and how long the driver holds it mapped afterwards so that
-/// reaction reaches the screen.
+/// What a surface does when it is asked to close, and how long the driver holds it mapped afterwards so that reaction reaches the screen.
 ///
-/// Registered from inside the surface's own build, by whatever wants an exit transition — which is more than
-/// one thing per surface: the hosted scaffold fades its scrim while the panel content slides back toward its
-/// bar edge. So reactions accumulate and the linger is the longest of them, rather than the last registration
-/// replacing the first.
+/// Registered from inside the surface's own build, by whatever wants an exit transition — which is more than one thing per surface: the hosted scaffold fades its scrim while the panel content slides back toward its bar edge. So reactions accumulate and the linger is the longest of them, rather than the last registration replacing the first.
 #[derive(Default)]
 pub(crate) struct ExitPlan {
     linger: Duration,
@@ -139,9 +118,7 @@ impl ExitPlan {
         self.linger
     }
 
-    /// Whether this plan asks the driver for anything at all. An empty one — no reaction, or a zero duration
-    /// because the user switched animation off — means the surface goes now, exactly as it did before any of
-    /// this existed.
+    /// Whether this plan asks the driver for anything at all. An empty one — no reaction, or a zero duration because the user switched animation off — means the surface goes now, exactly as it did before any of this existed.
     pub(crate) fn is_empty(&self) -> bool {
         self.linger.is_zero() || self.reactions.is_empty()
     }

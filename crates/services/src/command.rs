@@ -1,18 +1,13 @@
 //! The shell's command surface, as a producer sees it.
 //!
-//! Two services run what the *user* configured rather than what their own code says: `[idle]` fires a request
-//! line at each stage, and a bound global shortcut is a request line the desktop portal delivers. Neither knows
-//! the command table — it lives with the socket, above here — so both go through the hooks below, installed
-//! once at startup by whoever owns that table.
+//! Two services run what the *user* configured rather than what their own code says: `[idle]` fires a request line at each stage, and a bound global shortcut is a request line the desktop portal delivers. Neither knows the command table — it lives with the socket, above here — so both go through the hooks below, installed once at startup by whoever owns that table.
 //!
-//! [`Request`] lives here rather than beside the socket for the same reason: a shortcut and a `hogar-shell …`
-//! invocation must produce the *same* thing, and only one of the two can see the socket.
+//! [`Request`] lives here rather than beside the socket for the same reason: a shortcut and a `hogar-shell …` invocation must produce the *same* thing, and only one of the two can see the socket.
 
 use std::cell::RefCell;
 use std::sync::mpsc;
 
-/// One request in flight: the raw line, and where its reply goes. The socket thread blocks on `reply` while the
-/// driver thread runs the handler, which is what makes a command synchronous from the caller's point of view.
+/// One request in flight: the raw line, and where its reply goes. The socket thread blocks on `reply` while the driver thread runs the handler, which is what makes a command synchronous from the caller's point of view.
 pub struct Request {
     line: String,
     reply: mpsc::Sender<String>,
@@ -27,11 +22,9 @@ impl Request {
         }
     }
 
-    /// A request nobody is waiting on the answer to — a global shortcut, a keypress. The handler still sends its
-    /// reply, into a receiver that has already been dropped, which is a no-op.
+    /// A request nobody is waiting on the answer to — a global shortcut, a keypress. The handler still sends its reply, into a receiver that has already been dropped, which is a no-op.
     ///
-    /// Constructed here rather than by making the fields public: a `Request` carries a live reply channel the
-    /// socket path depends on, and the only two ways to make one should be "from a client" and "from nobody".
+    /// Constructed here rather than by making the fields public: a `Request` carries a live reply channel the socket path depends on, and the only two ways to make one should be "from a client" and "from nobody".
     pub fn unattended(line: impl Into<String>) -> Self {
         let (reply, _) = mpsc::channel();
         Self {
@@ -79,10 +72,7 @@ pub fn run(line: &str) -> String {
 
 /// Whether `line` names a command the shell answers, **without running it**.
 ///
-/// The distinction is the whole reason this is separate from [`run`]: anything that wants to check a request
-/// line — the global-shortcut table, a config validator — must be able to do so without performing it. Half the
-/// table changes the machine. Before the table is installed nothing resolves, which is the safe answer: a
-/// validator that ran this early would wave every line through.
+/// The distinction is the whole reason this is separate from [`run`]: anything that wants to check a request line — the global-shortcut table, a config validator — must be able to do so without performing it. Half the table changes the machine. Before the table is installed nothing resolves, which is the safe answer: a validator that ran this early would wave every line through.
 pub fn resolves(line: &str) -> bool {
     RESOLVES.with(|hook| hook.borrow().as_ref().is_some_and(|check| check(line)))
 }

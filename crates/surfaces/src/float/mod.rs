@@ -17,14 +17,7 @@ use ui::placement::{Centred, Placement};
 ///
 /// `[modules.<id>]` (or `[panels.float]`) is the size the window opens at, and for now the size it keeps.
 ///
-/// **The corner grip is gone until this is an xdg toplevel.** Dragging one costs a swapchain rebuild per
-/// step, and a rebuild is a `vkDeviceWaitIdle` on the device every surface shares — measured at ~11 ms
-/// against ~1.5 ms to draw the frame. Making that cheaper means not rebuilding on every step, which means
-/// holding the layout still for a moment; and a layer surface has no interactive-resize protocol, so the grip
-/// is the client's own — it reads laid-out rects, and the pointer only reaches it through an input region
-/// built from that same laid-out tree. Holding the layout holds the pointer, and the drag then advances at
-/// the throttle's pace rather than the cursor's. `xdg_toplevel.resize` gives the grab and the sizing to the
-/// compositor, which unties it.
+/// **The corner grip is gone until this is an xdg toplevel.** Dragging one costs a swapchain rebuild per step, and a rebuild is a `vkDeviceWaitIdle` on the device every surface shares — measured at ~11 ms against ~1.5 ms to draw the frame. Making that cheaper means not rebuilding on every step, which means holding the layout still for a moment; and a layer surface has no interactive-resize protocol, so the grip is the client's own — it reads laid-out rects, and the pointer only reaches it through an input region built from that same laid-out tree. Holding the layout holds the pointer, and the drag then advances at the throttle's pace rather than the cursor's. `xdg_toplevel.resize` gives the grab and the sizing to the compositor, which unties it.
 pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
     let module = module_id.to_string();
     let (width, height) = env.config.float_size_for(module_id);
@@ -32,8 +25,7 @@ pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
         .size(width, height)
         .keyboard(panel_wants_keyboard(module_id))
         .output(env.output.clone());
-    // A float hangs off no edge of its own, so it reads the bar its chip lives on — which is what makes its
-    // radius, gaps and opacity match the drawer showing the very same panel.
+    // A float hangs off no edge of its own, so it reads the bar its chip lives on — which is what makes its radius, gaps and opacity match the drawer showing the very same panel.
     PanelSurface::new(placement, move |env| {
         let theme = use_theme::<NordTheme>();
         let radius = content_radius();
@@ -45,8 +37,7 @@ pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
             close: theme.muted,
             radius,
             font_size: theme.font(FontRole::Title),
-            // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the
-            // compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
+            // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
             controls: Default::default(),
             body_inset: 12.0,
             control_hover: telar::Color::TRANSPARENT,
@@ -60,9 +51,7 @@ pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
     .open()
 }
 
-/// The window chrome a float is presented in — title bar, ✕ and a placeholder body — for [`crate::preview`].
-/// The chrome rather than a module's panel, because *which* panel a float shows is the caller's choice and
-/// every one of them already previews on its own.
+/// The window chrome a float is presented in — title bar, ✕ and a placeholder body — for [`crate::preview`]. The chrome rather than a module's panel, because *which* panel a float shows is the caller's choice and every one of them already previews on its own.
 pub(crate) fn frame_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let body = box_item(StyledContainer::new(
@@ -77,8 +66,7 @@ pub(crate) fn frame_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         close: theme.muted,
         radius: 14.0,
         font_size: theme.font(FontRole::Title),
-        // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the
-        // compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
+        // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
         controls: Default::default(),
         body_inset: 12.0,
         control_hover: telar::Color::TRANSPARENT,
@@ -99,8 +87,7 @@ mod tests {
 
     use config::theme::NordTheme;
 
-    /// The float's chrome under the enter animation, which is the one thing a `[preview]` cannot show: the
-    /// preview page renders a tree, and this is about what the *surface root* does to it over several frames.
+    /// The float's chrome under the enter animation, which is the one thing a `[preview]` cannot show: the preview page renders a tree, and this is about what the *surface root* does to it over several frames.
     struct AnimatedFloat;
 
     impl App for AnimatedFloat {
@@ -125,15 +112,12 @@ mod tests {
         }
     }
 
-    /// A float that animates in must *land*. The enter transition fades the whole surface from transparent, so
-    /// a transition that never completes leaves a window the user cannot see — and every other check passes,
-    /// because the tree is built, laid out and drawn exactly as it should be. Only the pixels say otherwise.
+    /// A float that animates in must *land*. The enter transition fades the whole surface from transparent, so a transition that never completes leaves a window the user cannot see — and every other check passes, because the tree is built, laid out and drawn exactly as it should be. Only the pixels say otherwise.
     #[test]
     fn a_float_that_animates_in_ends_up_visible() {
         const SIDE: u32 = 240;
         let sink: FrameSink = Arc::new(Mutex::new(None));
-        // The headless platform paces at a real 60fps, so 20 frames is a comfortable margin over the 200ms
-        // enter transition.
+        // The headless platform paces at a real 60fps, so 20 frames is a comfortable margin over the 200ms enter transition.
         let platform = HeadlessPlatform::new(SIDE, SIDE)
             .with_frames(20)
             .capture_into(sink.clone());

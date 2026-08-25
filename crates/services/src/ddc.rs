@@ -1,14 +1,8 @@
 //! External monitors over DDC/CI, through `ddcutil`.
 //!
-//! The only way to dim a desktop monitor: it has no sysfs backlight, because the panel's backlight is the monitor's
-//! own business and the cable is how you ask. `ddcutil` speaks that protocol over the I²C bus behind each output,
-//! and there is no library worth binding — the CLI is the interface every other shell uses too.
+//! The only way to dim a desktop monitor: it has no sysfs backlight, because the panel's backlight is the monitor's own business and the cable is how you ask. `ddcutil` speaks that protocol over the I²C bus behind each output, and there is no library worth binding — the CLI is the interface every other shell uses too.
 //!
-//! Two things make it unlike the internal backlight, and both shape the service around it. It is a *process*, so
-//! every call has a deadline and none of them may happen on the UI thread. And a `getvcp` is slow enough (tens to
-//! hundreds of milliseconds per monitor) that reading one on a timer would be a permanent background cost for a
-//! value that only changes when somebody changes it — so levels are read once at detection and then tracked
-//! optimistically, which is why a change made with the monitor's own buttons is not noticed.
+//! Two things make it unlike the internal backlight, and both shape the service around it. It is a *process*, so every call has a deadline and none of them may happen on the UI thread. And a `getvcp` is slow enough (tens to hundreds of milliseconds per monitor) that reading one on a timer would be a permanent background cost for a value that only changes when somebody changes it — so levels are read once at detection and then tracked optimistically, which is why a change made with the monitor's own buttons is not noticed.
 
 use std::time::Duration;
 
@@ -28,8 +22,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(8);
 pub struct Monitor {
     /// The I²C bus behind it, which is how every later call names it.
     pub bus: u8,
-    /// The DRM connector `ddcutil` reported (`DP-1`), empty when this build does not report one. When it is there
-    /// it *is* the compositor's output name, which beats matching on model text.
+    /// The DRM connector `ddcutil` reported (`DP-1`), empty when this build does not report one. When it is there it *is* the compositor's output name, which beats matching on model text.
     pub connector: String,
     /// `MFG:MODEL:SERIAL` as the monitor's EDID spells it — what identifies it when there is no connector.
     pub model: String,
@@ -43,8 +36,7 @@ pub fn available() -> bool {
 
 /// Every DDC/CI monitor on the machine.
 ///
-/// Blocking and slow — seconds, on a bus with a monitor that answers lazily — so this only ever runs on the
-/// brightness service's own thread.
+/// Blocking and slow — seconds, on a bus with a monitor that answers lazily — so this only ever runs on the brightness service's own thread.
 pub fn detect() -> Vec<Monitor> {
     let Some(stdout) = deps::output(Dep::Ddcutil, &["detect", "--brief"], DETECT_TIMEOUT) else {
         return Vec::new();
@@ -77,10 +69,7 @@ pub fn set(bus: u8, percent: i32) -> bool {
 
 /// Reads `ddcutil detect --brief`.
 ///
-/// The format is stanzas of indented `key: value` lines under a `Display N` heading, and what is present varies by
-/// version and by monitor: `DRM connector` only appears on 1.4 and later, and a display the tool could not talk to
-/// (`Invalid display`) has no I²C bus to address. Anything without a bus is therefore dropped rather than kept as
-/// an entry nothing can be done with.
+/// The format is stanzas of indented `key: value` lines under a `Display N` heading, and what is present varies by version and by monitor: `DRM connector` only appears on 1.4 and later, and a display the tool could not talk to (`Invalid display`) has no I²C bus to address. Anything without a bus is therefore dropped rather than kept as an entry nothing can be done with.
 fn parse_detect(stdout: &str) -> Vec<Monitor> {
     let mut found = Vec::new();
     let mut current: Option<Monitor> = None;
@@ -111,8 +100,7 @@ fn parse_detect(stdout: &str) -> Vec<Monitor> {
             }
             // `card1-DP-1`, whose tail is the connector the compositor calls `DP-1`.
             "DRM connector" => monitor.connector = connector_of(value),
-            // `Monitor` carries all three EDID fields at once, colon-separated — which is why this parse cannot
-            // simply split the line on every colon.
+            // `Monitor` carries all three EDID fields at once, colon-separated — which is why this parse cannot simply split the line on every colon.
             "Monitor" => {
                 let mut parts = value.split(':');
                 let make = parts.next().unwrap_or_default().trim();
@@ -205,8 +193,7 @@ Display 1
         assert_eq!(found[0].model, "ACR Acer XV272U");
     }
 
-    /// A display ddcutil could not talk to has nothing to control, and keeping it would put a slider on screen
-    /// that does nothing.
+    /// A display ddcutil could not talk to has nothing to control, and keeping it would put a slider on screen that does nothing.
     #[test]
     fn a_display_that_cannot_be_addressed_is_dropped() {
         let mixed = "\

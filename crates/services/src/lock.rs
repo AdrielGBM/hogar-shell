@@ -1,14 +1,8 @@
 //! Whether the session is locked, and everything that decides it.
 //!
-//! One state, three writers and one performer. The **writers** are the session menu, `hogar-shell lock`, logind's
-//! `Lock`/`Unlock` signals and the idle timers — all of which do nothing but change [`LockState`]. The
-//! **performer** is [`on_state`], which runs on the driver thread and is the only place that takes or releases
-//! the compositor's session lock. Splitting them that way is what makes a lock requested from a keybind, from
-//! `loginctl`, and from a click the same lock rather than three racing attempts at one.
+//! One state, three writers and one performer. The **writers** are the session menu, `hogar-shell lock`, logind's `Lock`/`Unlock` signals and the idle timers — all of which do nothing but change [`LockState`]. The **performer** is [`on_state`], which runs on the driver thread and is the only place that takes or releases the compositor's session lock. Splitting them that way is what makes a lock requested from a keybind, from `loginctl`, and from a click the same lock rather than three racing attempts at one.
 //!
-//! Two things are checked *before* the screen is covered, never after: that the compositor implements
-//! `ext-session-lock-v1`, and that PAM can be loaded. A lock this process cannot undo is the one failure with
-//! no way out for the user, so it is refused with a message instead.
+//! Two things are checked *before* the screen is covered, never after: that the compositor implements `ext-session-lock-v1`, and that PAM can be loaded. A lock this process cannot undo is the one failure with no way out for the user, so it is refused with a message instead.
 
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -18,8 +12,7 @@ use platform_wayland::{EventSender, LockHandle};
 use crate::pam::{self, AuthError};
 use util::broadcast::Store;
 
-/// How often the shell asks the compositor whether the lock it requested has actually been granted. A one-shot
-/// chain rather than a standing interval: it exists only while a lock does.
+/// How often the shell asks the compositor whether the lock it requested has actually been granted. A one-shot chain rather than a standing interval: it exists only while a lock does.
 const CONFIRM_POLL: Duration = Duration::from_millis(250);
 
 /// Which unlock method is running, so the screen can say what it is waiting for rather than just spinning.
@@ -42,9 +35,7 @@ impl Method {
 
 /// What the lock screen shows and what the rest of the shell reads.
 ///
-/// `wanted` and `locked` are deliberately separate: between asking the compositor and being granted, the
-/// desktop may still be on screen. Anything security-sensitive — suspending, reporting the session as locked
-/// over IPC — must wait for `locked`, which is the compositor's own word that nothing is visible.
+/// `wanted` and `locked` are deliberately separate: between asking the compositor and being granted, the desktop may still be on screen. Anything security-sensitive — suspending, reporting the session as locked over IPC — must wait for `locked`, which is the compositor's own word that nothing is visible.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LockState {
     /// The shell wants the session locked.
@@ -93,8 +84,7 @@ pub fn subscribe(tx: EventSender<LockState>) {
     STATE.subscribe(tx);
 }
 
-/// Whether the session is locked *and the compositor has confirmed it* — what `hogar-shell lock status` reports
-/// and what a `lockstatus`-style indicator reads.
+/// Whether the session is locked *and the compositor has confirmed it* — what `hogar-shell lock status` reports and what a `lockstatus`-style indicator reads.
 pub fn is_locked() -> bool {
     STATE.get().locked
 }
@@ -113,9 +103,7 @@ pub fn lock() {
     });
 }
 
-/// Asks for the session to be unlocked. Only reached after a successful authentication, or from
-/// `hogar-shell lock off` — which is a deliberate escape hatch for a shell that has locked a machine its user
-/// cannot authenticate to, and is exactly as privileged as the process already is.
+/// Asks for the session to be unlocked. Only reached after a successful authentication, or from `hogar-shell lock off` — which is a deliberate escape hatch for a shell that has locked a machine its user cannot authenticate to, and is exactly as privileged as the process already is.
 pub fn unlock() {
     if !STATE.get().wanted {
         return;
@@ -137,8 +125,7 @@ thread_local! {
     static HANDLE: RefCell<Option<LockHandle>> = const { RefCell::new(None) };
     // Whether a confirmation poll is already in flight, so a burst of state updates arms one chain, not ten.
     static POLLING: RefCell<bool> = const { RefCell::new(false) };
-    // How to put the lock screen up. Installed at startup: what the locked screen *draws* is a surface, and a
-    // service has no business knowing one — it owns when the session is locked, not what that looks like.
+    // How to put the lock screen up. Installed at startup: what the locked screen *draws* is a surface, and a service has no business knowing one — it owns when the session is locked, not what that looks like.
     static SESSION: RefCell<Option<Box<dyn Fn() -> LockHandle>>> = const { RefCell::new(None) };
 }
 
@@ -151,8 +138,7 @@ fn open_session() -> Option<LockHandle> {
     SESSION.with(|hook| hook.borrow().as_ref().map(|open| open()))
 }
 
-/// Whether this machine can lock at all: the compositor implements the protocol and PAM will load. Read on the
-/// driver thread — `lock_supported` is answered by the driver's own view of the compositor's globals.
+/// Whether this machine can lock at all: the compositor implements the protocol and PAM will load. Read on the driver thread — `lock_supported` is answered by the driver's own view of the compositor's globals.
 pub fn can_lock() -> Result<(), String> {
     if !platform_wayland::lock_supported() {
         return Err("this compositor does not implement ext-session-lock-v1".to_string());
@@ -168,9 +154,7 @@ pub fn can_lock() -> Result<(), String> {
     Ok(())
 }
 
-/// The performer: reconciles the compositor's lock with what [`LockState`] asks for. Registered once at
-/// startup with `platform_wayland::watch(lock::subscribe, lock::on_state)`, so it runs on the driver
-/// thread — the only one that may open a surface.
+/// The performer: reconciles the compositor's lock with what [`LockState`] asks for. Registered once at startup with `platform_wayland::watch(lock::subscribe, lock::on_state)`, so it runs on the driver thread — the only one that may open a surface.
 pub fn on_state(state: LockState) {
     let held = HANDLE.with(|handle| handle.borrow().is_some());
     match (state.wanted, held) {
@@ -217,9 +201,7 @@ fn release() {
 
 /// Follows the lock from "asked for" to "granted", and notices a compositor that refuses or takes it back.
 ///
-/// A one-shot timer that re-arms itself while a lock is held rather than a standing interval: the driver's
-/// loop has no way to remove an app-level source once registered, so a permanent ticker would outlive every
-/// lock the session ever takes.
+/// A one-shot timer that re-arms itself while a lock is held rather than a standing interval: the driver's loop has no way to remove an app-level source once registered, so a permanent ticker would outlive every lock the session ever takes.
 fn arm_confirmation_poll() {
     if POLLING.with(|polling| std::mem::replace(&mut *polling.borrow_mut(), true)) {
         return;
@@ -239,8 +221,7 @@ fn schedule_confirmation_poll() {
             return;
         };
         if finished {
-            // The compositor ended the lock itself. The session is *not* locked, and saying otherwise would
-            // let a suspend go ahead behind an uncovered screen.
+            // The compositor ended the lock itself. The session is *not* locked, and saying otherwise would let a suspend go ahead behind an uncovered screen.
             tracing::warn!("the compositor ended the session lock");
             HANDLE.with(|slot| *slot.borrow_mut() = None);
             POLLING.with(|polling| *polling.borrow_mut() = false);
@@ -259,8 +240,7 @@ fn schedule_confirmation_poll() {
     });
 }
 
-/// Takes a password attempt. Returns immediately: PAM is run on a worker thread, because `pam_unix` sleeps for
-/// seconds after a wrong password and the lock screen must keep drawing while it does.
+/// Takes a password attempt. Returns immediately: PAM is run on a worker thread, because `pam_unix` sleeps for seconds after a wrong password and the lock screen must keep drawing while it does.
 pub fn submit(password: String) {
     let state = STATE.get();
     if !state.wanted || !state.accepts_input() {
@@ -291,8 +271,7 @@ pub fn submit(password: String) {
         });
 }
 
-/// A successful unlock, whatever proved it. The one path out of the lock, so a fingerprint and a password
-/// leave exactly the same state behind.
+/// A successful unlock, whatever proved it. The one path out of the lock, so a fingerprint and a password leave exactly the same state behind.
 pub fn succeed(method: Method) {
     tracing::info!("unlocked by {method:?}");
     STATE.update(|state| {
@@ -314,8 +293,7 @@ pub fn fail(error: AuthError, max_tries: u32, lockout_seconds: u64) {
         state.busy = None;
         state.failures += 1;
         state.message = Some(key);
-        // `max_tries = 0` never locks out — a machine whose owner would rather keep retrying than be shut out
-        // for thirty seconds every time they fumble a long passphrase.
+        // `max_tries = 0` never locks out — a machine whose owner would rather keep retrying than be shut out for thirty seconds every time they fumble a long passphrase.
         if max_tries > 0 && state.failures >= max_tries && lockout_seconds > 0 {
             state.locked_out_until = Some(Instant::now() + Duration::from_secs(lockout_seconds));
         }
@@ -325,8 +303,7 @@ pub fn fail(error: AuthError, max_tries: u32, lockout_seconds: u64) {
     }
 }
 
-/// Publishes one more state change when the lockout expires, so the screen re-enables its field on its own
-/// rather than only when the user next presses a key it is ignoring.
+/// Publishes one more state change when the lockout expires, so the screen re-enables its field on its own rather than only when the user next presses a key it is ignoring.
 fn clear_lockout_when_elapsed(deadline: Instant) {
     let remaining = deadline.saturating_duration_since(Instant::now());
     let _ = std::thread::Builder::new()
@@ -343,8 +320,7 @@ fn clear_lockout_when_elapsed(deadline: Instant) {
         });
 }
 
-/// Marks a biometric attempt as running, so the screen says what it is waiting for and a password typed
-/// meanwhile is not thrown away by a competing attempt.
+/// Marks a biometric attempt as running, so the screen says what it is waiting for and a password typed meanwhile is not thrown away by a competing attempt.
 pub fn set_busy(method: Option<Method>) {
     if STATE.get().busy == method {
         return;
@@ -358,8 +334,7 @@ mod tests {
 
     #[test]
     fn wanting_a_lock_and_holding_one_are_different_questions() {
-        // The window between the two is the whole reason they are separate fields: a suspend triggered on
-        // `wanted` would race the compositor's first covered frame.
+        // The window between the two is the whole reason they are separate fields: a suspend triggered on `wanted` would race the compositor's first covered frame.
         let asked = LockState {
             wanted: true,
             locked: false,

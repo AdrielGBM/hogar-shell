@@ -1,26 +1,12 @@
 //! One PipeWire capture stream, in this process rather than behind a pipe.
 //!
-//! The visualiser needs what the speakers are playing, and reading it used to cost a `pw-cat`: a process, a
-//! pipe and a copy per hop, running for as long as anything was subscribed. That was the one genuinely hot
-//! subprocess this shell had left. Here it is a `pw_stream` on a main loop of its own, handing the samples
-//! straight to a closure.
+//! The visualiser needs what the speakers are playing, and reading it used to cost a `pw-cat`: a process, a pipe and a copy per hop, running for as long as anything was subscribed. That was the one genuinely hot subprocess this shell had left. Here it is a `pw_stream` on a main loop of its own, handing the samples straight to a closure.
 //!
-//! **Loaded at runtime, not linked**, for the same reason as [`nvml`](super::nvml) and [`pam`](super::pam):
-//! linking `libpipewire-0.3` would make PipeWire a *build* dependency of a shell that degrades to silent bars
-//! without it at runtime, and would put a second library between a clone and a working bar. The other two
-//! PipeWire helpers stay subprocesses on purpose — `pw-dump --monitor` is one long-lived process that parses
-//! only when the graph changes, and `wpctl` is one fork per volume change. Neither is hot; this one was.
+//! **Loaded at runtime, not linked**, for the same reason as [`nvml`](super::nvml) and [`pam`](super::pam): linking `libpipewire-0.3` would make PipeWire a *build* dependency of a shell that degrades to silent bars without it at runtime, and would put a second library between a clone and a working bar. The other two PipeWire helpers stay subprocesses on purpose — `pw-dump --monitor` is one long-lived process that parses only when the graph changes, and `wpctl` is one fork per volume change. Neither is hot; this one was.
 //!
-//! **The callback runs on the main loop, not the data thread.** Without `PW_STREAM_FLAG_RT_PROCESS` PipeWire
-//! hands `process` to the loop this thread is running, which is what makes it safe to do a transform and wake
-//! every subscribed surface from inside it. With that flag it would be the realtime graph thread, where both
-//! are a missed deadline for every other application on the machine.
+//! **The callback runs on the main loop, not the data thread.** Without `PW_STREAM_FLAG_RT_PROCESS` PipeWire hands `process` to the loop this thread is running, which is what makes it safe to do a transform and wake every subscribed surface from inside it. With that flag it would be the realtime graph thread, where both are a missed deadline for every other application on the machine.
 //!
-//! **Exactly one format is offered**, so negotiation either produces f32 mono at the asked rate or fails
-//! outright — which is what makes reading a buffer as `f32` safe without parsing the negotiated format back.
-//! The conversion happens in the stream's own adapter, and `node.rate` is deliberately not set: asking the
-//! *graph* to run at 44.1 kHz would make every other application resample for a row of bars, which is a thing
-//! `pw-cat --rate` does and this does not.
+//! **Exactly one format is offered**, so negotiation either produces f32 mono at the asked rate or fails outright — which is what makes reading a buffer as `f32` safe without parsing the negotiated format back. The conversion happens in the stream's own adapter, and `node.rate` is deliberately not set: asking the *graph* to run at 44.1 kHz would make every other application resample for a row of bars, which is a thing `pw-cat --rate` does and this does not.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::ops::ControlFlow;
@@ -59,8 +45,7 @@ const SPA_AUDIO_FORMAT_F32_LE: u32 = 0x11b;
 /// A capture is an *input* to this process, whatever it is reading.
 const PW_DIRECTION_INPUT: u32 = 0;
 
-/// Let the session manager choose the target. The sink is named by `stream.capture.sink` instead, which is
-/// what turns a recording stream around onto what is being played rather than onto a microphone.
+/// Let the session manager choose the target. The sink is named by `stream.capture.sink` instead, which is what turns a recording stream around onto what is being played rather than onto a microphone.
 const PW_ID_ANY: u32 = u32::MAX;
 
 const PW_STREAM_FLAG_AUTOCONNECT: u32 = 1 << 0;
@@ -70,8 +55,7 @@ const PW_STREAM_FLAG_MAP_BUFFERS: u32 = 1 << 2;
 const PW_STREAM_STATE_ERROR: c_int = -1;
 const PW_STREAM_STATE_UNCONNECTED: c_int = 0;
 
-/// The events struct this fills in. Claiming the version it was written against is what tells an older
-/// library not to reach for a callback it has no field for.
+/// The events struct this fills in. Claiming the version it was written against is what tells an older library not to reach for a callback it has no field for.
 const PW_VERSION_STREAM_EVENTS: u32 = 2;
 
 #[repr(C)]
@@ -114,15 +98,13 @@ struct SpaBuffer {
     datas: *mut SpaData,
 }
 
-/// Only the first field is read, and the pointer is handed straight back to PipeWire. The rest of the struct
-/// has grown over 0.3's life and none of it is wanted here.
+/// Only the first field is read, and the pointer is handed straight back to PipeWire. The rest of the struct has grown over 0.3's life and none of it is wanted here.
 #[repr(C)]
 struct PwBuffer {
     buffer: *mut SpaBuffer,
 }
 
-/// The callback table, laid out as `pw_stream_events` — every slot present so the offsets match, and only the
-/// two that are wanted filled in.
+/// The callback table, laid out as `pw_stream_events` — every slot present so the offsets match, and only the two that are wanted filled in.
 #[repr(C)]
 struct StreamEvents {
     version: u32,
@@ -154,8 +136,7 @@ static EVENTS: StreamEvents = StreamEvents {
     trigger_done: None,
 };
 
-/// The handful of `libpipewire` symbols a capture needs. A stream carries its own context and core, which is
-/// what `pw_stream_new_simple` is for — the rest of the connection API never has to be named.
+/// The handful of `libpipewire` symbols a capture needs. A stream carries its own context and core, which is what `pw_stream_new_simple` is for — the rest of the connection API never has to be named.
 struct Pw {
     main_loop_new: unsafe extern "C" fn(*const SpaDict) -> MainLoop,
     main_loop_get_loop: unsafe extern "C" fn(MainLoop) -> Loop,
@@ -178,8 +159,7 @@ struct Pw {
     _library: libloading::Library,
 }
 
-// The function pointers are into a library that is never unloaded, and every object made from them lives on
-// one thread — the loop is created, run and destroyed inside a single call.
+// The function pointers are into a library that is never unloaded, and every object made from them lives on one thread — the loop is created, run and destroyed inside a single call.
 unsafe impl Send for Pw {}
 unsafe impl Sync for Pw {}
 
@@ -190,8 +170,7 @@ fn library() -> Option<&'static Pw> {
 }
 
 fn load() -> Option<Pw> {
-    // SAFETY: loading a shared object runs its initialisers, and every symbol is looked up by the signature
-    // PipeWire documents for it.
+    // SAFETY: loading a shared object runs its initialisers, and every symbol is looked up by the signature PipeWire documents for it.
     unsafe {
         deps::open_library(Dep::LibPipeWire, None, |library| {
             let init = *library
@@ -210,8 +189,7 @@ fn load() -> Option<Pw> {
                 stream_destroy: *library.get(b"pw_stream_destroy\0")?,
                 _library: library,
             };
-            // Once, here, and never undone: `pw_deinit` on a process that is exiting anyway buys nothing, and
-            // a second capture must not re-initialise the library underneath the first.
+            // Once, here, and never undone: `pw_deinit` on a process that is exiting anyway buys nothing, and a second capture must not re-initialise the library underneath the first.
             init(std::ptr::null_mut(), std::ptr::null_mut());
             Ok(pw)
         })
@@ -220,9 +198,7 @@ fn load() -> Option<Pw> {
 
 /// Captures the default sink's monitor until it stops, handing `on_hop` exactly `hop` samples at a time.
 ///
-/// Blocks the calling thread for the life of the capture: it *is* the main loop. `Ok(())` means the stream ran
-/// and then ended — PipeWire went away, or `on_hop` asked to stop — which is a caller's cue to re-attach.
-/// `Err` means it never started, which is the one case worth retiring on.
+/// Blocks the calling thread for the life of the capture: it *is* the main loop. `Ok(())` means the stream ran and then ended — PipeWire went away, or `on_hop` asked to stop — which is a caller's cue to re-attach. `Err` means it never started, which is the one case worth retiring on.
 pub fn monitor(
     rate: u32,
     hop: usize,
@@ -239,15 +215,13 @@ pub fn monitor(
     result
 }
 
-/// What one capture holds. Reached only through the raw pointer PipeWire was handed, which is what keeps the
-/// callbacks and this function from aliasing the same `&mut`.
+/// What one capture holds. Reached only through the raw pointer PipeWire was handed, which is what keeps the callbacks and this function from aliasing the same `&mut`.
 struct Capture<'a> {
     pw: &'static Pw,
     main_loop: MainLoop,
     stream: Stream,
     hop: usize,
-    /// Samples arrived but not yet handed on: a quantum is whatever the graph chose, and a hop is what the
-    /// consumer asked for.
+    /// Samples arrived but not yet handed on: a quantum is whatever the graph chose, and a hop is what the consumer asked for.
     pending: Vec<f32>,
     on_hop: &'a mut dyn FnMut(&[f32]) -> ControlFlow<()>,
     /// Set when the stream ends for any reason, so the loop is never entered after it has been asked to stop.
@@ -297,8 +271,7 @@ impl Capture<'_> {
 
 /// The valid bytes of a buffer's first block, or `None` when there is nothing to read.
 ///
-/// Read as bytes rather than as `f32`: a chunk carries an offset into a mapping, and nothing in the protocol
-/// promises it lands where a float wants to start.
+/// Read as bytes rather than as `f32`: a chunk carries an offset into a mapping, and nothing in the protocol promises it lands where a float wants to start.
 unsafe fn first_data<'a>(buffer: *mut PwBuffer) -> Option<&'a [u8]> {
     let spa = unsafe { (*buffer).buffer };
     if spa.is_null() || unsafe { (*spa).n_datas } == 0 {
@@ -309,8 +282,7 @@ unsafe fn first_data<'a>(buffer: *mut PwBuffer) -> Option<&'a [u8]> {
     if data.data.is_null() || data.maxsize == 0 {
         return None;
     }
-    // Modulo, not a clamp: an offset is allowed to run past the end of a mapping that is being used as a ring,
-    // and `spa/buffer/buffer.h` says to take it that way.
+    // Modulo, not a clamp: an offset is allowed to run past the end of a mapping that is being used as a ring, and `spa/buffer/buffer.h` says to take it that way.
     let offset = (chunk.offset % data.maxsize) as usize;
     let size = (chunk.size as usize).min(data.maxsize as usize - offset);
     Some(unsafe { std::slice::from_raw_parts(data.data.cast::<u8>().add(offset), size) })
@@ -318,8 +290,7 @@ unsafe fn first_data<'a>(buffer: *mut PwBuffer) -> Option<&'a [u8]> {
 
 unsafe extern "C" fn on_process(data: *mut c_void) {
     let capture = unsafe { &mut *data.cast::<Capture<'_>>() };
-    // A panic must not unwind into C. Carried out on the caller's thread instead, where it means what it
-    // always did: the service thread dies with the message.
+    // A panic must not unwind into C. Carried out on the caller's thread instead, where it means what it always did: the service thread dies with the message.
     if let Err(panic) = std::panic::catch_unwind(AssertUnwindSafe(|| capture.drain())) {
         capture.panic = Some(panic);
         capture.stop();
@@ -343,8 +314,7 @@ unsafe extern "C" fn on_state_changed(
             });
             capture.stop();
         }
-        // Reached when the graph drops the stream — PipeWire restarting, mostly — and again on the way out of
-        // `pw_stream_destroy`, where quitting a loop that has already returned is a no-op.
+        // Reached when the graph drops the stream — PipeWire restarting, mostly — and again on the way out of `pw_stream_destroy`, where quitting a loop that has already returned is a no-op.
         PW_STREAM_STATE_UNCONNECTED => capture.stop(),
         _ => {}
     }
@@ -357,8 +327,7 @@ fn run(
     hop: usize,
     on_hop: &mut dyn FnMut(&[f32]) -> ControlFlow<()>,
 ) -> std::io::Result<()> {
-    // The quantum the graph is asked for, so one wakeup carries one hop's worth of new sound rather than a
-    // buffer to unpick.
+    // The quantum the graph is asked for, so one wakeup carries one hop's worth of new sound rather than a buffer to unpick.
     let latency = CString::new(format!("{hop}/{rate}")).map_err(std::io::Error::other)?;
     let items = [
         SpaDictItem {
@@ -433,8 +402,7 @@ fn run(
         )
     };
 
-    // A stream that failed while connecting has already asked the loop to quit, and a quit that arrives before
-    // `pw_main_loop_run` is a quit nobody hears — so the flag is read here rather than trusted to the loop.
+    // A stream that failed while connecting has already asked the loop to quit, and a quit that arrives before `pw_main_loop_run` is a quit nobody hears — so the flag is read here rather than trusted to the loop.
     let started = connected >= 0 && !unsafe { (*capture).stopped };
     if started {
         unsafe { (pw.main_loop_run)(main_loop) };
@@ -477,12 +445,9 @@ struct FormatPod([u32; FORMAT_WORDS]);
 
 /// The one format this stream will accept: f32, mono, at `rate`.
 ///
-/// Mono because a visualiser draws one row of bars, and the stream's own adapter sums the channels for less
-/// than a fold per hop would cost here.
+/// Mono because a visualiser draws one row of bars, and the stream's own adapter sums the channels for less than a fold per hop would cost here.
 ///
-/// Built by hand because the C spelling of this is `spa_format_audio_raw_build`, a `static inline` in a header
-/// — there is no such symbol to load. The shape is in `spa/pod/pod.h`: a pod is a body size, a type and a body
-/// padded to eight bytes; an object pod's body is its own type and id followed by properties.
+/// Built by hand because the C spelling of this is `spa_format_audio_raw_build`, a `static inline` in a header — there is no such symbol to load. The shape is in `spa/pod/pod.h`: a pod is a body size, a type and a body padded to eight bytes; an object pod's body is its own type and id followed by properties.
 fn audio_format(rate: u32) -> FormatPod {
     let mut pod = FormatPod([0; FORMAT_WORDS]);
     let body = (FORMAT_WORDS - 2) * size_of::<u32>();
@@ -517,8 +482,7 @@ fn audio_format(rate: u32) -> FormatPod {
 mod tests {
     use super::*;
 
-    /// The pod is the one thing here a compiler cannot check: a wrong size or a misplaced pad is not a build
-    /// error, it is a stream that negotiates something else and a buffer read as the wrong type.
+    /// The pod is the one thing here a compiler cannot check: a wrong size or a misplaced pad is not a build error, it is a stream that negotiates something else and a buffer read as the wrong type.
     #[test]
     fn the_format_pod_is_the_object_pipewire_expects_to_parse() {
         let pod = audio_format(44_100);
@@ -549,8 +513,7 @@ mod tests {
         }
     }
 
-    /// Every offset the callbacks read is a promise about a C struct, and getting one wrong reads a valid
-    /// pointer out of the middle of another field. These are the layouts in `spa/buffer/buffer.h`.
+    /// Every offset the callbacks read is a promise about a C struct, and getting one wrong reads a valid pointer out of the middle of another field. These are the layouts in `spa/buffer/buffer.h`.
     #[test]
     fn the_buffer_structs_have_the_layout_the_headers_describe() {
         assert_eq!(size_of::<SpaChunk>(), 16);
@@ -563,8 +526,7 @@ mod tests {
         assert_eq!(std::mem::offset_of!(SpaData, data), 24);
         assert_eq!(std::mem::offset_of!(SpaData, chunk), 32);
 
-        // The one field order worth spelling out: both counts come before both pointers, which is not the
-        // order a reader guesses.
+        // The one field order worth spelling out: both counts come before both pointers, which is not the order a reader guesses.
         assert_eq!(std::mem::offset_of!(SpaBuffer, n_datas), 4);
         assert_eq!(std::mem::offset_of!(SpaBuffer, datas), 16);
     }

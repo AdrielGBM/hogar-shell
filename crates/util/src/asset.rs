@@ -1,13 +1,8 @@
 //! Asking a worker thread for something the frame must not wait for.
 //!
-//! Cover art was the first of these and wrote the shape by hand: a request goes out, a signal comes back
-//! `Loading`, and a worker fills it in later. Two more wanted the same thing for different reasons — a wallpaper
-//! thumbnail is a full-resolution decode, a `qalc` answer is a subprocess — and neither is work the UI thread can
-//! do between two frames. This is that shape once, so the next one is a `Loader::new` rather than a fourth copy
-//! of the borrow rule below.
+//! Cover art was the first of these and wrote the shape by hand: a request goes out, a signal comes back `Loading`, and a worker fills it in later. Two more wanted the same thing for different reasons — a wallpaper thumbnail is a full-resolution decode, a `qalc` answer is a subprocess — and neither is work the UI thread can do between two frames. This is that shape once, so the next one is a `Loader::new` rather than a fourth copy of the borrow rule below.
 //!
-//! The store is per-thread by construction: a `Loader` holds `Rc` signal handles, so it lives on the driver
-//! thread with the surfaces that read it, and only the work itself crosses over.
+//! The store is per-thread by construction: a `Loader` holds `Rc` signal handles, so it lives on the driver thread with the surfaces that read it, and only the work itself crosses over.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -51,8 +46,7 @@ where
 {
     /// Starts a loader whose worker runs `work` for each distinct key, in the order asked.
     ///
-    /// Headless — under a test or an offline render — `watch` is a no-op: no worker runs and every request stays
-    /// `Loading`, which is what a surface with no platform behind it should show.
+    /// Headless — under a test or an offline render — `watch` is a no-op: no worker runs and every request stays `Loading`, which is what a surface with no platform behind it should show.
     pub fn new(work: impl Fn(&K) -> Option<V> + Send + 'static) -> Self {
         let signals: Signals<K, V> = Rc::new(RefCell::new(HashMap::new()));
         let (requests, incoming) = channel::<K>();
@@ -66,8 +60,7 @@ where
 
     /// The state of `key`, starting the work the first time it is asked for.
     ///
-    /// `at_hand` is the answer that needs no worker — a cache entry already on disk — so the common case renders
-    /// the real thing on the frame it is asked for instead of flashing a placeholder.
+    /// `at_hand` is the answer that needs no worker — a cache entry already on disk — so the common case renders the real thing on the frame it is asked for instead of flashing a placeholder.
     pub fn get(&self, key: K, at_hand: impl FnOnce(&K) -> Option<V>) -> ReadSignal<Load<V>> {
         if let Some(existing) = self.signals.borrow().get(&key) {
             return existing.read_only();
@@ -105,8 +98,7 @@ fn serve<K, V>(
 }
 
 fn deliver<K: Eq + Hash, V>(signals: &Signals<K, V>, key: K, value: Option<V>) {
-    // Clone the handle out and drop the map borrow BEFORE `set`: a signal write flushes effects synchronously,
-    // and an effect that asks the same loader for another key would re-enter this borrow and panic.
+    // Clone the handle out and drop the map borrow BEFORE `set`: a signal write flushes effects synchronously, and an effect that asks the same loader for another key would re-enter this borrow and panic.
     let handle = signals.borrow().get(&key).cloned();
     if let Some(handle) = handle {
         handle.set(match value {

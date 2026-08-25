@@ -1,7 +1,6 @@
 //! The capture half of the utilities panel: taking a picture, recording, and what has been recorded.
 //!
-//! The elapsed readout is the only thing here that ticks, and it ticks off the shared clock service rather than a
-//! timer of its own — the same second boundary the bar's clock uses, so nothing in the shell has two.
+//! The elapsed readout is the only thing here that ticks, and it ticks off the shared clock service rather than a timer of its own — the same second boundary the bar's clock uses, so nothing in the shell has two.
 
 use std::path::{Path, PathBuf};
 use ui::scale::space;
@@ -72,15 +71,13 @@ pub fn capture_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError
     card(children, theme)
 }
 
-/// The recorder's controls: one button that starts or stops, a pause beside it on a backend that can, and the
-/// elapsed time while it runs.
+/// The recorder's controls: one button that starts or stops, a pause beside it on a backend that can, and the elapsed time while it runs.
 fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let live = signal(recorder::current());
     let sink = live.clone();
     platform_wayland::watch(recorder::subscribe, move |state: Recording| sink.set(state));
 
-    // The clock is what makes the readout move: a recording's elapsed time changes with the wall clock, not with
-    // anything the recorder publishes.
+    // The clock is what makes the readout move: a recording's elapsed time changes with the wall clock, not with anything the recorder publishes.
     let tick = signal(0u32);
     let ticker = tick.clone();
     platform_wayland::watch(
@@ -144,8 +141,7 @@ fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let elapsed_tick = tick.read_only();
     let elapsed = Text::auto(
         move || {
-            // Both signals are read, and both matter: the recorder says whether anything is running, the tick is
-            // what brings the closure back a second later. Reading only the state would freeze the readout.
+            // Both signals are read, and both matter: the recorder says whether anything is running, the tick is what brings the closure back a second later. Reading only the state would freeze the readout.
             elapsed_tick.get();
             let state = elapsed_state.get();
             if state.active {
@@ -171,8 +167,7 @@ fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// What the last capture did — the file it wrote, or why it did not. Blank until the first one, so the card does
-/// not open with a line about nothing.
+/// What the last capture did — the file it wrote, or why it did not. Blank until the first one, so the card does not open with a line about nothing.
 fn last_capture(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let last = signal(screenshot::current());
     let sink = last.clone();
@@ -214,8 +209,7 @@ fn shot_line(shot: &Shot) -> String {
 
 /// The recordings, newest first: press to open, right-click twice to delete.
 ///
-/// Right-click-to-delete arms first, like the bluetooth panel's forget: a recording is minutes of something that
-/// cannot be taken again, and a stray click must not be able to remove it.
+/// Right-click-to-delete arms first, like the bluetooth panel's forget: a recording is minutes of something that cannot be taken again, and a stray click must not be able to remove it.
 pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let dir = recordings_dir();
     let limit = surface_env()
@@ -223,8 +217,7 @@ pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutEr
         .unwrap_or(12);
 
     let entries = signal(recorder::recordings(&dir, limit));
-    // A finished recording is a new file in the list, and the recorder is the only thing that puts one there — so
-    // its state change is the refresh signal, rather than a watch on the directory.
+    // A finished recording is a new file in the list, and the recorder is the only thing that puts one there — so its state change is the refresh signal, rather than a watch on the directory.
     let refresh = entries.clone();
     let refresh_dir = dir.clone();
     platform_wayland::watch(recorder::subscribe, move |_: Recording| {
@@ -290,8 +283,7 @@ fn recordings_dir() -> PathBuf {
         .unwrap_or_else(|| util::paths::data_dir().join("recordings"))
 }
 
-/// Keyed on what the row draws: a file being written grows, so its size — and therefore its subtitle — changes
-/// while the row is on screen.
+/// Keyed on what the row draws: a file being written grows, so its size — and therefore its subtitle — changes while the row is on screen.
 fn row_key(entry: &Entry) -> String {
     format!(
         "{}|{}|{}",
@@ -430,8 +422,7 @@ fn open_file(path: &Path) {
     services::apps::run_detached(format!("xdg-open {}", quoted(path)));
 }
 
-/// Shows the recordings directory in the configured file manager — `[general.apps] file_manager`, so this and
-/// every other "show me this folder" in the shell open the same application.
+/// Shows the recordings directory in the configured file manager — `[general.apps] file_manager`, so this and every other "show me this folder" in the shell open the same application.
 fn reveal_in_files(dir: &Path) {
     let manager = config::config()
         .map(|c| c.app_command(config::HelperApp::FileManager))
@@ -439,8 +430,7 @@ fn reveal_in_files(dir: &Path) {
     services::apps::run_detached(format!("{manager} {}", quoted(dir)));
 }
 
-/// A path as one shell word. The command goes through `sh -c`, so a recording in a folder with a space in its
-/// name would otherwise arrive as two arguments.
+/// A path as one shell word. The command goes through `sh -c`, so a recording in a folder with a space in its name would otherwise arrive as two arguments.
 fn quoted(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
 }
@@ -478,8 +468,7 @@ fn pill(
     )
 }
 
-/// A pill whose glyph, label and filled state all follow live values — the recorder's button, which is a
-/// different control depending on what the recorder is doing.
+/// A pill whose glyph, label and filled state all follow live values — the recorder's button, which is a different control depending on what the recorder is doing.
 fn pill_live(
     label: impl Fn() -> String + 'static,
     icon: impl Fn() -> String + 'static,

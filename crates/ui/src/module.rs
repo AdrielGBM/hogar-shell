@@ -18,16 +18,9 @@ thread_local! {
 
 /// Runs `act` — a chip's press or drag-open handler — with the chip's own laid-out rect in scope.
 ///
-/// The rect is what a drawer hangs off, on the same terms as the card a hover opens over the same chip, and
-/// only the chip knows it. What travelled here before was the *zone* the chip sat in, which could say no more
-/// than which end of the bar to align to — and could not always say that: an id placed in more than one zone
-/// resolves to whichever the config search reaches first, and a `[corners]` module sits in no zone at all
-/// despite being laid out at a very definite end of its bar. A rect answers both without asking the config
-/// anything.
+/// The rect is what a drawer hangs off, on the same terms as the card a hover opens over the same chip, and only the chip knows it. What travelled here before was the *zone* the chip sat in, which could say no more than which end of the bar to align to — and could not always say that: an id placed in more than one zone resolves to whichever the config search reaches first, and a `[corners]` module sits in no zone at all despite being laid out at a very definite end of its bar. A rect answers both without asking the config anything.
 ///
-/// Ambient rather than a parameter because the handler that reads it may be a `ModuleClick::Action` — a bare
-/// `fn()` that opens someone else's panel — which no signature change reaches. Scoped strictly to the
-/// synchronous dispatch, so nothing can read a stale rect afterwards.
+/// Ambient rather than a parameter because the handler that reads it may be a `ModuleClick::Action` — a bare `fn()` that opens someone else's panel — which no signature change reaches. Scoped strictly to the synchronous dispatch, so nothing can read a stale rect afterwards.
 pub fn from_chip<R>(chip: Rect, act: impl FnOnce() -> R) -> R {
     let previous = PRESSED_CHIP.with(|pressed| pressed.replace(Some(chip)));
     let done = act();
@@ -35,8 +28,7 @@ pub fn from_chip<R>(chip: Rect, act: impl FnOnce() -> R) -> R {
     done
 }
 
-/// The rect of the chip whose press is being dispatched, if a press is what is running. `None` for a panel
-/// reached from anywhere else — IPC, a keybind — where there is no chip to hang off.
+/// The rect of the chip whose press is being dispatched, if a press is what is running. `None` for a panel reached from anywhere else — IPC, a keybind — where there is no chip to hang off.
 pub fn pressed_chip() -> Option<Rect> {
     PRESSED_CHIP.with(|pressed| pressed.get())
 }
@@ -45,8 +37,7 @@ pub fn pressed_chip() -> Option<Rect> {
 type PanelOpener = Box<dyn Fn(&str)>;
 
 thread_local! {
-    // How a chip opens its module's panel. Installed at startup, because *which* surface a module id opens is
-    // the shell's routing rather than the chip's: a chip knows it was dragged away from the bar and nothing more.
+    // How a chip opens its module's panel. Installed at startup, because *which* surface a module id opens is the shell's routing rather than the chip's: a chip knows it was dragged away from the bar and nothing more.
     static OPEN_PANEL: RefCell<Option<PanelOpener>> = const { RefCell::new(None) };
 }
 
@@ -131,8 +122,7 @@ pub struct DragOpen {
 }
 
 impl DragOpen {
-    /// How far a drag has travelled *away from the bar*, from a press at `from` to a pointer now at `to`.
-    /// Negative is back towards the bar, which is the direction that closes rather than opens.
+    /// How far a drag has travelled *away from the bar*, from a press at `from` to a pointer now at `to`. Negative is back towards the bar, which is the direction that closes rather than opens.
     pub(crate) fn travel(&self, from: (f32, f32), to: (f32, f32)) -> f32 {
         match self.edge {
             Edge::Top => to.1 - from.1,
@@ -162,15 +152,9 @@ pub struct ModuleDef {
     pub click: Option<ModuleClick>,
     /// What the wheel does over the module, as `(dx, dy)` in pixels; `None` leaves the chip inert to scroll.
     pub scroll: Option<fn(f32, f32)>,
-    /// Whether resting the pointer on the chip opens its hover popout. Set from
-    /// `popout::has_popout` rather than declared twice, so a module can't
-    /// be wired for a card it has no content for.
+    /// Whether resting the pointer on the chip opens its hover popout. Set from `popout::has_popout` rather than declared twice, so a module can't be wired for a card it has no content for.
     pub popout: bool,
-    /// Whether this chip gives up width when its zone runs short, instead of holding its content width like
-    /// every other one. For the chips whose text has no natural length — a window title, a track name — which
-    /// are the reason a zone runs short in the first place. Their label elides, so what they lose is the tail
-    /// of a string rather than anything a reader needs; a chip that gave up width without eliding would just
-    /// hide its own end.
+    /// Whether this chip gives up width when its zone runs short, instead of holding its content width like every other one. For the chips whose text has no natural length — a window title, a track name — which are the reason a zone runs short in the first place. Their label elides, so what they lose is the tail of a string rather than anything a reader needs; a chip that gave up width without eliding would just hide its own end.
     pub elastic: bool,
 }
 
@@ -202,8 +186,7 @@ impl ModuleDef {
         self
     }
 
-    /// Wires the wheel over this chip to `action`, receiving the scroll delta in pixels (positive `dy` is a
-    /// scroll up). Used by the level modules so the chip is a control, not just a readout.
+    /// Wires the wheel over this chip to `action`, receiving the scroll delta in pixels (positive `dy` is a scroll up). Used by the level modules so the chip is a control, not just a readout.
     pub fn on_scroll(mut self, action: fn(f32, f32)) -> Self {
         self.scroll = Some(action);
         self
@@ -214,8 +197,7 @@ impl ModuleDef {
         self
     }
 
-    /// Lets this chip shrink when its zone is short of room, eliding its label rather than holding a width
-    /// nothing else can give back.
+    /// Lets this chip shrink when its zone is short of room, eliding its label rather than holding a width nothing else can give back.
     pub fn elastic(mut self) -> Self {
         self.elastic = true;
         self
@@ -240,24 +222,21 @@ impl ModuleRegistry {
         self.modules.get(id)
     }
 
-    /// Every registered id, sorted. What the settings application's per-module overrides enumerate, so a chip
-    /// can be restyled before it has been put on a bar.
+    /// Every registered id, sorted. What the settings application's per-module overrides enumerate, so a chip can be restyled before it has been put on a bar.
     pub fn ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.modules.keys().cloned().collect();
         ids.sort_unstable();
         ids
     }
 
-    /// Marks every registered module the popout layer has card content for. Driven off that list rather than
-    /// declared per module, so the two cannot drift into a chip that opens an empty card.
+    /// Marks every registered module the popout layer has card content for. Driven off that list rather than declared per module, so the two cannot drift into a chip that opens an empty card.
     pub fn wire_popouts(&mut self, has_popout: impl Fn(&str) -> bool) {
         for (id, def) in self.modules.iter_mut() {
             def.popout = has_popout(id);
         }
     }
 
-    /// Every registered module. What lets a test walk the table and check the roles against the routing it is
-    /// supposed to match.
+    /// Every registered module. What lets a test walk the table and check the roles against the routing it is supposed to match.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &ModuleDef)> {
         self.modules.iter()
     }
@@ -275,15 +254,12 @@ thread_local! {
     static LIVE: RefCell<Option<ModuleRegistry>> = const { RefCell::new(None) };
 }
 
-/// Publishes the module vocabulary every bar builds from, and that the settings application enumerates. Set once
-/// at startup by whoever owns the module list — the same arrangement as [`crate::panels`], so neither the bar
-/// nor a panel that lists modules has to name one.
+/// Publishes the module vocabulary every bar builds from, and that the settings application enumerates. Set once at startup by whoever owns the module list — the same arrangement as [`crate::panels`], so neither the bar nor a panel that lists modules has to name one.
 pub fn install(registry: ModuleRegistry) {
     LIVE.with(|live| *live.borrow_mut() = Some(registry));
 }
 
-/// Runs `act` against the installed registry, or against an empty one when nothing has been installed — a bar
-/// with no modules rather than a panic, which is what a test that never composed a shell should see.
+/// Runs `act` against the installed registry, or against an empty one when nothing has been installed — a bar with no modules rather than a panic, which is what a test that never composed a shell should see.
 pub fn with_registry<R>(act: impl FnOnce(&ModuleRegistry) -> R) -> R {
     LIVE.with(|live| match live.borrow().as_ref() {
         Some(registry) => act(registry),
@@ -316,9 +292,7 @@ mod tests {
 
     /// An elastic chip hands back the width a cramped bar needs; every other chip keeps its own.
     ///
-    /// This is what makes an eliding label mean anything: a title only ends in `…` when something narrowed the
-    /// box it is drawn in, and a chip that holds its content width is never narrowed. The other half — that a
-    /// clamped label ends in an ellipsis rather than being cut mid-glyph — is telar's, and tested there.
+    /// This is what makes an eliding label mean anything: a title only ends in `…` when something narrowed the box it is drawn in, and a chip that holds its content width is never narrowed. The other half — that a clamped label ends in an ellipsis rather than being cut mid-glyph — is telar's, and tested there.
     #[test]
     fn an_elastic_chip_yields_width_and_a_plain_one_holds_it() {
         use crate::{ModuleShellProps, module_shell};

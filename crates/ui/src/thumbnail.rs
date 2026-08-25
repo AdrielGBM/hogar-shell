@@ -1,10 +1,6 @@
 //! Wallpaper thumbnails on screen, without a full-resolution decode on the frame that asks for one.
 //!
-//! The cache itself belongs to the wallpaper service, which is where `hogar-shell wallpaper` reaches it from. What
-//! lives here is the *surface* half: a grid asks for a picture and gets a signal, a worker generates the ones
-//! that are not cached yet, and each tile swaps its glyph for the real thing as it lands. A grid of two hundred
-//! images therefore opens immediately and fills in, rather than freezing the shell for the length of two hundred
-//! JPEG decodes.
+//! The cache itself belongs to the wallpaper service, which is where `hogar-shell wallpaper` reaches it from. What lives here is the *surface* half: a grid asks for a picture and gets a signal, a worker generates the ones that are not cached yet, and each tile swaps its glyph for the real thing as it lands. A grid of two hundred images therefore opens immediately and fills in, rather than freezing the shell for the length of two hundred JPEG decodes.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -48,8 +44,7 @@ fn ensure_store() {
     THUMBNAILS.with(|cell| *cell.borrow_mut() = Some(store));
 }
 
-/// The size `[wallpaper] thumbnail_size` asks for. Read here rather than at each call site so a grid and a picker
-/// cannot generate two caches of the same pictures at two sizes.
+/// The size `[wallpaper] thumbnail_size` asks for. Read here rather than at each call site so a grid and a picker cannot generate two caches of the same pictures at two sizes.
 pub fn size() -> u32 {
     config::config()
         .map(|config| config.wallpaper.thumbnail_size)
@@ -58,9 +53,7 @@ pub fn size() -> u32 {
 
 /// A picture of `source` at `width`×`height`, showing `glyph` until it has one.
 ///
-/// A keyed one-item list rather than a plain image, the same shape the dashboard's cover art uses: the file is
-/// decoded once per picture instead of once per repaint, and the placeholder is replaced in place when the
-/// thumbnail lands.
+/// A keyed one-item list rather than a plain image, the same shape the dashboard's cover art uses: the file is decoded once per picture instead of once per repaint, and the placeholder is replaced in place when the thumbnail lands.
 pub fn view(
     source: PathBuf,
     width: f32,

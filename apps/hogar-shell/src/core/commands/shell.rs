@@ -219,9 +219,7 @@ pub(crate) const SCHEME: Target = Target {
                 };
                 let next = match wanted {
                     "auto" => "auto".to_string(),
-                    // Toggling resolves the *effective* mode first: `auto` is not a third state to flip
-                    // through, it is "whatever the palette is", and a user pressing a toggle means the
-                    // other one.
+                    // Toggling resolves the *effective* mode first: `auto` is not a third state to flip through, it is "whatever the palette is", and a user pressing a toggle means the other one.
                     "toggle" => match Mode::of(&config.resolve_theme()) {
                         Mode::Dark => Mode::Light,
                         Mode::Light => Mode::Dark,
@@ -335,10 +333,7 @@ pub(crate) const DEPS: Target = Target {
 
 /// What the shell is holding right now, as a census a script can diff.
 ///
-/// The shell's standing rule is that nothing runs, and nothing is resident, unless something is asking for it —
-/// and unmeasured that regresses silently: a module switched off in a reload leaving its poller reading the
-/// system for nobody is invisible from the outside, and was only ever findable in `top`. Every number here is
-/// counted from the thing itself rather than tracked alongside it, so none of them can drift from what is true.
+/// The shell's standing rule is that nothing runs, and nothing is resident, unless something is asking for it — and unmeasured that regresses silently: a module switched off in a reload leaving its poller reading the system for nobody is invisible from the outside, and was only ever findable in `top`. Every number here is counted from the thing itself rather than tracked alongside it, so none of them can drift from what is true.
 fn status() -> String {
     let services = util::broadcast::running_services();
     let mut out = format!(
@@ -355,18 +350,14 @@ fn status() -> String {
     out
 }
 
-/// Threads in this process, counted from the kernel rather than from anything the shell bookkeeps — a thread
-/// leaked by a library the shell only calls into still shows up here.
+/// Threads in this process, counted from the kernel rather than from anything the shell bookkeeps — a thread leaked by a library the shell only calls into still shows up here.
 fn live_threads() -> Option<usize> {
     Some(std::fs::read_dir("/proc/self/task").ok()?.count())
 }
 
 /// What the renderer is holding, one line per cache, so a growing process can be told from a growing cache.
 ///
-/// RSS alone cannot answer that: a shell whose memory climbs looks identical whether the climb is in a text raster
-/// cache doing its job or in something with no ceiling at all. Every figure comes from the cache itself, summed
-/// across the threads that render, and is at most a second old — the caches are thread-local, so a rendering thread
-/// leaves its own count where this can read it rather than this reaching across for a set it cannot see.
+/// RSS alone cannot answer that: a shell whose memory climbs looks identical whether the climb is in a text raster cache doing its job or in something with no ceiling at all. Every figure comes from the cache itself, summed across the threads that render, and is at most a second old — the caches are thread-local, so a rendering thread leaves its own count where this can read it rather than this reaching across for a set it cannot see.
 fn caches() -> String {
     let stats = telar::cache_stats();
     if stats.is_empty() {
@@ -393,17 +384,11 @@ fn kib(bytes: usize) -> String {
 
 /// Gives back what the shell is holding but not using, and reports what that came to.
 ///
-/// glibc keeps the pages it has freed inside its arenas rather than returning them to the kernel — which is
-/// most of why a shell with no leak still climbs, since profiling put a quarter of its three million
-/// allocations in the transient bucket, and that churn is what leaves arenas full of holes.
+/// glibc keeps the pages it has freed inside its arenas rather than returning them to the kernel — which is most of why a shell with no leak still climbs, since profiling put a quarter of its three million allocations in the transient bucket, and that churn is what leaves arenas full of holes.
 ///
-/// The renderer's caches used to be the other half of this and no longer are: each surface rasterises on its
-/// own render thread, which sweeps its own caches once it has been idle for their horizon. A sweep from here
-/// would reach neither those (they are thread-local to the render threads) nor anything else — the shell
-/// never rasterises on the UI thread — and could not evict earlier than that horizon anyway.
+/// The renderer's caches used to be the other half of this and no longer are: each surface rasterises on its own render thread, which sweeps its own caches once it has been idle for their horizon. A sweep from here would reach neither those (they are thread-local to the render threads) nor anything else — the shell never rasterises on the UI thread — and could not evict earlier than that horizon anyway.
 ///
-/// A command rather than a timer because the shell already has somewhere to put it: `[[idle.stages]]` runs shell
-/// commands, so `action = "shell reclaim"` on a stage makes this automatic at whatever idleness the user means.
+/// A command rather than a timer because the shell already has somewhere to put it: `[[idle.stages]]` runs shell commands, so `action = "shell reclaim"` on a stage makes this automatic at whatever idleness the user means.
 fn reclaim() -> String {
     let before = rss_kb();
     trim_heap();
@@ -441,8 +426,7 @@ fn rss_kb() -> Option<u64> {
 
 /// One line per dependency: whether it is there, what it is for, and — when it is not — what that costs.
 ///
-/// Answered from the registry rather than from a written list, so it cannot describe a shell other than the one
-/// running it.
+/// Answered from the registry rather than from a written list, so it cannot describe a shell other than the one running it.
 fn render_deps(statuses: Vec<util::deps::Status>, only_missing: bool) -> String {
     use util::deps::{Need, Presence, entry};
     let mut out = String::new();

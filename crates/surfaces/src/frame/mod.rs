@@ -20,8 +20,7 @@ impl App for FrameApp {
         let config = self.config.get();
         let theme = config.resolve_theme();
         set_theme(theme);
-        // The frame is the bars' own edge continued around the screen, so it follows their opacity rather than
-        // a key of its own — a ring painted solid against translucent bars reads as a bug, not a choice.
+        // The frame is the bars' own edge continued around the screen, so it follows their opacity rather than a key of its own — a ring painted solid against translucent bars reads as a bug, not a choice.
         let base = theme.base.with_alpha(config.opacity());
         let inner_radius = config
             .shape

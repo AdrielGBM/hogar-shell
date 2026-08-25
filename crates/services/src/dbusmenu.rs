@@ -1,13 +1,8 @@
 //! A `com.canonical.dbusmenu` client: the menu behind a tray icon.
 //!
-//! Not a [`Service`](util::broadcast::Service), because a menu is not ambient state — it is
-//! fetched when the user asks to see one and thrown away when it closes. What it *is* is a D-Bus round trip to
-//! another application, so every entry point here runs off the UI thread; the fetch is a `watch` producer whose
-//! result lands back on the driver thread, which is the one place a surface may be opened.
+//! Not a [`Service`](util::broadcast::Service), because a menu is not ambient state — it is fetched when the user asks to see one and thrown away when it closes. What it *is* is a D-Bus round trip to another application, so every entry point here runs off the UI thread; the fetch is a `watch` producer whose result lands back on the driver thread, which is the one place a surface may be opened.
 //!
-//! This is the only way to interact with a good part of the tray. Applications built on libappindicator —
-//! Steam among them — implement no `Activate` at all and expose a menu instead, so without this their icon is
-//! decoration.
+//! This is the only way to interact with a good part of the tray. Applications built on libappindicator — Steam among them — implement no `Activate` at all and expose a menu instead, so without this their icon is decoration.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -19,9 +14,7 @@ use zbus::zvariant::{OwnedValue, Value};
 
 const MENU_IFACE: &str = "com.canonical.dbusmenu";
 
-/// An application that accepts a call and never replies must not strand the menu behind it. Applied to the
-/// whole connection, so it bounds `AboutToShow` and `GetLayout` alike — a method the application simply does
-/// not implement errors immediately and never reaches this.
+/// An application that accepts a call and never replies must not strand the menu behind it. Applied to the whole connection, so it bounds `AboutToShow` and `GetLayout` alike — a method the application simply does not implement errors immediately and never reaches this.
 const METHOD_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What a row's tick renders as, per the spec's `toggle-type`/`toggle-state` pair.
@@ -69,15 +62,13 @@ impl MenuItem {
         !self.children.is_empty()
     }
 
-    /// Whether this row does something when clicked. A separator, a disabled row, and a row that only opens a
-    /// submenu are all "not an action".
+    /// Whether this row does something when clicked. A separator, a disabled row, and a row that only opens a submenu are all "not an action".
     pub fn is_actionable(&self) -> bool {
         self.enabled && !self.separator && !self.has_submenu()
     }
 }
 
-/// Strips GTK mnemonic underscores: `_Store` is "Store" with S underlined, and `__` is one literal underscore.
-/// Rendering them raw is the difference between a menu that looks native and one that looks broken.
+/// Strips GTK mnemonic underscores: `_Store` is "Store" with S underlined, and `__` is one literal underscore. Rendering them raw is the difference between a menu that looks native and one that looks broken.
 fn strip_mnemonics(label: &str) -> String {
     let mut out = String::with_capacity(label.len());
     let mut chars = label.chars().peekable();
@@ -97,9 +88,7 @@ fn strip_mnemonics(label: &str) -> String {
 /// The wire shape of one node: `(ia{sv}av)` — id, properties, children as variants.
 type RawNode = (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>);
 
-/// A node's properties as borrowed values. Deliberately not `OwnedValue`: converting each one is fallible, and
-/// a conversion that quietly fails turns every label into an empty string rather than into an error anybody
-/// would notice.
+/// A node's properties as borrowed values. Deliberately not `OwnedValue`: converting each one is fallible, and a conversion that quietly fails turns every label into an empty string rather than into an error anybody would notice.
 type Props<'a> = [(String, Value<'a>)];
 
 fn lookup<'a, 'v>(props: &'a Props<'v>, key: &str) -> Option<&'a Value<'v>> {
@@ -154,11 +143,7 @@ fn bytes_property(props: &Props<'_>, key: &str) -> Option<Vec<u8>> {
 
 /// Turns one `(ia{sv}av)` node — id, properties, children — into a [`MenuItem`], recursively.
 ///
-/// Invisible rows are dropped here rather than at render time: an application uses `visible` to switch whole
-/// blocks of its menu on and off, and carrying them into the view only to skip them would leave the separators
-/// around them stranded.
-/// Builds a node from its own properties and its already-parsed children. Shared by the root, which arrives
-/// deserialized as a tuple, and by every child, which arrives as a raw variant.
+/// Invisible rows are dropped here rather than at render time: an application uses `visible` to switch whole blocks of its menu on and off, and carrying them into the view only to skip them would leave the separators around them stranded. Builds a node from its own properties and its already-parsed children. Shared by the root, which arrives deserialized as a tuple, and by every child, which arrives as a raw variant.
 fn build_item(id: i32, props: &Props<'_>, children: Vec<MenuItem>) -> Option<MenuItem> {
     if !bool_property(props, "visible", true) {
         return None;
@@ -190,8 +175,7 @@ fn parse_node((id, props, children): RawNode) -> Option<MenuItem> {
     build_item(id, &props, children)
 }
 
-/// A child arrives as a variant wrapping the same `(ia{sv}av)` shape, so it is taken apart by hand rather than
-/// deserialized: the type is recursive, and `Value` is where that recursion bottoms out.
+/// A child arrives as a variant wrapping the same `(ia{sv}av)` shape, so it is taken apart by hand rather than deserialized: the type is recursive, and `Value` is where that recursion bottoms out.
 fn parse_child(value: &Value<'_>) -> Option<MenuItem> {
     let node = match value {
         Value::Value(inner) => return parse_child(inner),
@@ -226,8 +210,7 @@ fn connect(bus: &str) -> Option<(Connection, BusName<'static>)> {
     Some((conn, name))
 }
 
-/// Asks the application to refresh the menu it is about to show. Applications populate lazily — Steam's recent
-/// games are filled in here — so skipping this shows a stale or empty menu on the first open.
+/// Asks the application to refresh the menu it is about to show. Applications populate lazily — Steam's recent games are filled in here — so skipping this shows a stale or empty menu on the first open.
 fn about_to_show(conn: &Connection, name: &BusName<'_>, path: &str, id: i32) {
     let reply = conn.call_method(Some(name), path, Some(MENU_IFACE), "AboutToShow", &id);
     if let Err(e) = reply {
@@ -239,8 +222,7 @@ fn about_to_show(conn: &Connection, name: &BusName<'_>, path: &str, id: i32) {
 pub fn fetch(bus: &str, path: &str) -> Option<MenuItem> {
     let (conn, name) = connect(bus)?;
     about_to_show(&conn, &name, path, 0);
-    // Depth -1 is the whole tree in one call: a submenu opened later would otherwise cost another round trip
-    // while the pointer waits on it.
+    // Depth -1 is the whole tree in one call: a submenu opened later would otherwise cost another round trip while the pointer waits on it.
     let reply = conn
         .call_method(
             Some(&name),
@@ -259,17 +241,14 @@ pub fn fetch(bus: &str, path: &str) -> Option<MenuItem> {
     parse_node(layout)
 }
 
-/// Fetches the menu on a worker thread and delivers it to `tx`, which [`platform_wayland::watch`] drains on
-/// the driver thread — the only place a surface may be opened. A one-shot producer: it sends once and returns,
-/// so the channel closes and the watch source retires with it.
+/// Fetches the menu on a worker thread and delivers it to `tx`, which [`platform_wayland::watch`] drains on the driver thread — the only place a surface may be opened. A one-shot producer: it sends once and returns, so the channel closes and the watch source retires with it.
 pub fn fetch_into(bus: String, path: String) -> impl FnOnce(EventSender<Option<MenuItem>>) {
     move |tx| {
         tx.send(fetch(&bus, &path));
     }
 }
 
-/// Reports a row's activation back to the application. Fire-and-forget on a thread of its own: the application
-/// may take as long as it likes to act on it, and the click that triggered this happened on the UI thread.
+/// Reports a row's activation back to the application. Fire-and-forget on a thread of its own: the application may take as long as it likes to act on it, and the click that triggered this happened on the UI thread.
 pub fn activate(bus: &str, path: &str, id: i32) {
     let (bus, path) = (bus.to_string(), path.to_string());
     let _ = std::thread::Builder::new()
@@ -278,8 +257,7 @@ pub fn activate(bus: &str, path: &str, id: i32) {
             let Some((conn, name)) = connect(&bus) else {
                 return;
             };
-            // The spec's signature is (id, eventId, data, timestamp); `data` is unused for a click, and a
-            // timestamp of 0 is what every other host sends.
+            // The spec's signature is (id, eventId, data, timestamp); `data` is unused for a click, and a timestamp of 0 is what every other host sends.
             let data = Value::I32(0);
             if let Err(e) = conn.call_method(
                 Some(&name),
@@ -321,9 +299,7 @@ mod tests {
         assert!(!Toggle::None.is_on());
     }
 
-    // Reads a real menu off the session bus, gated behind an env var so it never runs in headless CI: run with
-    // `HOGAR_SHELL_TEST_DBUSMENU=<bus><path> cargo test -p hogar-shell --lib dbusmenu_reads -- --nocapture`, e.g.
-    // `HOGAR_SHELL_TEST_DBUSMENU=":1.502/org/ayatana/NotificationItem/steam/Menu"`.
+    // Reads a real menu off the session bus, gated behind an env var so it never runs in headless CI: run with `HOGAR_SHELL_TEST_DBUSMENU=<bus><path> cargo test -p hogar-shell --lib dbusmenu_reads -- --nocapture`, e.g. `HOGAR_SHELL_TEST_DBUSMENU=":1.502/org/ayatana/NotificationItem/steam/Menu"`.
     #[test]
     fn dbusmenu_reads_a_live_menu() {
         let Ok(target) = std::env::var("HOGAR_SHELL_TEST_DBUSMENU") else {

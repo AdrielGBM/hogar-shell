@@ -1,14 +1,8 @@
 //! The graphics processor: how busy it is, how hot, and how much of its memory is in use.
 //!
-//! Two backends, because the kernel only tells half the story. AMD's `amdgpu` publishes utilisation and VRAM
-//! straight into sysfs, so reading it costs four file reads and no process; NVIDIA's driver publishes none of
-//! that and answers only NVML, which this shell `dlopen`s rather than paying a `nvidia-smi` fork per reading.
-//! Intel sits in between — a temperature from
-//! hwmon, and no utilisation counter outside the perf interface — and reports what it has rather than
-//! inventing the rest.
+//! Two backends, because the kernel only tells half the story. AMD's `amdgpu` publishes utilisation and VRAM straight into sysfs, so reading it costs four file reads and no process; NVIDIA's driver publishes none of that and answers only NVML, which this shell `dlopen`s rather than paying a `nvidia-smi` fork per reading. Intel sits in between — a temperature from hwmon, and no utilisation counter outside the perf interface — and reports what it has rather than inventing the rest.
 //!
-//! Which is why every field is an `Option`: a card that cannot answer says so, and a card reads as absent only
-//! when there is genuinely no GPU to read.
+//! Which is why every field is an `Option`: a card that cannot answer says so, and a card reads as absent only when there is genuinely no GPU to read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,8 +17,7 @@ use util::broadcast::{Broadcast, Service};
 
 const DRM_DIR: &str = "/sys/class/drm";
 
-/// Slower than the CPU's one-second tick on purpose: a GPU load that matters is one that lasts longer than
-/// two seconds, and every backend here reads several counters per tick.
+/// Slower than the CPU's one-second tick on purpose: a GPU load that matters is one that lasts longer than two seconds, and every backend here reads several counters per tick.
 const POLL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -66,8 +59,7 @@ impl Vendor {
     }
 }
 
-/// One reading. Every measurement is optional because which of them a driver publishes is a property of the
-/// driver, not of the machine — showing a hard zero where there is no counter would read as an idle GPU.
+/// One reading. Every measurement is optional because which of them a driver publishes is a property of the driver, not of the machine — showing a hard zero where there is no counter would read as an idle GPU.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Gpu {
     pub vendor: Vendor,
@@ -83,8 +75,7 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    /// VRAM in use as a 0..1 fraction, for a meter. `None` when the card reports no memory at all — an
-    /// integrated one shares system RAM, which the memory card already shows.
+    /// VRAM in use as a 0..1 fraction, for a meter. `None` when the card reports no memory at all — an integrated one shares system RAM, which the memory card already shows.
     pub fn vram_fraction(&self) -> Option<f32> {
         let (used, total) = (self.vram_used?, self.vram_total?);
         (total > 0).then(|| used as f32 / total as f32)
@@ -111,8 +102,7 @@ fn read_number<T: std::str::FromStr>(path: &Path) -> Option<T> {
 
 /// Every GPU the `drm` subsystem knows about, in card order.
 ///
-/// The connector entries (`card1-DP-1`) share the directory and are not cards; they are filtered by the dash,
-/// which no card name contains.
+/// The connector entries (`card1-DP-1`) share the directory and are not cards; they are filtered by the dash, which no card name contains.
 fn cards() -> Vec<Card> {
     let Ok(entries) = fs::read_dir(DRM_DIR) else {
         return Vec::new();
@@ -135,9 +125,7 @@ fn cards() -> Vec<Card> {
     found
 }
 
-/// The card to read: the one `[gpu] card` names, else the first with a vendor we have a backend for, else the
-/// first card at all. A laptop with switchable graphics lists the integrated GPU first, so "first with a
-/// backend" is not enough on its own — which is exactly what `card` is there to override.
+/// The card to read: the one `[gpu] card` names, else the first with a vendor we have a backend for, else the first card at all. A laptop with switchable graphics lists the integrated GPU first, so "first with a backend" is not enough on its own — which is exactly what `card` is there to override.
 fn select(cards: &[Card], config: &GpuConfig) -> Option<Card> {
     let wanted = config.card.trim();
     if !wanted.is_empty() {
@@ -153,9 +141,7 @@ fn select(cards: &[Card], config: &GpuConfig) -> Option<Card> {
         .cloned()
 }
 
-/// The first `temp*_input` under the card's hwmon directory, in millidegrees. Which index carries the die
-/// temperature differs by driver (`temp1` on amdgpu, but not universally), so this takes the lowest-numbered
-/// one rather than assuming.
+/// The first `temp*_input` under the card's hwmon directory, in millidegrees. Which index carries the die temperature differs by driver (`temp1` on amdgpu, but not universally), so this takes the lowest-numbered one rather than assuming.
 fn hwmon_temperature(device: &Path) -> Option<f32> {
     let hwmon = fs::read_dir(device.join("hwmon")).ok()?.flatten().next()?;
     let mut inputs: Vec<PathBuf> = fs::read_dir(hwmon.path())
@@ -173,8 +159,7 @@ fn hwmon_temperature(device: &Path) -> Option<f32> {
     Some(millidegrees / 1000.0)
 }
 
-/// Reads a card straight out of sysfs. `gpu_busy_percent` and the `mem_info_vram_*` pair are amdgpu's; Intel
-/// publishes neither, so an Intel card comes back with a temperature and honest `None`s.
+/// Reads a card straight out of sysfs. `gpu_busy_percent` and the `mem_info_vram_*` pair are amdgpu's; Intel publishes neither, so an Intel card comes back with a temperature and honest `None`s.
 fn read_sysfs(card: &Card) -> Gpu {
     Gpu {
         vendor: card.vendor,
@@ -189,15 +174,12 @@ fn read_sysfs(card: &Card) -> Gpu {
 
 /// The NVIDIA card, through NVML.
 ///
-/// This used to fork `nvidia-smi` and parse a CSV line, once per poll tick. NVML is the library that tool is
-/// itself a front end for, so the readings are identical and the process start is gone — see [`crate::nvml`]
-/// for why it is `dlopen`ed rather than linked.
+/// This used to fork `nvidia-smi` and parse a CSV line, once per poll tick. NVML is the library that tool is itself a front end for, so the readings are identical and the process start is gone — see [`crate::nvml`] for why it is `dlopen`ed rather than linked.
 fn read_nvidia() -> Option<Gpu> {
     crate::nvml::read(0).map(from_nvml)
 }
 
-/// NVML's reading as this service's. Split out so the rule every field here exists for — a counter the card
-/// does not publish reads as unknown, never as zero — is testable without an NVIDIA GPU present.
+/// NVML's reading as this service's. Split out so the rule every field here exists for — a counter the card does not publish reads as unknown, never as zero — is testable without an NVIDIA GPU present.
 fn from_nvml(reading: crate::nvml::Reading) -> Gpu {
     Gpu {
         vendor: Vendor::Nvidia,
@@ -222,8 +204,7 @@ pub fn read(config: &GpuConfig) -> Option<Gpu> {
         Some(forced) => forced,
         None => card.as_ref().map(|c| c.vendor).unwrap_or_default(),
     };
-    // NVIDIA's card *is* in sysfs, and reading it there yields nothing but a directory: the driver publishes
-    // no utilisation, no temperature and no memory outside its own tool.
+    // NVIDIA's card *is* in sysfs, and reading it there yields nothing but a directory: the driver publishes no utilisation, no temperature and no memory outside its own tool.
     if vendor == Vendor::Nvidia {
         return read_nvidia();
     }
@@ -232,16 +213,14 @@ pub fn read(config: &GpuConfig) -> Option<Gpu> {
 
 static GPU: Service<Gpu> = Service::new("hogar-shell-gpu", run);
 
-/// The `[gpu]` settings, or the defaults outside a started shell. Read through the cross-thread snapshot: the
-/// only caller is the producer, and the driver thread's own copy is invisible from there.
+/// The `[gpu]` settings, or the defaults outside a started shell. Read through the cross-thread snapshot: the only caller is the producer, and the driver thread's own copy is invisible from there.
 fn settings() -> GpuConfig {
     config::shared_config()
         .map(|c| c.gpu.clone())
         .unwrap_or_default()
 }
 
-/// Polls, because neither backend has an event source: sysfs counters are files with no notification, and
-/// One poll for the whole shell, not one per surface.
+/// Polls, because neither backend has an event source: sysfs counters are files with no notification, and One poll for the whole shell, not one per surface.
 fn run(out: &Arc<Broadcast<Gpu>>) {
     let config = settings();
     let mut history = History::default();
@@ -256,8 +235,7 @@ fn run(out: &Arc<Broadcast<Gpu>>) {
                 last = gpu.clone();
                 out.publish(gpu);
             }
-            // Said once, so a subscriber knows the answer is "no GPU" rather than "not yet", and not repeated:
-            // a desktop with no readable card would otherwise wake every surface twice a second forever.
+            // Said once, so a subscriber knows the answer is "no GPU" rather than "not yet", and not repeated: a desktop with no readable card would otherwise wake every surface twice a second forever.
             None if last != Gpu::default() || out.current().is_none() => {
                 last = Gpu::default();
                 out.publish(Gpu::default());
@@ -271,9 +249,7 @@ fn run(out: &Arc<Broadcast<Gpu>>) {
     }
 }
 
-/// Registers `tx` for live readings — unless `[gpu] enabled` is off, in which case nothing is registered and
-/// the producer is never started. Guarding here rather than inside the producer is what makes a disabled
-/// section cost *zero* threads rather than one that exits: `Service` spawns on first touch.
+/// Registers `tx` for live readings — unless `[gpu] enabled` is off, in which case nothing is registered and the producer is never started. Guarding here rather than inside the producer is what makes a disabled section cost *zero* threads rather than one that exits: `Service` spawns on first touch.
 pub fn subscribe(tx: EventSender<Gpu>) {
     if !settings().enabled {
         return;
@@ -328,8 +304,7 @@ mod tests {
         };
         assert_eq!(select(&cards, &forced).unwrap().id, "card2");
 
-        // Naming a card wins over the backend: it is the more specific answer, and on a laptop with two cards
-        // from one vendor it is the only one that can distinguish them.
+        // Naming a card wins over the backend: it is the more specific answer, and on a laptop with two cards from one vendor it is the only one that can distinguish them.
         let named = GpuConfig {
             backend: "nvidia".into(),
             card: "card1".into(),
@@ -353,9 +328,7 @@ mod tests {
         assert!(select(&[], &GpuConfig::default()).is_none());
     }
 
-    /// The rule the whole `Option` shape of [`Gpu`] exists for. Carried over from when this backend parsed
-    /// `nvidia-smi`'s `[N/A]` columns: NVML says the same thing by failing the individual call, and the
-    /// mapping must keep meaning "unknown" rather than filling in a zero that draws an idle GPU.
+    /// The rule the whole `Option` shape of [`Gpu`] exists for. Carried over from when this backend parsed `nvidia-smi`'s `[N/A]` columns: NVML says the same thing by failing the individual call, and the mapping must keep meaning "unknown" rather than filling in a zero that draws an idle GPU.
     #[test]
     fn a_field_the_card_does_not_measure_reads_as_unknown_not_as_zero() {
         let gpu = from_nvml(crate::nvml::Reading {

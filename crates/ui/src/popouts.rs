@@ -1,12 +1,8 @@
 //! Which card a chip shows when the pointer rests on it.
 //!
-//! The hover surface's counterpart to [`crate::panels`], and registered for the same reason: the popout is one
-//! card-shaped surface that opens under whichever chip was hovered, and naming the modules it can show would be
-//! the one thing stopping it from being built without them.
+//! The hover surface's counterpart to [`crate::panels`], and registered for the same reason: the popout is one card-shaped surface that opens under whichever chip was hovered, and naming the modules it can show would be the one thing stopping it from being built without them.
 //!
-//! A builder yields a [`Card`] rather than a finished tree, because the surface owns the frame around it — the
-//! panel fill, the bar's radius and the pointer tracking that keeps the popout up — and a card that built its
-//! own box could not be told any of that.
+//! A builder yields a [`Card`] rather than a finished tree, because the surface owns the frame around it — the panel fill, the bar's radius and the pointer tracking that keeps the popout up — and a card that built its own box could not be told any of that.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -56,8 +52,7 @@ pub fn install(registry: PopoutRegistry) {
     LIVE.with(|live| *live.borrow_mut() = Some(registry));
 }
 
-/// Whether `module` has a card. What the bar wires its chips' hover from, so no chip is given a hover target it
-/// would open empty.
+/// Whether `module` has a card. What the bar wires its chips' hover from, so no chip is given a hover target it would open empty.
 pub fn has_popout(module: &str) -> bool {
     LIVE.with(|live| {
         live.borrow()
@@ -66,8 +61,7 @@ pub fn has_popout(module: &str) -> bool {
     })
 }
 
-/// Builds `module`'s card, or `None` when it has none — which the hover wiring already gates on, so an id that
-/// reaches here anyway gets no card rather than a mislabelled one.
+/// Builds `module`'s card, or `None` when it has none — which the hover wiring already gates on, so an id that reaches here anyway gets no card rather than a mislabelled one.
 pub fn build(
     module: &str,
     config: &Config,

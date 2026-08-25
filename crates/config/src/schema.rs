@@ -1,12 +1,8 @@
 //! The annotated default config, generated rather than written.
 //!
-//! `hogar-shell config schema` prints every section with its defaults and the doc comment that explains it, so the
-//! "every option" reference is a view of the code instead of a second copy that drifts away from it. The comments
-//! come from `build.rs`, which lifts them off `config.rs`; the values come from serializing [`Config::starter`], so
-//! a key that exists is a key the shell reads.
+//! `hogar-shell config schema` prints every section with its defaults and the doc comment that explains it, so the "every option" reference is a view of the code instead of a second copy that drifts away from it. The comments come from `build.rs`, which lifts them off `config.rs`; the values come from serializing [`Config::starter`], so a key that exists is a key the shell reads.
 //!
-//! [`outline`] is that view as data, and [`render`] is one printing of it. `hogar-shell man 5` is the other: both
-//! walk the same tree, so a key cannot reach the TOML reference and go missing from the manual.
+//! [`outline`] is that view as data, and [`render`] is one printing of it. `hogar-shell man 5` is the other: both walk the same tree, so a key cannot reach the TOML reference and go missing from the manual.
 
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -15,9 +11,7 @@ use crate::Config;
 
 include!(concat!(env!("OUT_DIR"), "/config_docs.rs"));
 
-/// Which config struct backs each top-level section, so a section's keys can be annotated from the right
-/// struct. Kept honest by `every_section_maps_to_a_documented_struct`, which fails if a section is added to
-/// `Config` without an entry here.
+/// Which config struct backs each top-level section, so a section's keys can be annotated from the right struct. Kept honest by `every_section_maps_to_a_documented_struct`, which fails if a section is added to `Config` without an entry here.
 fn section_structs() -> HashMap<&'static str, &'static str> {
     [
         ("general", "GeneralConfig"),
@@ -74,8 +68,7 @@ fn doc_for(structure: &str, field: &str) -> Option<&'static str> {
         .map(|(_, _, doc)| *doc)
 }
 
-/// Every documented key, as `# ` comment lines wrapped to nothing — the source comments are already wrapped,
-/// so they are emitted verbatim rather than reflowed into a width this shell would have to guess.
+/// Every documented key, as `# ` comment lines wrapped to nothing — the source comments are already wrapped, so they are emitted verbatim rather than reflowed into a width this shell would have to guess.
 fn comment(doc: &str) -> String {
     doc.lines()
         .map(|line| {
@@ -95,19 +88,16 @@ pub struct Table {
     pub entries: Vec<Entry>,
 }
 
-/// What a table holds, in the order any rendering has to emit it — TOML puts every bare key before the first
-/// sub-table header, since a header printed first would swallow the keys that follow it.
+/// What a table holds, in the order any rendering has to emit it — TOML puts every bare key before the first sub-table header, since a header printed first would swallow the keys that follow it.
 pub enum Entry {
-    /// A key and the value the shell uses when it is absent. `default` is `None` for an `Option` field: there
-    /// is no value to print, and inventing one would document a default the shell does not use.
+    /// A key and the value the shell uses when it is absent. `default` is `None` for an `Option` field: there is no value to print, and inventing one would document a default the shell does not use.
     Key {
         name: String,
         default: Option<toml::Value>,
         doc: Option<&'static str>,
     },
     Table(Table),
-    /// A list of tables — `[[idle.stages]]`, `[[battery.warn_levels]]` — carrying the entries a fresh install
-    /// starts with. Its shape is those entries; there is no struct behind the element type to annotate.
+    /// A list of tables — `[[idle.stages]]`, `[[battery.warn_levels]]` — carrying the entries a fresh install starts with. Its shape is those entries; there is no struct behind the element type to annotate.
     List {
         path: String,
         doc: Option<&'static str>,
@@ -115,8 +105,7 @@ pub enum Entry {
     },
 }
 
-/// Every section of the reference, or one of them, as data rather than as text. An unknown section name is an
-/// error listing the real ones, so a typo answers with the menu rather than with nothing.
+/// Every section of the reference, or one of them, as data rather than as text. An unknown section name is an error listing the real ones, so a typo answers with the menu rather than with nothing.
 pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
     let structs = section_structs();
     let defaults = toml::Value::try_from(Config::starter())
@@ -153,8 +142,7 @@ pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
     Ok(sections)
 }
 
-/// One table's entries: its own keys, then the optional ones serde left out, then its sub-tables, then its
-/// lists of tables.
+/// One table's entries: its own keys, then the optional ones serde left out, then its sub-tables, then its lists of tables.
 fn walk(path: &str, table: &toml::map::Map<String, toml::Value>, structure: &str) -> Vec<Entry> {
     let mut keys = Vec::new();
     let mut tables = Vec::new();
@@ -162,9 +150,7 @@ fn walk(path: &str, table: &toml::map::Map<String, toml::Value>, structure: &str
     for (key, entry) in table {
         let child = format!("{path}.{key}");
         if let Some(inner) = entry.as_table() {
-            // A map-valued key (`[theme.colors]`, `[background.monitors]`) has no struct and no fixed keys, so
-            // it contributes a header and nothing else — still the one thing a reader cannot learn elsewhere:
-            // that the table exists and what to call it.
+            // A map-valued key (`[theme.colors]`, `[background.monitors]`) has no struct and no fixed keys, so it contributes a header and nothing else — still the one thing a reader cannot learn elsewhere: that the table exists and what to call it.
             let entries = match type_of(structure, key) {
                 Some(nested) => walk(&child, inner, nested),
                 None => Vec::new(),
@@ -177,8 +163,7 @@ fn walk(path: &str, table: &toml::map::Map<String, toml::Value>, structure: &str
             continue;
         }
         if let Some(elements) = table_array(entry) {
-            // A list's explanation is usually on its element struct rather than on the field holding it: what
-            // an `[[idle.stages]]` table means is what an `IdleStage` is.
+            // A list's explanation is usually on its element struct rather than on the field holding it: what an `[[idle.stages]]` table means is what an `IdleStage` is.
             let doc = doc_for(structure, key)
                 .or_else(|| type_of(structure, key).and_then(|element| doc_for(element, "")));
             lists.push(Entry::List {
@@ -220,8 +205,7 @@ pub fn render(section: Option<&str>) -> Result<String, String> {
     Ok(out)
 }
 
-/// A table's entries as TOML. A list of tables has to carry its section in the header — serializing it as a
-/// bare one-key map yields a reference whose own text does not parse back into the section it documents.
+/// A table's entries as TOML. A list of tables has to carry its section in the header — serializing it as a bare one-key map yields a reference whose own text does not parse back into the section it documents.
 fn render_entries(entries: &[Entry]) -> String {
     let mut out = String::new();
     for entry in entries {
@@ -291,13 +275,9 @@ fn struct_for(path: &str) -> Option<&'static str> {
     Some(current)
 }
 
-/// Whether the config section at `path` has a key — or a key's explanation — containing `needle`, which the
-/// caller has already lowercased.
+/// Whether the config section at `path` has a key — or a key's explanation — containing `needle`, which the caller has already lowercased.
 ///
-/// This is what the settings search matches against. Every form's fields are keys on a struct and every key's
-/// prose is already lifted off the source for the reference, so a search built on it finds a setting by the
-/// words that *explain* it without any form having to register its rows a second time — and cannot go stale
-/// when a form gains one.
+/// This is what the settings search matches against. Every form's fields are keys on a struct and every key's prose is already lifted off the source for the reference, so a search built on it finds a setting by the words that *explain* it without any form having to register its rows a second time — and cannot go stale when a form gains one.
 pub fn section_mentions(path: &str, needle: &str) -> bool {
     let Some(structure) = struct_for(path) else {
         return false;
@@ -310,10 +290,7 @@ pub fn section_mentions(path: &str, needle: &str) -> bool {
 
 /// An `f32` config value printed the way it was written rather than the way it widens.
 ///
-/// Serde has one float type and it is `f64`, so `0.35f32` reaches the serializer as `0.3499999940395355` and
-/// the generated reference documents a default nobody typed. The test for "this came from an `f32`" is that
-/// narrowing round-trips exactly — true for every value an `f32` field can hold and false for a `f64` carrying
-/// more precision than one, which is left alone.
+/// Serde has one float type and it is `f64`, so `0.35f32` reaches the serializer as `0.3499999940395355` and the generated reference documents a default nobody typed. The test for "this came from an `f32`" is that narrowing round-trips exactly — true for every value an `f32` field can hold and false for a `f64` carrying more precision than one, which is left alone.
 fn narrow_float(entry: &toml::Value) -> toml::Value {
     match entry.as_float() {
         Some(value) if (value as f32) as f64 == value => {
@@ -331,12 +308,9 @@ fn table_array(entry: &toml::Value) -> Option<&[toml::Value]> {
 
 /// The keys serde left out because they default to `None`.
 ///
-/// An `Option` with no value serializes to nothing, so a reference built from the defaults alone would silently
-/// omit every optional key — `[clock] format` is a documented option a reader would never learn exists.
+/// An `Option` with no value serializes to nothing, so a reference built from the defaults alone would silently omit every optional key — `[clock] format` is a documented option a reader would never learn exists.
 ///
-/// Walked over every field rather than over the documented ones: `[corners] top_left` and `[background] image`
-/// carry no doc comment and are still keys, and a reference that lists a key only when somebody remembered to
-/// explain it is one where forgetting a comment deletes the key.
+/// Walked over every field rather than over the documented ones: `[corners] top_left` and `[background] image` carry no doc comment and are still keys, and a reference that lists a key only when somebody remembered to explain it is one where forgetting a comment deletes the key.
 fn unset(table: &toml::map::Map<String, toml::Value>, structure: &str) -> Vec<Entry> {
     CONFIG_FIELDS
         .iter()
@@ -398,8 +372,7 @@ mod tests {
 
     #[test]
     fn an_f32_default_is_printed_as_it_was_written() {
-        // Serde has one float type, so every `f32` default reaches the printer widened: `0.35` came out as
-        // `0.3499999940395355`, and the reference documented a number nobody typed and no one would copy.
+        // Serde has one float type, so every `f32` default reaches the printer widened: `0.35` came out as `0.3499999940395355`, and the reference documented a number nobody typed and no one would copy.
         let text = render(None).expect("renders");
         assert!(text.contains("background_opacity = 0.35"), "{text}");
         assert!(text.contains("beat_sensitivity = 1.35"), "{text}");
@@ -417,9 +390,7 @@ mod tests {
 
     #[test]
     fn a_list_of_tables_is_printed_under_the_section_that_owns_it() {
-        // Round-tripping is not enough on its own to catch this: a bare `[[stages]]` parses as an unknown
-        // top-level key, which serde drops silently — so the reference read as valid while documenting a
-        // section the shell would never see.
+        // Round-tripping is not enough on its own to catch this: a bare `[[stages]]` parses as an unknown top-level key, which serde drops silently — so the reference read as valid while documenting a section the shell would never see.
         let text = render(Some("idle")).expect("renders");
         assert!(text.contains("[[idle.stages]]"), "{text}");
         assert!(!text.contains("\n[[stages]]"), "{text}");

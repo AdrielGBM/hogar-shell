@@ -6,8 +6,7 @@ use ::config::MediaConfig;
 
 let (config, path) = source();
 let m = &config.media;
-// Aliases are map-valued, so they stay hand-edited in the TOML for now, like `theme.colors`; carrying the
-// existing map through means saving this section does not silently drop them.
+// Aliases are map-valued, so they stay hand-edited in the TOML for now, like `theme.colors`; carrying the existing map through means saving this section does not silently drop them.
 let base = m.clone();
 let preferred = signal(m.preferred_player.clone());
 let max_chars = signal(m.max_chars.to_string());

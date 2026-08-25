@@ -16,8 +16,7 @@ platform_wayland::watch(netspeed::subscribe, move |speed: NetSpeed| {
 let fg = ui::module::module_fg();
 let fg_down = fg.clone();
 let fg_up = fg.clone();
-// Half-height arrows stacked in the chip: two rates need two lines to stay readable at bar size, and the
-// direction glyph says which is which without a label.
+// Half-height arrows stacked in the chip: two rates need two lines to stay readable at bar size, and the direction glyph says which is which without a label.
 let arrow_size = (ui::module::icon_px() * 0.55).round();
 
 [view]

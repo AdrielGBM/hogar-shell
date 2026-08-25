@@ -17,8 +17,7 @@ let save: Box<dyn Fn()> = Box::new({
     let (latitude, longitude) = (latitude.clone(), longitude.clone());
     let (refresh, days) = (refresh.clone(), days.clone());
     move || {
-        // A blank coordinate is "not set", not zero: a stray empty field must fall back to the place name
-        // rather than pinning the forecast to the Gulf of Guinea.
+        // A blank coordinate is "not set", not zero: a stray empty field must fall back to the place name rather than pinning the forecast to the Gulf of Guinea.
         let optional = |raw: String| raw.trim().parse::<f32>().ok();
         let value = WeatherConfig {
             enabled: enabled.peek(),

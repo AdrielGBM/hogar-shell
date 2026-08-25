@@ -1,23 +1,14 @@
 //! Which settings live on which page, and how a search finds them.
 //!
-//! Each form owns one `[toml]` section and saves it on its own, whether it is an `.rsx` component or one of
-//! the handful still written in Rust. What this file adds is the *shape* of the application over them: a page
-//! is a nav entry and the ordered list of sections it shows, so grouping is a table rather than the order of a
-//! forty-item `Vec`.
+//! Each form owns one `[toml]` section and saves it on its own, whether it is an `.rsx` component or one of the handful still written in Rust. What this file adds is the *shape* of the application over them: a page is a nav entry and the ordered list of sections it shows, so grouping is a table rather than the order of a forty-item `Vec`.
 //!
-//! **Search is answered from the schema, not from the widgets.** Every field a form draws is a key on a config
-//! struct, and `build.rs` already lifts the doc comment off each one for `hogar-shell config schema`. Matching a
-//! query against *that* means the search finds `beat_sensitivity` — a key whose label says "Beat sensitivity"
-//! and whose explanation says "how far above its recent average the bass has to jump" — without every field
-//! having to register itself twice, and without the index going stale when a form gains a row.
+//! **Search is answered from the schema, not from the widgets.** Every field a form draws is a key on a config struct, and `build.rs` already lifts the doc comment off each one for `hogar-shell config schema`. Matching a query against *that* means the search finds `beat_sensitivity` — a key whose label says "Beat sensitivity" and whose explanation says "how far above its recent average the bass has to jump" — without every field having to register itself twice, and without the index going stale when a form gains a row.
 
 use config::schema;
 
 /// A catalogue lookup for a key assembled at runtime.
 ///
-/// `t!` validates its key while it compiles, which it can only do for a literal — and the nav's labels come out
-/// of a table. The check is moved rather than lost: `every_label_has_a_translation` asks the catalogue for all
-/// of them, and a missing one fails the suite instead of showing a user a raw key.
+/// `t!` validates its key while it compiles, which it can only do for a literal — and the nav's labels come out of a table. The check is moved rather than lost: `every_label_has_a_translation` asks the catalogue for all of them, and a missing one fails the suite instead of showing a user a raw key.
 pub fn label(prefix: &str, name: &str) -> String {
     telar::i18n::translate(
         &crate::__rsx_i18n::CATALOG,
@@ -26,17 +17,14 @@ pub fn label(prefix: &str, name: &str) -> String {
     )
 }
 
-/// A section's builder. It takes nothing: the file a form edits is ambient (`form::source`), and so is the
-/// theme it draws in — they were parameters only because the panel had them in hand when it called down, and
-/// carrying them made every section a shape no `.rsx` component can have.
+/// A section's builder. It takes nothing: the file a form edits is ambient (`form::source`), and so is the theme it draws in — they were parameters only because the panel had them in hand when it called down, and carrying them made every section a shape no `.rsx` component can have.
 pub type Build = fn() -> Result<Box<dyn telar::LayoutItem>, telar::LayoutError>;
 
 /// One form on a page.
 pub struct Section {
     /// Key under `settings.section`, which is also the heading the form draws for itself.
     pub label: &'static str,
-    /// The `[toml]` sections this form edits. Drives search, and is what makes a form findable by the name of
-    /// a key rather than only by the words on its own label.
+    /// The `[toml]` sections this form edits. Drives search, and is what makes a form findable by the name of a key rather than only by the words on its own label.
     pub keys: &'static [&'static str],
     pub build: Build,
 }
@@ -51,8 +39,7 @@ pub struct Page {
 }
 
 impl Page {
-    /// Whether anything on this page answers `query` — what dims a nav entry during a search rather than
-    /// letting a user click through to a page with nothing on it.
+    /// Whether anything on this page answers `query` — what dims a nav entry during a search rather than letting a user click through to a page with nothing on it.
     pub fn matches(&self, query: &str) -> bool {
         let query = query.trim().to_lowercase();
         query.is_empty()
@@ -80,10 +67,7 @@ impl Section {
 
 /// Which forms the page area shows.
 ///
-/// A search deliberately leaves the nav behind and looks everywhere. The alternative — narrowing only the
-/// selected page — makes a user who types `beat` and is on the wrong page see nothing at all, and there is no
-/// way for them to tell that from "no such setting". Searching is asking the application a question; the nav
-/// is for browsing it, and it stays lit so they can see where the answers live.
+/// A search deliberately leaves the nav behind and looks everywhere. The alternative — narrowing only the selected page — makes a user who types `beat` and is on the wrong page see nothing at all, and there is no way for them to tell that from "no such setting". Searching is asking the application a question; the nav is for browsing it, and it stays lit so they can see where the answers live.
 pub fn visible(selected: usize, query: &str) -> Vec<&'static Section> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
@@ -108,9 +92,7 @@ macro_rules! section {
 
 /// The nav, in the order it is drawn.
 ///
-/// The order is deliberate rather than alphabetical: the first four pages are what a user opens the settings
-/// *for* — how it looks, where the bars are, and the two devices whose panels they already know — and the ones
-/// they will each visit once come after.
+/// The order is deliberate rather than alphabetical: the first four pages are what a user opens the settings *for* — how it looks, where the bars are, and the two devices whose panels they already know — and the ones they will each visit once come after.
 pub const PAGES: &[Page] = &[
     Page {
         label: "appearance",
@@ -286,9 +268,7 @@ mod tests {
 
     #[test]
     fn every_config_section_is_reachable_from_some_page() {
-        // The failure this catches is silent and permanent: a section added to `Config` with a form written for
-        // it, and no nav entry, is a form no user can ever open. Nothing else notices — the shell builds, the
-        // schema prints it, and the key simply cannot be edited.
+        // The failure this catches is silent and permanent: a section added to `Config` with a form written for it, and no nav entry, is a form no user can ever open. Nothing else notices — the shell builds, the schema prints it, and the key simply cannot be edited.
         let defaults = toml::Value::try_from(Config::starter()).expect("serializes");
         let placed: Vec<&str> = PAGES
             .iter()
@@ -334,8 +314,7 @@ mod tests {
     #[test]
     fn a_search_finds_a_form_by_a_key_it_does_not_display() {
         english();
-        // The point of indexing the schema: `beat_sensitivity` is a field on the visualiser form, and nothing
-        // about the words "Audio visualiser" would ever match it.
+        // The point of indexing the schema: `beat_sensitivity` is a field on the visualiser form, and nothing about the words "Audio visualiser" would ever match it.
         let found = visible(0, "beat_sensitivity");
         assert_eq!(
             found.iter().map(|s| s.label).collect::<Vec<_>>(),
@@ -355,8 +334,7 @@ mod tests {
     #[test]
     fn a_search_leaves_the_selected_page_behind() {
         english();
-        // A user who types `wifi` while sitting on Appearance has asked a question, not narrowed a page — and
-        // an answer that depends on where they happened to be is indistinguishable from "no such setting".
+        // A user who types `wifi` while sitting on Appearance has asked a question, not narrowed a page — and an answer that depends on where they happened to be is indistinguishable from "no such setting".
         let from_appearance = visible(0, "ssid");
         let from_services = visible(PAGES.len() - 1, "ssid");
         assert!(!from_appearance.is_empty());
@@ -384,8 +362,7 @@ mod tests {
 
     #[test]
     fn every_label_has_a_translation() {
-        // The check `t!` would have made, moved: these keys are assembled at runtime from the table above, so
-        // a page added without its catalogue entry would draw the literal `settings.page.foo` at a user.
+        // The check `t!` would have made, moved: these keys are assembled at runtime from the table above, so a page added without its catalogue entry would draw the literal `settings.page.foo` at a user.
         for locale in ["en", "es"] {
             services::locale::attach(locale.to_string());
             for page in PAGES {

@@ -1,13 +1,8 @@
 //! In-shell toasts: the small, self-dismissing messages the shell says about itself.
 //!
-//! Deliberately not freedesktop notifications. A notification is a record — it belongs to an application, it goes
-//! into history, it can be acted on, and under Do-Not-Disturb it is *kept* rather than shown. "Caps Lock is on"
-//! is none of those things: it is feedback about a key the user just pressed, it is worthless a second later, and
-//! filing it in the notification history would be filing the user's own keystrokes. So toasts have their own
-//! queue, their own surface and their own per-event switches, and nothing here reaches the daemon.
+//! Deliberately not freedesktop notifications. A notification is a record — it belongs to an application, it goes into history, it can be acted on, and under Do-Not-Disturb it is *kept* rather than shown. "Caps Lock is on" is none of those things: it is feedback about a key the user just pressed, it is worthless a second later, and filing it in the notification history would be filing the user's own keystrokes. So toasts have their own queue, their own surface and their own per-event switches, and nothing here reaches the daemon.
 //!
-//! Expiry runs on a thread of its own. Toasts are posted from wherever the event happened — a service thread, an
-//! IPC handler, a click — so the one thing they cannot rely on is a surface being up to time them out.
+//! Expiry runs on a thread of its own. Toasts are posted from wherever the event happened — a service thread, an IPC handler, a click — so the one thing they cannot rely on is a surface being up to time them out.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,8 +13,7 @@ use platform_wayland::EventSender;
 
 use util::broadcast::Store;
 
-/// Every one is a switch in `[toasts.events]`, so the type is the config's; this is the name the queue reads it
-/// by.
+/// Every one is a switch in `[toasts.events]`, so the type is the config's; this is the name the queue reads it by.
 pub use config::policy::ToastEvent as Event;
 
 /// One toast on screen.
@@ -36,15 +30,12 @@ pub struct Toast {
 }
 
 impl Toast {
-    /// A row's list key: what it draws, not just which toast it is — a replaced toast keeps its slot and has to
-    /// redraw with the new text.
+    /// A row's list key: what it draws, not just which toast it is — a replaced toast keeps its slot and has to redraw with the new text.
     pub fn key(&self) -> String {
         format!("{}|{}|{}", self.id, self.title, self.body)
     }
 
-    /// A toast built without going through the queue, so a surface test has a card to draw. Not gated on
-    /// `cfg(test)`: the surface that draws one lives in another crate, where this crate's test build is not in
-    /// scope.
+    /// A toast built without going through the queue, so a surface test has a card to draw. Not gated on `cfg(test)`: the surface that draws one lives in another crate, where this crate's test build is not in scope.
     pub fn sample(event: Event, icon: &str, title: &str, body: &str) -> Self {
         Self {
             id: 1,
@@ -77,8 +68,7 @@ pub fn current() -> Vec<Toast> {
 
 /// Shows a toast for `event`, unless `[toasts]` has that event — or toasts altogether — switched off.
 ///
-/// The gate lives here rather than at each call site: every place that reports something is a place that would
-/// otherwise have to remember to ask, and the one that forgot would be the one the user cannot switch off.
+/// The gate lives here rather than at each call site: every place that reports something is a place that would otherwise have to remember to ask, and the one that forgot would be the one the user cannot switch off.
 pub fn post(event: Event, icon: &str, title: impl Into<String>, body: impl Into<String>) {
     let config = config::shared_config();
     let allowed = config
@@ -112,8 +102,7 @@ pub fn clear() {
     let _ = queue().send(Message::Clear);
 }
 
-/// The expiry thread's channel, started on the first toast. A shell whose user switched every event off never
-/// spawns it.
+/// The expiry thread's channel, started on the first toast. A shell whose user switched every event off never spawns it.
 fn queue() -> &'static Sender<Message> {
     QUEUE.get_or_init(|| {
         let (tx, rx) = channel::<Message>();
@@ -122,8 +111,7 @@ fn queue() -> &'static Sender<Message> {
             .spawn(move || {
                 let mut live: Vec<Toast> = Vec::new();
                 loop {
-                    // Wait until the next toast expires, or forever when nothing is showing — a queue with
-                    // nothing in it must not wake once a second to discover that.
+                    // Wait until the next toast expires, or forever when nothing is showing — a queue with nothing in it must not wake once a second to discover that.
                     let message = match next_wait(&live) {
                         Some(wait) => match rx.recv_timeout(wait) {
                             Ok(message) => Some(message),
@@ -155,12 +143,9 @@ fn queue() -> &'static Sender<Message> {
     })
 }
 
-/// Puts `toast` on the stack: replacing the one already there for the same event, and dropping the oldest when
-/// the stack is full.
+/// Puts `toast` on the stack: replacing the one already there for the same event, and dropping the oldest when the stack is full.
 ///
-/// Replacement rather than stacking, because the events here are *states*: two "microphone muted" toasts one
-/// after the other are one fact reported twice, and a user spinning the volume wheel would otherwise bury their
-/// own screen in identical cards.
+/// Replacement rather than stacking, because the events here are *states*: two "microphone muted" toasts one after the other are one fact reported twice, and a user spinning the volume wheel would otherwise bury their own screen in identical cards.
 fn admit(live: &mut Vec<Toast>, toast: Toast, max: usize) {
     if let Some(existing) = live.iter_mut().find(|showing| showing.event == toast.event) {
         *existing = toast;
@@ -219,8 +204,7 @@ mod tests {
         assert_eq!(live[0].title, "second", "the oldest made room");
         assert_eq!(live[1].title, "third");
 
-        // A max of zero still shows the toast that was just posted; the alternative is a switch that silently
-        // disables the feature while `enabled` says it is on.
+        // A max of zero still shows the toast that was just posted; the alternative is a switch that silently disables the feature while `enabled` says it is on.
         let mut live = vec![];
         admit(&mut live, toast(4, Event::Dnd, "only"), 0);
         assert_eq!(live.len(), 1);

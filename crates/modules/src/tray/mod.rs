@@ -17,12 +17,10 @@ use config::theme::NordTheme;
 use services::tray::{self, Pixmap, TrayItem};
 use ui::icon::{app_icon_view_tinted, icon_view};
 
-/// Drawn for an application that names an icon nobody can resolve and ships no pixels either — rare, but a
-/// blank gap that still takes clicks is worse than an obvious placeholder.
+/// Drawn for an application that names an icon nobody can resolve and ships no pixels either — rare, but a blank gap that still takes clicks is worse than an obvious placeholder.
 const FALLBACK_GLYPH: &str = "mdi:application-outline";
 
-/// The items the bar draws: the ones the user hasn't hidden, minus those asking to be `Passive`, which is the
-/// spec's way for an application to say "I am running but have nothing to report".
+/// The items the bar draws: the ones the user hasn't hidden, minus those asking to be `Passive`, which is the spec's way for an application to say "I am running but have nothing to report".
 pub fn visible(items: &[TrayItem], config: &TrayConfig) -> Vec<TrayItem> {
     if !config.enabled {
         return Vec::new();
@@ -35,8 +33,7 @@ pub fn visible(items: &[TrayItem], config: &TrayConfig) -> Vec<TrayItem> {
         .collect()
 }
 
-/// A file inside the application's own `IconThemePath`, which is where several applications put an icon that
-/// exists in no installed theme. Checked before the theme lookup precisely because the theme has no answer.
+/// A file inside the application's own `IconThemePath`, which is where several applications put an icon that exists in no installed theme. Checked before the theme lookup precisely because the theme has no answer.
 fn private_icon(item: &TrayItem) -> Option<String> {
     let dir = item.icon_theme_path.trim();
     let name = item.icon_reference().trim();
@@ -65,9 +62,7 @@ fn pixmap_widget(pixmap: &Arc<Pixmap>, size: f32) -> Result<Box<dyn LayoutItem>,
     )?))
 }
 
-/// One application's icon, resolved through everything the spec and the desktop offer, most specific first:
-/// the user's own substitution, the application's private icon directory, the icon theme, the raw pixels it
-/// handed over, and finally a placeholder.
+/// One application's icon, resolved through everything the spec and the desktop offer, most specific first: the user's own substitution, the application's private icon directory, the icon theme, the raw pixels it handed over, and finally a placeholder.
 fn icon_widget(
     item: &TrayItem,
     config: &TrayConfig,
@@ -93,14 +88,12 @@ fn icon_widget(
     icon_view(|| FALLBACK_GLYPH.to_string(), move || tint, size)
 }
 
-/// Where the chip sits inside its bar, and which bar that is — everything the menu needs to anchor itself.
-/// `None` outside a surface (a unit test), where there is nothing to anchor to.
+/// Where the chip sits inside its bar, and which bar that is — everything the menu needs to anchor itself. `None` outside a surface (a unit test), where there is nothing to anchor to.
 fn anchor_for(rect: ReadSignal<Rect>) -> Option<(Rect, SurfaceEnv)> {
     ui::module::surface_env().map(|env| (rect.get(), env))
 }
 
-/// A primary click. An item that says it is a menu, or that implements no `Activate`, gets its menu opened —
-/// which for everything built on libappindicator is the only interaction it has.
+/// A primary click. An item that says it is a menu, or that implements no `Activate`, gets its menu opened — which for everything built on libappindicator is the only interaction it has.
 fn primary(item: &TrayItem, rect: ReadSignal<Rect>) {
     if item.item_is_menu || !item.has_activate {
         open_menu(item, rect);
@@ -109,8 +102,7 @@ fn primary(item: &TrayItem, rect: ReadSignal<Rect>) {
     tray::activate(item, 0, 0);
 }
 
-/// A right click always means "show me the menu". Only when the item exposes none does this fall back to
-/// asking the application to pop its own.
+/// A right click always means "show me the menu". Only when the item exposes none does this fall back to asking the application to pop its own.
 fn open_menu(item: &TrayItem, rect: ReadSignal<Rect>) {
     if item.menu.trim().is_empty() {
         tray::context_menu(item, 0, 0);
@@ -128,12 +120,9 @@ fn secondary(item: &TrayItem) {
 
 /// One tray icon, wrapped in its own pressable box.
 ///
-/// Built here rather than in the view because the view's `for` is reactive: it constructs each item afresh
-/// whenever that application comes back, so its content has to be an expression (`build`) rather than a widget
-/// bound once in `[logic]`.
+/// Built here rather than in the view because the view's `for` is reactive: it constructs each item afresh whenever that application comes back, so its content has to be an expression (`build`) rather than a widget bound once in `[logic]`.
 ///
-/// Right-click opens the item's menu and middle-click is `SecondaryActivate`; what a primary click does
-/// depends on the item, since `Activate` is far from universal — see [`primary`].
+/// Right-click opens the item's menu and middle-click is `SecondaryActivate`; what a primary click does depends on the item, since `Activate` is far from universal — see [`primary`].
 pub fn tray_icon(
     item: TrayItem,
     config: TrayConfig,
@@ -167,8 +156,7 @@ pub fn tray_icon(
     let scroll_item = item;
     let container =
         StyledContainer::new(style, move |_r| RectStyle::filled(rest, radius), vec![icon])?;
-    // The chip's own laid-out rect is what the menu anchors to, so it has to be tracked before the handlers
-    // that read it are attached.
+    // The chip's own laid-out rect is what the menu anchors to, so it has to be tracked before the handlers that read it are attached.
     let rect = track_layout(container.layout_node())
         .expect("a container registers its rect")
         .read_only();
@@ -182,8 +170,7 @@ pub fn tray_icon(
             _ => secondary(&alt_item),
         })
         .on_scroll(move |dx, dy| {
-            // The wheel reports pixels; the spec wants a step count, and an applet that maps it to volume
-            // expects a small number rather than the ~60 one notch produces.
+            // The wheel reports pixels; the spec wants a step count, and an applet that maps it to volume expects a small number rather than the ~60 one notch produces.
             let (delta, horizontal) = if dx.abs() > dy.abs() {
                 (dx, true)
             } else {

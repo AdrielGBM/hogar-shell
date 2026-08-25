@@ -1,20 +1,12 @@
 //! Colour schemes derived from the wallpaper.
 //!
-//! `[theme] name = "dynamic"` resolves through here instead of through [`NordTheme::named`]: an image is reduced
-//! to one seed colour, and that seed is expanded into the same token set every built-in palette fills, so every
-//! surface picks a dynamic scheme up through the reload path it already has. Nothing downstream learns a new
-//! concept — a dynamic theme is a `NordTheme` like any other.
+//! `[theme] name = "dynamic"` resolves through here instead of through [`NordTheme::named`]: an image is reduced to one seed colour, and that seed is expanded into the same token set every built-in palette fills, so every surface picks a dynamic scheme up through the reload path it already has. Nothing downstream learns a new concept — a dynamic theme is a `NordTheme` like any other.
 //!
 //! Two decisions are worth stating up front.
 //!
-//! **The ramp is built in OkLCH, not RGB.** A palette is a set of lightness steps at a shared hue, and only a
-//! perceptual space makes "one step lighter" mean the same thing at every hue; the same nudge in RGB moves a
-//! yellow far more than a blue.
+//! **The ramp is built in OkLCH, not RGB.** A palette is a set of lightness steps at a shared hue, and only a perceptual space makes "one step lighter" mean the same thing at every hue; the same nudge in RGB moves a yellow far more than a blue.
 //!
-//! **Semantic colours keep their own hue.** An error that came out green because the wallpaper was a forest is
-//! not a theme, it is a bug. `red`/`green`/`yellow`/`blue` are pinned to fixed hues and only *harmonised* toward
-//! the seed — rotated by at most [`HARMONY`] degrees — which is enough to make them belong to the palette and
-//! not enough to make them lie.
+//! **Semantic colours keep their own hue.** An error that came out green because the wallpaper was a forest is not a theme, it is a bug. `red`/`green`/`yellow`/`blue` are pinned to fixed hues and only *harmonised* toward the seed — rotated by at most [`HARMONY`] degrees — which is enough to make them belong to the palette and not enough to make them lie.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -31,12 +23,10 @@ use util::paths;
 /// The config name that selects a wallpaper-derived scheme.
 pub const DYNAMIC: &str = "dynamic";
 
-/// How far a semantic hue may be rotated toward the seed. Enough that a red belongs to the palette, small
-/// enough that it is still a red.
+/// How far a semantic hue may be rotated toward the seed. Enough that a red belongs to the palette, small enough that it is still a red.
 const HARMONY: f32 = 15.0;
 
-/// The contrast body text must keep against the base it is read on (WCAG AA for normal text). A generated
-/// palette has no designer to catch an unreadable pairing, so the ramp is corrected until it clears this.
+/// The contrast body text must keep against the base it is read on (WCAG AA for normal text). A generated palette has no designer to catch an unreadable pairing, so the ramp is corrected until it clears this.
 const MIN_TEXT_CONTRAST: f32 = 4.5;
 
 /// Whether the scheme is built for a dark or a light desktop.
@@ -66,8 +56,7 @@ impl Mode {
         }
     }
 
-    /// The mode a palette actually is, judged by whether its text is lighter than its base. Lets a built-in
-    /// theme answer "am I the light one" without a table that could disagree with the palette.
+    /// The mode a palette actually is, judged by whether its text is lighter than its base. Lets a built-in theme answer "am I the light one" without a table that could disagree with the palette.
     pub fn of(theme: &NordTheme) -> Self {
         if theme.base.relative_luminance() > theme.text.relative_luminance() {
             Mode::Light
@@ -77,8 +66,7 @@ impl Mode {
     }
 }
 
-/// How much colour the scheme carries. The names match what other Material-You-style generators call the same
-/// idea, so a user moving from one does not have to relearn them.
+/// How much colour the scheme carries. The names match what other Material-You-style generators call the same idea, so a user moving from one does not have to relearn them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Variant {
@@ -127,10 +115,7 @@ impl Variant {
 
     /// How much of the seed's chroma the neutral surfaces carry.
     ///
-    /// Calibrated against the built-in palettes rather than guessed: their bases and surfaces sit between
-    /// C 0.015 (Everforest) and C 0.036 (Tokyo Night), and Nord, Catppuccin and Rosé Pine all land near 0.030.
-    /// The first pass here used a tenth of that, which turned a blue-sky wallpaper into a grey shell with one
-    /// blue accent — technically a tint, visibly a monochrome.
+    /// Calibrated against the built-in palettes rather than guessed: their bases and surfaces sit between C 0.015 (Everforest) and C 0.036 (Tokyo Night), and Nord, Catppuccin and Rosé Pine all land near 0.030. The first pass here used a tenth of that, which turned a blue-sky wallpaper into a grey shell with one blue accent — technically a tint, visibly a monochrome.
     fn neutral_chroma(self) -> f32 {
         match self {
             Variant::Muted => 0.010,
@@ -140,8 +125,7 @@ impl Variant {
         }
     }
 
-    /// The chroma the accent and the semantic colours are drawn at. `Fidelity` is the exception: it takes the
-    /// source's own chroma instead of a fixed one, which is what makes it a reproduction rather than a style.
+    /// The chroma the accent and the semantic colours are drawn at. `Fidelity` is the exception: it takes the source's own chroma instead of a fixed one, which is what makes it a reproduction rather than a style.
     fn accent_chroma(self, seed: f32) -> f32 {
         match self {
             Variant::Muted => 0.055,
@@ -162,9 +146,7 @@ impl Variant {
     }
 }
 
-/// A resolved scheme: the seed it came from and the palette built out of it. Serialised to the cache so a
-/// restart repaints in the user's colours immediately instead of flashing the fallback palette while an image
-/// is quantised again.
+/// A resolved scheme: the seed it came from and the palette built out of it. Serialised to the cache so a restart repaints in the user's colours immediately instead of flashing the fallback palette while an image is quantised again.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scheme {
     /// The wallpaper the seed was taken from, for the cache key and for `hogar-shell scheme status`.
@@ -173,14 +155,12 @@ pub struct Scheme {
     pub seed: String,
     pub mode: Mode,
     pub variant: Variant,
-    /// Every palette token by the name `[theme.colors]` uses, so the export files and the theme are built from
-    /// one list rather than two that can disagree.
+    /// Every palette token by the name `[theme.colors]` uses, so the export files and the theme are built from one list rather than two that can disagree.
     pub colors: Vec<(String, String)>,
 }
 
 impl Scheme {
-    /// The palette as a theme, starting from the built-in metrics so radius/spacing/type scale stay the design's
-    /// rather than being invented per wallpaper.
+    /// The palette as a theme, starting from the built-in metrics so radius/spacing/type scale stay the design's rather than being invented per wallpaper.
     pub fn theme(&self) -> NordTheme {
         let mut theme = NordTheme::new();
         for (name, hex) in &self.colors {
@@ -201,18 +181,14 @@ impl Scheme {
 
 /// The dominant colours of an RGBA buffer, most populous first.
 ///
-/// A histogram rather than k-means: the buckets are fixed, so the answer does not depend on where the centroids
-/// happened to start, and a wallpaper reduces to the same palette every time it is opened. Four bits per channel
-/// is coarse enough that a photograph's gradient collapses into a handful of buckets and fine enough to keep two
-/// distinct colours apart.
+/// A histogram rather than k-means: the buckets are fixed, so the answer does not depend on where the centroids happened to start, and a wallpaper reduces to the same palette every time it is opened. Four bits per channel is coarse enough that a photograph's gradient collapses into a handful of buckets and fine enough to keep two distinct colours apart.
 fn histogram(rgba: &[u8], samples: usize) -> Vec<(Color, u32)> {
     const BUCKETS: usize = 16 * 16 * 16;
     let pixels = rgba.len() / 4;
     if pixels == 0 {
         return Vec::new();
     }
-    // Sampling, not reading every pixel: a 4K wallpaper is eight million pixels and the histogram converges
-    // long before that. The stride is prime-ish so a repeating pattern is not sampled in phase with itself.
+    // Sampling, not reading every pixel: a 4K wallpaper is eight million pixels and the histogram converges long before that. The stride is prime-ish so a repeating pattern is not sampled in phase with itself.
     let stride = (pixels / samples.max(1)).max(1);
     let mut counts = vec![0u32; BUCKETS];
     let mut sums = vec![[0u32; 3]; BUCKETS];
@@ -246,13 +222,9 @@ fn histogram(rgba: &[u8], samples: usize) -> Vec<(Color, u32)> {
     found
 }
 
-/// The seed colour of an image: the bucket that best combines "there is a lot of it" with "it is actually a
-/// colour".
+/// The seed colour of an image: the bucket that best combines "there is a lot of it" with "it is actually a colour".
 ///
-/// Population alone picks the sky out of every landscape and the grey out of every screenshot, which is how a
-/// generated palette ends up with no colour in it. Chroma alone picks a single red pixel of a logo. The product
-/// of a damped population and a capped chroma is what lands on the colour a person would name if asked what the
-/// picture is.
+/// Population alone picks the sky out of every landscape and the grey out of every screenshot, which is how a generated palette ends up with no colour in it. Chroma alone picks a single red pixel of a logo. The product of a damped population and a capped chroma is what lands on the colour a person would name if asked what the picture is.
 pub fn seed_of(rgba: &[u8], samples: usize) -> Option<Color> {
     let buckets = histogram(rgba, samples);
     if buckets.is_empty() {
@@ -263,8 +235,7 @@ pub fn seed_of(rgba: &[u8], samples: usize) -> Option<Color> {
             .partial_cmp(&score(b.0, b.1))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    // Every candidate scoring zero means a greyscale image, which is a legitimate wallpaper and not a failure:
-    // the most populous bucket then seeds a near-neutral scheme.
+    // Every candidate scoring zero means a greyscale image, which is a legitimate wallpaper and not a failure: the most populous bucket then seeds a near-neutral scheme.
     match scored {
         Some((color, count)) if score(*color, *count) > 0.0 => Some(*color),
         _ => buckets.first().map(|(color, _)| *color),
@@ -282,11 +253,7 @@ fn score(color: Color, count: u32) -> f32 {
 
 /// The closest sRGB colour to `(lightness, chroma, hue)` that survives the round trip.
 ///
-/// OkLCH describes far more colours than a screen can show, and asking for one it cannot does not fail — it
-/// clips each channel on its own, which does not desaturate the colour, it *rotates* it. A red anchored at hue
-/// 27° at full chroma came back at 40°, which is an orange; the semantic-hue test is what caught it. Halving the
-/// chroma until the round trip agrees gives up only the saturation the screen was never going to show, and keeps
-/// the hue the token's name promises.
+/// OkLCH describes far more colours than a screen can show, and asking for one it cannot does not fail — it clips each channel on its own, which does not desaturate the colour, it *rotates* it. A red anchored at hue 27° at full chroma came back at 40°, which is an orange; the semantic-hue test is what caught it. Halving the chroma until the round trip agrees gives up only the saturation the screen was never going to show, and keeps the hue the token's name promises.
 fn in_gamut(lightness: f32, chroma: f32, hue: f32) -> Color {
     let fits = |candidate: Color, wanted: f32| {
         let (l, c, h, _) = candidate.to_oklcha();
@@ -318,8 +285,7 @@ fn harmonise(hue: f32, toward: f32) -> f32 {
     (hue + difference.clamp(-HARMONY, HARMONY)).rem_euclid(360.0)
 }
 
-/// The hue each semantic token is anchored at, before harmonisation. These are the hues the names mean; a
-/// palette that moved them would be renaming its own tokens.
+/// The hue each semantic token is anchored at, before harmonisation. These are the hues the names mean; a palette that moved them would be renaming its own tokens.
 const HUES: &[(&str, f32)] = &[
     ("red", 27.0),
     ("orange", 55.0),
@@ -333,9 +299,7 @@ const HUES: &[(&str, f32)] = &[
 
 /// The lightness ramp for a mode, as the tokens that step through it.
 ///
-/// The steps are taken from where the built-in palettes actually sit, so a dynamic theme is recognisably a
-/// member of the same family rather than a much darker stranger: their bases run L 0.21–0.32 and their surfaces
-/// 0.24–0.38. An earlier ramp starting at 0.17 produced a near-black shell that no shipped palette resembles.
+/// The steps are taken from where the built-in palettes actually sit, so a dynamic theme is recognisably a member of the same family rather than a much darker stranger: their bases run L 0.21–0.32 and their surfaces 0.24–0.38. An earlier ramp starting at 0.17 produced a near-black shell that no shipped palette resembles.
 fn neutrals(mode: Mode) -> [(&'static str, f32); 9] {
     match mode {
         Mode::Dark => [
@@ -349,8 +313,7 @@ fn neutrals(mode: Mode) -> [(&'static str, f32); 9] {
             ("subtle", 0.80),
             ("text", 0.94),
         ],
-        // Not the dark ramp inverted: a light theme raises a panel by *darkening* it, so surface and overlay
-        // step down from the base rather than up (the same rule Catppuccin Latte follows).
+        // Not the dark ramp inverted: a light theme raises a panel by *darkening* it, so surface and overlay step down from the base rather than up (the same rule Catppuccin Latte follows).
         Mode::Light => [
             ("base", 0.96),
             ("surface", 0.92),
@@ -368,8 +331,7 @@ fn neutrals(mode: Mode) -> [(&'static str, f32); 9] {
 /// Builds the full token set from one seed.
 pub fn palette(seed: Color, mode: Mode, variant: Variant) -> Vec<(String, String)> {
     let (_, seed_chroma, seed_hue, _) = seed.to_oklcha();
-    // Scaled by how colourful the wallpaper actually is, with no floor: a photograph of a grey city should keep
-    // a grey shell, and a floor here is exactly what would tint it by the faint cast its sky happened to have.
+    // Scaled by how colourful the wallpaper actually is, with no floor: a photograph of a grey city should keep a grey shell, and a floor here is exactly what would tint it by the faint cast its sky happened to have.
     let neutral_chroma = variant.neutral_chroma() * (seed_chroma / 0.10).min(1.2);
     let chroma = variant.accent_chroma(seed_chroma);
     let accent_lightness = match mode {
@@ -393,8 +355,7 @@ pub fn palette(seed: Color, mode: Mode, variant: Variant) -> Vec<(String, String
     ));
 
     for (name, base_hue) in HUES {
-        // Spread pushes each anchor away from the seed before harmonisation pulls it back, which is what makes
-        // `expressive` read as more colours rather than as one louder one.
+        // Spread pushes each anchor away from the seed before harmonisation pulls it back, which is what makes `expressive` read as more colours rather than as one louder one.
         let offset = (base_hue - seed_hue + 540.0).rem_euclid(360.0) - 180.0;
         let spread = (seed_hue + offset * variant.spread()).rem_euclid(360.0);
         let hue = harmonise(spread, seed_hue);
@@ -427,9 +388,7 @@ pub fn palette(seed: Color, mode: Mode, variant: Variant) -> Vec<(String, String
 
 /// Darkens (or lightens) body text until it clears [`MIN_TEXT_CONTRAST`] against the base.
 ///
-/// The ramp above is chosen to clear it already; this is the guard for the case it cannot — a `fidelity` scheme
-/// off a very light or very saturated wallpaper, where the neutral tint pushes the two ends together. Unreadable
-/// text is the one failure a generated palette must not be allowed to ship.
+/// The ramp above is chosen to clear it already; this is the guard for the case it cannot — a `fidelity` scheme off a very light or very saturated wallpaper, where the neutral tint pushes the two ends together. Unreadable text is the one failure a generated palette must not be allowed to ship.
 fn readable(colors: &mut [(String, String)], mode: Mode) {
     let value = |colors: &[(String, String)], name: &str| {
         colors
@@ -457,8 +416,7 @@ fn readable(colors: &mut [(String, String)], mode: Mode) {
     }
 }
 
-/// Derives a scheme from an image file. Decoding and quantising is tens of milliseconds on a large wallpaper, so
-/// every caller runs it off the UI thread.
+/// Derives a scheme from an image file. Decoding and quantising is tens of milliseconds on a large wallpaper, so every caller runs it off the UI thread.
 pub fn from_image(path: &Path, mode: Mode, variant: Variant) -> Option<Scheme> {
     let image = ::image::open(path).ok()?.to_rgba8();
     let seed = seed_of(image.as_raw(), 40_000)?;
@@ -473,10 +431,7 @@ pub fn from_image(path: &Path, mode: Mode, variant: Variant) -> Option<Scheme> {
 
 /// The scheme the shell is currently painting with, if any.
 ///
-/// A process-global rather than a field on `Config`: `Config::resolve_theme` is called from every surface build
-/// and is pure, while the scheme is derived asynchronously from a file the config only names. Publishing it here
-/// keeps `resolve_theme` synchronous and keeps the extraction off the frame. A [`Store`] rather than a plain
-/// lock so the driver thread can *hear* a palette land instead of polling for it.
+/// A process-global rather than a field on `Config`: `Config::resolve_theme` is called from every surface build and is pure, while the scheme is derived asynchronously from a file the config only names. Publishing it here keeps `resolve_theme` synchronous and keeps the extraction off the frame. A [`Store`] rather than a plain lock so the driver thread can *hear* a palette land instead of polling for it.
 static CURRENT: Store<Option<Scheme>> = Store::new(|| None);
 
 pub fn current() -> Option<Scheme> {
@@ -489,26 +444,20 @@ pub fn subscribe(tx: EventSender<Option<Scheme>>) {
 }
 
 thread_local! {
-    /// The palette the surfaces on this thread were last built from, so a delivery that changes nothing does
-    /// not rebuild the shell. Seeded by the immediate send `subscribe` makes, which is the scheme startup
-    /// already resolved.
+    /// The palette the surfaces on this thread were last built from, so a delivery that changes nothing does not rebuild the shell. Seeded by the immediate send `subscribe` makes, which is the scheme startup already resolved.
     static PAINTED: RefCell<Option<Option<Scheme>>> = const { RefCell::new(None) };
 }
 
-/// Records the palette the surfaces about to be built will carry, so the delivery that follows is recognised as
-/// old news.
+/// Records the palette the surfaces about to be built will carry, so the delivery that follows is recognised as old news.
 ///
-/// Called from the reload path, which resolves the scheme *before* it rebuilds the surfaces: without this, the
-/// rebuild would be followed by a delivery that looked like a change and asked for a second, identical reload.
+/// Called from the reload path, which resolves the scheme *before* it rebuilds the surfaces: without this, the rebuild would be followed by a delivery that looked like a change and asked for a second, identical reload.
 pub fn mark_painted() {
     PAINTED.with(|painted| *painted.borrow_mut() = Some(current()));
 }
 
 /// The driver-thread consumer for [`subscribe`]: rebuilds every surface when the palette actually moved.
 ///
-/// A reload is how a theme reaches the shell — the same path a `[theme]` edit takes — so a dynamic scheme needs
-/// no second mechanism. What is left for this to catch is the case nothing else can: a palette that finishes
-/// being extracted seconds after the surfaces were built, on a thread of its own.
+/// A reload is how a theme reaches the shell — the same path a `[theme]` edit takes — so a dynamic scheme needs no second mechanism. What is left for this to catch is the case nothing else can: a palette that finishes being extracted seconds after the surfaces were built, on a thread of its own.
 pub fn on_change(scheme: Option<Scheme>) {
     let changed = PAINTED.with(|painted| {
         let mut painted = painted.borrow_mut();
@@ -521,8 +470,7 @@ pub fn on_change(scheme: Option<Scheme>) {
     }
 }
 
-/// The dynamic theme, or `None` when no wallpaper has been quantised yet — which is what makes
-/// `[theme] fallback` a real setting rather than a formality.
+/// The dynamic theme, or `None` when no wallpaper has been quantised yet — which is what makes `[theme] fallback` a real setting rather than a formality.
 pub fn theme() -> Option<NordTheme> {
     current().map(|scheme| scheme.theme())
 }
@@ -566,8 +514,7 @@ fn store_cached(scheme: &Scheme) {
 
 /// Resolves the scheme for `source` and publishes it, returning whether the palette changed.
 ///
-/// Synchronous, and cheap when the cache hits — which is the startup path. The miss path decodes an image, so
-/// callers on the driver thread go through [`refresh`] instead.
+/// Synchronous, and cheap when the cache hits — which is the startup path. The miss path decodes an image, so callers on the driver thread go through [`refresh`] instead.
 pub fn resolve(source: &Path, mode: Mode, variant: Variant) -> bool {
     let scheme = match load_cached(source, mode, variant) {
         Some(cached) => Some(cached),
@@ -595,30 +542,18 @@ pub fn is_cached(source: &Path, mode: Mode, variant: Variant) -> bool {
     cache_path(source, mode, variant).exists()
 }
 
-/// The image a dynamic palette is derived from: whatever the focused screen is showing, falling back through
-/// the service's own resolution order to the global choice.
+/// The image a dynamic palette is derived from: whatever the focused screen is showing, falling back through the service's own resolution order to the global choice.
 ///
-/// The focused screen rather than the global image, because there is only ever one palette and a multi-monitor
-/// desktop has to take it from somewhere. Reading the global one meant a per-monitor wallpaper change re-derived
-/// nothing at all — the command answered `ok` and the colours stayed where they were.
+/// The focused screen rather than the global image, because there is only ever one palette and a multi-monitor desktop has to take it from somewhere. Reading the global one meant a per-monitor wallpaper change re-derived nothing at all — the command answered `ok` and the colours stayed where they were.
 fn source_image(config: &Config) -> Option<PathBuf> {
     crate::live::wallpaper_source(config)
 }
 
-/// Re-derives the scheme for `config`'s current wallpaper off the UI thread. The one entry point for "the
-/// wallpaper changed" and "the mode changed" alike, so the two cannot drift into different behaviours.
+/// Re-derives the scheme for `config`'s current wallpaper off the UI thread. The one entry point for "the wallpaper changed" and "the mode changed" alike, so the two cannot drift into different behaviours.
 ///
-/// `settle` is how long to wait before publishing. Landing a palette *is* a reload, and a reload rebuilds every
-/// surface's content — including the wallpaper surface that is halfway through cross-fading to the very image
-/// the palette came from, whose fade lives in the tree being replaced. Waiting out the transition means the
-/// colours arrive once the picture has, which is both what the eye expects and the only way the fade survives.
-/// Zero everywhere a transition is not running.
-/// Re-derives the palette after *the shell itself* changed the wallpaper, reading the running config for both the
-/// dynamic check and the transition to wait out.
+/// `settle` is how long to wait before publishing. Landing a palette *is* a reload, and a reload rebuilds every surface's content — including the wallpaper surface that is halfway through cross-fading to the very image the palette came from, whose fade lives in the tree being replaced. Waiting out the transition means the colours arrive once the picture has, which is both what the eye expects and the only way the fade survives. Zero everywhere a transition is not running. Re-derives the palette after *the shell itself* changed the wallpaper, reading the running config for both the dynamic check and the transition to wait out.
 ///
-/// Every path that sets a wallpaper has to call this, and there is more than one: the IPC commands, and the
-/// launcher's `@` grid — which shipped without it, so a dynamic theme kept the old picture's colours until the next
-/// reload. One helper rather than the two lines at each call site is what stops the third one forgetting too.
+/// Every path that sets a wallpaper has to call this, and there is more than one: the IPC commands, and the launcher's `@` grid — which shipped without it, so a dynamic theme kept the old picture's colours until the next reload. One helper rather than the two lines at each call site is what stops the third one forgetting too.
 pub fn refresh_current() {
     if let Some(config) = crate::live::config() {
         let settle = config.wallpaper_transition();
@@ -649,8 +584,7 @@ pub fn refresh(config: &Config, settle: std::time::Duration) {
         });
 }
 
-/// Loads the scheme for `config` synchronously when it is already cached, so a restart paints in the user's
-/// colours on its first frame; otherwise hands the work to [`refresh`].
+/// Loads the scheme for `config` synchronously when it is already cached, so a restart paints in the user's colours on its first frame; otherwise hands the work to [`refresh`].
 pub fn init(config: &Config) {
     if !config.theme.is_dynamic() {
         return;
@@ -690,10 +624,7 @@ impl Choice {
 
 /// Applies a scheme choice by writing it to `[theme]`, and lets the config watcher reload the shell.
 ///
-/// A palette is a preference, not session state: it belongs in the file the user owns. Going through
-/// `save_section` is what makes a scheme picked from the launcher, from a keybind, from the settings panel and
-/// from a hand edit the same change arriving by the same route — and the format-preserving write is why doing
-/// it from the UI does not cost the user their comments.
+/// A palette is a preference, not session state: it belongs in the file the user owns. Going through `save_section` is what makes a scheme picked from the launcher, from a keybind, from the settings panel and from a hand edit the same change arriving by the same route — and the format-preserving write is why doing it from the UI does not cost the user their comments.
 pub fn apply(choice: Choice, value: &str) -> Result<String, String> {
     let path = Config::default_path();
     let mut theme = Config::load_or_default(&path).theme;
@@ -729,12 +660,9 @@ pub fn choices() -> Vec<(Choice, String)> {
 
 /// Writes the resolved palette out for the applications that are not this shell (J4).
 ///
-/// The point of a dynamic scheme is a desktop that agrees with itself, and nothing else on it reads
-/// `config.toml`. Each format is a flat list of the same tokens, so adding a consumer is a template here rather
-/// than a second place the palette is decided.
+/// The point of a dynamic scheme is a desktop that agrees with itself, and nothing else on it reads `config.toml`. Each format is a flat list of the same tokens, so adding a consumer is a template here rather than a second place the palette is decided.
 ///
-/// Written on a thread of its own: the cached-startup path calls this from the driver thread, and a hook that
-/// reloads a slow application must not be the reason a bar takes a second to appear.
+/// Written on a thread of its own: the cached-startup path calls this from the driver thread, and a hook that reloads a slow application must not be the reason a bar takes a second to appear.
 pub fn export_scheme(scheme: &Scheme, config: &SchemeExportConfig) {
     if !config.enabled {
         return;
@@ -804,9 +732,7 @@ fn as_shell(scheme: &Scheme) -> String {
     out
 }
 
-/// The sixteen ANSI colours as OSC escapes, which is how a running terminal is recoloured without restarting it
-/// (`cat sequences > /dev/pts/N`). The bright half is the same hue one lightness step up, so the pairs stay
-/// recognisably the same colour.
+/// The sixteen ANSI colours as OSC escapes, which is how a running terminal is recoloured without restarting it (`cat sequences > /dev/pts/N`). The bright half is the same hue one lightness step up, so the pairs stay recognisably the same colour.
 fn as_sequences(scheme: &Scheme) -> String {
     let get = |name: &str| scheme.color(name).unwrap_or(Color::BLACK);
     let brighter = |color: Color| {
@@ -858,8 +784,7 @@ mod tests {
 
     #[test]
     fn the_seed_is_the_colour_a_person_would_name() {
-        // Mostly sky, with a small area of vivid orange. Population alone answers "grey-blue"; the score is what
-        // keeps the picture's actual colour.
+        // Mostly sky, with a small area of vivid orange. Population alone answers "grey-blue"; the score is what keeps the picture's actual colour.
         let pixels = image([120, 140, 160], 900, [230, 120, 20], 100);
         let seed = seed_of(&pixels, 4000).expect("a seed comes out");
         let (_, chroma, hue, _) = seed.to_oklcha();
@@ -872,8 +797,7 @@ mod tests {
 
     #[test]
     fn a_greyscale_wallpaper_still_yields_a_scheme() {
-        // Every candidate scores zero here. Refusing would leave the shell with no palette at all, which is
-        // worse than a near-neutral one.
+        // Every candidate scores zero here. Refusing would leave the shell with no palette at all, which is worse than a near-neutral one.
         let pixels = image([90, 90, 90], 500, [200, 200, 200], 100);
         let seed = seed_of(&pixels, 4000).expect("grey is a wallpaper too");
         assert!(seed.to_oklcha().1 < 0.02);
@@ -950,9 +874,7 @@ mod tests {
 
     #[test]
     fn a_colourful_wallpaper_tints_the_surfaces_not_only_the_accent() {
-        // The failure this guards is not a crash and not an unreadable pairing, so nothing else catches it: a
-        // sky-blue wallpaper produced surfaces at C 0.010, which reads as a grey shell with one blue accent.
-        // The floor is where the built-in palettes sit — Everforest, the flattest of them, is C 0.015.
+        // The failure this guards is not a crash and not an unreadable pairing, so nothing else catches it: a sky-blue wallpaper produced surfaces at C 0.010, which reads as a grey shell with one blue accent. The floor is where the built-in palettes sit — Everforest, the flattest of them, is C 0.015.
         let sky = Color::from_rgb_u8(109, 134, 236);
         let (_, seed_chroma, seed_hue, _) = sky.to_oklcha();
         for mode in Mode::ALL {
@@ -1006,8 +928,7 @@ mod tests {
 
     #[test]
     fn semantic_colours_keep_their_own_hue() {
-        // A blue-green wallpaper must not produce a green error. Harmonisation may rotate the anchors, never
-        // rename them.
+        // A blue-green wallpaper must not produce a green error. Harmonisation may rotate the anchors, never rename them.
         let seed = Color::from_rgb_u8(30, 140, 120);
         let colors = palette(seed, Mode::Dark, Variant::Vibrant);
         let hue_of = |name: &str| {
@@ -1024,8 +945,7 @@ mod tests {
             "the error colour is still a red: {red}"
         );
         let distance = |a: f32, b: f32| ((a - b + 540.0).rem_euclid(360.0) - 180.0).abs();
-        // The tolerance is the harmony budget plus what a hex round trip costs: the palette is stored as
-        // 8-bit `#rrggbb`, and quantising a colour moves its hue by a degree or so.
+        // The tolerance is the harmony budget plus what a hex round trip costs: the palette is stored as 8-bit `#rrggbb`, and quantising a colour moves its hue by a degree or so.
         const QUANTISATION: f32 = 2.0;
         for (name, anchor) in HUES {
             let drift = distance(hue_of(name), *anchor);

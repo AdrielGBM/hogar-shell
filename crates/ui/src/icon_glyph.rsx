@@ -13,13 +13,11 @@ let stroke = use_theme::<NordTheme>().icon_stroke;
 let name = props.name;
 let tint_fn = props.tint;
 
-// Both props go through a memo so the arms below can read them as `$signal`s: each arm is its own closure, and a
-// signal read is what the view's clone prelude knows how to hand to every one of them.
+// Both props go through a memo so the arms below can read them as `$signal`s: each arm is its own closure, and a signal read is what the view's clone prelude knows how to hand to every one of them.
 let state = memo(move || icon_state(&name()));
 let tint = memo(move || tint_fn());
 
-// Inset so a missing glyph reads as a gap in the row rather than a filled chip, and keeps the module's footprint
-// identical to a loaded one so nothing shifts when it settles.
+// Inset so a missing glyph reads as a gap in the row rather than a filled chip, and keeps the module's footprint identical to a loaded one so nothing shifts when it settles.
 let inset = (size * 0.25).max(1.0);
 let side = size - inset * 2.0;
 

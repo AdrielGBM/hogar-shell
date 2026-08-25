@@ -1,12 +1,8 @@
 //! Unit conversion for the launcher's calculator: `3 km in mi`, `100 c in f`, `1 gib in mb`.
 //!
-//! A static table rather than a dependency, for the same reason the evaluator next door is one: this runs on every
-//! keystroke, and the whole feature is a few hundred rows of arithmetic. Every unit converts through one base per
-//! dimension, and a conversion between two dimensions is refused rather than guessed — a query that is really an
-//! application name must fall through to the app search.
+//! A static table rather than a dependency, for the same reason the evaluator next door is one: this runs on every keystroke, and the whole feature is a few hundred rows of arithmetic. Every unit converts through one base per dimension, and a conversion between two dimensions is refused rather than guessed — a query that is really an application name must fall through to the app search.
 //!
-//! Temperature is why the conversion is affine rather than a ratio: 0 °C is not 0 K, and scaling alone would put
-//! freezing water at absolute zero.
+//! Temperature is why the conversion is affine rather than a ratio: 0 °C is not 0 K, and scaling alone would put freezing water at absolute zero.
 
 use super::evaluate;
 
@@ -205,8 +201,7 @@ static UNITS: &[Unit] = &[
     ),
     unit("B", &["b", "byte", "bytes"], Dimension::Data, 1.0),
     unit("bit", &["bit", "bits"], Dimension::Data, 0.125),
-    // SI for the decimal prefixes and IEC for the binary ones, so `1 gb in gib` is a real question with a real
-    // answer instead of both spellings meaning whichever the shell picked.
+    // SI for the decimal prefixes and IEC for the binary ones, so `1 gb in gib` is a real question with a real answer instead of both spellings meaning whichever the shell picked.
     unit("kB", &["kb", "kilobyte", "kilobytes"], Dimension::Data, 1e3),
     unit("MB", &["mb", "megabyte", "megabytes"], Dimension::Data, 1e6),
     unit("GB", &["gb", "gigabyte", "gigabytes"], Dimension::Data, 1e9),
@@ -379,8 +374,7 @@ static UNITS: &[Unit] = &[
     ),
 ];
 
-/// The words that mean "convert this into". The `->` forms need no spaces around them, which is why they are
-/// matched separately.
+/// The words that mean "convert this into". The `->` forms need no spaces around them, which is why they are matched separately.
 const SPACED_KEYWORDS: &[&str] = &[" in ", " to ", " as ", " into "];
 const SYMBOL_KEYWORDS: &[&str] = &["->", "→", "=>"];
 
@@ -393,8 +387,7 @@ pub struct Quantity {
 
 /// Converts `input` — `<expression> <unit> in <unit>` — or `None` when it is not that.
 ///
-/// Every part has to hold: a valid expression, two known units, and one dimension between them. A query that
-/// merely contains the word "in" therefore costs a failed lookup and nothing else.
+/// Every part has to hold: a valid expression, two known units, and one dimension between them. A query that merely contains the word "in" therefore costs a failed lookup and nothing else.
 pub fn convert(input: &str) -> Option<Quantity> {
     let (left, right) = split_conversion(input)?;
     let (value, from) = split_quantity(left)?;
@@ -412,8 +405,7 @@ pub fn convert(input: &str) -> Option<Quantity> {
 
 /// Splits `input` at its conversion keyword.
 ///
-/// The *last* occurrence, which is what makes `12 in in cm` work: `in` is both a unit and the keyword, and a
-/// left-to-right split would take the inch for the preposition and leave "in cm" as the target.
+/// The *last* occurrence, which is what makes `12 in in cm` work: `in` is both a unit and the keyword, and a left-to-right split would take the inch for the preposition and leave "in cm" as the target.
 fn split_conversion(input: &str) -> Option<(&str, &str)> {
     let lowered = input.to_ascii_lowercase();
     let mut best: Option<(usize, usize)> = None;
@@ -432,8 +424,7 @@ fn split_conversion(input: &str) -> Option<(&str, &str)> {
 
 /// Splits `<expression><unit>` into the number it evaluates to and the unit it is in.
 ///
-/// Tried longest-unit-first, so `90 min` is ninety minutes rather than ninety *inches* with a stray `m` — and the
-/// remainder has to evaluate, which is what keeps a word ending in a unit's name from reading as a quantity.
+/// Tried longest-unit-first, so `90 min` is ninety minutes rather than ninety *inches* with a stray `m` — and the remainder has to evaluate, which is what keeps a word ending in a unit's name from reading as a quantity.
 fn split_quantity(text: &str) -> Option<(f64, &'static Unit)> {
     let text = text.trim();
     for (at, _) in text.char_indices().skip(1) {
@@ -460,8 +451,7 @@ fn resolve(name: &str) -> Option<&'static Unit> {
     if let Some(unit) = found(&squashed) {
         return Some(unit);
     }
-    // A trailing plural is stripped rather than listed twice for every unit. Tried only after the exact match, so
-    // a unit whose own name ends in `s` — a second, an inch — is never mistaken for the plural of something else.
+    // A trailing plural is stripped rather than listed twice for every unit. Tried only after the exact match, so a unit whose own name ends in `s` — a second, an inch — is never mistaken for the plural of something else.
     squashed
         .strip_suffix('s')
         .filter(|singular| !singular.is_empty())
@@ -613,8 +603,7 @@ mod tests {
         );
     }
 
-    /// Every name in the table has to be reachable, and no two units may claim the same spelling — the first
-    /// would silently win and the second would be unreachable for ever.
+    /// Every name in the table has to be reachable, and no two units may claim the same spelling — the first would silently win and the second would be unreachable for ever.
     #[test]
     fn no_two_units_answer_to_the_same_name() {
         let mut seen: Vec<&str> = Vec::new();

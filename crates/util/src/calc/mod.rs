@@ -1,15 +1,10 @@
 //! Expression evaluation for the launcher's calculator mode.
 //!
-//! A recursive-descent evaluator over a hand-rolled tokenizer: no dependency, no subprocess, and fast enough to
-//! run on every keystroke on the UI thread — which is the requirement that rules out shelling out to `qalc` for
-//! the *live* result.
+//! A recursive-descent evaluator over a hand-rolled tokenizer: no dependency, no subprocess, and fast enough to run on every keystroke on the UI thread — which is the requirement that rules out shelling out to `qalc` for the *live* result.
 //!
-//! Percentages are context-sensitive, because that is what people mean by them: `200 + 10%` is 220, not 200.1.
-//! A percentage on the right of `+`/`-` is taken *of the left operand*; anywhere else it is simply a hundredth.
+//! Percentages are context-sensitive, because that is what people mean by them: `200 + 10%` is 220, not 200.1. A percentage on the right of `+`/`-` is taken *of the left operand*; anywhere else it is simply a hundredth.
 //!
-//! Two things sit on top of the evaluator. [`units`] answers `3 km in mi` from a static table, still with no
-//! dependency and no subprocess. [`qalc`] is the fallback for everything neither of them does — and it *is* a
-//! subprocess, so it runs on a worker thread and its answer arrives when it arrives.
+//! Two things sit on top of the evaluator. [`units`] answers `3 km in mi` from a static table, still with no dependency and no subprocess. [`qalc`] is the fallback for everything neither of them does — and it *is* a subprocess, so it runs on a worker thread and its answer arrives when it arrives.
 
 pub mod qalc;
 pub mod units;
@@ -62,8 +57,7 @@ enum Token {
     Close,
 }
 
-/// Splits `input` into tokens, or `None` on a character that has no meaning here — which is how a query that is
-/// plainly not an expression (an app name) is rejected before any evaluation happens.
+/// Splits `input` into tokens, or `None` on a character that has no meaning here — which is how a query that is plainly not an expression (an app name) is rejected before any evaluation happens.
 fn tokenize(input: &str) -> Option<Vec<Token>> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = input.chars().collect();
@@ -83,8 +77,7 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
             {
                 i += 1;
             }
-            // An exponent only counts when a digit (or a sign then a digit) follows, so `2e` is not a number and
-            // `2 e` keeps `e` as the constant.
+            // An exponent only counts when a digit (or a sign then a digit) follows, so `2e` is not a number and `2 e` keeps `e` as the constant.
             if let Some('e' | 'E') = chars.get(i).copied() {
                 let mut lookahead = i + 1;
                 if let Some('+' | '-') = chars.get(lookahead).copied() {
@@ -164,8 +157,7 @@ impl Parser {
                 left = Value::plain(left.resolve() * self.power()?.resolve());
             } else if self.eat(&Token::Slash) {
                 let divisor = self.power()?.resolve();
-                // Division by zero yields infinity in IEEE terms, but "∞" is not an answer a calculator should
-                // offer for `1/0`; refusing leaves the query looking like what it is — not a valid sum.
+                // Division by zero yields infinity in IEEE terms, but "∞" is not an answer a calculator should offer for `1/0`; refusing leaves the query looking like what it is — not a valid sum.
                 if divisor == 0.0 {
                     return None;
                 }
@@ -224,8 +216,7 @@ impl Parser {
                 if let Some(constant) = constant(&lowered) {
                     return Some(Value::plain(constant));
                 }
-                // A function must be called: `sqrt` alone is a word, not a value, which is what keeps an app
-                // search for "sqrt" from rendering as a calculation.
+                // A function must be called: `sqrt` alone is a word, not a value, which is what keeps an app search for "sqrt" from rendering as a calculation.
                 if !self.eat(&Token::Open) {
                     return None;
                 }
@@ -272,9 +263,7 @@ fn apply(name: &str, x: f64) -> Option<f64> {
 
 /// Evaluates `input`, or `None` when it is not a complete arithmetic expression.
 ///
-/// Being strict is the point: this runs on every launcher keystroke, and a query that is really an app name
-/// must fall through to the app search rather than showing a spurious number. So trailing tokens, unbalanced
-/// brackets, unknown words and non-finite results all fail rather than being salvaged.
+/// Being strict is the point: this runs on every launcher keystroke, and a query that is really an app name must fall through to the app search rather than showing a spurious number. So trailing tokens, unbalanced brackets, unknown words and non-finite results all fail rather than being salvaged.
 pub fn evaluate(input: &str) -> Option<f64> {
     let tokens = tokenize(input)?;
     let mut parser = Parser { tokens, at: 0 };
@@ -287,8 +276,7 @@ pub fn evaluate(input: &str) -> Option<f64> {
     number.is_finite().then_some(number)
 }
 
-/// Renders a result the way a calculator does: no trailing `.0` on whole numbers, and rounded far enough to
-/// hide binary-float noise (`0.1 + 0.2` reads as `0.3`, not `0.30000000000000004`).
+/// Renders a result the way a calculator does: no trailing `.0` on whole numbers, and rounded far enough to hide binary-float noise (`0.1 + 0.2` reads as `0.3`, not `0.30000000000000004`).
 pub fn format(value: f64) -> String {
     let rounded = (value * 1e10).round() / 1e10;
     if rounded == rounded.trunc() && rounded.abs() < 1e15 {
@@ -310,8 +298,7 @@ pub enum Answer {
 }
 
 impl Answer {
-    /// What to show, and what selecting the row copies. The unit travels with the number: an answer of `1.86`
-    /// pasted somewhere else is a different claim from `1.86 mi`.
+    /// What to show, and what selecting the row copies. The unit travels with the number: an answer of `1.86` pasted somewhere else is a different claim from `1.86 mi`.
     pub fn text(&self) -> String {
         match self {
             Answer::Number(value) => format(*value),
@@ -322,8 +309,7 @@ impl Answer {
 
 /// Solves `input`, whatever kind of question it is: a conversion first, then arithmetic.
 ///
-/// Conversions are tried first because `3 km in mi` is not arithmetic at all — the evaluator rejects it on the
-/// first unit name — and because a conversion that parses is unambiguous about what was meant.
+/// Conversions are tried first because `3 km in mi` is not arithmetic at all — the evaluator rejects it on the first unit name — and because a conversion that parses is unambiguous about what was meant.
 pub fn solve(input: &str) -> Option<Answer> {
     if let Some(quantity) = units::convert(input) {
         return Some(Answer::Quantity {
@@ -336,8 +322,7 @@ pub fn solve(input: &str) -> Option<Answer> {
 
 /// Whether `query` reads as a calculation worth showing a result for.
 ///
-/// A bare number is deliberately excluded: typing `2` is far more likely the start of an app name than a sum
-/// the user wants echoed back at them.
+/// A bare number is deliberately excluded: typing `2` is far more likely the start of an app name than a sum the user wants echoed back at them.
 pub fn looks_like_math(query: &str) -> bool {
     let trimmed = query.trim();
     if trimmed.is_empty() || trimmed.parse::<f64>().is_ok() {

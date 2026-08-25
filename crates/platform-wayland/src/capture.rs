@@ -1,18 +1,10 @@
 //! Reading pixels back off the compositor.
 //!
-//! A capture is not a surface: nothing is mapped, nothing is drawn, and the answer is wanted synchronously by
-//! whoever asked. So this takes its own short-lived connection — the same shape [`enumerate_outputs`] uses —
-//! rather than borrowing the driver's loop, which would mean pumping a screenshot's round trips through the
-//! thread every bar is painted on.
+//! A capture is not a surface: nothing is mapped, nothing is drawn, and the answer is wanted synchronously by whoever asked. So this takes its own short-lived connection — the same shape [`enumerate_outputs`] uses — rather than borrowing the driver's loop, which would mean pumping a screenshot's round trips through the thread every bar is painted on.
 //!
-//! Two protocols answer the same question, and both are spoken. `ext-image-copy-capture-v1` is the standardised
-//! successor and the route taken first; `zwlr-screencopy-v1` is what every wlroots compositor has carried for
-//! years and is the fallback. The same two-spelling shape [`crate::clipboard`] takes, for the same reason: which
-//! of the two is the difference between working on the current Hyprland and working on a two-year-old Sway.
+//! Two protocols answer the same question, and both are spoken. `ext-image-copy-capture-v1` is the standardised successor and the route taken first; `zwlr-screencopy-v1` is what every wlroots compositor has carried for years and is the fallback. The same two-spelling shape [`crate::clipboard`] takes, for the same reason: which of the two is the difference between working on the current Hyprland and working on a two-year-old Sway.
 //!
-//! The newer protocol will not crop. It captures a *source* whole and has no region request, so a selection is
-//! read back at output size and cut here — which is what [`region`] is, and why the older route is not simply
-//! the worse one.
+//! The newer protocol will not crop. It captures a *source* whole and has no region request, so a selection is read back at output size and cut here — which is what [`region`] is, and why the older route is not simply the worse one.
 //!
 //! [`enumerate_outputs`]: crate::enumerate_outputs
 
@@ -46,22 +38,17 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
     ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
 };
 
-/// How long a capture waits for the compositor to hand a frame back. A copy is a blit the compositor does on its
-/// own schedule, so it needs a bound rather than a parked thread: a shell that hangs on a screenshot is worse
-/// than one that says the screenshot failed.
+/// How long a capture waits for the compositor to hand a frame back. A copy is a blit the compositor does on its own schedule, so it needs a bound rather than a parked thread: a shell that hangs on a screenshot is worse than one that says the screenshot failed.
 const DEADLINE: Duration = Duration::from_secs(3);
 
-/// One captured image: tightly-packed RGBA8, top row first, in the output's own physical pixels and the right
-/// way up whatever transform the screen is running under.
+/// One captured image: tightly-packed RGBA8, top row first, in the output's own physical pixels and the right way up whatever transform the screen is running under.
 pub struct Capture {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
 }
 
-/// Which part of the screen to read. Region coordinates are relative to the output, in its logical pixels —
-/// which is what the older protocol takes, so the translation from a screen-wide selection belongs to the caller
-/// that knows where each output sits.
+/// Which part of the screen to read. Region coordinates are relative to the output, in its logical pixels — which is what the older protocol takes, so the translation from a screen-wide selection belongs to the caller that knows where each output sits.
 #[derive(Clone, Copy, Debug)]
 pub enum CaptureArea {
     Output,
@@ -75,8 +62,7 @@ pub enum CaptureArea {
 
 /// Which protocol to read through.
 ///
-/// `Auto` is what a user who has not thought about it gets, and it falls back. Naming one means "this route or
-/// none": a user who names a backend is usually debugging one, and a silent fallback is what hides the answer.
+/// `Auto` is what a user who has not thought about it gets, and it falls back. Naming one means "this route or none": a user who names a backend is usually debugging one, and a silent fallback is what hides the answer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Backend {
     #[default]
@@ -85,8 +71,7 @@ pub enum Backend {
     Screencopy,
 }
 
-/// The interfaces the `ext-image-copy-capture` route needs. Two globals, not one: the capture manager takes a
-/// *source*, and a source for an output comes from its own factory.
+/// The interfaces the `ext-image-copy-capture` route needs. Two globals, not one: the capture manager takes a *source*, and a source for an output comes from its own factory.
 pub const IMAGE_COPY_CAPTURE_INTERFACES: &[&str] = &[
     "ext_image_copy_capture_manager_v1",
     "ext_output_image_capture_source_manager_v1",
@@ -95,8 +80,7 @@ pub const IMAGE_COPY_CAPTURE_INTERFACES: &[&str] = &[
 /// The interface the `wlr-screencopy` route needs.
 pub const SCREENCOPY_INTERFACES: &[&str] = &["zwlr_screencopy_manager_v1"];
 
-/// Whether this compositor can be asked for pixels at all, by either route. Asked before offering a capture
-/// rather than after: finding out from a failed keypress is worse than greying the button out.
+/// Whether this compositor can be asked for pixels at all, by either route. Asked before offering a capture rather than after: finding out from a failed keypress is worse than greying the button out.
 pub fn capture_supported() -> bool {
     let has = |interfaces| crate::globals::advertises_all(interfaces) == Some(true);
     has(IMAGE_COPY_CAPTURE_INTERFACES) || has(SCREENCOPY_INTERFACES)
@@ -128,8 +112,7 @@ pub fn capture(
 mod toplevel_tests {
     use super::*;
 
-    /// Capturing one window by the identifier the *other* connection reported, which is the whole claim: a
-    /// protocol object cannot be shared between connections, and it does not have to be.
+    /// Capturing one window by the identifier the *other* connection reported, which is the whole claim: a protocol object cannot be shared between connections, and it does not have to be.
     ///
     /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevel_capture -- --nocapture`
     #[test]
@@ -182,14 +165,12 @@ mod toplevel_tests {
 
 /// Captures one window, named by the identifier `ext-foreign-toplevel-list-v1` gave it.
 ///
-/// Only the newer protocol can do this: `wlr-screencopy` captures outputs, so there is no fallback and a
-/// compositor without `ext-image-copy-capture` says so rather than quietly handing back a screen.
+/// Only the newer protocol can do this: `wlr-screencopy` captures outputs, so there is no fallback and a compositor without `ext-image-copy-capture` says so rather than quietly handing back a screen.
 pub fn capture_toplevel(identifier: &str, cursor: bool) -> Result<Capture, CaptureError> {
     Reader::open()?.toplevel(identifier, cursor)
 }
 
-/// The interfaces capturing a *window* needs, which is a different pair from capturing an output: the source
-/// comes from the toplevel factory, and the list is what hands out the handles that factory takes.
+/// The interfaces capturing a *window* needs, which is a different pair from capturing an output: the source comes from the toplevel factory, and the list is what hands out the handles that factory takes.
 pub const TOPLEVEL_CAPTURE_INTERFACES: &[&str] = &[
     "ext_image_copy_capture_manager_v1",
     "ext_foreign_toplevel_image_capture_source_manager_v1",
@@ -204,8 +185,7 @@ pub fn toplevel_capture_supported() -> bool {
 /// The output to read from, and the two facts about it a capture needs afterwards.
 struct Target {
     output: wl_output::WlOutput,
-    /// The size the compositor lays this screen out at, which is the space a region is expressed in. `None` when
-    /// the compositor announced no `xdg_output` for it.
+    /// The size the compositor lays this screen out at, which is the space a region is expressed in. `None` when the compositor announced no `xdg_output` for it.
     logical_size: Option<(i32, i32)>,
     scale: i32,
 }
@@ -269,8 +249,7 @@ impl Reader {
         })
     }
 
-    /// The standardised route: a source for the output, a session over it, then one frame into a buffer sized
-    /// the way the session said it must be.
+    /// The standardised route: a source for the output, a session over it, then one frame into a buffer sized the way the session said it must be.
     fn image_copy_capture(
         &mut self,
         target: &Target,
@@ -289,9 +268,7 @@ impl Reader {
 
     /// One window's pixels, named by the identifier `ext-foreign-toplevel-list-v1` gave it.
     ///
-    /// The list is bound here rather than borrowed from the watcher: what the two share is the identifier, not
-    /// the object. Two round trips, because the first announces the handles and the second delivers what each
-    /// one is called.
+    /// The list is bound here rather than borrowed from the watcher: what the two share is the identifier, not the object. Two round trips, because the first announces the handles and the second delivers what each one is called.
     fn toplevel(&mut self, identifier: &str, cursor: bool) -> Result<Capture, CaptureError> {
         let qh = self.queue.handle();
         let list: ExtForeignToplevelListV1 = self
@@ -320,8 +297,7 @@ impl Reader {
         self.capture_from(source, cursor)
     }
 
-    /// Everything a capture does once it has a source, which is all of it: the two source factories differ and
-    /// both hand back the same `ext_image_capture_source_v1`.
+    /// Everything a capture does once it has a source, which is all of it: the two source factories differ and both hand back the same `ext_image_capture_source_v1`.
     fn capture_from(
         &mut self,
         source: ExtImageCaptureSourceV1,
@@ -342,8 +318,7 @@ impl Reader {
         };
         let session = manager.create_session(&source, options, &qh, ());
 
-        // The session answers with the buffer it will fill — a size, and the formats it will accept — and only
-        // then is there anything to allocate. Which is why this cannot be one round trip.
+        // The session answers with the buffer it will fill — a size, and the formats it will accept — and only then is there anything to allocate. Which is why this cannot be one round trip.
         self.pump(|state| state.session.settled())?;
         let constraints = self.state.session.constraints()?;
 
@@ -361,8 +336,7 @@ impl Reader {
 
         let frame = session.create_frame(&qh, ());
         frame.attach_buffer(buffer.wl_buffer());
-        // The whole buffer, always: this session has captured nothing before, so there is no previous content
-        // for the compositor to leave standing.
+        // The whole buffer, always: this session has captured nothing before, so there is no previous content for the compositor to leave standing.
         frame.damage_buffer(0, 0, constraints.width as i32, constraints.height as i32);
         frame.capture();
         self.pump(|state| state.frame.settled())?;
@@ -463,8 +437,7 @@ impl Reader {
         ))
     }
 
-    /// Dispatches until `done` or the deadline. Blocking on the queue rather than spinning: a copy takes as long
-    /// as the compositor's next composition, and a busy loop would spend that whole frame burning a core.
+    /// Dispatches until `done` or the deadline. Blocking on the queue rather than spinning: a copy takes as long as the compositor's next composition, and a busy loop would spend that whole frame burning a core.
     fn pump(&mut self, done: impl Fn(&CaptureState) -> bool) -> Result<(), CaptureError> {
         let start = Instant::now();
         while !done(&self.state) {
@@ -482,9 +455,7 @@ impl Reader {
 
 /// `area` out of a whole-output capture, for the route that cannot ask the compositor to crop.
 ///
-/// The selection arrives in the output's logical pixels and the capture is in its physical ones, so the two are
-/// related by whatever ratio the screen is scaled at. Taken from the sizes themselves rather than from the
-/// announced integer scale: a screen at 1.5× reports a scale of 2 and is neither.
+/// The selection arrives in the output's logical pixels and the capture is in its physical ones, so the two are related by whatever ratio the screen is scaled at. Taken from the sizes themselves rather than from the announced integer scale: a screen at 1.5× reports a scale of 2 and is neither.
 fn crop_to(full: Capture, area: CaptureArea, target: &Target) -> Result<Capture, CaptureError> {
     let CaptureArea::Region {
         x,
@@ -558,9 +529,7 @@ fn is_supported(format: wl_shm::Format) -> bool {
 
 /// The compositor's buffer as tightly-packed RGBA8, row for row.
 ///
-/// Two corrections, and both are invisible in a still image until they are wrong: the 32-bit formats are
-/// little-endian, so an `argb8888` buffer carries blue first; and an `x` format's fourth byte is undefined
-/// rather than opaque, so taking it as alpha yields a picture that is transparent in a viewer.
+/// Two corrections, and both are invisible in a still image until they are wrong: the 32-bit formats are little-endian, so an `argb8888` buffer carries blue first; and an `x` format's fourth byte is undefined rather than opaque, so taking it as alpha yields a picture that is transparent in a viewer.
 fn to_rgba(canvas: &[u8], width: u32, height: u32, stride: u32, format: wl_shm::Format) -> Vec<u8> {
     let swap_red_blue = matches!(format, wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888);
     let opaque = matches!(format, wl_shm::Format::Xrgb8888 | wl_shm::Format::Xbgr8888);
@@ -585,9 +554,7 @@ fn to_rgba(canvas: &[u8], width: u32, height: u32, stride: u32, format: wl_shm::
 
 /// The picture the right way up, given the transform the compositor says it applied to the buffer.
 ///
-/// The eight `wl_output` transforms are the symmetries of a rectangle, so undoing one is applying another from
-/// the same set — [`inverse`] is that table, and this is the only place a rotated or mirrored screen stops
-/// coming back sideways.
+/// The eight `wl_output` transforms are the symmetries of a rectangle, so undoing one is applying another from the same set — [`inverse`] is that table, and this is the only place a rotated or mirrored screen stops coming back sideways.
 fn upright(pixels: Vec<u8>, width: u32, height: u32, transform: wl_output::Transform) -> Capture {
     let transform = inverse(transform);
     if transform == wl_output::Transform::Normal {
@@ -637,8 +604,7 @@ fn upright(pixels: Vec<u8>, width: u32, height: u32, transform: wl_output::Trans
 
 /// The transform that undoes `transform`.
 ///
-/// A rotation is undone by the opposite rotation; every flipped variant is its own inverse, because a flip
-/// composed with a rotation is a reflection and a reflection applied twice is nothing.
+/// A rotation is undone by the opposite rotation; every flipped variant is its own inverse, because a flip composed with a rotation is a reflection and a reflection applied twice is nothing.
 fn inverse(transform: wl_output::Transform) -> wl_output::Transform {
     match transform {
         wl_output::Transform::_90 => wl_output::Transform::_270,
@@ -683,8 +649,7 @@ struct Constraints {
 #[derive(Default)]
 struct Session {
     size: Option<(u32, u32)>,
-    /// Every shared-memory format offered, in the order offered — the client picks, so the first one this build
-    /// can read is the one taken.
+    /// Every shared-memory format offered, in the order offered — the client picks, so the first one this build can read is the one taken.
     formats: Vec<WEnum<wl_shm::Format>>,
     done: bool,
     stopped: bool,
@@ -721,8 +686,7 @@ impl Session {
 
 /// One frame in flight, whichever protocol asked for it.
 struct Frame {
-    /// Only the wlroots route fills this: its frame announces the buffer, where a session announces it once for
-    /// every frame that follows.
+    /// Only the wlroots route fills this: its frame announces the buffer, where a session announces it once for every frame that follows.
     buffer: Option<BufferSpec>,
     ready: bool,
     failed: Option<String>,
@@ -762,10 +726,7 @@ struct CaptureState {
     frame: Frame,
     /// The open windows this connection was told about, by the identifier they announced.
     ///
-    /// A capture cannot borrow the toplevel watcher's handle — a protocol object belongs to the connection
-    /// that made it — but it does not have to: the identifier is what crosses. The protocol promises it is
-    /// unique and stable for the window's life, so listing the toplevels again here and matching on it names
-    /// the same window without anything being shared.
+    /// A capture cannot borrow the toplevel watcher's handle — a protocol object belongs to the connection that made it — but it does not have to: the identifier is what crosses. The protocol promises it is unique and stable for the window's life, so listing the toplevels again here and matching on it names the same window without anything being shared.
     toplevels: HashMap<String, ExtForeignToplevelHandleV1>,
 }
 
@@ -814,8 +775,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
                     stride,
                 });
             }
-            // This protocol has no transform event; the one orientation it reports is a buffer stored bottom-up,
-            // which is the same symmetry the newer one spells `flipped_180`.
+            // This protocol has no transform event; the one orientation it reports is a buffer stored bottom-up, which is the same symmetry the newer one spells `flipped_180`.
             zwlr_screencopy_frame_v1::Event::Flags {
                 flags: WEnum::Value(flags),
             } => {
@@ -910,8 +870,7 @@ impl Dispatch<ExtForeignToplevelListV1, ()> for CaptureState {
     }
 }
 
-/// Only the identifier is kept. A capture names a window by the one field the protocol promises is unique and
-/// stable, and has no use for a title it would only have to guess with.
+/// Only the identifier is kept. A capture names a window by the one field the protocol promises is unique and stable, and has no use for a title it would only have to guess with.
 impl Dispatch<ExtForeignToplevelHandleV1, ()> for CaptureState {
     fn event(
         state: &mut Self,
@@ -941,8 +900,7 @@ mod tests {
         vec![10, 20, 30, 40, 50, 60, 70, 80]
     }
 
-    /// A 2×2 image whose pixels are numbered, so a transform can be read off the result by eye:
-    /// `1 2` over `3 4`.
+    /// A 2×2 image whose pixels are numbered, so a transform can be read off the result by eye: `1 2` over `3 4`.
     fn numbered() -> Vec<u8> {
         (1u8..=4).flat_map(|n| [n, n, n, 255]).collect()
     }
@@ -953,14 +911,12 @@ mod tests {
 
     #[test]
     fn a_little_endian_argb_buffer_comes_back_as_rgba() {
-        // `argb8888` is a 32-bit word, so in memory it reads B, G, R, A. Taken as-is, every screenshot on this
-        // machine would come out with its reds and blues swapped.
+        // `argb8888` is a 32-bit word, so in memory it reads B, G, R, A. Taken as-is, every screenshot on this machine would come out with its reds and blues swapped.
         let rgba = to_rgba(&buffer(), 1, 2, 4, wl_shm::Format::Argb8888);
         assert_eq!(rgba[0..4], [30, 20, 10, 40]);
         assert_eq!(rgba[4..8], [70, 60, 50, 80]);
 
-        // An `xbgr` buffer is already in byte order and its fourth byte means nothing, so it must be forced
-        // opaque — kept as alpha, a full-screen capture opens as a transparent image.
+        // An `xbgr` buffer is already in byte order and its fourth byte means nothing, so it must be forced opaque — kept as alpha, a full-screen capture opens as a transparent image.
         let rgba = to_rgba(&buffer(), 1, 2, 4, wl_shm::Format::Xbgr8888);
         assert_eq!(rgba[0..4], [10, 20, 30, 255]);
     }
@@ -988,8 +944,7 @@ mod tests {
 
     #[test]
     fn a_rotated_screen_comes_back_the_right_way_up() {
-        // A screen the compositor turned a quarter turn anticlockwise is undone by turning it back, not by
-        // turning it the same way again — which is the mistake that leaves a portrait monitor upside down.
+        // A screen the compositor turned a quarter turn anticlockwise is undone by turning it back, not by turning it the same way again — which is the mistake that leaves a portrait monitor upside down.
         let turned = upright(numbered(), 2, 2, wl_output::Transform::_90);
         assert_eq!(corners(&turned), vec![3, 1, 4, 2]);
         assert_eq!(
@@ -998,8 +953,7 @@ mod tests {
             "a square keeps its size; the axes still swapped"
         );
 
-        // Undoing a rotation twice is doing nothing, which is what makes the table above provable rather than
-        // asserted: every transform composed with its own undo is the identity.
+        // Undoing a rotation twice is doing nothing, which is what makes the table above provable rather than asserted: every transform composed with its own undo is the identity.
         for transform in [
             wl_output::Transform::Normal,
             wl_output::Transform::_90,
@@ -1030,9 +984,7 @@ mod tests {
 
     #[test]
     fn a_selection_is_cut_out_of_the_output_in_its_own_pixels() {
-        // The route without a region request reads the whole screen back, so the scale between the logical
-        // rectangle the user dragged and the pixels that arrived is the only thing standing between a correct
-        // crop and one that is off by a factor of two on every HiDPI laptop.
+        // The route without a region request reads the whole screen back, so the scale between the logical rectangle the user dragged and the pixels that arrived is the only thing standing between a correct crop and one that is off by a factor of two on every HiDPI laptop.
         let full = Capture {
             width: 4,
             height: 4,
@@ -1099,10 +1051,7 @@ mod tests {
 
     /// Both routes, against the compositor that is actually running.
     ///
-    /// Everything above this line is arithmetic on buffers a test made up; none of it can say whether the
-    /// session hand-shake is right, and a protocol implementation that has never spoken to a compositor is a
-    /// guess. Needs a live one, so it is opt-in the same way the clipboard round trip is:
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland capture -- --nocapture`
+    /// Everything above this line is arithmetic on buffers a test made up; none of it can say whether the session hand-shake is right, and a protocol implementation that has never spoken to a compositor is a guess. Needs a live one, so it is opt-in the same way the clipboard round trip is: `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland capture -- --nocapture`
     #[test]
     fn both_routes_read_the_same_screen_back_at_the_same_size() {
         if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
@@ -1138,8 +1087,7 @@ mod tests {
                 whole.width, whole.height, part.width, part.height
             );
         }
-        // The point of the assertion: one protocol crops on the compositor's side and the other crops here, off
-        // a whole-output read scaled by hand. A HiDPI screen is where those two stop agreeing.
+        // The point of the assertion: one protocol crops on the compositor's side and the other crops here, off a whole-output read scaled by hand. A HiDPI screen is where those two stop agreeing.
         assert_eq!(
             sizes[0], sizes[1],
             "the two routes disagree about the screen"

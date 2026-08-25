@@ -1,9 +1,6 @@
 //! The glyph and tint each service's state reads as.
 //!
-//! One home for it because the same state is drawn in four places — its own bar chip, the OSD, a hover popout
-//! and the status cluster — and four copies of "which icon means muted" drift. They already had: the volume
-//! chip and the OSD carried separate copies of the same three-way glyph, and the battery was tinted by three
-//! different rules depending on which surface you looked at.
+//! One home for it because the same state is drawn in four places — its own bar chip, the OSD, a hover popout and the status cluster — and four copies of "which icon means muted" drift. They already had: the volume chip and the OSD carried separate copies of the same three-way glyph, and the battery was tinted by three different rules depending on which surface you looked at.
 
 use telar::Color;
 
@@ -13,8 +10,7 @@ use services::network::{Network, NetworkKind, WifiStatus};
 use services::volume::Volume;
 use services::weather::Condition;
 
-/// Muted wins over the level, because it is the state that matters at a glance; below that the glyph tracks
-/// how far the sink is turned down.
+/// Muted wins over the level, because it is the state that matters at a glance; below that the glyph tracks how far the sink is turned down.
 pub fn volume(v: Volume) -> &'static str {
     if v.muted || v.level == 0 {
         "volume-x"
@@ -46,8 +42,7 @@ pub fn network(net: Network) -> &'static str {
     }
 }
 
-/// The arc for a signal strength, 0–100. Shared by the chip, the cluster and every row of the network list, so
-/// "three bars" means the same number everywhere.
+/// The arc for a signal strength, 0–100. Shared by the chip, the cluster and every row of the network list, so "three bars" means the same number everywhere.
 pub fn wifi_signal(strength: u8) -> &'static str {
     match strength {
         s if s >= 70 => "wifi",
@@ -57,8 +52,7 @@ pub fn wifi_signal(strength: u8) -> &'static str {
     }
 }
 
-/// The radio itself, for a cluster entry that reports Wi-Fi specifically rather than "am I online" — which is
-/// what [`network`] already covers, wired included.
+/// The radio itself, for a cluster entry that reports Wi-Fi specifically rather than "am I online" — which is what [`network`] already covers, wired included.
 pub fn wifi(status: WifiStatus) -> &'static str {
     if !status.available || !status.enabled {
         "wifi-off"
@@ -69,8 +63,7 @@ pub fn wifi(status: WifiStatus) -> &'static str {
     }
 }
 
-/// A radio that is on but joined to nothing recedes to muted: it is idle, not broken, and should not read as
-/// loudly as a live connection beside it.
+/// A radio that is on but joined to nothing recedes to muted: it is idle, not broken, and should not read as loudly as a live connection beside it.
 pub fn wifi_tint(status: WifiStatus, theme: NordTheme, fg: Color) -> Color {
     if !status.available || !status.enabled {
         theme.muted
@@ -81,11 +74,9 @@ pub fn wifi_tint(status: WifiStatus, theme: NordTheme, fg: Color) -> Color {
     }
 }
 
-/// The radio's state in one glyph, most specific first: something connected outranks a scan, and a scan
-/// outranks an idle radio, because that is the order a user cares about them in.
+/// The radio's state in one glyph, most specific first: something connected outranks a scan, and a scan outranks an idle radio, because that is the order a user cares about them in.
 ///
-/// Takes the `Copy` summary rather than the whole state so a chip can hold it in a signal and read it with a
-/// plain `get`; see [`bluetooth::Status`](services::bluetooth::Status).
+/// Takes the `Copy` summary rather than the whole state so a chip can hold it in a signal and read it with a plain `get`; see [`bluetooth::Status`](services::bluetooth::Status).
 pub fn bluetooth(bt: Status) -> &'static str {
     if !bt.available || !bt.powered {
         "bluetooth-off"
@@ -98,8 +89,7 @@ pub fn bluetooth(bt: Status) -> &'static str {
     }
 }
 
-/// A connected radio reads in the accent, so "something is paired" is visible without reading the glyph's
-/// shape; an unavailable one recedes. `fg` is what the caller would otherwise paint with.
+/// A connected radio reads in the accent, so "something is paired" is visible without reading the glyph's shape; an unavailable one recedes. `fg` is what the caller would otherwise paint with.
 pub fn bluetooth_tint(bt: Status, theme: NordTheme, accent: Color, fg: Color) -> Color {
     if !bt.available || !bt.powered {
         theme.muted
@@ -110,9 +100,7 @@ pub fn bluetooth_tint(bt: Status, theme: NordTheme, accent: Color, fg: Color) ->
     }
 }
 
-/// What kind of thing a Bluetooth device is, from BlueZ's `Icon` property. BlueZ names a freedesktop icon the
-/// user's theme may or may not carry; mapping it to the shell's own icon set is what makes a headset draw as a
-/// headset on every machine rather than only where that theme is installed.
+/// What kind of thing a Bluetooth device is, from BlueZ's `Icon` property. BlueZ names a freedesktop icon the user's theme may or may not carry; mapping it to the shell's own icon set is what makes a headset draw as a headset on every machine rather than only where that theme is installed.
 pub fn bluetooth_device(icon: &str) -> &'static str {
     match icon {
         "audio-headset" | "audio-headphones" => "headphones",
@@ -137,9 +125,7 @@ pub fn battery(charging: bool) -> &'static str {
     }
 }
 
-/// Charging reads green, a low charge warns, and anything else takes the surrounding foreground so the icon
-/// sits with its neighbours. `fg` is what the caller would otherwise paint with — a chip's own foreground,
-/// which follows the container variant, or a panel's text token.
+/// Charging reads green, a low charge warns, and anything else takes the surrounding foreground so the icon sits with its neighbours. `fg` is what the caller would otherwise paint with — a chip's own foreground, which follows the container variant, or a panel's text token.
 pub fn battery_tint(level: i32, charging: bool, theme: NordTheme, fg: Color) -> Color {
     if charging {
         theme.green
@@ -152,8 +138,7 @@ pub fn battery_tint(level: i32, charging: bool, theme: NordTheme, fg: Color) -> 
     }
 }
 
-/// The sky. `day` picks between the sun and moon variants where the two differ, which is the difference
-/// between a clear night and a card that claims the sun is out at 2am.
+/// The sky. `day` picks between the sun and moon variants where the two differ, which is the difference between a clear night and a card that claims the sun is out at 2am.
 pub fn weather(condition: Condition, day: bool) -> &'static str {
     match condition {
         Condition::Clear if day => "sun",
@@ -173,8 +158,7 @@ pub fn weather(condition: Condition, day: bool) -> &'static str {
     }
 }
 
-/// The graphics card. Lucide has a `cpu` and nothing for a GPU, and drawing both readings with the same chip
-/// glyph would make two numbers on one bar indistinguishable — so this one comes from MDI.
+/// The graphics card. Lucide has a `cpu` and nothing for a GPU, and drawing both readings with the same chip glyph would make two numbers on one bar indistinguishable — so this one comes from MDI.
 pub fn gpu() -> &'static str {
     "mdi:expansion-card"
 }
@@ -217,8 +201,7 @@ pub fn now_playing() -> &'static str {
     "music"
 }
 
-/// Both live beside the state that decides them, so the service's own toast and a bar chip take the same
-/// answer; re-exported here so every glyph is still reached by one name.
+/// Both live beside the state that decides them, so the service's own toast and a bar chip take the same answer; re-exported here so every glyph is still reached by one name.
 pub use services::recorder::glyph as recording;
 pub use services::screenshot::glyph as screenshot;
 

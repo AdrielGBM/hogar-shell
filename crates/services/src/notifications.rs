@@ -26,8 +26,7 @@ fn urgency_from_hint(byte: u8) -> Urgency {
     }
 }
 
-/// A notification's own image (from the `image-data`/`icon_data` hint), decoded to RGBA8. Runtime-only — not
-/// persisted (raw pixels would bloat the history file), so a restored notification falls back to its dot.
+/// A notification's own image (from the `image-data`/`icon_data` hint), decoded to RGBA8. Runtime-only — not persisted (raw pixels would bloat the history file), so a restored notification falls back to its dot.
 #[derive(Clone, Debug)]
 pub struct NotificationImage {
     pub width: u32,
@@ -46,9 +45,7 @@ pub struct Notification {
     #[serde(default)]
     pub actions: Vec<String>,
     pub urgency: Urgency,
-    /// Whether this notification may still raise a popup: `true` for a fresh arrival, `false` for one restored
-    /// from persisted history at startup (those belong in the history panel, not re-popped). Runtime-only —
-    /// skipped from serialization, so every restored notification deserializes back to `false`.
+    /// Whether this notification may still raise a popup: `true` for a fresh arrival, `false` for one restored from persisted history at startup (those belong in the history panel, not re-popped). Runtime-only — skipped from serialization, so every restored notification deserializes back to `false`.
     #[serde(skip)]
     pub popup: bool,
     /// The notification's image, when it carried one. Runtime-only (not persisted).
@@ -65,8 +62,7 @@ pub struct Snapshot {
     pub unread: u32,
     /// Do-Not-Disturb: popups are suppressed, history still records.
     pub dnd: bool,
-    /// Applications whose notifications never pop. Carried in the snapshot so a panel can draw a group's mute
-    /// state from the same reading it draws its cards from, rather than reading the state file per row.
+    /// Applications whose notifications never pop. Carried in the snapshot so a panel can draw a group's mute state from the same reading it draws its cards from, rather than reading the state file per row.
     pub muted_apps: Vec<String>,
 }
 
@@ -99,14 +95,12 @@ impl State {
 
 /// The daemon's `[notifications]`-derived behaviour: the auto-dismiss defaults and the sound a pop makes.
 ///
-/// Held behind a lock rather than copied in at startup, so [`set_policy`] can hand the daemon a new one on a
-/// config reload — the D-Bus name and the notification history stay put, only the policy moves.
+/// Held behind a lock rather than copied in at startup, so [`set_policy`] can hand the daemon a new one on a config reload — the D-Bus name and the notification history stay put, only the policy moves.
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
     pub timeout: Duration,
     pub critical_sticky: bool,
-    /// The ceiling on a sticky `critical` popup, after which it retires to the history like any other. `None`
-    /// is the unbounded wait, which has no way out but a gesture.
+    /// The ceiling on a sticky `critical` popup, after which it retires to the history like any other. `None` is the unbounded wait, which has no way out but a gesture.
     pub critical_max: Option<Duration>,
     /// A shell command run detached each time a notification pops; empty is silent.
     pub sound: String,
@@ -119,18 +113,14 @@ struct Inner {
     policy: Mutex<Policy>,
     /// What each notification's popup expiry *will* be, held until it is actually on screen.
     ///
-    /// The clock cannot start when a notification arrives, because the column shows a bounded number of cards
-    /// and the rest wait: a fifth notification whose timer began on arrival spends its whole life queued and is
-    /// gone almost the moment it appears. It starts on [`shown`] instead, which the column calls for the cards
-    /// it is drawing, and an entry is spent the first time that happens.
+    /// The clock cannot start when a notification arrives, because the column shows a bounded number of cards and the rest wait: a fifth notification whose timer began on arrival spends its whole life queued and is gone almost the moment it appears. It starts on [`shown`] instead, which the column calls for the cards it is drawing, and an entry is spent the first time that happens.
     pending: Mutex<HashMap<u32, (i32, Urgency)>>,
     /// The current history is shipped here after every change; a background thread debounces and writes it.
     saver: Sender<Vec<Notification>>,
 }
 
 impl Inner {
-    /// Applies `mutate`, persists the new history (debounced, off-thread), then pushes a fresh snapshot to
-    /// every live subscriber, dropping any whose surface has gone.
+    /// Applies `mutate`, persists the new history (debounced, off-thread), then pushes a fresh snapshot to every live subscriber, dropping any whose surface has gone.
     fn commit(&self, mutate: impl FnOnce(&mut State)) {
         let snapshot = {
             let mut state = self.state.lock().unwrap();
@@ -161,9 +151,7 @@ impl Inner {
             assigned = id;
             // Decided at the daemon's single entry point, so a mute holds for the shell's own advisories as much as for anything arriving over D-Bus.
             //
-            // Do-Not-Disturb is decided here too, and not where the card is drawn: a notification that arrives
-            // under it must be *recorded as not popping*, so that switching DND off later leaves it in the
-            // history rather than putting it on screen. Suppressed is not deferred.
+            // Do-Not-Disturb is decided here too, and not where the card is drawn: a notification that arrives under it must be *recorded as not popping*, so that switching DND off later leaves it in the history rather than putting it on screen. Suppressed is not deferred.
             notification.popup &= !state.muted_apps.contains(&notification.app_name) && !state.dnd;
             popped = notification.popup;
             if let Some(existing) = state.active.iter_mut().find(|n| n.id == id) {
@@ -179,8 +167,7 @@ impl Inner {
         assigned
     }
 
-    /// Sets Do-Not-Disturb, retiring every popup it is switching on over. See [`set_dnd`] for why suppressing
-    /// is not deferring.
+    /// Sets Do-Not-Disturb, retiring every popup it is switching on over. See [`set_dnd`] for why suppressing is not deferring.
     fn set_dnd(&self, dnd: bool) {
         self.commit(|state| {
             state.dnd = dnd;
@@ -198,8 +185,7 @@ impl Inner {
         self.commit(|state| state.active.retain(|n| n.id != id));
     }
 
-    /// Drops every notification `app_name` sent, answering with the ids that went so the caller can close them
-    /// on the bus.
+    /// Drops every notification `app_name` sent, answering with the ids that went so the caller can close them on the bus.
     fn clear_app(&self, app_name: &str) -> Vec<u32> {
         let mut closed = Vec::new();
         self.commit(|state| {
@@ -214,9 +200,7 @@ impl Inner {
         closed
     }
 
-    /// Retires `id`'s popup while keeping it in the history: the popup stack stops showing it (it filters on
-    /// `popup`), but the panel — which lists all of `active` — keeps it until dismissed. This is what a popup
-    /// timeout does, so an auto-dismissed notification is still there to read later.
+    /// Retires `id`'s popup while keeping it in the history: the popup stack stops showing it (it filters on `popup`), but the panel — which lists all of `active` — keeps it until dismissed. This is what a popup timeout does, so an auto-dismissed notification is still there to read later.
     fn expire(&self, id: u32) {
         self.disarm_expiry(id);
         self.commit(|state| {
@@ -233,8 +217,7 @@ impl Inner {
         }
     }
 
-    /// Starts `id`'s expiry, if it has one and has not started already — what the column calls for a card it has
-    /// put on screen.
+    /// Starts `id`'s expiry, if it has one and has not started already — what the column calls for a card it has put on screen.
     fn start_expiry(&self, id: u32) {
         let armed = self
             .pending
@@ -269,20 +252,14 @@ impl Inner {
 
 /// How long a popup has on screen once it is shown, or `None` when it waits to be dealt with instead.
 ///
-/// A sticky `critical` ignores both the sender's `expire_timeout` and the configured one — that is what sticky
-/// means — and waits out `critical_max` instead. Without a ceiling it waits forever, and forever is the one
-/// answer with no way out: the notification's only remaining exit is a gesture, so a gesture that does not land
-/// leaves it on screen until the shell restarts. Expiring is not dismissing, so the ceiling costs nothing —
-/// the notification is still in the history panel afterwards.
+/// A sticky `critical` ignores both the sender's `expire_timeout` and the configured one — that is what sticky means — and waits out `critical_max` instead. Without a ceiling it waits forever, and forever is the one answer with no way out: the notification's only remaining exit is a gesture, so a gesture that does not land leaves it on screen until the shell restarts. Expiring is not dismissing, so the ceiling costs nothing — the notification is still in the history panel afterwards.
 fn expiry_delay(expire_timeout: i32, urgency: Urgency, policy: &Policy) -> Option<Duration> {
     if urgency == Urgency::Critical && policy.critical_sticky {
         return policy.critical_max;
     }
     let ms = match expire_timeout {
         t if t > 0 => t as u64,
-        // The spec's "never expire". Honoured for a non-critical notification, whose card can still be pressed
-        // and swiped — it is the critical one, floated above everything and outliving the column, that needs a
-        // floor under it.
+        // The spec's "never expire". Honoured for a non-critical notification, whose card can still be pressed and swiped — it is the critical one, floated above everything and outliving the column, that needs a floor under it.
         0 => return None,
         _ => policy.timeout.as_millis() as u64,
     };
@@ -294,18 +271,13 @@ pub struct NotificationService {
 }
 
 static SERVICE: OnceLock<NotificationService> = OnceLock::new();
-/// The daemon's live D-Bus connection, kept so action invocations and closes can emit their signals from any
-/// thread (the daemon thread just parks). Set once the bus name is claimed.
+/// The daemon's live D-Bus connection, kept so action invocations and closes can emit their signals from any thread (the daemon thread just parks). Set once the bus name is claimed.
 static CONNECTION: OnceLock<zbus::blocking::Connection> = OnceLock::new();
 
-/// Starts the daemon once for the whole process (before any surface, so its state survives config reloads).
-/// Do-Not-Disturb and the per-application mutes are restored from the persisted shell state, so a toggle
-/// survives a restart rather than quietly re-arming every sender. Idempotent; a second call is a no-op — use
-/// [`set_policy`] to hand a running daemon a reloaded config.
+/// Starts the daemon once for the whole process (before any surface, so its state survives config reloads). Do-Not-Disturb and the per-application mutes are restored from the persisted shell state, so a toggle survives a restart rather than quietly re-arming every sender. Idempotent; a second call is a no-op — use [`set_policy`] to hand a running daemon a reloaded config.
 pub fn init(policy: Policy) {
     SERVICE.get_or_init(|| {
-        // Restored notifications deserialize with `popup = false`, so they populate the history panel without
-        // re-popping on login; ids continue past the highest restored one.
+        // Restored notifications deserialize with `popup = false`, so they populate the history panel without re-popping on login; ids continue past the highest restored one.
         let restored = load_history();
         let next_id = restored.iter().map(|n| n.id).max().unwrap_or(0);
         let (saver, saver_rx) = channel::<Vec<Notification>>();
@@ -331,8 +303,7 @@ pub fn init(policy: Policy) {
     });
 }
 
-/// Replaces the running daemon's policy, so a `[notifications]` edit applies without restarting the shell (and
-/// without dropping the D-Bus name or the history). A no-op before [`init`].
+/// Replaces the running daemon's policy, so a `[notifications]` edit applies without restarting the shell (and without dropping the D-Bus name or the history). A no-op before [`init`].
 pub fn set_policy(policy: Policy) {
     if let Some(service) = SERVICE.get() {
         *service.inner.policy.lock().unwrap() = policy;
@@ -349,16 +320,12 @@ pub fn subscribe(tx: EventSender<SharedSnapshot>) {
     }
 }
 
-/// Raises a notification from inside the shell itself, without a D-Bus round-trip — how hogar-shell reports its
-/// own problems (a config that won't parse, a service that won't start) through the same surface every other
-/// app's notifications land on. `Critical` urgency, so with the default `critical_sticky` it waits to be read
-/// rather than timing out. Falls back to stderr before the daemon is up.
+/// Raises a notification from inside the shell itself, without a D-Bus round-trip — how hogar-shell reports its own problems (a config that won't parse, a service that won't start) through the same surface every other app's notifications land on. `Critical` urgency, so with the default `critical_sticky` it waits to be read rather than timing out. Falls back to stderr before the daemon is up.
 pub fn notify_local(app_name: &str, summary: &str, body: &str) {
     notify_shell(app_name, summary, body, "", Urgency::Critical);
 }
 
-/// [`notify_local`] with an icon and an urgency of its own — for the shell's own *advisories* (a battery
-/// running low) rather than its errors, which should not all shout at `Critical`.
+/// [`notify_local`] with an icon and an urgency of its own — for the shell's own *advisories* (a battery running low) rather than its errors, which should not all shout at `Critical`.
 pub fn notify_shell(app_name: &str, summary: &str, body: &str, app_icon: &str, urgency: Urgency) {
     let Some(service) = SERVICE.get() else {
         eprintln!("{app_name}: {summary} — {body}");
@@ -389,10 +356,7 @@ pub fn snapshot_now() -> Option<SharedSnapshot> {
 
 /// Tells the daemon `id`'s popup is on screen, which is when its expiry clock starts.
 ///
-/// **Arrival is the wrong moment.** The shell shows a bounded column of cards and queues the rest, so a
-/// notification that arrives fifth waits — and one whose timer began on arrival would spend that wait burning
-/// its own life and vanish almost as it appeared. Called by the column for every card it draws, and spent the
-/// first time: a notification that stays up does not get its clock restarted on every repaint.
+/// **Arrival is the wrong moment.** The shell shows a bounded column of cards and queues the rest, so a notification that arrives fifth waits — and one whose timer began on arrival would spend that wait burning its own life and vanish almost as it appeared. Called by the column for every card it draws, and spent the first time: a notification that stays up does not get its clock restarted on every repaint.
 pub fn shown(id: u32) {
     if let Some(service) = SERVICE.get() {
         service.inner.start_expiry(id);
@@ -407,8 +371,7 @@ pub fn close(id: u32) {
     emit_closed(id, 2);
 }
 
-/// Retires a notification's popup after its timeout while keeping it in the history. Emits `NotificationClosed`
-/// with the expired reason, as the spec expects when a popup times out.
+/// Retires a notification's popup after its timeout while keeping it in the history. Emits `NotificationClosed` with the expired reason, as the spec expects when a popup times out.
 pub fn expire(id: u32) {
     if let Some(service) = SERVICE.get() {
         service.inner.expire(id);
@@ -416,8 +379,7 @@ pub fn expire(id: u32) {
     emit_closed(id, 1);
 }
 
-/// Invokes a notification's action `key`: emits `ActionInvoked`, then closes it (the sender closes on
-/// invocation, per the spec). Wired to the history panel's action buttons.
+/// Invokes a notification's action `key`: emits `ActionInvoked`, then closes it (the sender closes on invocation, per the spec). Wired to the history panel's action buttons.
 pub fn invoke_action(id: u32, key: &str) {
     if let Some(conn) = CONNECTION.get() {
         let _ = conn.emit_signal(
@@ -454,9 +416,7 @@ pub fn clear_all() {
     }
 }
 
-/// Clears one application's notifications — the group header's own clear, so dismissing a run of chat messages
-/// is one gesture rather than one per card. Every removed id gets its `NotificationClosed`, since a sender
-/// watching for its own notification to go away cannot tell a group clear from a card tap.
+/// Clears one application's notifications — the group header's own clear, so dismissing a run of chat messages is one gesture rather than one per card. Every removed id gets its `NotificationClosed`, since a sender watching for its own notification to go away cannot tell a group clear from a card tap.
 pub fn clear_app(app_name: &str) {
     let Some(service) = SERVICE.get() else { return };
     for id in service.inner.clear_app(app_name) {
@@ -471,13 +431,9 @@ pub fn mark_read() {
     }
 }
 
-/// Toggles Do-Not-Disturb; popups are suppressed while on, history keeps recording. Persisted, so the toggle
-/// means the same thing after a restart as it did before one.
+/// Toggles Do-Not-Disturb; popups are suppressed while on, history keeps recording. Persisted, so the toggle means the same thing after a restart as it did before one.
 ///
-/// **Switching it on retires what is already on screen**, rather than hiding it until the toggle comes back.
-/// Do-Not-Disturb is a request to stop being shown things, and a column that emptied and then refilled the
-/// moment it was switched off would be delivering the interruption it was asked to prevent — late, and with
-/// newer cards already above it. Everything retired stays in the history, which is where it was going anyway.
+/// **Switching it on retires what is already on screen**, rather than hiding it until the toggle comes back. Do-Not-Disturb is a request to stop being shown things, and a column that emptied and then refilled the moment it was switched off would be delivering the interruption it was asked to prevent — late, and with newer cards already above it. Everything retired stays in the history, which is where it was going anyway.
 pub fn set_dnd(dnd: bool) {
     if let Some(service) = SERVICE.get() {
         service.inner.set_dnd(dnd);
@@ -485,8 +441,7 @@ pub fn set_dnd(dnd: bool) {
     crate::state::update(move |s| s.dnd = dnd);
 }
 
-/// Mutes or unmutes one application: its notifications keep arriving into the history and stop popping.
-/// Persisted alongside Do-Not-Disturb, and applied at the daemon's single entry point rather than per surface.
+/// Mutes or unmutes one application: its notifications keep arriving into the history and stop popping. Persisted alongside Do-Not-Disturb, and applied at the daemon's single entry point rather than per surface.
 pub fn set_app_muted(app_name: &str, muted: bool) {
     let app = app_name.to_string();
     if let Some(service) = SERVICE.get() {
@@ -524,8 +479,7 @@ struct HistoryFile {
     notifications: Vec<Notification>,
 }
 
-/// Owns the disk writes on its own thread: takes each new history snapshot, debounces a burst (keeping only
-/// the last), and writes it. Ends when the daemon — and thus the sender — is dropped (i.e. process exit).
+/// Owns the disk writes on its own thread: takes each new history snapshot, debounces a burst (keeping only the last), and writes it. Ends when the daemon — and thus the sender — is dropped (i.e. process exit).
 fn run_saver(rx: Receiver<Vec<Notification>>) {
     let path = history_path();
     while let Ok(mut latest) = rx.recv() {
@@ -624,9 +578,7 @@ impl NotificationsIface {
             .map(urgency_from_hint)
             .unwrap_or(Urgency::Normal);
         let image = extract_image(&hints);
-        // freedesktop icon precedence for the card's leading visual: raw `image-data` (kept in `image`) wins,
-        // then the `image-path` hint, then the `app_icon` parameter. Folding image-path into `app_icon` lets
-        // the UI resolve a single reference — and, unlike the raw pixels, it persists into the history.
+        // freedesktop icon precedence for the card's leading visual: raw `image-data` (kept in `image`) wins, then the `image-path` hint, then the `app_icon` parameter. Folding image-path into `app_icon` lets the UI resolve a single reference — and, unlike the raw pixels, it persists into the history.
         let app_icon = image_path_hint(&hints).unwrap_or(app_icon);
         let id = self.inner.push(
             Notification {
@@ -669,16 +621,14 @@ impl NotificationsIface {
     }
 }
 
-/// Pulls a notification image out of the spec's raw-pixel hints (`image-data`, its underscore variant, or the
-/// legacy `icon_data`) — each an `(iiibiiay)` struct — and converts it to RGBA8. `None` if absent or malformed.
+/// Pulls a notification image out of the spec's raw-pixel hints (`image-data`, its underscore variant, or the legacy `icon_data`) — each an `(iiibiiay)` struct — and converts it to RGBA8. `None` if absent or malformed.
 fn extract_image(hints: &HashMap<String, Value<'_>>) -> Option<NotificationImage> {
     ["image-data", "image_data", "icon_data"]
         .iter()
         .find_map(|key| hints.get(*key).and_then(image_from_hint))
 }
 
-/// The `image-path` hint (or its underscore variant): a file path, `file://` URI, or themed icon name for the
-/// notification's image. `None` if absent or empty.
+/// The `image-path` hint (or its underscore variant): a file path, `file://` URI, or themed icon name for the notification's image. `None` if absent or empty.
 fn image_path_hint(hints: &HashMap<String, Value<'_>>) -> Option<String> {
     ["image-path", "image_path"]
         .iter()
@@ -713,8 +663,7 @@ fn image_from_hint(value: &Value<'_>) -> Option<NotificationImage> {
     })
 }
 
-/// Repacks raw image bytes (3-channel RGB or 4-channel RGBA, laid out with `rowstride`-byte rows) into tight
-/// RGBA8. `None` if the channel count is unsupported or the data is short.
+/// Repacks raw image bytes (3-channel RGB or 4-channel RGBA, laid out with `rowstride`-byte rows) into tight RGBA8. `None` if the channel count is unsupported or the data is short.
 fn to_rgba(
     width: u32,
     height: u32,
@@ -742,8 +691,7 @@ fn to_rgba(
 mod tests {
     use super::*;
 
-    /// A daemon core with no D-Bus name, no saver thread and no subscribers — everything `Inner` decides is
-    /// decided here, so the tests drive it directly rather than through the process-wide service.
+    /// A daemon core with no D-Bus name, no saver thread and no subscribers — everything `Inner` decides is decided here, so the tests drive it directly rather than through the process-wide service.
     fn test_inner(muted_apps: Vec<String>) -> Inner {
         Inner {
             pending: Mutex::new(HashMap::new()),
@@ -776,9 +724,7 @@ mod tests {
 
     /// **A sticky `critical` still has a floor under it.**
     ///
-    /// Sticky means "long enough that it cannot be missed", and read as *forever* it has one failure mode with
-    /// no way out: the card's only exit is a gesture, so a gesture that never lands leaves it on screen until
-    /// the shell restarts. The ceiling retires it to the history rather than dismissing it, so nothing is lost.
+    /// Sticky means "long enough that it cannot be missed", and read as *forever* it has one failure mode with no way out: the card's only exit is a gesture, so a gesture that never lands leaves it on screen until the shell restarts. The ceiling retires it to the history rather than dismissing it, so nothing is lost.
     #[test]
     fn a_sticky_critical_expires_at_its_ceiling_and_only_waits_forever_when_asked_to() {
         let bounded = policy_with(true, Some(Duration::from_secs(120)));
@@ -953,10 +899,7 @@ mod tests {
 
     /// **Do-Not-Disturb suppresses; it does not defer.**
     ///
-    /// Switching it on retires what is on screen, and anything arriving under it is recorded as not popping —
-    /// so switching it *off* brings nothing back. The alternative, which this replaced, was a filter applied
-    /// where the card is drawn: the notifications stayed marked as popping, so the moment the toggle went off
-    /// the column refilled with everything it had been asked to hide, underneath whatever had arrived since.
+    /// Switching it on retires what is on screen, and anything arriving under it is recorded as not popping — so switching it *off* brings nothing back. The alternative, which this replaced, was a filter applied where the card is drawn: the notifications stayed marked as popping, so the moment the toggle went off the column refilled with everything it had been asked to hide, underneath whatever had arrived since.
     #[test]
     fn dnd_retires_what_it_hides_and_switching_it_off_brings_nothing_back() {
         let inner = test_inner(Vec::new());
@@ -1003,8 +946,7 @@ mod tests {
         );
     }
 
-    // Live D-Bus round-trip. Run under a private bus so it never collides with the desktop's real daemon:
-    // `dbus-run-session -- cargo test -p hogar-shell --lib notifications::tests::daemon -- --ignored --nocapture`
+    // Live D-Bus round-trip. Run under a private bus so it never collides with the desktop's real daemon: `dbus-run-session -- cargo test -p hogar-shell --lib notifications::tests::daemon -- --ignored --nocapture`
     #[test]
     #[ignore = "needs a session bus; run under dbus-run-session"]
     fn daemon_receives_notify_over_dbus() {

@@ -2,15 +2,9 @@
 //!
 //! Every watcher here follows the same two rules, and both are the difference between feedback and noise.
 //!
-//! **Only a change is an event.** `watch` hands a subscriber the current reading immediately, so a handler that
-//! toasted on delivery would put a card on screen for every service the moment the shell started. Each watcher
-//! remembers what it last saw and says nothing about the first one.
+//! **Only a change is an event.** `watch` hands a subscriber the current reading immediately, so a handler that toasted on delivery would put a card on screen for every service the moment the shell started. Each watcher remembers what it last saw and says nothing about the first one.
 //!
-//! **A watcher only exists if its toast is switched on.** Subscribing starts the service behind it — a D-Bus
-//! connection, or in the lock keys' case a poll — so a user who switched an event off pays nothing for it. This
-//! is why the set is decided from the config here rather than filtered at the point the toast is posted, and why
-//! switching one off *removes* its watcher: leaving it installed and silent would leave the service it started
-//! running for nobody, which is the cost this rule exists to avoid rather than a cosmetic detail.
+//! **A watcher only exists if its toast is switched on.** Subscribing starts the service behind it — a D-Bus connection, or in the lock keys' case a poll — so a user who switched an event off pays nothing for it. This is why the set is decided from the config here rather than filtered at the point the toast is posted, and why switching one off *removes* its watcher: leaving it installed and silent would leave the service it started running for nobody, which is the cost this rule exists to avoid rather than a cosmetic detail.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,19 +17,14 @@ use services::toaster::{self, Event};
 use ui::glyph;
 
 thread_local! {
-    /// Which watchers are up, and the registration that takes each one back. Installing twice would double-toast
-    /// and start a second subscription, so a reload adds only what is missing and removes only what is no longer
-    /// asked for. A thread-local because this only ever runs on the driver thread, which is also where
-    /// [`unwatch`] has to run.
+    /// Which watchers are up, and the registration that takes each one back. Installing twice would double-toast and start a second subscription, so a reload adds only what is missing and removes only what is no longer asked for. A thread-local because this only ever runs on the driver thread, which is also where [`unwatch`] has to run.
     static INSTALLED: RefCell<HashMap<&'static str, WatchToken>> = RefCell::new(HashMap::new());
 }
 
 /// An event's id, whether the config asks for it, and how to install its watcher.
 type Wanted = (&'static str, bool, fn() -> Option<WatchToken>);
 
-/// Reconciles the installed watchers with the ones the config asks for. Called from the startup path and again on
-/// every reload, so turning an event on gets it without restarting the shell — and turning one off gives back
-/// the service behind it.
+/// Reconciles the installed watchers with the ones the config asks for. Called from the startup path and again on every reload, so turning an event on gets it without restarting the shell — and turning one off gives back the service behind it.
 pub fn watch_events(config: &Config) {
     let events = &config.toasts;
     let wanted: [Wanted; 8] = [
@@ -71,8 +60,7 @@ pub fn watch_events(config: &Config) {
     }
 }
 
-/// A change watcher: remembers the last reading and calls `report` only when the next one differs. The seed
-/// delivery is recorded and not reported, which is what keeps startup quiet.
+/// A change watcher: remembers the last reading and calls `report` only when the next one differs. The seed delivery is recorded and not reported, which is what keeps startup quiet.
 fn on_change<T, S>(subscribe: S, report: impl Fn(&T, &T) + 'static) -> Option<WatchToken>
 where
     T: Clone + PartialEq + Send + 'static,
@@ -148,11 +136,9 @@ fn dnd() -> Option<WatchToken> {
     })
 }
 
-/// The default output and input *devices* — which is a different question from their level, and the one worth a
-/// toast: plugging a headset in changes where sound goes without anything on screen saying so.
+/// The default output and input *devices* — which is a different question from their level, and the one worth a toast: plugging a headset in changes where sound goes without anything on screen saying so.
 ///
-/// One watcher for both halves, since both come off the same graph reading. Which half is wanted is read live
-/// rather than captured, so switching one off in the config takes effect on the next change.
+/// One watcher for both halves, since both come off the same graph reading. Which half is wanted is read live rather than captured, so switching one off in the config takes effect on the next change.
 fn audio() -> Option<WatchToken> {
     use services::pipewire::{self, Graph};
     let last: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
@@ -254,8 +240,7 @@ fn vpn() -> Option<WatchToken> {
 fn now_playing() -> Option<WatchToken> {
     use services::mpris::{self, Player};
     on_change(mpris::subscribe, |previous: &Player, current: &Player| {
-        // The track, not the position: a player republishes on every progress tick, and none of those is a new
-        // song. An empty title is a player that stopped, which the media chip already shows.
+        // The track, not the position: a player republishes on every progress tick, and none of those is a new song. An empty title is a player that stopped, which the media chip already shows.
         if previous.title == current.title || current.title.trim().is_empty() {
             return;
         }
@@ -273,8 +258,7 @@ fn now_playing() -> Option<WatchToken> {
     })
 }
 
-/// The shell's own config reload. Not a service watcher: the reload path is what knows a save was applied, and
-/// only it can tell an applied config from the one the shell started with.
+/// The shell's own config reload. Not a service watcher: the reload path is what knows a save was applied, and only it can tell an applied config from the one the shell started with.
 pub fn config_reloaded() {
     toaster::post(
         Event::ConfigLoaded,

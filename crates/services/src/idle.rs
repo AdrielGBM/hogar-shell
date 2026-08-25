@@ -1,14 +1,8 @@
 //! Idle timeouts and what holds them off.
 //!
-//! Every stage in `[idle]` becomes one `ext-idle-notify-v1` notification, and the compositor — the only thing
-//! that sees the input devices — says when it elapses. What the stage then *does* is a request line the shell
-//! already answers, so `hogar-shell --list` is the whole vocabulary and anything bindable to a key is bindable
-//! to a timeout.
+//! Every stage in `[idle]` becomes one `ext-idle-notify-v1` notification, and the compositor — the only thing that sees the input devices — says when it elapses. What the stage then *does* is a request line the shell already answers, so `hogar-shell --list` is the whole vocabulary and anything bindable to a key is bindable to a timeout.
 //!
-//! An inhibit is expressed by having no notification at all rather than by ignoring one that fires. A stage
-//! that is inhibited is not armed, so the compositor never counts down for it, and un-inhibiting re-arms from
-//! zero — which is what a user expects after closing the film that was holding the screen awake, rather than
-//! the lock screen appearing the moment it ends.
+//! An inhibit is expressed by having no notification at all rather than by ignoring one that fires. A stage that is inhibited is not armed, so the compositor never counts down for it, and un-inhibiting re-arms from zero — which is what a user expects after closing the film that was holding the screen awake, rather than the lock screen appearing the moment it ends.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -18,18 +12,15 @@ use platform_wayland::IdleHandle;
 use config::IdleConfig;
 
 thread_local! {
-    // Armed on the driver thread, which is the only one that may create a Wayland object. Dropping a handle
-    // destroys its notification, so replacing this vector is how every stage is disarmed at once.
+    // Armed on the driver thread, which is the only one that may create a Wayland object. Dropping a handle destroys its notification, so replacing this vector is how every stage is disarmed at once.
     static ARMED: RefCell<Vec<IdleHandle>> = const { RefCell::new(Vec::new()) };
-    // Whether the inhibit sources have been subscribed. App-level watches live for the process, so this is a
-    // one-way latch rather than something reconcile toggles.
+    // Whether the inhibit sources have been subscribed. App-level watches live for the process, so this is a one-way latch rather than something reconcile toggles.
     static WATCHING: Cell<bool> = const { Cell::new(false) };
     // Whether the last reconcile left the stages armed, so a log line is emitted on the change, not per tick.
     static ARMED_NOW: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Why the timers are currently held off, if they are. Named rather than boolean because it is what
-/// `hogar-shell idle status` prints and what a quick toggle shows.
+/// Why the timers are currently held off, if they are. Named rather than boolean because it is what `hogar-shell idle status` prints and what a quick toggle shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Inhibit {
     /// The user's own toggle.
@@ -64,9 +55,7 @@ pub fn inhibited_by(config: &IdleConfig) -> Option<Inhibit> {
     None
 }
 
-/// Whether anything is playing through an output. Read off the PipeWire graph the shell already keeps rather
-/// than by asking a player: a browser tab playing video has no MPRIS entry, and it is exactly the case a user
-/// means by "don't lock while something is playing".
+/// Whether anything is playing through an output. Read off the PipeWire graph the shell already keeps rather than by asking a player: a browser tab playing video has no MPRIS entry, and it is exactly the case a user means by "don't lock while something is playing".
 fn audio_is_playing() -> bool {
     use crate::pipewire::{self, NodeKind};
     pipewire::current().is_some_and(|graph| {
@@ -78,15 +67,12 @@ fn audio_is_playing() -> bool {
 
 /// Whether the machine is on mains power.
 ///
-/// A machine with no battery reads as *not* charging, which is the opposite of the literal answer and the
-/// right one here: a desktop is permanently plugged in, so taking that literally would make `[idle]` inert on
-/// every desktop that ever copied this line from a laptop's config, with nothing on screen to say why.
+/// A machine with no battery reads as *not* charging, which is the opposite of the literal answer and the right one here: a desktop is permanently plugged in, so taking that literally would make `[idle]` inert on every desktop that ever copied this line from a laptop's config, with nothing on screen to say why.
 fn is_charging() -> bool {
     crate::battery::read().is_some_and(|battery| battery.charging)
 }
 
-/// The user's own idle inhibit, persisted so it survives a reload — a toggle that quietly turned itself off
-/// when the config changed would be worse than no toggle.
+/// The user's own idle inhibit, persisted so it survives a reload — a toggle that quietly turned itself off when the config changed would be worse than no toggle.
 pub fn set_manual_inhibit(inhibit: bool) {
     crate::state::update(|state| state.idle_inhibit = inhibit);
     reconcile();
@@ -100,12 +86,10 @@ pub fn manual_inhibit() -> bool {
     crate::state::get().idle_inhibit
 }
 
-/// Disarms every stage and re-arms the ones that should be running. The single path in: a config reload, a
-/// toggle, a charger plugged in and a track starting all end up here.
+/// Disarms every stage and re-arms the ones that should be running. The single path in: a config reload, a toggle, a charger plugged in and a track starting all end up here.
 pub fn reconcile() {
     let config = config::config().map(|c| c.idle.clone()).unwrap_or_default();
-    // Dropped first, and unconditionally: re-arming from scratch is what makes un-inhibiting restart the
-    // countdown rather than resume it mid-way.
+    // Dropped first, and unconditionally: re-arming from scratch is what makes un-inhibiting restart the countdown rather than resume it mid-way.
     ARMED.with(|armed| armed.borrow_mut().clear());
 
     if !config.enabled || config.stages.is_empty() {
@@ -145,9 +129,7 @@ fn note_armed(armed: bool) {
     }
 }
 
-/// Arms one stage. The `fired` flag is what keeps a return action honest: the compositor sends `resumed` on
-/// every wake, including ones where this stage never elapsed, and running `shell dpms on` for a screen that
-/// was never turned off is a request the compositor has to service on every keystroke.
+/// Arms one stage. The `fired` flag is what keeps a return action honest: the compositor sends `resumed` on every wake, including ones where this stage never elapsed, and running `shell dpms on` for a screen that was never turned off is a request the compositor has to service on every keystroke.
 fn arm(stage: &config::IdleStage, respect_inhibitors: bool) -> Option<IdleHandle> {
     let action = stage.action.trim().to_string();
     let return_action = stage.return_action.trim().to_string();
@@ -183,8 +165,7 @@ fn arm(stage: &config::IdleStage, respect_inhibitors: bool) -> Option<IdleHandle
     platform_wayland::idle_notification(stage.duration(), respect_inhibitors, on_idle, on_resume)
 }
 
-/// Runs a stage's action through the shell's own command surface, so an idle timeout and a keybind reach the
-/// same code. Failures are logged rather than returned: there is nobody to report them to at 3 a.m.
+/// Runs a stage's action through the shell's own command surface, so an idle timeout and a keybind reach the same code. Failures are logged rather than returned: there is nobody to report them to at 3 a.m.
 fn run(line: &str) {
     let reply = crate::command::run(line);
     if let Some(error) = reply.strip_prefix("err ") {
@@ -194,9 +175,7 @@ fn run(line: &str) {
     }
 }
 
-/// Subscribes the sources an inhibit depends on, once. They are app-level watches, which live for the process,
-/// so this latches on rather than following the config both ways — and it is only reached when `[idle]` is on,
-/// so a shell with idle switched off never starts the PipeWire monitor for it.
+/// Subscribes the sources an inhibit depends on, once. They are app-level watches, which live for the process, so this latches on rather than following the config both ways — and it is only reached when `[idle]` is on, so a shell with idle switched off never starts the PipeWire monitor for it.
 fn ensure_inhibit_watches(config: &IdleConfig) {
     if WATCHING.with(|watching| watching.replace(true)) {
         return;

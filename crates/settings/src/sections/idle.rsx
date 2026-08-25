@@ -4,8 +4,7 @@ use ::config::IdleConfig;
 
 let (config, path) = source();
 let i = &config.idle;
-// `stages` is a list of tables, so it stays hand-edited in the TOML — K13. Carried through, so switching idle
-// on from here does not wipe the timeouts it is switching on.
+// `stages` is a list of tables, so it stays hand-edited in the TOML — K13. Carried through, so switching idle on from here does not wipe the timeouts it is switching on.
 let base = i.clone();
 let enabled = signal(i.enabled);
 let inhibit_when_audio = signal(i.inhibit_when_audio);

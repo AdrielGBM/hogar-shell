@@ -1,14 +1,8 @@
 //! Where a surface sits, as one vocabulary.
 //!
-//! Every window this shell puts on screen used to describe itself: five modules built a whole `LayerConfig`
-//! by hand, three more went through the surface host's own placement type, and each named its layer-shell
-//! namespace in a string literal of its own. The result was four ways to say "a panel anchored to an edge"
-//! and no way to tell, from one of them, what the others had decided.
+//! Every window this shell puts on screen used to describe itself: five modules built a whole `LayerConfig` by hand, three more went through the surface host's own placement type, and each named its layer-shell namespace in a string literal of its own. The result was four ways to say "a panel anchored to an edge" and no way to tell, from one of them, what the others had decided.
 //!
-//! There is one way here. A [`Placement`] is built from a **named primitive** — the shape the surface takes on
-//! screen — and adjusted with the handful of modifiers a surface actually varies: its size, its margin, how
-//! much of the keyboard it wants, what it does with the pointer. The primitives are the shell's whole
-//! taxonomy of windows:
+//! There is one way here. A [`Placement`] is built from a **named primitive** — the shape the surface takes on screen — and adjusted with the handful of modifiers a surface actually varies: its size, its margin, how much of the keyboard it wants, what it does with the pointer. The primitives are the shell's whole taxonomy of windows:
 //!
 //! | Primitive | The shape | Who takes it |
 //! | --- | --- | --- |
@@ -22,21 +16,11 @@
 //! | [`centred`](Placement::centred) | a window in the middle of the screen | a module's float, the launcher |
 //! | [`screen`](Placement::screen) | the whole screen, over everything, takes the keyboard | the region picker |
 //!
-//! Two of those rows used to be four. A popout, a drawer and the tray's menu are one *position* — the chip's
-//! rect and the bar's edge — asked for by three callers, and describing them apart is what let the menu be built
-//! as a card that had been made dismissable, which quietly turned it into a drawer built through the wrong door
-//! and announcing a namespace nobody chose. A float and the launcher are likewise one shape, differing in how
-//! they go away. What actually varies in each pair is [`OffChip`] and [`Centred`], and those say what the
-//! surface *is*, not where it goes.
+//! Two of those rows used to be four. A popout, a drawer and the tray's menu are one *position* — the chip's rect and the bar's edge — asked for by three callers, and describing them apart is what let the menu be built as a card that had been made dismissable, which quietly turned it into a drawer built through the wrong door and announcing a namespace nobody chose. A float and the launcher are likewise one shape, differing in how they go away. What actually varies in each pair is [`OffChip`] and [`Centred`], and those say what the surface *is*, not where it goes.
 //!
-//! **The namespace belongs to the shape, not to the surface.** It is what a compositor rule matches
-//! (`layer_rule = blur, hogar-shell-drawer`), so it is a public interface: the strings below are the ones
-//! hogar-shell has always announced, and a primitive owns its own rather than each call site spelling it out.
+//! **The namespace belongs to the shape, not to the surface.** It is what a compositor rule matches (`layer_rule = blur, hogar-shell-drawer`), so it is a public interface: the strings below are the ones hogar-shell has always announced, and a primitive owns its own rather than each call site spelling it out.
 //!
-//! A placement is lowered at the point of use: to a [`LayerConfig`] for a surface that owns its rendering, or
-//! to the surface host's [`SurfacePlacement`] for one that wants the scaffold — a scrim, a dismiss-on-outside,
-//! an entrance. Which of the two a surface needs is not a property of where it sits, so it is not decided
-//! here; see the surface reconciler.
+//! A placement is lowered at the point of use: to a [`LayerConfig`] for a surface that owns its rendering, or to the surface host's [`SurfacePlacement`] for one that wants the scaffold — a scrim, a dismiss-on-outside, an entrance. Which of the two a surface needs is not a property of where it sits, so it is not decided here; see the surface reconciler.
 
 use platform_wayland::{
     Anchor, KeyboardInteractivity, KeyboardMode, Layer, LayerConfig, SurfaceAlign, SurfaceAnchor,
@@ -55,23 +39,18 @@ pub enum Input {
     Solid,
     /// Nothing does: clicks go through to whatever is behind. A wallpaper, a frame ring, an OSD.
     Transparent,
-    /// Only where the content actually draws something pressable, recomputed as it changes — a stack of
-    /// cards with gaps between them, where the gaps belong to the window underneath.
+    /// Only where the content actually draws something pressable, recomputed as it changes — a stack of cards with gaps between them, where the gaps belong to the window underneath.
     FromContent,
 }
 
 /// Which of the two things that hang off a chip this is.
 ///
-/// They share a position and nothing else, so what this picks is the *kind of surface*: one is opened by resting
-/// a pointer and one by pressing, and everything below follows from that.
+/// They share a position and nothing else, so what this picks is the *kind of surface*: one is opened by resting a pointer and one by pressing, and everything below follows from that.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OffChip {
-    /// A reading the pointer opened by resting on the chip. It renders itself, at the size of the tallest card
-    /// it may be, and carves its input region out of what it actually draws — so the surplus around a short card
-    /// belongs to the window underneath. There is no way to dismiss it because there was no press to undo.
+    /// A reading the pointer opened by resting on the chip. It renders itself, at the size of the tallest card it may be, and carves its input region out of what it actually draws — so the surplus around a short card belongs to the window underneath. There is no way to dismiss it because there was no press to undo.
     Card,
-    /// A panel a press opened: sized to its content, dismissed by a press outside it, scaffolded and slid in by
-    /// the surface host. A module's drawer and the tray's context menu are the same surface asked for twice.
+    /// A panel a press opened: sized to its content, dismissed by a press outside it, scaffolded and slid in by the surface host. A module's drawer and the tray's context menu are the same surface asked for twice.
     Panel,
 }
 
@@ -87,8 +66,7 @@ impl OffChip {
 /// Which of the two windows that open in the middle of the screen this is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Centred {
-    /// A module's panel as a window of its own, with a title bar, a ✕ and a resize grip. It goes when the user
-    /// closes it and at no other time, which is the whole reason to choose it over a drawer.
+    /// A module's panel as a window of its own, with a title bar, a ✕ and a resize grip. It goes when the user closes it and at no other time, which is the whole reason to choose it over a drawer.
     Float,
     /// A window that takes the screen behind it too: the launcher. A press anywhere outside closes it.
     Modal,
@@ -102,9 +80,7 @@ impl Centred {
         }
     }
 
-    /// The namespace this shape has always announced. Kept in step with [`role`](Self::role) by hand because a
-    /// hosted surface is lowered by the surface host, which derives the namespace from the role and never sees
-    /// this — the two disagreeing is what made the tray's menu announce a name nobody chose.
+    /// The namespace this shape has always announced. Kept in step with [`role`](Self::role) by hand because a hosted surface is lowered by the surface host, which derives the namespace from the role and never sees this — the two disagreeing is what made the tray's menu announce a name nobody chose.
     fn namespace(self) -> &'static str {
         match self {
             Centred::Float => "hogar-shell-float",
@@ -112,17 +88,9 @@ impl Centred {
         }
     }
 
-    /// **A modal asks for the keyboard on demand, not exclusively, and that is about the *pointer*.** An
-    /// exclusive layer surface is an input grab: the compositor stops delivering pointer events to every other
-    /// surface while it is up, so with the launcher open the bar went dead — no chip highlighted, no popout
-    /// opened, and a press on a chip reached the launcher's own scaffold and dismissed it instead of opening
-    /// that chip's panel. On demand is the same keyboard for a surface that maps focused, without taking the
-    /// pointer from the rest of the shell. The grab is still right for the region picker, which is selecting an
-    /// area of the screen and must not have the bar answering clicks inside it — see [`Placement::screen`].
+    /// **A modal asks for the keyboard on demand, not exclusively, and that is about the *pointer*.** An exclusive layer surface is an input grab: the compositor stops delivering pointer events to every other surface while it is up, so with the launcher open the bar went dead — no chip highlighted, no popout opened, and a press on a chip reached the launcher's own scaffold and dismissed it instead of opening that chip's panel. On demand is the same keyboard for a surface that maps focused, without taking the pointer from the rest of the shell. The grab is still right for the region picker, which is selecting an area of the screen and must not have the bar answering clicks inside it — see [`Placement::screen`].
     ///
-    /// A float starts at none and is told what its module needs ([`Placement::keyboard`]): a layer surface
-    /// granted focus takes it from the window the user was in and gives it back when the panel closes, which
-    /// moves a scrolling layout on the way back. A panel that only shows readings must not provoke that.
+    /// A float starts at none and is told what its module needs ([`Placement::keyboard`]): a layer surface granted focus takes it from the window the user was in and gives it back when the panel closes, which moves a scrolling layout on the way back. A panel that only shows readings must not provoke that.
     fn keyboard(self) -> KeyboardMode {
         match self {
             Centred::Float => KeyboardMode::None,
@@ -145,13 +113,9 @@ pub struct Placement {
     output: Option<String>,
     /// The edge this surface hangs off, when it hangs off one.
     ///
-    /// Kept rather than re-derived from `anchor`, and that is the whole reason it exists: a card beside a chip
-    /// on a *left* bar is anchored `LEFT | TOP` — the edge it hangs off and the axis it lines up along — and
-    /// reading the flags back cannot tell which is which. The scaffold needs the edge, so the edge is
-    /// remembered.
+    /// Kept rather than re-derived from `anchor`, and that is the whole reason it exists: a card beside a chip on a *left* bar is anchored `LEFT | TOP` — the edge it hangs off and the axis it lines up along — and reading the flags back cannot tell which is which. The scaffold needs the edge, so the edge is remembered.
     edge: Option<Edge>,
-    /// Set by the primitives that are hosted rather than self-rendered; read only when lowering to a
-    /// [`SurfacePlacement`], where it decides the scaffold and the entrance.
+    /// Set by the primitives that are hosted rather than self-rendered; read only when lowering to a [`SurfacePlacement`], where it decides the scaffold and the entrance.
     role: SurfaceRole,
     align: SurfaceAlign,
     scrim: bool,
@@ -159,8 +123,7 @@ pub struct Placement {
     timeout: Option<std::time::Duration>,
     /// A reservation strip is a surface with no content at all — an exclusive zone and a transparent buffer.
     reserve_only: bool,
-    /// Whether this shape is realized by the surface host's scaffold or renders itself. Kept rather than
-    /// inferred from `role`, which every placement has a value for whether or not it is hosted.
+    /// Whether this shape is realized by the surface host's scaffold or renders itself. Kept rather than inferred from `role`, which every placement has a value for whether or not it is hosted.
     hosted: bool,
 }
 
@@ -187,8 +150,7 @@ impl Placement {
         }
     }
 
-    /// A bar: spans its edge, and reserves nothing *itself* — `-1` opts out of every other surface's zone so
-    /// its position does not depend on which surface was created first. Its strip is a separate surface.
+    /// A bar: spans its edge, and reserves nothing *itself* — `-1` opts out of every other surface's zone so its position does not depend on which surface was created first. Its strip is a separate surface.
     pub fn bar(edge: Edge, thickness: u32) -> Self {
         let mut placement = Self::new(bar_namespace(edge), spanning(edge), Layer::Top).zone(-1);
         placement.edge = Some(edge);
@@ -206,32 +168,23 @@ impl Placement {
         placement
     }
 
-    /// The whole screen and click-through: something painted across the desktop rather than placed on it.
-    /// `-1` so a bar's reserved strip does not shrink it.
+    /// The whole screen and click-through: something painted across the desktop rather than placed on it. `-1` so a bar's reserved strip does not shrink it.
     ///
-    /// The background layer is only the default — the wallpaper's. The frame ring takes the same shape up on
-    /// the bars' layer ([`layer`](Self::layer)), because it draws the strip a framed bar leaves empty and on
-    /// the background that strip showed the window through.
+    /// The background layer is only the default — the wallpaper's. The frame ring takes the same shape up on the bars' layer ([`layer`](Self::layer)), because it draws the strip a framed bar leaves empty and on the background that strip showed the window through.
     pub fn backdrop(namespace: &'static str) -> Self {
         Self::new(namespace, FULLSCREEN, Layer::Background)
             .zone(-1)
             .input(Input::Transparent)
     }
 
-    /// The part of the screen the bars left free, click-through, under every window: where a desktop widget
-    /// goes.
+    /// The part of the screen the bars left free, click-through, under every window: where a desktop widget goes.
     ///
-    /// A [`backdrop`](Self::backdrop) but for the zone, and that one number is the whole difference. `-1` opts
-    /// out of every exclusive zone and takes the screen; `0` respects them, so the compositor sizes this to
-    /// exactly what the bars did not take. A widget centred in it is centred where the applications are, which
-    /// is where a user looking at their desktop expects the middle to be — and it costs no arithmetic here,
-    /// because the compositor already did it for the windows.
+    /// A [`backdrop`](Self::backdrop) but for the zone, and that one number is the whole difference. `-1` opts out of every exclusive zone and takes the screen; `0` respects them, so the compositor sizes this to exactly what the bars did not take. A widget centred in it is centred where the applications are, which is where a user looking at their desktop expects the middle to be — and it costs no arithmetic here, because the compositor already did it for the windows.
     pub fn desktop(namespace: &'static str) -> Self {
         Self::new(namespace, FULLSCREEN, Layer::Background).input(Input::Transparent)
     }
 
-    /// A panel that spans an edge and sits over the windows. Zero zone, not `-1`: the compositor has already
-    /// cleared the bars, and a dock adds only the shared panel margin beyond them.
+    /// A panel that spans an edge and sits over the windows. Zero zone, not `-1`: the compositor has already cleared the bars, and a dock adds only the shared panel margin beyond them.
     pub fn dock(namespace: &'static str, edge: Edge, thickness: u32) -> Self {
         let mut placement = Self::new(namespace, spanning(edge), Layer::Overlay);
         placement.edge = Some(edge);
@@ -239,11 +192,9 @@ impl Placement {
         placement
     }
 
-    /// A run of cards pinned to one spot along an edge. Its input region is carved from the cards, so the
-    /// gaps between them belong to whatever the user is working in.
+    /// A run of cards pinned to one spot along an edge. Its input region is carved from the cards, so the gaps between them belong to whatever the user is working in.
     ///
-    /// Lay the cards out with [`column`](Self::column) — a stack's surface is sized for a full run, so where a
-    /// short run sits inside it is the difference between hugging the edge and floating in mid-screen.
+    /// Lay the cards out with [`column`](Self::column) — a stack's surface is sized for a full run, so where a short run sits inside it is the difference between hugging the edge and floating in mid-screen.
     pub fn stack(namespace: &'static str, edge: Edge, align: Align) -> Self {
         let mut placement =
             Self::new(namespace, cornered(edge, align), Layer::Overlay).input(Input::FromContent);
@@ -252,13 +203,9 @@ impl Placement {
         placement
     }
 
-    /// The column a [`stack`](Self::stack)'s cards lay out in: the full width of the surface, packed against the
-    /// same end of it the surface itself is pinned to.
+    /// The column a [`stack`](Self::stack)'s cards lay out in: the full width of the surface, packed against the same end of it the surface itself is pinned to.
     ///
-    /// A stack asks the compositor for room for a *full* run of cards, because a layer surface names its size
-    /// before it knows what it will hold. So a run of one is a card in a box several times its height, and where
-    /// it sits in that box is entirely up to this: packed the wrong way, a single toast on a bottom-anchored
-    /// stack renders a full stack's height above the bar, which reads as floating in the middle of the screen.
+    /// A stack asks the compositor for room for a *full* run of cards, because a layer surface names its size before it knows what it will hold. So a run of one is a card in a box several times its height, and where it sits in that box is entirely up to this: packed the wrong way, a single toast on a bottom-anchored stack renders a full stack's height above the bar, which reads as floating in the middle of the screen.
     ///
     /// Derived from the placement rather than passed alongside it so the two cannot disagree.
     pub fn column(&self, gap: f32) -> LayoutStyle {
@@ -271,8 +218,7 @@ impl Placement {
             .justify_content(self.packing())
     }
 
-    /// Which end of its surface a stack's cards pack against: the edge it hangs off when that edge is the one
-    /// the cards run along, and otherwise the alignment that pins it along a vertical edge.
+    /// Which end of its surface a stack's cards pack against: the edge it hangs off when that edge is the one the cards run along, and otherwise the alignment that pins it along a vertical edge.
     fn packing(&self) -> JustifyContent {
         match self.edge {
             Some(Edge::Top) => JustifyContent::START,
@@ -285,20 +231,11 @@ impl Placement {
         }
     }
 
-    /// A surface hanging off the chip that opened it: the hover popout, a module's drawer, the tray's context
-    /// menu. `chip` is that chip's laid-out rect, or `None` for a panel reached with no chip in hand — IPC, a
-    /// keybind — which has nothing to line up with and takes [`align`](Self::align) instead.
+    /// A surface hanging off the chip that opened it: the hover popout, a module's drawer, the tray's context menu. `chip` is that chip's laid-out rect, or `None` for a panel reached with no chip in hand — IPC, a keybind — which has nothing to line up with and takes [`align`](Self::align) instead.
     ///
-    /// **One shape, because the position is one piece of arithmetic.** The chip's rect decides where the surface
-    /// sits along the bar and the bar's edge decides which side it hangs off, for all three
-    /// ([`chip_margin`](crate::anchor::chip_margin)) — so what a hover opens and what a click opens land in the
-    /// same place. Only [`OffChip`] differs, and it differs in what the surface *is* rather than in where it
-    /// goes.
+    /// **One shape, because the position is one piece of arithmetic.** The chip's rect decides where the surface sits along the bar and the bar's edge decides which side it hangs off, for all three ([`chip_margin`](crate::anchor::chip_margin)) — so what a hover opens and what a click opens land in the same place. Only [`OffChip`] differs, and it differs in what the surface *is* rather than in where it goes.
     ///
-    /// The alignment is `Start` whenever a chip decided the margin, and that is not a taste: the host lays a
-    /// hosted surface out inside a full-screen scaffold where the margin is padding, so the distance that lines
-    /// the panel up with its chip is measured from whichever end the panel packs against. Centre it and the
-    /// same number pushes it half a screen the other way.
+    /// The alignment is `Start` whenever a chip decided the margin, and that is not a taste: the host lays a hosted surface out inside a full-screen scaffold where the margin is padding, so the distance that lines the panel up with its chip is measured from whichever end the panel packs against. Centre it and the same number pushes it half a screen the other way.
     pub fn off_chip(
         kind: OffChip,
         env: &SurfaceEnv,
@@ -328,23 +265,16 @@ impl Placement {
         placement
     }
 
-    /// A window in the middle of the screen, sized by what is in it rather than by an edge of the screen: a
-    /// module's float, the launcher. Which of the two is [`Centred`]'s to say — they are one shape, and differ
-    /// only in how they go away.
+    /// A window in the middle of the screen, sized by what is in it rather than by an edge of the screen: a module's float, the launcher. Which of the two is [`Centred`]'s to say — they are one shape, and differ only in how they go away.
     ///
-    /// A float names its size ([`size`](Self::size)); a modal does not, because `dismiss_on_outside` is not
-    /// only its way out — it is also what makes its *surface* full-screen with the window positioned inside,
-    /// since the host scaffolds anything that has to catch a press beyond its content. Without it the surface
-    /// would be centred, unanchored and unsized, which layer-shell rejects outright (a surface not anchored to
-    /// both edges of an axis has to name a size on it).
+    /// A float names its size ([`size`](Self::size)); a modal does not, because `dismiss_on_outside` is not only its way out — it is also what makes its *surface* full-screen with the window positioned inside, since the host scaffolds anything that has to catch a press beyond its content. Without it the surface would be centred, unanchored and unsized, which layer-shell rejects outright (a surface not anchored to both edges of an axis has to name a size on it).
     pub fn centred(kind: Centred) -> Self {
         let mut placement = Self::hosted(kind.role(), kind.namespace(), kind.keyboard());
         placement.dismiss_on_outside = kind == Centred::Modal;
         placement
     }
 
-    /// The whole screen, over everything, holding the keyboard: the region picker. Over a fullscreen window
-    /// on purpose — the user asked to select a region of what they can see.
+    /// The whole screen, over everything, holding the keyboard: the region picker. Over a fullscreen window on purpose — the user asked to select a region of what they can see.
     pub fn screen(namespace: &'static str) -> Self {
         Self::new(namespace, FULLSCREEN, Layer::Overlay)
             .zone(-1)
@@ -359,15 +289,12 @@ impl Placement {
         placement
     }
 
-    /// Whether the surface host realizes this shape — a scaffold, a scrim, an entrance — or the surface renders
-    /// itself. The one thing a caller must not decide for itself: lowering a hosted shape to a
-    /// [`LayerConfig`] yields a surface anchored to nothing, which the compositor rejects outright.
+    /// Whether the surface host realizes this shape — a scaffold, a scrim, an entrance — or the surface renders itself. The one thing a caller must not decide for itself: lowering a hosted shape to a [`LayerConfig`] yields a surface anchored to nothing, which the compositor rejects outright.
     pub fn is_hosted(&self) -> bool {
         self.hosted
     }
 
-    /// The edge this surface hangs off, when it hangs off one. What a panel's environment reports, so its
-    /// content resolves the same per-edge settings a bar module does.
+    /// The edge this surface hangs off, when it hangs off one. What a panel's environment reports, so its content resolves the same per-edge settings a bar module does.
     pub fn hangs_off(&self) -> Option<Edge> {
         self.edge
     }
@@ -443,9 +370,7 @@ impl Placement {
         }
     }
 
-    /// The surface host's view: what a surface that wants the scaffold — a scrim, a dismiss-on-outside, an
-    /// entrance — is opened with. The host derives its own layer config from this, which is why the
-    /// namespaces above have to agree with the ones it uses.
+    /// The surface host's view: what a surface that wants the scaffold — a scrim, a dismiss-on-outside, an entrance — is opened with. The host derives its own layer config from this, which is why the namespaces above have to agree with the ones it uses.
     pub fn hosted_placement(&self) -> SurfacePlacement {
         let mut placement = SurfacePlacement::new(self.role, host_anchor(self.edge))
             .align(self.align)
@@ -474,8 +399,7 @@ const FULLSCREEN: Anchor = Anchor::TOP
     .union(Anchor::LEFT)
     .union(Anchor::RIGHT);
 
-/// One bar per edge, so the edge is what names it — the string a `layer_rule` in the user's compositor
-/// config matches, which is why it is spelled out rather than derived from a debug format.
+/// One bar per edge, so the edge is what names it — the string a `layer_rule` in the user's compositor config matches, which is why it is spelled out rather than derived from a debug format.
 fn bar_namespace(edge: Edge) -> &'static str {
     match edge {
         Edge::Top => "hogar-shell-top",
@@ -504,8 +428,7 @@ fn spanning(edge: Edge) -> Anchor {
     }
 }
 
-/// Pinned to one spot along `edge`: the edge itself, plus the end `align` names. Centre pins nothing more, so
-/// the compositor centres it along that edge.
+/// Pinned to one spot along `edge`: the edge itself, plus the end `align` names. Centre pins nothing more, so the compositor centres it along that edge.
 fn cornered(edge: Edge, align: Align) -> Anchor {
     let mut anchor = edge_anchor(edge);
     let (start, end) = if edge.is_horizontal() {
@@ -521,8 +444,7 @@ fn cornered(edge: Edge, align: Align) -> Anchor {
     anchor
 }
 
-/// The two edges a chip-anchored card pins itself to: the bar's own, so it hangs off it, and the one it runs
-/// along, so the margin that lines it up with the chip means something.
+/// The two edges a chip-anchored card pins itself to: the bar's own, so it hangs off it, and the one it runs along, so the margin that lines it up with the chip means something.
 fn beside_a_chip(edge: Edge) -> Anchor {
     match edge {
         Edge::Top => Anchor::TOP.union(Anchor::LEFT),
@@ -541,8 +463,7 @@ fn edge_anchor(edge: Edge) -> Anchor {
     }
 }
 
-/// The host describes an anchor as the single edge a panel hangs off — it positions the panel inside a
-/// full-screen scaffold — so a surface that hangs off none is centred.
+/// The host describes an anchor as the single edge a panel hangs off — it positions the panel inside a full-screen scaffold — so a surface that hangs off none is centred.
 fn host_anchor(edge: Option<Edge>) -> SurfaceAnchor {
     match edge {
         Some(Edge::Top) => SurfaceAnchor::Top,
@@ -561,8 +482,7 @@ fn surface_align(align: Align) -> SurfaceAlign {
     }
 }
 
-/// A surface's own thickness on `edge`, as a layer-shell size: the axis it spans is handed back to the
-/// compositor with a zero.
+/// A surface's own thickness on `edge`, as a layer-shell size: the axis it spans is handed back to the compositor with a zero.
 fn across(edge: Edge, thickness: u32) -> (u32, u32) {
     if edge.is_horizontal() {
         (0, thickness)
@@ -600,21 +520,16 @@ mod tests {
 
     /// A stack's cards pack against the very edge its surface is pinned to.
     ///
-    /// The surface is sized for a *full* run of cards, because a layer surface names its size before it knows
-    /// what it will hold. Pack the column the wrong way and a run of one sits a full stack's height away from
-    /// the edge it belongs to — a single toast on a bottom-anchored stack rendering mid-screen, which is what
-    /// this looked like before the column came from the placement instead of from a default.
+    /// The surface is sized for a *full* run of cards, because a layer surface names its size before it knows what it will hold. Pack the column the wrong way and a run of one sits a full stack's height away from the edge it belongs to — a single toast on a bottom-anchored stack rendering mid-screen, which is what this looked like before the column came from the placement instead of from a default.
     #[test]
     fn a_stack_packs_its_cards_against_the_edge_it_hangs_off() {
         let stack = |edge, align| Placement::stack("hogar-shell-toasts", edge, align).packing();
         assert_eq!(stack(Edge::Bottom, Align::Center), JustifyContent::END);
         assert_eq!(stack(Edge::Top, Align::Center), JustifyContent::START);
-        // The alignment decides only where the surface sits *along* a horizontal edge, never which way its
-        // cards pile up from it.
+        // The alignment decides only where the surface sits *along* a horizontal edge, never which way its cards pile up from it.
         assert_eq!(stack(Edge::Bottom, Align::Start), JustifyContent::END);
 
-        // On a vertical edge the cards run along the edge itself, so the alignment is the only thing that says
-        // which end of it they start from.
+        // On a vertical edge the cards run along the edge itself, so the alignment is the only thing that says which end of it they start from.
         assert_eq!(stack(Edge::Left, Align::Start), JustifyContent::START);
         assert_eq!(stack(Edge::Left, Align::End), JustifyContent::END);
         assert_eq!(stack(Edge::Right, Align::Center), JustifyContent::CENTER);
@@ -622,14 +537,9 @@ mod tests {
 
     /// Every primitive must produce a surface the compositor will accept.
     ///
-    /// Layer-shell rejects a surface that names no size on an axis it is not anchored to *both* edges of — and
-    /// rejects it by killing the surface, which reaches the user as a flood of `Protocol error` and a window
-    /// that never appears. A scaffolded placement is exempt because the host makes it full-screen and positions
-    /// the panel inside it, so this is the same question the host asks, asked here over the whole taxonomy.
+    /// Layer-shell rejects a surface that names no size on an axis it is not anchored to *both* edges of — and rejects it by killing the surface, which reaches the user as a flood of `Protocol error` and a window that never appears. A scaffolded placement is exempt because the host makes it full-screen and positions the panel inside it, so this is the same question the host asks, asked here over the whole taxonomy.
     ///
-    /// It is not hypothetical: `modal` shipped without the flag that scaffolds it for exactly one build, which
-    /// took it out of the scaffolded branch and left the launcher unanchored and unsized. Pressing the search
-    /// chip killed it.
+    /// It is not hypothetical: `modal` shipped without the flag that scaffolds it for exactly one build, which took it out of the scaffolded branch and left the launcher unanchored and unsized. Pressing the search chip killed it.
     #[test]
     fn every_primitive_is_a_surface_the_compositor_will_accept() {
         let chip = Rect {
@@ -692,14 +602,9 @@ mod tests {
         }
     }
 
-    /// The namespaces are a public interface — a user's `layer_rule` matches on them — so they are asserted,
-    /// not left to whatever a refactor happens to produce.
+    /// The namespaces are a public interface — a user's `layer_rule` matches on them — so they are asserted, not left to whatever a refactor happens to produce.
     ///
-    /// **And a hosted shape is asserted twice**, because it announces its namespace through a second path: the
-    /// surface host derives it from the [`SurfaceRole`], which never sees the string this carries. The two are
-    /// kept in step by hand, and while they were not, the tray's menu — a card that had been made dismissable —
-    /// went out as `hogar-shell-popup`, a name no primitive claims and no `layer_rule` in anyone's config
-    /// mentions.
+    /// **And a hosted shape is asserted twice**, because it announces its namespace through a second path: the surface host derives it from the [`SurfaceRole`], which never sees the string this carries. The two are kept in step by hand, and while they were not, the tray's menu — a card that had been made dismissable — went out as `hogar-shell-popup`, a name no primitive claims and no `layer_rule` in anyone's config mentions.
     #[test]
     fn every_primitive_announces_the_namespace_it_always_has() {
         let env = SurfaceEnv {
@@ -810,11 +715,7 @@ mod tests {
 
     /// A panel paints nothing outside itself, and that is a requirement rather than a taste.
     ///
-    /// A scaffolded surface is full-screen — that is how a press beside the panel reaches it — so anything it
-    /// paints out there covers the screen. A scrim is exactly that, and it made a compositor
-    /// `layer_rule = blur` unusable: blur follows the alpha the surface writes, so a 35%-black wash meant
-    /// opening a drawer blurred the whole desktop instead of the panel. The surface stays full-screen and
-    /// stays dismissible; it just leaves the rest of the screen at alpha zero, where `ignorealpha` skips it.
+    /// A scaffolded surface is full-screen — that is how a press beside the panel reaches it — so anything it paints out there covers the screen. A scrim is exactly that, and it made a compositor `layer_rule = blur` unusable: blur follows the alpha the surface writes, so a 35%-black wash meant opening a drawer blurred the whole desktop instead of the panel. The surface stays full-screen and stays dismissible; it just leaves the rest of the screen at alpha zero, where `ignorealpha` skips it.
     #[test]
     fn a_scaffolded_panel_leaves_the_rest_of_the_screen_untouched() {
         for hosted in [chip_panel(Edge::Top), Placement::centred(Centred::Modal)] {
@@ -830,8 +731,7 @@ mod tests {
         }
     }
 
-    /// The host positions a panel inside a full-screen scaffold, so it wants the one edge the panel hangs
-    /// off — a spanning anchor has to collapse to it rather than confusing the scaffold with two.
+    /// The host positions a panel inside a full-screen scaffold, so it wants the one edge the panel hangs off — a spanning anchor has to collapse to it rather than confusing the scaffold with two.
     #[test]
     fn a_hosted_placement_keeps_the_edge_it_hangs_off() {
         let panel = chip_panel(Edge::Right)
@@ -852,14 +752,9 @@ mod tests {
 
     /// **Only the surface that is selecting part of the screen may grab the pointer.**
     ///
-    /// An exclusive layer surface is an input grab: while one is up the compositor delivers pointer events to
-    /// nothing else, so the bar stops highlighting chips, stops opening popouts, and answers a press by handing
-    /// it to the grabbing surface. The launcher held that grab, which is why opening it made the bar dead and a
-    /// press on a chip dismissed the launcher instead of opening that chip's panel.
+    /// An exclusive layer surface is an input grab: while one is up the compositor delivers pointer events to nothing else, so the bar stops highlighting chips, stops opening popouts, and answers a press by handing it to the grabbing surface. The launcher held that grab, which is why opening it made the bar dead and a press on a chip dismissed the launcher instead of opening that chip's panel.
     ///
-    /// The region picker keeps it, and is the one shape that should: it is drawn over the whole screen to
-    /// select an area *of* it, and a bar answering clicks inside that area would be answering clicks meant for
-    /// the selection.
+    /// The region picker keeps it, and is the one shape that should: it is drawn over the whole screen to select an area *of* it, and a bar answering clicks inside that area would be answering clicks meant for the selection.
     #[test]
     fn nothing_but_the_region_picker_takes_the_pointer_from_the_rest_of_the_shell() {
         let grabs = |placement: &Placement| placement.keyboard == KeyboardMode::Exclusive;

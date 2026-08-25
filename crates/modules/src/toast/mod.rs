@@ -1,8 +1,6 @@
 //! In-shell toasts: the small, self-dismissing messages the shell says about itself.
 //!
-//! What is here is the card and the switches behind it. Where it goes is not: a toast, a notification popup and
-//! an OSD are one column now ([`crate::stack`]), and this module says only what a toast *is* — its glyph, its
-//! title, the line under it, and that a press takes it away.
+//! What is here is the card and the switches behind it. Where it goes is not: a toast, a notification popup and an OSD are one column now ([`crate::stack`]), and this module says only what a toast *is* — its glyph, its title, the line under it, and that a press takes it away.
 
 mod events;
 
@@ -20,8 +18,7 @@ use ui::scale::space;
 
 const ICON: f32 = 22.0;
 
-/// Two sample toasts as the column draws them, for [`crate::preview`]: a live queue is empty on every run that
-/// is not a running shell, and an empty stack is a blank page.
+/// Two sample toasts as the column draws them, for [`crate::preview`]: a live queue is empty on every run that is not a running shell, and an empty stack is a blank page.
 pub(crate) fn stack_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = telar::use_theme::<NordTheme>();
     let cards = [
@@ -50,8 +47,7 @@ pub(crate) fn stack_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// One toast: its glyph, its title, and the line under it. A press dismisses it — the only interaction a toast
-/// has, because everything a toast says is already true whether or not it is read.
+/// One toast: its glyph, its title, and the line under it. A press dismisses it — the only interaction a toast has, because everything a toast says is already true whether or not it is read.
 pub(crate) fn card(
     toast: &Toast,
     theme: NordTheme,
@@ -118,8 +114,7 @@ pub(crate) fn card(
         vec![icon, Box::new(text)],
     )?
     .hover_style(move |_| RectStyle::filled(theme.overlay, radius));
-    // Dragged aside, never pressed away. A toast reports something that already happened, so a click on it is a
-    // click the user meant for whatever it landed on top of — which pressing to dismiss would swallow.
+    // Dragged aside, never pressed away. A toast reports something that already happened, so a click on it is a click the user meant for whatever it landed on top of — which pressing to dismiss would swallow.
     let Some(threshold) = crate::stack::swipe::column_threshold() else {
         return Ok(Box::new(card));
     };

@@ -1,23 +1,12 @@
 //! Windows over `zwlr-foreign-toplevel-management-v1`: which one has focus, where it is, and acting on it.
 //!
-//! The other half of a window list, and the only portable one. `ext-foreign-toplevel-list-v1` (`toplevels.rs`)
-//! enumerates windows and gives each a stable identifier; it says nothing about which is focused, minimised or
-//! fullscreen, reports no output, and offers no way to raise or close anything. This protocol answers all of
-//! that and carries no identifier at all.
+//! The other half of a window list, and the only portable one. `ext-foreign-toplevel-list-v1` (`toplevels.rs`) enumerates windows and gives each a stable identifier; it says nothing about which is focused, minimised or fullscreen, reports no output, and offers no way to raise or close anything. This protocol answers all of that and carries no identifier at all.
 //!
-//! **The two do not join.** A handle here and a handle there describe the same window and share nothing a
-//! client could match on — not an id, not a serial, nothing but a title and an app id that any two windows of
-//! the same application have in common. So a reading is taken from one protocol or the other in whole, never
-//! assembled from both: "the focused window" comes from here, "the window to capture" from there.
+//! **The two do not join.** A handle here and a handle there describe the same window and share nothing a client could match on — not an id, not a serial, nothing but a title and an app id that any two windows of the same application have in common. So a reading is taken from one protocol or the other in whole, never assembled from both: "the focused window" comes from here, "the window to capture" from there.
 //!
-//! **What it cannot say either.** No geometry, no workspace, no process id. A window's position and size are
-//! deliberately absent — `set_rectangle` sends a rectangle *to* the compositor, for the animation a minimise
-//! comes out of, and there is no reverse. Anything needing those stays on a compositor's own IPC.
+//! **What it cannot say either.** No geometry, no workspace, no process id. A window's position and size are deliberately absent — `set_rectangle` sends a rectangle *to* the compositor, for the animation a minimise comes out of, and there is no reverse. Anything needing those stays on a compositor's own IPC.
 //!
-//! **The watcher stops when the last registration is retired**, dropping its connection with it, and the next
-//! [`watch`] starts a fresh one — the shell's rule that nothing is resident unless something is asking for it.
-//! Bounded by the next event, as a polling producer is bounded by its next turn: until the compositor says
-//! something the thread is asleep in `poll`, resident but not running.
+//! **The watcher stops when the last registration is retired**, dropping its connection with it, and the next [`watch`] starts a fresh one — the shell's rule that nothing is resident unless something is asking for it. Bounded by the next event, as a polling producer is bounded by its next turn: until the compositor says something the thread is asleep in `poll`, resident but not running.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -46,8 +35,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 /// The global a compositor advertises when it can be told to act on a window.
 pub const TOPLEVEL_MANAGER_INTERFACE: &str = "zwlr_foreign_toplevel_manager_v1";
 
-/// The version that added fullscreen, both as a state and as a request. Below it a caller asking for one is
-/// told so rather than being silently ignored.
+/// The version that added fullscreen, both as a state and as a request. Below it a caller asking for one is told so rather than being silently ignored.
 const FULLSCREEN_SINCE: u32 = 2;
 
 /// The `wl_output` version that names an output.
@@ -63,18 +51,14 @@ const STATE_FULLSCREEN: u32 = 3;
 pub struct ManagedToplevelId(u32);
 
 impl ManagedToplevelId {
-    /// The raw token, for a caller that has to key something on a window's identity — a list row, a stored
-    /// preference — and wants a number rather than a `Debug` rendering it would then depend on.
+    /// The raw token, for a caller that has to key something on a window's identity — a list row, a stored preference — and wants a number rather than a `Debug` rendering it would then depend on.
     pub const fn raw(self) -> u32 {
         self.0
     }
 
     /// Rebuilds an id from [`ManagedToplevelId::raw`].
     ///
-    /// Mostly for tests, which cannot otherwise produce two windows that differ only in identity — the case a
-    /// window list has to survive, since two windows of one application share a title far more often than they
-    /// share nothing. Fabricating one is safe: an id the compositor never issued matches no window, so every
-    /// action against it is a no-op rather than the wrong window being acted on.
+    /// Mostly for tests, which cannot otherwise produce two windows that differ only in identity — the case a window list has to survive, since two windows of one application share a title far more often than they share nothing. Fabricating one is safe: an id the compositor never issued matches no window, so every action against it is a no-op rather than the wrong window being acted on.
     pub const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
@@ -87,15 +71,13 @@ pub struct ManagedToplevel {
     pub title: String,
     /// The application's own id — what `class` is called everywhere except Hyprland.
     pub app_id: String,
-    /// The outputs the window is visible on. More than one when it straddles a boundary, none while the
-    /// compositor has not placed it or its `wl_output` predates version 4.
+    /// The outputs the window is visible on. More than one when it straddles a boundary, none while the compositor has not placed it or its `wl_output` predates version 4.
     pub outputs: Vec<String>,
     /// This is the focused window. The reading `ext-foreign-toplevel-list-v1` cannot produce at all.
     pub activated: bool,
     pub minimized: bool,
     pub maximized: bool,
-    /// Reported only by a compositor implementing version 2 or above; false on version 1 whether or not the
-    /// window is actually fullscreen.
+    /// Reported only by a compositor implementing version 2 or above; false on version 1 whether or not the window is actually fullscreen.
     pub fullscreen: bool,
 }
 
@@ -109,11 +91,9 @@ struct Registration {
 
 static HANDLERS: Mutex<Vec<Registration>> = Mutex::new(Vec::new());
 static LATEST: Mutex<Vec<ManagedToplevel>> = Mutex::new(Vec::new());
-/// The live watcher's channel, and `None` whenever none is running — which is what lets a later [`watch`] start
-/// a fresh thread rather than register with one that has already gone.
+/// The live watcher's channel, and `None` whenever none is running — which is what lets a later [`watch`] start a fresh thread rather than register with one that has already gone.
 static REQUESTS: Mutex<Option<Sender<Request>>> = Mutex::new(None);
-/// Set when starting finds no compositor or no management protocol, so a caller on one that cannot answer does
-/// not open a connection on every `watch` — no watcher is left behind to say it already failed.
+/// Set when starting finds no compositor or no management protocol, so a caller on one that cannot answer does not open a connection on every `watch` — no watcher is left behind to say it already failed.
 static UNSUPPORTED: AtomicBool = AtomicBool::new(false);
 
 enum Request {
@@ -124,20 +104,16 @@ enum Request {
     Maximized(ManagedToplevelId, bool),
 }
 
-/// Whether the compositor can be told to act on a window, asked over a connection of its own so it answers
-/// outside a running shell. `None` means no compositor could be reached.
+/// Whether the compositor can be told to act on a window, asked over a connection of its own so it answers outside a running shell. `None` means no compositor could be reached.
 pub fn toplevel_control_supported() -> Option<bool> {
     crate::globals::advertises(TOPLEVEL_MANAGER_INTERFACE)
 }
 
-/// Registers `on_change` for the window list, starting the watcher on first use and keeping it for as long as
-/// `interest` is alive.
+/// Registers `on_change` for the window list, starting the watcher on first use and keeping it for as long as `interest` is alive.
 ///
-/// Returns false when the compositor does not implement the protocol, in which case `on_change` is never
-/// called. A handler registered after the watcher is running is handed the current list immediately.
+/// Returns false when the compositor does not implement the protocol, in which case `on_change` is never called. A handler registered after the watcher is running is handed the current list immediately.
 ///
-/// The channel slot is held across both the start and the registration, and taken again by [`retire`]: that
-/// overlap is what stops a `watch` landing on a watcher already on its way out and never being called.
+/// The channel slot is held across both the start and the registration, and taken again by [`retire`]: that overlap is what stops a `watch` landing on a watcher already on its way out and never being called.
 pub fn watch(
     interest: &Interest,
     on_change: impl FnMut(&[ManagedToplevel]) + Send + 'static,
@@ -163,8 +139,7 @@ pub fn current() -> Vec<ManagedToplevel> {
     LATEST.lock().unwrap().clone()
 }
 
-/// The focused window, when the compositor reports one. `None` on an empty workspace, and while a layer
-/// surface this shell owns holds the keyboard.
+/// The focused window, when the compositor reports one. `None` on an empty workspace, and while a layer surface this shell owns holds the keyboard.
 pub fn focused() -> Option<ManagedToplevel> {
     current().into_iter().find(|window| window.activated)
 }
@@ -174,8 +149,7 @@ pub fn focus(id: ManagedToplevelId) -> bool {
     send(Request::Focus(id))
 }
 
-/// Asks a window to close — the same request its own close button makes, so an application with unsaved work
-/// gets to put up its dialog rather than being killed.
+/// Asks a window to close — the same request its own close button makes, so an application with unsaved work gets to put up its dialog rather than being killed.
 pub fn close(id: ManagedToplevelId) -> bool {
     send(Request::Close(id))
 }
@@ -192,8 +166,7 @@ pub fn set_maximized(id: ManagedToplevelId, maximized: bool) -> bool {
     send(Request::Maximized(id, maximized))
 }
 
-/// Whether the request could be handed to the watcher — not whether the compositor honoured it. The protocol
-/// answers an action by publishing a new state, so a caller wanting to know watches for it.
+/// Whether the request could be handed to the watcher — not whether the compositor honoured it. The protocol answers an action by publishing a new state, so a caller wanting to know watches for it.
 fn send(request: Request) -> bool {
     let slot = REQUESTS.lock().unwrap();
     slot.as_ref()
@@ -202,8 +175,7 @@ fn send(request: Request) -> bool {
 
 /// The channel to talk to the watcher over, starting one if none is running.
 ///
-/// Takes the slot the caller already holds rather than locking again, because [`watch`] has to keep that lock
-/// across registering — see there.
+/// Takes the slot the caller already holds rather than locking again, because [`watch`] has to keep that lock across registering — see there.
 fn watcher(slot: &mut Option<Sender<Request>>) -> Option<Sender<Request>> {
     if let Some(requests) = slot.as_ref() {
         return Some(requests.clone());
@@ -227,8 +199,7 @@ fn anyone_listening() -> bool {
     !handlers.is_empty()
 }
 
-/// Gives up the watcher slot, for a thread about to return. `false` is a `watch` having landed since the last
-/// registration went: it is already in the list, and retiring now would leave it waiting on nothing.
+/// Gives up the watcher slot, for a thread about to return. `false` is a `watch` having landed since the last registration went: it is already in the list, and retiring now would leave it waiting on nothing.
 fn retire() -> bool {
     let mut slot = REQUESTS.lock().unwrap();
     if !HANDLERS.lock().unwrap().is_empty() {
@@ -238,15 +209,13 @@ fn retire() -> bool {
     true
 }
 
-/// Gives the slot up whatever is registered, for a watcher whose connection has failed under it: leaving the
-/// sender behind would have every later `focus` or `close` report success into a channel nobody reads.
+/// Gives the slot up whatever is registered, for a watcher whose connection has failed under it: leaving the sender behind would have every later `focus` or `close` report success into a channel nobody reads.
 fn forget() {
     *REQUESTS.lock().unwrap() = None;
     HANDLERS.lock().unwrap().clear();
 }
 
-/// Connects and binds here rather than on the watcher thread, so the answer to "can this compositor be told to
-/// act on a window" is known by the time [`watch`] returns.
+/// Connects and binds here rather than on the watcher thread, so the answer to "can this compositor be told to act on a window" is known by the time [`watch`] returns.
 fn start() -> Option<Sender<Request>> {
     let connection = Connection::connect_to_env().ok()?;
     let (globals, queue) = registry_queue_init::<Watcher>(&connection).ok()?;
@@ -255,8 +224,7 @@ fn start() -> Option<Sender<Request>> {
         tracing::debug!("no wlr-foreign-toplevel-management: {e}");
         return None;
     }
-    // Focusing a window is a request against a seat, so a compositor with no seat can list windows and not
-    // raise them. That is a working watcher, not a reason to have none.
+    // Focusing a window is a request against a seat, so a compositor with no seat can list windows and not raise them. That is a working watcher, not a reason to have none.
     let seat = globals.bind::<wl_seat::WlSeat, _, _>(&qh, 1..=9, ()).ok();
     if seat.is_none() {
         tracing::warn!("no wl_seat: windows can be listed and closed but not focused");
@@ -283,8 +251,7 @@ fn start() -> Option<Sender<Request>> {
     Some(requests)
 }
 
-/// What the watcher needs that can cross a thread boundary. The loop handle cannot — it holds an `Rc` — and it
-/// does not exist until the loop does, so the watcher itself is assembled on the far side.
+/// What the watcher needs that can cross a thread boundary. The loop handle cannot — it holds an `Rc` — and it does not exist until the loop does, so the watcher itself is assembled on the far side.
 struct Seed {
     seat: Option<wl_seat::WlSeat>,
     bound: HashMap<u32, wl_output::WlOutput>,
@@ -323,9 +290,7 @@ fn run(seed: Seed, connection: Connection, queue: EventQueue<Watcher>, requests:
         if event_loop.dispatch(None, &mut watcher).is_err() {
             break;
         }
-        // Asked after a dispatch rather than after a publish: a registration is retired by whoever made it,
-        // which is not something this thread is told about, so the only sound moment to look is every time it
-        // wakes.
+        // Asked after a dispatch rather than after a publish: a registration is retired by whoever made it, which is not something this thread is told about, so the only sound moment to look is every time it wakes.
         if !anyone_listening() && retire() {
             return;
         }
@@ -342,8 +307,7 @@ struct Entry {
     states: Vec<u32>,
 }
 
-/// Everything the events accumulate, with no protocol object of its own — which is what lets the reading be
-/// checked without a compositor.
+/// Everything the events accumulate, with no protocol object of its own — which is what lets the reading be checked without a compositor.
 #[derive(Default)]
 struct State {
     names: HashMap<u32, String>,
@@ -463,15 +427,9 @@ impl Watcher {
 
     /// Watches for a focus request to take effect, and asks again if it did not.
     ///
-    /// **A compositor ignores `activate` while another surface holds the seat's keyboard.** Measured against
-    /// Hyprland 0.56.1: with a layer surface up at `KeyboardInteractivity::Exclusive` the request changes
-    /// nothing at all, and the same request lands the moment that surface is gone. That is the whole reason a
-    /// window switcher living in a layer surface did nothing — and it cannot be fixed by ordering alone,
-    /// because the surface is torn down over the shell's connection while this goes over the watcher's, and
-    /// two connections have no ordering between them.
+    /// **A compositor ignores `activate` while another surface holds the seat's keyboard.** Measured against Hyprland 0.56.1: with a layer surface up at `KeyboardInteractivity::Exclusive` the request changes nothing at all, and the same request lands the moment that surface is gone. That is the whole reason a window switcher living in a layer surface did nothing — and it cannot be fixed by ordering alone, because the surface is torn down over the shell's connection while this goes over the watcher's, and two connections have no ordering between them.
     ///
-    /// So the request is repeated, briefly, until the compositor acts on it or the window stops existing. The
-    /// deadline is short enough that a user who changed their mind and clicked elsewhere is not fought with.
+    /// So the request is repeated, briefly, until the compositor acts on it or the window stops existing. The deadline is short enough that a user who changed their mind and clicked elsewhere is not fought with.
     fn await_focus(&mut self, target: u32) {
         const TRIES: u8 = 8;
         self.pending = Some(Pending {
@@ -525,8 +483,7 @@ impl Watcher {
         self.arm_retry();
     }
 
-    /// Publishes the whole list. Each window batches its own changes behind a `done`, so a title retyped a
-    /// keystroke at a time is one publish per commit rather than one per event.
+    /// Publishes the whole list. Each window batches its own changes behind a `done`, so a title retyped a keystroke at a time is one publish per commit rather than one per event.
     fn publish(&self) {
         let snapshot = self.state.snapshot();
         *LATEST.lock().unwrap() = snapshot.clone();
@@ -648,8 +605,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for Watcher {
     }
 }
 
-/// A monitor plugged in after the watcher started still has to be nameable, or every window on it reports no
-/// output at all.
+/// A monitor plugged in after the watcher started still has to be nameable, or every window on it reports no output at all.
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Watcher {
     fn event(
         state: &mut Self,
@@ -683,16 +639,11 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Watcher {
 mod tests {
     use super::*;
 
-    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the
-    /// watcher has to *stop* when the last registration is retired, and give its slot back so the next
-    /// [`watch`] starts a fresh one rather than registering with a thread on its way out.
+    /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the watcher has to *stop* when the last registration is retired, and give its slot back so the next [`watch`] starts a fresh one rather than registering with a thread on its way out.
     ///
-    /// One test rather than several because they all move the same statics, and split across `cargo test`'s
-    /// threads they would take turns wrecking each other's world.
+    /// One test rather than several because they all move the same statics, and split across `cargo test`'s threads they would take turns wrecking each other's world.
     ///
-    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live
-    /// tests below register with a real watcher, so "nothing is registered" is false through no fault of the
-    /// code, and emptying the registry to make it true would retire the watcher out from under them.
+    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live tests below register with a real watcher, so "nothing is registered" is false through no fault of the code, and emptying the registry to make it true would retire the watcher out from under them.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
         if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
@@ -710,8 +661,7 @@ mod tests {
         assert!(anyone_listening(), "a live registration is listening");
         assert!(!retire(), "something is registered, so the watcher stays");
 
-        // Retired by whoever registered, and dropped without ever being called again — which is the whole
-        // reason the answer lives beside the handler instead of in what it returns.
+        // Retired by whoever registered, and dropped without ever being called again — which is the whole reason the answer lives beside the handler instead of in what it returns.
         interest.retire();
         assert!(!anyone_listening(), "a retired registration was kept");
         assert!(retire(), "nothing is registered, so nothing needs it");
@@ -773,8 +723,7 @@ mod tests {
         assert!(windows.iter().all(|w| w.outputs == vec!["eDP-1"]));
     }
 
-    /// The `state` event carries the whole set every time, so unsetting one is that value no longer arriving —
-    /// a handler that merged rather than replaced would leave a window minimised for ever.
+    /// The `state` event carries the whole set every time, so unsetting one is that value no longer arriving — a handler that merged rather than replaced would leave a window minimised for ever.
     #[test]
     fn a_state_that_stops_being_reported_is_unset() {
         let mut state = open_windows();
@@ -801,8 +750,7 @@ mod tests {
         );
     }
 
-    /// The half no fixture can prove: that this reads a real compositor, and that what it calls the focused
-    /// window is the one that actually has focus.
+    /// The half no fixture can prove: that this reads a real compositor, and that what it calls the focused window is the one that actually has focus.
     ///
     /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevel_control -- --nocapture --test-threads=1`
     #[test]
@@ -847,9 +795,7 @@ mod tests {
 
     /// Whether `activate` actually moves the compositor, with no layer surface anywhere near it.
     ///
-    /// This exists to tell two failures apart. A window switcher that does nothing could be failing here — the
-    /// request never lands — or failing above, because whoever asked closed a keyboard-grabbing surface
-    /// straight afterwards and the compositor handed focus back. Only isolating the request answers that.
+    /// This exists to tell two failures apart. A window switcher that does nothing could be failing here — the request never lands — or failing above, because whoever asked closed a keyboard-grabbing surface straight afterwards and the compositor handed focus back. Only isolating the request answers that.
     ///
     /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland activate_moves -- --nocapture`
     ///

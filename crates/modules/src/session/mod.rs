@@ -23,9 +23,7 @@ pub fn power_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// The session menu: one tile per action this machine can actually perform.
 ///
-/// Destructive actions confirm first — the tile arms, and only a second press on the armed tile goes through.
-/// A single mis-click on a panel that opens next to the clock should not end the session, and arming in place
-/// costs no extra surface and no extra keystroke for someone who meant it.
+/// Destructive actions confirm first — the tile arms, and only a second press on the armed tile goes through. A single mis-click on a panel that opens next to the clock should not end the session, and arming in place costs no extra surface and no extra keystroke for someone who meant it.
 pub fn session_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let armed = signal(String::new());
@@ -96,8 +94,7 @@ pub fn session_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(panel))
 }
 
-/// The session menu's key bindings. A wrapped row of tiles, so it reads the horizontal arrows as well: the
-/// tiles sit side by side, and Left/Right is what a hand on that row reaches for first.
+/// The session menu's key bindings. A wrapped row of tiles, so it reads the horizontal arrows as well: the tiles sit side by side, and Left/Right is what a hand on that row reaches for first.
 fn navigation() -> keynav::KeyNav {
     let config = config::config().map(|c| c.keynav).unwrap_or_default();
     keynav::KeyNav {
@@ -106,15 +103,12 @@ fn navigation() -> keynav::KeyNav {
     }
 }
 
-/// Whether pressing `action` ends work the user might not have saved. Suspend and lock are recoverable in a
-/// keystroke; the rest are not, so only the rest arm before they fire.
+/// Whether pressing `action` ends work the user might not have saved. Suspend and lock are recoverable in a keystroke; the rest are not, so only the rest arm before they fire.
 fn is_destructive(action: Action) -> bool {
     !matches!(action, Action::Lock | Action::Suspend)
 }
 
-/// Whether this machine can perform `action` right now. Everything but Lock is logind's answer, already
-/// filtered by [`session::available`]; Lock is the shell's own, because a compositor without
-/// `ext-session-lock-v1` or a machine with no PAM cannot be unlocked afterwards and so must not be offered.
+/// Whether this machine can perform `action` right now. Everything but Lock is logind's answer, already filtered by [`session::available`]; Lock is the shell's own, because a compositor without `ext-session-lock-v1` or a machine with no PAM cannot be unlocked afterwards and so must not be offered.
 fn is_offered(action: Action) -> bool {
     action != Action::Lock || services::lock::can_lock().is_ok()
 }
@@ -130,13 +124,11 @@ fn label_for(action: Action) -> String {
     }
 }
 
-/// Runs `action`, arming it first when it is destructive and not already armed. The one path both the pointer
-/// and the keyboard take, so a tile cannot end the session in fewer presses from one than from the other.
+/// Runs `action`, arming it first when it is destructive and not already armed. The one path both the pointer and the keyboard take, so a tile cannot end the session in fewer presses from one than from the other.
 fn press(action: Action, armed: &telar::RwSignal<String>) {
     let id = action.id();
     if !is_destructive(action) || armed.peek() == id {
-        // Lock goes to the lock service rather than to logind, so it works on a machine with no system bus —
-        // and logind's own `Lock` signal lands in the same place, so the two remain one lock.
+        // Lock goes to the lock service rather than to logind, so it works on a machine with no system bus — and logind's own `Lock` signal lands in the same place, so the two remain one lock.
         if action == Action::Lock {
             if let Err(reason) = services::lock::can_lock() {
                 tracing::warn!("cannot lock: {reason}");
@@ -167,8 +159,7 @@ fn tile(
     let armed_caption = armed.read_only();
     let armed_fill = armed.read_only();
     let armed_hover = armed.read_only();
-    // Resolved once, at build time: whether this machine can lock is a fact about the compositor and the PAM
-    // stack, not something that changes while a menu is on screen.
+    // Resolved once, at build time: whether this machine can lock is a fact about the compositor and the PAM stack, not something that changes while a menu is on screen.
     let offered = is_offered(action);
 
     let icon = ui::icon::icon_view(
@@ -188,8 +179,7 @@ fn tile(
     let caption = Text::auto(
         move || {
             if !offered {
-                // Says *why* rather than greying a tile out silently: a Lock that does nothing on press is
-                // indistinguishable from a broken shell.
+                // Says *why* rather than greying a tile out silently: a Lock that does nothing on press is indistinguishable from a broken shell.
                 telar::t!("lock.unsupported")
             } else if armed_caption.get() == id {
                 telar::t!("session.confirm")
@@ -236,8 +226,7 @@ fn tile(
         };
         RectStyle::filled(fill, rounded)
     });
-    // No press handler at all, rather than one that returns early: a tile with nothing behind it should not
-    // take the click away from the surface either.
+    // No press handler at all, rather than one that returns early: a tile with nothing behind it should not take the click away from the surface either.
     let tile = if offered {
         tile.on_press(move || press(action, &armed))
     } else {

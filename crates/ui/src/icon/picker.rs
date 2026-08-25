@@ -19,19 +19,15 @@ use util::search;
 const CELL: f32 = 40.0;
 const ICON: f32 = 24.0;
 const GRID_GAP: f32 = 4.0;
-/// The visible window is grown by this many px on every side when deciding what to load, so an icon starts
-/// fetching just before it scrolls into view instead of only once it is already on screen.
+/// The visible window is grown by this many px on every side when deciding what to load, so an icon starts fetching just before it scrolls into view instead of only once it is already on screen.
 const PREFETCH: f32 = 96.0;
 const PANEL_WIDTH: f32 = 288.0;
 const GRID_HEIGHT: f32 = 240.0;
 const FILTER_DEBOUNCE: Duration = Duration::from_millis(200);
-/// Upper bound on results kept for the grid. Generous because the grid is virtualized (only on-screen rows
-/// are built), so a whole icon set shows and scrolls cheaply; it just caps the reconciled row list.
+/// Upper bound on results kept for the grid. Generous because the grid is virtualized (only on-screen rows are built), so a whole icon set shows and scrolls cheaply; it just caps the reconciled row list.
 const MAX_RESULTS: usize = 2000;
 
-/// A floating icon picker anchored under `anchor_node`, like a dropdown menu: a click-away backdrop over the
-/// whole surface, and a panel with a filter box over a scrolling grid of the default icon set. Selecting an
-/// icon calls `on_select` with its `set:name` id; a click outside (or a pick) calls `on_close`.
+/// A floating icon picker anchored under `anchor_node`, like a dropdown menu: a click-away backdrop over the whole surface, and a panel with a filter box over a scrolling grid of the default icon set. Selecting an icon calls `on_select` with its `set:name` id; a click outside (or a pick) calls `on_close`.
 pub fn icon_picker_overlay(
     anchor_node: NodeId,
     fallback_rect: RwSignal<Rect>,
@@ -78,8 +74,7 @@ pub fn icon_picker_overlay(
     Ok(box_item(overlay))
 }
 
-/// The picker's panel contents: a filter box over the scrolling grid, plus the debounced-filter effect that
-/// feeds the grid. The effect is parked in the returned item so it lives exactly as long as the panel.
+/// The picker's panel contents: a filter box over the scrolling grid, plus the debounced-filter effect that feeds the grid. The effect is parked in the returned item so it lives exactly as long as the panel.
 fn picker_body(
     theme: NordTheme,
     pick: Rc<dyn Fn(String)>,
@@ -113,8 +108,7 @@ fn picker_body(
     }))
 }
 
-/// Re-filters `filtered` from `collection` a short beat after `query` (or the collection) last changed, so the
-/// grid only rebuilds once typing settles rather than on every keystroke.
+/// Re-filters `filtered` from `collection` a short beat after `query` (or the collection) last changed, so the grid only rebuilds once typing settles rather than on every keystroke.
 fn debounced_filter(
     query: ReadSignal<String>,
     collection: ReadSignal<CollectionState>,
@@ -142,13 +136,9 @@ fn debounced_filter(
     })
 }
 
-/// Icons ranked against `query` by the shared matcher, best first; an empty query keeps them all in collection
-/// order. Capped at [`MAX_RESULTS`].
+/// Icons ranked against `query` by the shared matcher, best first; an empty query keeps them all in collection order. Capped at [`MAX_RESULTS`].
 ///
-/// Matching is against the name part (`lucide:home` → `home`), so a set prefix every candidate shares can't
-/// skew the ranking. The empty query is short-circuited rather than ranked: the collection runs to tens of
-/// thousands of ids, and scoring them all to preserve the order they already have is the one case where the
-/// ranking has nothing to add.
+/// Matching is against the name part (`lucide:home` → `home`), so a set prefix every candidate shares can't skew the ranking. The empty query is short-circuited rather than ranked: the collection runs to tens of thousands of ids, and scoring them all to preserve the order they already have is the one case where the ranking has nothing to add.
 fn filter_ids(all: &[String], query: &str) -> Vec<String> {
     let query = query.trim();
     if query.is_empty() {
@@ -195,8 +185,7 @@ fn results_view(
     Ok(Box::new(list))
 }
 
-/// A coarse kind for the results area, so the outer list only swaps between message and grid when the mode
-/// changes — a grid persists (and reconciles) as the filtered set changes within `Ready`.
+/// A coarse kind for the results area, so the outer list only swaps between message and grid when the mode changes — a grid persists (and reconciles) as the filtered set changes within `Ready`.
 fn view_kind(collection: &ReadSignal<CollectionState>, filtered: &ReadSignal<Vec<String>>) -> u8 {
     let empty = filtered.with(|f| f.is_empty());
     collection.with(|state| match state {
@@ -207,19 +196,14 @@ fn view_kind(collection: &ReadSignal<CollectionState>, filtered: &ReadSignal<Vec
     })
 }
 
-/// One row of the icon grid: `index` fixes its position; `ids` are the row's icons when it is on-screen, or
-/// empty when it is a spacer (so an off-screen row costs one empty box, not a strip of icon widgets).
+/// One row of the icon grid: `index` fixes its position; `ids` are the row's icons when it is on-screen, or empty when it is a spacer (so an off-screen row costs one empty box, not a strip of icon widgets).
 #[derive(Clone)]
 struct Row {
     index: usize,
     ids: Vec<String>,
 }
 
-/// A virtualized grid: a flex column of fixed-height rows where only the rows in (or near) the viewport carry
-/// their icons — the rest are empty spacers of the same height, so the total scroll height and every row's
-/// position stay correct while only on-screen icons are ever built (and thus downloaded). Reacts to the scroll
-/// offset and viewport height, so scrolling swaps spacers for real rows on the fly. One reactive list drives
-/// it all, which keeps it clear of the per-cell visibility-signal pitfalls.
+/// A virtualized grid: a flex column of fixed-height rows where only the rows in (or near) the viewport carry their icons — the rest are empty spacers of the same height, so the total scroll height and every row's position stay correct while only on-screen icons are ever built (and thus downloaded). Reacts to the scroll offset and viewport height, so scrolling swaps spacers for real rows on the fly. One reactive list drives it all, which keeps it clear of the per-cell visibility-signal pitfalls.
 fn grid(
     vp: ScrollViewport,
     filtered: ReadSignal<Vec<String>>,
@@ -242,8 +226,7 @@ fn grid(
     Ok(Box::new(list))
 }
 
-/// The rows for the current filter and scroll position: every row up to the total exists (to size the scroll),
-/// but only those within a [`PREFETCH`] band of the viewport get their icon ids.
+/// The rows for the current filter and scroll position: every row up to the total exists (to size the scroll), but only those within a [`PREFETCH`] band of the viewport get their icon ids.
 fn rows(all: &[String], vp: &Rect, scroll_y: f32) -> Vec<Row> {
     let cols = columns(vp.width);
     let row_pitch = CELL + GRID_GAP;
@@ -296,8 +279,7 @@ fn build_row(
     Ok(Box::new(row))
 }
 
-/// A single icon button. Built only for on-screen rows, so constructing it (which reads — and thus downloads —
-/// the glyph via [`icon_view`]) is what makes loading lazy.
+/// A single icon button. Built only for on-screen rows, so constructing it (which reads — and thus downloads — the glyph via [`icon_view`]) is what makes loading lazy.
 fn cell(
     id: String,
     theme: NordTheme,
@@ -367,8 +349,7 @@ fn default_set() -> String {
         .unwrap_or_else(|| "lucide".to_string())
 }
 
-/// The picker's panel over a fixed set of glyphs, for [`crate::preview`]. Shows the cell centring and the
-/// wrapping the grid does — which is what there was to look at, and what no unit test can see.
+/// The picker's panel over a fixed set of glyphs, for [`crate::preview`]. Shows the cell centring and the wrapping the grid does — which is what there was to look at, and what no unit test can see.
 pub(crate) fn grid_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let ids: Vec<String> = [
@@ -396,8 +377,7 @@ pub(crate) fn grid_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// Wraps a layout item so it also owns an effect for its lifetime — the two drop together when the subtree is
-/// disposed. Lets a plain component tree keep a background effect (here, the debounced filter) alive.
+/// Wraps a layout item so it also owns an effect for its lifetime — the two drop together when the subtree is disposed. Lets a plain component tree keep a background effect (here, the debounced filter) alive.
 struct WithEffect {
     inner: Box<dyn LayoutItem>,
     _effect: Effect,
@@ -467,9 +447,7 @@ mod tests {
         assert!(filter_ids(&all, "mdi").is_empty());
     }
 
-    // The real picker's timing: the viewport is laid out (empty grid) BEFORE the icon set loads and the grid
-    // fills. A cell built after layout must still become visible once it's laid out, and request its glyph —
-    // otherwise it stays stuck on the placeholder dot (the "never loads" bug).
+    // The real picker's timing: the viewport is laid out (empty grid) BEFORE the icon set loads and the grid fills. A cell built after layout must still become visible once it's laid out, and request its glyph — otherwise it stays stuck on the placeholder dot (the "never loads" bug).
     #[test]
     fn cell_built_after_layout_becomes_visible_and_requests_its_icon() {
         use telar::{AvailableSpace, compute_layout, relayout_if_dirty};
@@ -514,9 +492,7 @@ mod tests {
         );
     }
 
-    // Faithful repro of opening the picker in a notes card: a scroll (the drawer content) holds a card with
-    // a trigger and a `picking`-gated overlay holder; mount, flip picking (reconcile builds the overlay in a
-    // flush), render, then tear down. Catches the reactive re-entry / overlay-host panics seen in the shell.
+    // Faithful repro of opening the picker in a notes card: a scroll (the drawer content) holds a card with a trigger and a `picking`-gated overlay holder; mount, flip picking (reconcile builds the overlay in a flush), render, then tear down. Catches the reactive re-entry / overlay-host panics seen in the shell.
     #[test]
     fn overlay_inside_scroll_reconcile_and_teardown_does_not_panic() {
         use telar::ComponentList;
@@ -570,9 +546,7 @@ mod tests {
         drop(tree);
     }
 
-    // The full path that crashed in the shell: an overlay (with its own scrolling grid) opened inside the
-    // drawer's scroll, the layout host bounced across roots via relayout, the grid filled with many cells,
-    // then closed and torn down. Exercises overlay attach/detach against a moving host and a big reconcile.
+    // The full path that crashed in the shell: an overlay (with its own scrolling grid) opened inside the drawer's scroll, the layout host bounced across roots via relayout, the grid filled with many cells, then closed and torn down. Exercises overlay attach/detach against a moving host and a big reconcile.
     #[test]
     fn overlay_grid_fills_relayouts_and_closes_without_panic() {
         use telar::{ComponentList, relayout_if_dirty};
@@ -639,8 +613,7 @@ mod tests {
         drop(tree);
     }
 
-    // Builds the picker overlay in a real surface tree and drives a frame + teardown, to catch a
-    // build/teardown panic (like the reactive-runtime re-entry seen when opening the popover).
+    // Builds the picker overlay in a real surface tree and drives a frame + teardown, to catch a build/teardown panic (like the reactive-runtime re-entry seen when opening the popover).
     #[test]
     fn overlay_builds_and_tears_down_without_panic() {
         use telar::ComponentList;

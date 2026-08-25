@@ -21,15 +21,13 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Workspace {
     pub id: i32,
-    /// Hyprland's own name. Numbered workspaces name themselves after their id; a special workspace is
-    /// `special:<name>`, which is the only place its name is recoverable.
+    /// Hyprland's own name. Numbered workspaces name themselves after their id; a special workspace is `special:<name>`, which is the only place its name is recoverable.
     pub name: String,
     pub windows: u32,
     pub monitor: String,
     /// The window classes on this workspace, in Hyprland's order — what a pill draws app icons from.
     pub clients: Vec<String>,
-    /// What the compositor calls this workspace over `ext-workspace-v1`, when it listed it. `None` for a
-    /// scratchpad, which the protocol does not list, and for every workspace on a compositor without it.
+    /// What the compositor calls this workspace over `ext-workspace-v1`, when it listed it. `None` for a scratchpad, which the protocol does not list, and for every workspace on a compositor without it.
     pub handle: Option<platform_wayland::WorkspaceId>,
 }
 
@@ -49,17 +47,13 @@ impl Workspace {
     }
 }
 
-/// The focused window, or the empty value when the compositor reports none (an empty workspace, a layer
-/// surface holding focus). Every field is what Hyprland calls it, so a config regex written against
-/// `hyprctl clients` matches.
+/// The focused window, or the empty value when the compositor reports none (an empty workspace, a layer surface holding focus). Every field is what Hyprland calls it, so a config regex written against `hyprctl clients` matches.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActiveWindow {
     pub title: String,
     /// The application id. Hyprland's `class`, and `app_id` in every protocol that reports one.
     pub class: String,
-    /// Hyprland's `0x…` handle, and empty on any compositor that is not Hyprland: no Wayland protocol exposes
-    /// a window's address. Anything reading geometry, a workspace or a process id needs this and therefore
-    /// needs Hyprland.
+    /// Hyprland's `0x…` handle, and empty on any compositor that is not Hyprland: no Wayland protocol exposes a window's address. Anything reading geometry, a workspace or a process id needs this and therefore needs Hyprland.
     pub address: String,
     /// What the compositor calls this window over `wlr-foreign-toplevel-management`, when it reported one.
     pub handle: Option<platform_wayland::ManagedToplevelId>,
@@ -68,8 +62,7 @@ pub struct ActiveWindow {
 impl ActiveWindow {
     /// Whether the compositor reports no focused window at all.
     ///
-    /// Both identities, not just the address: off Hyprland every window has an empty address, so asking about
-    /// that alone would report every window as no window.
+    /// Both identities, not just the address: off Hyprland every window has an empty address, so asking about that alone would report every window as no window.
     pub fn is_empty(&self) -> bool {
         self.handle.is_none() && self.address.is_empty()
     }
@@ -93,8 +86,7 @@ struct WorkspaceJson {
     monitor: String,
 }
 
-/// One window the compositor is managing, as `j/clients` reports it. Every field keeps Hyprland's own meaning
-/// so a rule written against `hyprctl clients` reads the same here.
+/// One window the compositor is managing, as `j/clients` reports it. Every field keeps Hyprland's own meaning so a rule written against `hyprctl clients` reads the same here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Client {
     /// `0x…`, unique and stable for the window's life — the handle every dispatcher takes.
@@ -109,12 +101,10 @@ pub struct Client {
     pub at: (i32, i32),
     pub size: (i32, i32),
     pub floating: bool,
-    /// Maximized or fullscreen; Hyprland distinguishes the two, a shell asking "is something covering the
-    /// screen" does not.
+    /// Maximized or fullscreen; Hyprland distinguishes the two, a shell asking "is something covering the screen" does not.
     pub fullscreen: bool,
     pub pinned: bool,
-    /// An unmapped window is one the compositor is not drawing — a tray-minimized application, mostly. Kept
-    /// rather than filtered so a window list can show it as hidden instead of losing it.
+    /// An unmapped window is one the compositor is not drawing — a tray-minimized application, mostly. Kept rather than filtered so a window list can show it as hidden instead of losing it.
     pub mapped: bool,
     pub xwayland: bool,
 }
@@ -148,9 +138,7 @@ struct ClientJson {
     xwayland: bool,
 }
 
-/// Hyprland reported `fullscreen` as a bool until 0.42 and as a mode integer (0 none, 1 maximized, 2 fullscreen)
-/// after it. Accepting both keeps the client list working across the versions a user might be on, instead of
-/// failing the whole parse on the field's type.
+/// Hyprland reported `fullscreen` as a bool until 0.42 and as a mode integer (0 none, 1 maximized, 2 fullscreen) after it. Accepting both keeps the client list working across the versions a user might be on, instead of failing the whole parse on the field's type.
 #[derive(Deserialize, Default, Clone, Copy)]
 #[serde(untagged)]
 enum Fullscreen {
@@ -182,8 +170,7 @@ struct ActiveJson {
     id: i32,
 }
 
-/// One output, as `j/monitors` describes it. The connector `name` (`DP-1`) is what per-monitor config, the
-/// layer-shell surfaces and the settings app all key on; `make`/`model` are what a human recognises it by.
+/// One output, as `j/monitors` describes it. The connector `name` (`DP-1`) is what per-monitor config, the layer-shell surfaces and the settings app all key on; `make`/`model` are what a human recognises it by.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Screen {
     pub name: String,
@@ -306,12 +293,9 @@ fn query_monitors(dir: &Path, command: &str) -> Option<Vec<MonitorJson>> {
     serde_json::from_str(&request(dir, command).ok()?).ok()
 }
 
-/// Every output the compositor knows about, ordered left-to-right then top-to-bottom by their position in the
-/// layout — the order a user reads their desk in, and the one a per-monitor settings list wants.
+/// Every output the compositor knows about, ordered left-to-right then top-to-bottom by their position in the layout — the order a user reads their desk in, and the one a per-monitor settings list wants.
 pub fn screens(dir: &Path) -> Vec<Screen> {
-    // `all` includes outputs that are connected but switched off, which is the difference between a settings
-    // list that can re-enable a monitor and one that cannot see it. Not every Hyprland accepts the argument, so
-    // a refusal falls back to the plain query rather than reporting no screens at all.
+    // `all` includes outputs that are connected but switched off, which is the difference between a settings list that can re-enable a monitor and one that cannot see it. Not every Hyprland accepts the argument, so a refusal falls back to the plain query rather than reporting no screens at all.
     let Some(parsed) =
         query_monitors(dir, "j/monitors all").or_else(|| query_monitors(dir, "j/monitors"))
     else {
@@ -349,10 +333,7 @@ pub fn monitor_from_focus_event(line: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Runs a Hyprland dispatcher. Hyprland ≥ 0.55 evaluates socket commands as Lua, so `dispatch workspace N` no
-/// longer parses; `call` is the Lua expression the socket wraps as `hl.dispatch(<call>)`, e.g.
-/// `hl.dsp.focus({ workspace = 3 })`. Errors are reported rather than returned: every caller is a UI handler
-/// with nothing useful to do about a refused dispatch.
+/// Runs a Hyprland dispatcher. Hyprland ≥ 0.55 evaluates socket commands as Lua, so `dispatch workspace N` no longer parses; `call` is the Lua expression the socket wraps as `hl.dispatch(<call>)`, e.g. `hl.dsp.focus({ workspace = 3 })`. Errors are reported rather than returned: every caller is a UI handler with nothing useful to do about a refused dispatch.
 fn dispatch(dir: &Path, call: &str) {
     let cmd = format!("dispatch {call}");
     match request(dir, &cmd) {
@@ -370,10 +351,7 @@ pub fn focus_workspace(dir: &Path, id: i32) {
 
 /// Focuses the workspace a pill shows, over whichever route the compositor offers.
 ///
-/// The protocol first, and only for a workspace the compositor actually listed. A `[workspaces] shown` bar
-/// draws placeholder pills for workspaces that do not exist yet and pressing one is how you get there — there
-/// is no handle to activate for a workspace that does not exist, and Hyprland's dispatcher creates it. That is
-/// what makes the fallback more than a fallback on a compositor that has both.
+/// The protocol first, and only for a workspace the compositor actually listed. A `[workspaces] shown` bar draws placeholder pills for workspaces that do not exist yet and pressing one is how you get there — there is no handle to activate for a workspace that does not exist, and Hyprland's dispatcher creates it. That is what makes the fallback more than a fallback on a compositor that has both.
 pub fn focus_workspace_id(id: i32) {
     let handle = current_workspaces()
         .and_then(|snapshot| snapshot.workspaces.into_iter().find(|w| w.id == id))
@@ -390,10 +368,7 @@ pub fn focus_workspace_id(id: i32) {
 
 /// The two ways Hyprland 0.56's `dpms` dispatcher might take its state.
 ///
-/// Every other Lua dispatcher names its arguments when given the wrong ones — `hl.dsp.focus({ nonsense = 1 })`
-/// answers with "Expected one of: direction, monitor, window, …" — but `hl.dsp.dpms` accepts anything at all,
-/// including a function, without complaint. There is nothing to read the shape off, so it is not guessed:
-/// [`set_dpms`] tries these and checks whether the compositor's own `dpmsStatus` moved.
+/// Every other Lua dispatcher names its arguments when given the wrong ones — `hl.dsp.focus({ nonsense = 1 })` answers with "Expected one of: direction, monitor, window, …" — but `hl.dsp.dpms` accepts anything at all, including a function, without complaint. There is nothing to read the shape off, so it is not guessed: [`set_dpms`] tries these and checks whether the compositor's own `dpmsStatus` moved.
 fn dpms_calls(state: &str) -> [String; 2] {
     [
         format!("hl.dsp.dpms(\"{state}\")"),
@@ -403,9 +378,7 @@ fn dpms_calls(state: &str) -> [String; 2] {
 
 /// Switches every monitor's output on or off, and reports whether it worked.
 ///
-/// Verified rather than trusted, for the reason above: the call is made and `dpmsStatus` read back, so an idle
-/// stage that blanks the screen either does or says it could not. DPMS is idempotent, so a second shape landing
-/// after a first one already worked costs nothing.
+/// Verified rather than trusted, for the reason above: the call is made and `dpmsStatus` read back, so an idle stage that blanks the screen either does or says it could not. DPMS is idempotent, so a second shape landing after a first one already worked costs nothing.
 pub fn set_dpms(dir: &Path, on: bool) -> bool {
     let state = if on { "on" } else { "off" };
     if dpms_is(dir, on) {
@@ -421,8 +394,7 @@ pub fn set_dpms(dir: &Path, on: bool) -> bool {
     false
 }
 
-/// Whether every enabled monitor's output is in the requested state. Read from the compositor rather than
-/// remembered, since a `hyprctl` or a keybind can move it behind the shell's back.
+/// Whether every enabled monitor's output is in the requested state. Read from the compositor rather than remembered, since a `hyprctl` or a keybind can move it behind the shell's back.
 fn dpms_is(dir: &Path, on: bool) -> bool {
     let Some(monitors) = query_monitors(dir, "j/monitors") else {
         return false;
@@ -430,9 +402,7 @@ fn dpms_is(dir: &Path, on: bool) -> bool {
     !monitors.is_empty() && monitors.iter().all(|m| m.dpms_status == on)
 }
 
-/// Every window the compositor is managing, in Hyprland's own order. One parse feeds both readers of it — the
-/// workspace pills, which want the classes grouped by workspace, and the client list itself — so the two can't
-/// disagree about what is open.
+/// Every window the compositor is managing, in Hyprland's own order. One parse feeds both readers of it — the workspace pills, which want the classes grouped by workspace, and the client list itself — so the two can't disagree about what is open.
 pub fn clients(dir: &Path) -> Vec<Client> {
     let Ok(raw) = request(dir, "j/clients") else {
         return Vec::new();
@@ -461,8 +431,7 @@ pub fn clients(dir: &Path) -> Vec<Client> {
         .collect()
 }
 
-/// The window classes on each workspace, keyed by workspace id. A window with no class draws no icon, so it is
-/// dropped here rather than leaving a gap in the pill.
+/// The window classes on each workspace, keyed by workspace id. A window with no class draws no icon, so it is dropped here rather than leaving a gap in the pill.
 fn classes_by_workspace(clients: &[Client]) -> HashMap<i32, Vec<String>> {
     let mut by_workspace: HashMap<i32, Vec<String>> = HashMap::new();
     for client in clients {
@@ -477,8 +446,7 @@ fn classes_by_workspace(clients: &[Client]) -> HashMap<i32, Vec<String>> {
     by_workspace
 }
 
-/// Special workspaces are kept rather than filtered out — a scratchpad is something a bar wants to indicate —
-/// and sorted after the numbered ones so their negative ids don't put them at the front.
+/// Special workspaces are kept rather than filtered out — a scratchpad is something a bar wants to indicate — and sorted after the numbered ones so their negative ids don't put them at the front.
 fn query_snapshot(dir: &Path) -> Option<Snapshot> {
     let workspaces_raw = request(dir, "j/workspaces").ok()?;
     let active_raw = request(dir, "j/activeworkspace").ok()?;
@@ -518,8 +486,7 @@ fn affects_workspaces(line: &str) -> bool {
         "openwindow>>",
         "closewindow>>",
         "movewindow>>",
-        // A scratchpad being shown or hidden. `ext-workspace-v1` does not list special workspaces at all, so
-        // this is the only event that reports one becoming active.
+        // A scratchpad being shown or hidden. `ext-workspace-v1` does not list special workspaces at all, so this is the only event that reports one becoming active.
         "activespecial",
     ];
     PREFIXES.iter().any(|prefix| line.starts_with(prefix))
@@ -534,20 +501,14 @@ struct Registration {
 }
 
 static HANDLERS: Mutex<Vec<Registration>> = Mutex::new(Vec::new());
-/// Whether the socket reader is running. Not a `OnceLock`, because it has to be able to say "no" again: the
-/// thread gives it back when the last registration goes, and a later producer starts a fresh one.
+/// Whether the socket reader is running. Not a `OnceLock`, because it has to be able to say "no" again: the thread gives it back when the last registration goes, and a later producer starts a fresh one.
 static EVENT_THREAD: Mutex<bool> = Mutex::new(false);
 
-/// Registers `handler` on the compositor's event stream for as long as `interest` is alive, opening the socket
-/// on first use.
+/// Registers `handler` on the compositor's event stream for as long as `interest` is alive, opening the socket on first use.
 ///
-/// Hyprland's `.socket2.sock` is a single-consumer firehose, and every derived reading — workspaces, the
-/// focused window, the keyboard layout — is driven by the same lines. One connection with a list of handlers
-/// keeps that at one socket and one read per event no matter how many services read from it, rather than a
-/// connection per service on top of the connection-per-bar the shared-source design already rules out.
+/// Hyprland's `.socket2.sock` is a single-consumer firehose, and every derived reading — workspaces, the focused window, the keyboard layout — is driven by the same lines. One connection with a list of handlers keeps that at one socket and one read per event no matter how many services read from it, rather than a connection per service on top of the connection-per-bar the shared-source design already rules out.
 ///
-/// The running flag is held across the registration, and taken again by [`retire_event_stream`]: that overlap
-/// is what stops a registration landing on a reader already on its way out and never being called.
+/// The running flag is held across the registration, and taken again by [`retire_event_stream`]: that overlap is what stops a registration landing on a reader already on its way out and never being called.
 fn on_events(interest: &Interest, handler: EventHandler) {
     let mut running = EVENT_THREAD.lock().unwrap();
     HANDLERS.lock().unwrap().push(Registration {
@@ -564,13 +525,9 @@ fn on_events(interest: &Interest, handler: EventHandler) {
 
 /// Registers `handler` for as long as anything is listening to `service`.
 ///
-/// A producer that registers a callback and returns has two questions to keep answering — did this line change
-/// my reading, and is anyone still there — and only the first is interesting enough to be written at each call
-/// site. Asked here in one place so that no registration can answer only that one and go on reading the
-/// compositor for nobody.
+/// A producer that registers a callback and returns has two questions to keep answering — did this line change my reading, and is anyone still there — and only the first is interesting enough to be written at each call site. Asked here in one place so that no registration can answer only that one and go on reading the compositor for nobody.
 ///
-/// **After the handler, never before.** `Broadcast::wanted` releases the producer slot the moment it answers
-/// `false`, so asking first would retire a service between the line arriving and the reading it implies.
+/// **After the handler, never before.** `Broadcast::wanted` releases the producer slot the moment it answers `false`, so asking first would retire a service between the line arriving and the reading it implies.
 fn on_events_while_wanted<T: Clone + Send + 'static>(
     service: &Arc<Broadcast<T>>,
     interest: &Interest,
@@ -596,8 +553,7 @@ fn anyone_reading() -> bool {
     !handlers.is_empty()
 }
 
-/// Gives up the reader, for a thread about to return. `false` is a registration having landed since the last
-/// one went, which has to keep the socket open — it is already in the list and nothing else would call it.
+/// Gives up the reader, for a thread about to return. `false` is a registration having landed since the last one went, which has to keep the socket open — it is already in the list and nothing else would call it.
 fn retire_event_stream() -> bool {
     let mut running = EVENT_THREAD.lock().unwrap();
     if !HANDLERS.lock().unwrap().is_empty() {
@@ -607,9 +563,7 @@ fn retire_event_stream() -> bool {
     true
 }
 
-/// Gives the reader up whatever is registered, for a stream that has failed or ended under it: every
-/// registration is waiting on a socket that is not coming back, and leaving the flag set would stop any later
-/// producer from opening a working one.
+/// Gives the reader up whatever is registered, for a stream that has failed or ended under it: every registration is waiting on a socket that is not coming back, and leaving the flag set would stop any later producer from opening a working one.
 fn forget_event_stream() {
     let mut running = EVENT_THREAD.lock().unwrap();
     HANDLERS.lock().unwrap().clear();
@@ -626,9 +580,7 @@ fn run_event_stream() {
     };
     for line in BufReader::new(stream).lines() {
         let Ok(line) = line else { break };
-        // Pruned before the line is delivered rather than after, so a registration retired since the last one
-        // is not called again — `Broadcast::wanted` answering `false` is final, and calling its handler once
-        // more would ask a service that has already given up its producer slot.
+        // Pruned before the line is delivered rather than after, so a registration retired since the last one is not called again — `Broadcast::wanted` answering `false` is final, and calling its handler once more would ask a service that has already given up its producer slot.
         {
             let mut handlers = HANDLERS.lock().unwrap();
             handlers.retain(|registration| registration.interest.alive());
@@ -636,8 +588,7 @@ fn run_event_stream() {
                 (registration.handler)(&line);
             }
         }
-        // The bound on teardown, and the same one a polling producer has: the reader is asleep on the socket
-        // until the compositor says something, and gives itself up the next time it wakes.
+        // The bound on teardown, and the same one a polling producer has: the reader is asleep on the socket until the compositor says something, and gives itself up the next time it wakes.
         if !anyone_reading() && retire_event_stream() {
             return;
         }
@@ -647,10 +598,7 @@ fn run_event_stream() {
 
 /// The number a user calls a workspace, recovered from a protocol that has no numeric id.
 ///
-/// `ext-workspace-v1` carries an optional opaque *string* id, which Hyprland does not send at all. What it does
-/// send is the name — on Hyprland, the number written out — and one coordinate carrying the same number. Either
-/// answers this; a compositor naming its workspaces "web" and "mail" answers it with the coordinate. Failing
-/// both, the position in the list, so two workspaces never collide on zero.
+/// `ext-workspace-v1` carries an optional opaque *string* id, which Hyprland does not send at all. What it does send is the name — on Hyprland, the number written out — and one coordinate carrying the same number. Either answers this; a compositor naming its workspaces "web" and "mail" answers it with the coordinate. Failing both, the position in the list, so two workspaces never collide on zero.
 fn numbered_id(workspace: &platform_wayland::Workspace, position: usize) -> i32 {
     workspace
         .name
@@ -668,8 +616,7 @@ struct Facts {
     /// The scratchpads, which `ext-workspace-v1` does not list at all.
     specials: Vec<Workspace>,
     focused_monitor: String,
-    /// The active workspace when it is a scratchpad — the one case the protocol reports something else, since
-    /// it goes on reporting the numbered workspace underneath.
+    /// The active workspace when it is a scratchpad — the one case the protocol reports something else, since it goes on reporting the numbered workspace underneath.
     active_special: Option<i32>,
 }
 
@@ -710,11 +657,7 @@ fn read_facts(dir: &Path) -> Facts {
 
 /// The compositor's own workspace list, carrying whatever the compositor's IPC can add to it.
 ///
-/// One field, one owner. The protocol owns which workspaces exist, what they are called, their order, which is
-/// active and the output each sits on — every compositor with workspaces can say that much. It cannot say how
-/// many windows are on one, which applications those are, or that a scratchpad exists, and no other protocol
-/// can either: no toplevel protocol reports the workspace a window is on. Those come off Hyprland where there
-/// is a Hyprland, and are absent where there is not, rather than two sources disagreeing about one field.
+/// One field, one owner. The protocol owns which workspaces exist, what they are called, their order, which is active and the output each sits on — every compositor with workspaces can say that much. It cannot say how many windows are on one, which applications those are, or that a scratchpad exists, and no other protocol can either: no toplevel protocol reports the workspace a window is on. Those come off Hyprland where there is a Hyprland, and are absent where there is not, rather than two sources disagreeing about one field.
 fn merge(protocol: &[platform_wayland::Workspace], dir: Option<&Path>) -> Snapshot {
     merge_with(protocol, dir.map(read_facts).unwrap_or_default())
 }
@@ -750,8 +693,7 @@ fn merge_with(protocol: &[platform_wayland::Workspace], facts: Facts) -> Snapsho
                 .map(|(position, workspace)| numbered_id(workspace, position))
         })
         .unwrap_or_default();
-    // Failing an IPC that names it, the output holding the active workspace: the only thing this side of the
-    // protocol that answers "which monitor is the user on".
+    // Failing an IPC that names it, the output holding the active workspace: the only thing this side of the protocol that answers "which monitor is the user on".
     let focused_monitor = if facts.focused_monitor.is_empty() {
         protocol
             .iter()
@@ -770,20 +712,13 @@ fn merge_with(protocol: &[platform_wayland::Workspace], facts: Facts) -> Snapsho
 
 static WORKSPACES: Service<Snapshot> = Service::new("hogar-shell-workspaces", run_workspaces);
 
-/// The single shared workspaces source: publishes the current layout, then republishes on every event that
-/// could have changed it. Fanned out to every bar that subscribed, so N bars cost one parse per change (the M3
-/// "one producer, N readers"), not N.
+/// The single shared workspaces source: publishes the current layout, then republishes on every event that could have changed it. Fanned out to every bar that subscribed, so N bars cost one parse per change (the M3 "one producer, N readers"), not N.
 ///
-/// `ext-workspace-v1` first and Hyprland's socket only for what it cannot answer, which is the shell's standing
-/// preference for a protocol over one compositor's IPC. Both feed the same snapshot, so both republish it —
-/// hence the deduplication: a workspace switch is reported by the protocol *and* by the event stream, and
-/// publishing it twice would wake every subscribed surface for a reading that did not change.
+/// `ext-workspace-v1` first and Hyprland's socket only for what it cannot answer, which is the shell's standing preference for a protocol over one compositor's IPC. Both feed the same snapshot, so both republish it — hence the deduplication: a workspace switch is reported by the protocol *and* by the event stream, and publishing it twice would wake every subscribed surface for a reading that did not change.
 fn run_workspaces(service: &Arc<Broadcast<Snapshot>>) {
     let dir = socket_dir();
     let last: Arc<Mutex<Option<Snapshot>>> = Arc::new(Mutex::new(None));
-    // One claim for both registrations below, so the two retire together. Retiring them one at a time leaves a
-    // window in which a new subscriber arrives, `wanted` answers `true` again to whichever has not yet asked,
-    // it stays — and the fresh producer this service then starts registers a second reader of the same stream.
+    // One claim for both registrations below, so the two retire together. Retiring them one at a time leaves a window in which a new subscriber arrives, `wanted` answers `true` again to whichever has not yet asked, it stays — and the fresh producer this service then starts registers a second reader of the same stream.
     let interest = Interest::new();
 
     let over_protocol = {
@@ -799,13 +734,11 @@ fn run_workspaces(service: &Arc<Broadcast<Snapshot>>) {
         })
     };
 
-    // The broadcast outlives this call: the handler owns a clone of the `Arc` the service holds, so the
-    // producer thread can return once it has registered instead of parking on a socket of its own.
+    // The broadcast outlives this call: the handler owns a clone of the `Arc` the service holds, so the producer thread can return once it has registered instead of parking on a socket of its own.
     let Some(dir) = dir else { return };
     let published = Arc::clone(service);
     if over_protocol {
-        // Nothing the protocol publishes moves when a window opens or closes, and occupancy and the app icons
-        // are read from exactly that. The event stream is what republishes them.
+        // Nothing the protocol publishes moves when a window opens or closes, and occupancy and the app icons are read from exactly that. The event stream is what republishes them.
         on_events_while_wanted(service, &interest, move |line| {
             if affects_workspaces(line) {
                 let merged = merge(&platform_wayland::current_workspaces(), Some(&dir));
@@ -829,9 +762,7 @@ fn run_workspaces(service: &Arc<Broadcast<Snapshot>>) {
 
 /// Publishes a reading unless it is the one already published.
 ///
-/// Every service here has two producers now — a protocol and a compositor's event stream — and the two report
-/// overlapping facts, so the same reading arrives twice for one change. Publishing it twice would wake every
-/// subscribed surface for something that did not move.
+/// Every service here has two producers now — a protocol and a compositor's event stream — and the two report overlapping facts, so the same reading arrives twice for one change. Publishing it twice would wake every subscribed surface for something that did not move.
 fn publish_changed<T: Clone + PartialEq>(
     service: &Broadcast<T>,
     last: &Mutex<Option<T>>,
@@ -850,14 +781,12 @@ pub fn current_workspaces() -> Option<Snapshot> {
     WORKSPACES.current()
 }
 
-/// Registers `tx` (bound to a bar's event loop) for live workspace snapshots and sends the current one, spinning
-/// up the single shared Hyprland listener on first use. Called from a bar's `watch` producer.
+/// Registers `tx` (bound to a bar's event loop) for live workspace snapshots and sends the current one, spinning up the single shared Hyprland listener on first use. Called from a bar's `watch` producer.
 pub fn subscribe(tx: EventSender<Snapshot>) {
     WORKSPACES.subscribe(tx);
 }
 
-/// Stands `snapshot` in for the compositor's own, without starting the listener — so a `[preview]` draws the
-/// workspaces it describes whether or not Hyprland is running. See [`util::broadcast::Service::seed`].
+/// Stands `snapshot` in for the compositor's own, without starting the listener — so a `[preview]` draws the workspaces it describes whether or not Hyprland is running. See [`util::broadcast::Service::seed`].
 pub fn seed_workspaces(snapshot: Snapshot) {
     WORKSPACES.seed(snapshot);
 }
@@ -878,8 +807,7 @@ fn affects_active_window(line: &str) -> bool {
     PREFIXES.iter().any(|prefix| line.starts_with(prefix))
 }
 
-/// The focused window, or the empty value when nothing is focused. Hyprland answers `j/activewindow` with `{}`
-/// on an empty workspace, which deserializes to the default rather than failing.
+/// The focused window, or the empty value when nothing is focused. Hyprland answers `j/activewindow` with `{}` on an empty workspace, which deserializes to the default rather than failing.
 pub fn active_window(dir: &Path) -> ActiveWindow {
     let Ok(raw) = request(dir, "j/activewindow") else {
         return ActiveWindow::default();
@@ -894,18 +822,11 @@ pub fn active_window(dir: &Path) -> ActiveWindow {
         .unwrap_or_default()
 }
 
-/// The focused window as `wlr-foreign-toplevel-management` reports it, carrying Hyprland's address where there
-/// is a Hyprland to ask.
+/// The focused window as `wlr-foreign-toplevel-management` reports it, carrying Hyprland's address where there is a Hyprland to ask.
 ///
-/// The same rule the workspace list follows. The protocol owns which window has focus and what it is called —
-/// no other portable route answers the first at all, since `ext-foreign-toplevel-list-v1` lists windows
-/// without ever saying which is active. The address is Hyprland's alone, so Hyprland is asked for it, and it
-/// stays empty elsewhere rather than being invented.
-/// Whether what was last published already describes `focused`, so nothing has to be read or fanned out.
+/// The same rule the workspace list follows. The protocol owns which window has focus and what it is called — no other portable route answers the first at all, since `ext-foreign-toplevel-list-v1` lists windows without ever saying which is active. The address is Hyprland's alone, so Hyprland is asked for it, and it stays empty elsewhere rather than being invented. Whether what was last published already describes `focused`, so nothing has to be read or fanned out.
 ///
-/// The protocol publishes the whole window list whenever *any* window commits a change, and a terminal retypes
-/// its title on nearly every keystroke. Without this, someone typing in a background window would cost a socket
-/// round trip per keystroke — exactly the cost reading a protocol was meant to remove.
+/// The protocol publishes the whole window list whenever *any* window commits a change, and a terminal retypes its title on nearly every keystroke. Without this, someone typing in a background window would cost a socket round trip per keystroke — exactly the cost reading a protocol was meant to remove.
 fn already_published(
     published: Option<&ActiveWindow>,
     focused: Option<&platform_wayland::ManagedToplevel>,
@@ -933,8 +854,7 @@ fn active_from(focused: platform_wayland::ManagedToplevel, address: String) -> A
 static ACTIVE_WINDOW: Service<ActiveWindow> =
     Service::new("hogar-shell-active-window", run_active_window);
 
-/// The focused window, published on every change and never twice for the same reading: a title changes on
-/// nearly every keystroke in a terminal or a browser, and most of those land on a window nobody is showing.
+/// The focused window, published on every change and never twice for the same reading: a title changes on nearly every keystroke in a terminal or a browser, and most of those land on a window nobody is showing.
 fn run_active_window(service: &Arc<Broadcast<ActiveWindow>>) {
     let dir = socket_dir();
     let last: Arc<Mutex<Option<ActiveWindow>>> = Arc::new(Mutex::new(None));
@@ -959,9 +879,7 @@ fn run_active_window(service: &Arc<Broadcast<ActiveWindow>>) {
                 };
                 publish_changed(&published, &last, window);
             }
-            // After the publishing and on every reading, not only the ones that moved: `Broadcast::wanted`
-            // releases the producer slot the moment it answers `false`, and a reading nobody wanted is exactly
-            // when this needs asking.
+            // After the publishing and on every reading, not only the ones that moved: `Broadcast::wanted` releases the producer slot the moment it answers `false`, and a reading nobody wanted is exactly when this needs asking.
             if !published.wanted() {
                 owned.retire();
             }
@@ -1013,10 +931,7 @@ pub fn focus_window(dir: &Path, address: &str) {
     );
 }
 
-/// The window actions live under `hl.dsp.window.<action>`, and which *shape* each takes cannot be read off the
-/// compositor: called outside a dispatch context they refuse to build at all, so the usual trick of passing a
-/// nonsense field and reading the "expected one of" reply gets nothing. The same rule the `dpms` dispatcher
-/// taught applies — try a shape, then check whether the compositor's own state moved. See [`set_dpms`].
+/// The window actions live under `hl.dsp.window.<action>`, and which *shape* each takes cannot be read off the compositor: called outside a dispatch context they refuse to build at all, so the usual trick of passing a nonsense field and reading the "expected one of" reply gets nothing. The same rule the `dpms` dispatcher taught applies — try a shape, then check whether the compositor's own state moved. See [`set_dpms`].
 ///
 /// The table form first, because it is the one shape a verified dispatcher (`focus`) is known to take.
 fn window_calls(action: &str, address: &str, extra: &str) -> [String; 2] {
@@ -1026,8 +941,7 @@ fn window_calls(action: &str, address: &str, extra: &str) -> [String; 2] {
     ]
 }
 
-/// Runs each shape until `moved` reports the compositor did what was asked. The state is re-read after each
-/// attempt rather than slept on: a dispatch reply arrives after the action, so the next query already sees it.
+/// Runs each shape until `moved` reports the compositor did what was asked. The state is re-read after each attempt rather than slept on: a dispatch reply arrives after the action, so the next query already sees it.
 fn dispatch_until(dir: &Path, calls: [String; 2], moved: impl Fn(&Path) -> bool) -> bool {
     if moved(dir) {
         return true;
@@ -1047,8 +961,7 @@ fn client_of(dir: &Path, address: &str) -> Option<Client> {
 
 /// Closes a window.
 ///
-/// The one action with no second shape to fall back on: a close either happened or it did not, and trying another
-/// spelling of it afterwards is how the wrong window gets closed twice. A refused dispatch is a log line.
+/// The one action with no second shape to fall back on: a close either happened or it did not, and trying another spelling of it afterwards is how the wrong window gets closed twice. A refused dispatch is a log line.
 pub fn close_window(dir: &Path, address: &str) {
     dispatch(
         dir,
@@ -1090,9 +1003,7 @@ pub fn move_window_to_workspace(dir: &Path, address: &str, workspace: i32) -> bo
     })
 }
 
-/// Whether a line reports something that could have changed the set of open windows, where they are, or how
-/// they are laid out. Deliberately wider than [`affects_workspaces`]: a window moving between monitors or
-/// toggling float changes nothing about the workspace pills and everything about a window list.
+/// Whether a line reports something that could have changed the set of open windows, where they are, or how they are laid out. Deliberately wider than [`affects_workspaces`]: a window moving between monitors or toggling float changes nothing about the workspace pills and everything about a window list.
 fn affects_clients(line: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "openwindow>>",
@@ -1112,8 +1023,7 @@ fn affects_clients(line: &str) -> bool {
 
 static CLIENTS: Service<Vec<Client>> = Service::new("hogar-shell-clients", run_clients);
 
-/// The window list, republished whenever the compositor reports something that could have changed it. Costs one
-/// `j/clients` round-trip per such event — the same one the workspace pills already pay — and nothing at rest.
+/// The window list, republished whenever the compositor reports something that could have changed it. Costs one `j/clients` round-trip per such event — the same one the workspace pills already pay — and nothing at rest.
 fn run_clients(service: &Arc<Broadcast<Vec<Client>>>) {
     let Some(dir) = socket_dir() else { return };
     let mut last = clients(&dir);
@@ -1123,8 +1033,7 @@ fn run_clients(service: &Arc<Broadcast<Vec<Client>>>) {
         if !affects_clients(line) {
             return;
         }
-        // A title changes on nearly every keystroke in a terminal, and most of those land on a window nobody is
-        // listing; republishing an identical list would wake every subscriber for nothing.
+        // A title changes on nearly every keystroke in a terminal, and most of those land on a window nobody is listing; republishing an identical list would wake every subscriber for nothing.
         let current = clients(&dir);
         if current != last {
             last = current.clone();
@@ -1156,9 +1065,7 @@ fn affects_screens(line: &str) -> bool {
 
 static SCREENS: Service<Vec<Screen>> = Service::new("hogar-shell-screens", run_screens);
 
-/// The output list. Separate from the compositor-agnostic `platform_wayland::outputs()` the surface layer
-/// reconciles against, which knows a Wayland output's name and nothing else: mode, scale, make and model only
-/// exist on this side, and a settings page listing monitors needs them.
+/// The output list. Separate from the compositor-agnostic `platform_wayland::outputs()` the surface layer reconciles against, which knows a Wayland output's name and nothing else: mode, scale, make and model only exist on this side, and a settings page listing monitors needs them.
 fn run_screens(service: &Arc<Broadcast<Vec<Screen>>>) {
     let Some(dir) = socket_dir() else { return };
     let mut last = screens(&dir);
@@ -1221,26 +1128,18 @@ pub fn subscribe_keyboard(tx: EventSender<KeyboardLayout>) {
     KEYBOARD.subscribe(tx);
 }
 
-/// The wire form of a layout switch: a bare top-level command with space-separated arguments, *not* a
-/// `dispatch` payload. Separated from the call so a test can hold the shape without switching anyone's keyboard.
+/// The wire form of a layout switch: a bare top-level command with space-separated arguments, *not* a `dispatch` payload. Separated from the call so a test can hold the shape without switching anyone's keyboard.
 fn switch_layout_command(device: &str, to: &str) -> String {
     format!("switchxkblayout {device} {to}")
 }
 
 /// Moves `device` to its next configured keyboard layout.
 ///
-/// **Not a dispatcher, which is why this looked impossible.** `switchxkblayout` was a hyprlang dispatcher and
-/// was not carried into the Lua API: `hl.dsp` has no keyboard entry on 0.56, and `hl.device` is a config setter
-/// that returns nothing for a keyboard name. It survives as a *top-level IPC command* — the same kind as
-/// `devices` or `keyword` — so it goes over the socket verbatim rather than through `dispatch`. Looking only at
-/// `hl.dsp` is what made this read as unsupported.
+/// **Not a dispatcher, which is why this looked impossible.** `switchxkblayout` was a hyprlang dispatcher and was not carried into the Lua API: `hl.dsp` has no keyboard entry on 0.56, and `hl.device` is a config setter that returns nothing for a keyboard name. It survives as a *top-level IPC command* — the same kind as `devices` or `keyword` — so it goes over the socket verbatim rather than through `dispatch`. Looking only at `hl.dsp` is what made this read as unsupported.
 ///
-/// Verified against the running compositor rather than assumed, the same rule `set_dpms` follows: `next` and an
-/// explicit index both answer `ok`, and a name no keyboard has answers `device not found`. That last one is what
-/// makes the reply worth reading — a wrong device fails silently otherwise.
+/// Verified against the running compositor rather than assumed, the same rule `set_dpms` follows: `next` and an explicit index both answer `ok`, and a name no keyboard has answers `device not found`. That last one is what makes the reply worth reading — a wrong device fails silently otherwise.
 ///
-/// Nothing is read back here. The compositor emits `activelayout>>` on a real change, which the keyboard
-/// service already watches, so the chip follows a switch made from a keybind exactly as it follows this one.
+/// Nothing is read back here. The compositor emits `activelayout>>` on a real change, which the keyboard service already watches, so the chip follows a switch made from a keybind exactly as it follows this one.
 pub fn cycle_keyboard_layout(dir: &Path, device: &str) {
     let command = switch_layout_command(device, "next");
     match request(dir, &command) {
@@ -1250,9 +1149,7 @@ pub fn cycle_keyboard_layout(dir: &Path, device: &str) {
     }
 }
 
-/// Cycles the layout of whichever keyboard [`keyboard_layout`] reports, for a caller that has no device in hand
-/// — a bar chip, a keybind. Resolved per call rather than remembered: the main keyboard is exactly the thing
-/// that changes when one is plugged in.
+/// Cycles the layout of whichever keyboard [`keyboard_layout`] reports, for a caller that has no device in hand — a bar chip, a keybind. Resolved per call rather than remembered: the main keyboard is exactly the thing that changes when one is plugged in.
 pub fn cycle_main_keyboard_layout() {
     let Some(dir) = socket_dir() else { return };
     let Some(layout) = keyboard_layout(&dir) else {
@@ -1266,9 +1163,7 @@ pub fn cycle_main_keyboard_layout() {
 mod tests {
     use super::*;
 
-    /// The event stream is one socket shared by six services, so it stops only when the *last* of them has
-    /// gone — and having stopped, it has to let the next one open a working socket rather than believing one
-    /// is already open.
+    /// The event stream is one socket shared by six services, so it stops only when the *last* of them has gone — and having stopped, it has to let the next one open a working socket rather than believing one is already open.
     #[test]
     fn the_event_stream_lives_exactly_as_long_as_its_readers() {
         *EVENT_THREAD.lock().unwrap() = true;
@@ -1294,11 +1189,7 @@ mod tests {
 
     /// A layout switch is a top-level command, not a dispatch, and the difference is the whole feature.
     ///
-    /// `switchxkblayout` was a hyprlang dispatcher and did not survive into the Lua API, which is what made this
-    /// read as impossible for a release: `hl.dsp` has no keyboard entry and `hl.device` answers nothing for a
-    /// keyboard name. It is still there as a bare IPC command, the same kind as `devices`. Wrapping it in
-    /// `dispatch …` — the shape every other mutation here takes — is the one plausible way to get this wrong,
-    /// and the compositor answers a Lua parse error rather than anything that looks like a missing feature.
+    /// `switchxkblayout` was a hyprlang dispatcher and did not survive into the Lua API, which is what made this read as impossible for a release: `hl.dsp` has no keyboard entry and `hl.device` answers nothing for a keyboard name. It is still there as a bare IPC command, the same kind as `devices`. Wrapping it in `dispatch …` — the shape every other mutation here takes — is the one plausible way to get this wrong, and the compositor answers a Lua parse error rather than anything that looks like a missing feature.
     #[test]
     fn a_layout_switch_goes_over_the_socket_bare_rather_than_as_a_dispatch() {
         let command = switch_layout_command("at-translated-set-2-keyboard", "next");
@@ -1417,8 +1308,7 @@ mod tests {
 
     #[test]
     fn the_fullscreen_field_is_read_as_both_a_flag_and_a_mode() {
-        // Hyprland changed the type in 0.42; a shell that only understood one would fail the whole parse on the
-        // other, losing the window list rather than one field.
+        // Hyprland changed the type in 0.42; a shell that only understood one would fail the whole parse on the other, losing the window list rather than one field.
         let flag: ClientJson =
             serde_json::from_str(r#"{"workspace":{"id":1},"fullscreen":true}"#).unwrap();
         assert!(flag.fullscreen.is_set());
@@ -1494,8 +1384,7 @@ mod tests {
         }
     }
 
-    /// The reading a compositor that is not Hyprland produces: everything the protocol carries, and nothing
-    /// invented for what it does not.
+    /// The reading a compositor that is not Hyprland produces: everything the protocol carries, and nothing invented for what it does not.
     #[test]
     fn without_an_ipc_the_protocol_is_the_whole_snapshot() {
         let protocol = vec![
@@ -1523,8 +1412,7 @@ mod tests {
         );
     }
 
-    /// One field, one owner: the protocol's rows carry the IPC's counts and classes, and the scratchpads the
-    /// protocol never lists are the IPC's own rows.
+    /// One field, one owner: the protocol's rows carry the IPC's counts and classes, and the scratchpads the protocol never lists are the IPC's own rows.
     #[test]
     fn the_ipc_fills_in_only_what_the_protocol_cannot_say() {
         let protocol = vec![
@@ -1570,8 +1458,7 @@ mod tests {
         );
     }
 
-    /// Hyprland goes on reporting the numbered workspace as active while a scratchpad is up, so the one thing
-    /// the IPC has to be allowed to override is which workspace is active.
+    /// Hyprland goes on reporting the numbered workspace as active while a scratchpad is up, so the one thing the IPC has to be allowed to override is which workspace is active.
     #[test]
     fn an_active_scratchpad_wins_over_the_workspace_beneath_it() {
         let protocol = vec![protocol_workspace("2", 2, true)];

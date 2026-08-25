@@ -61,26 +61,20 @@ use crate::link::{ExitPlan, SurfaceLink, SurfaceUpdate};
 use crate::lock::LockSession;
 use crate::window::LayerWindow;
 
-/// The type driven every surface handler is boxed to, so one loop holds statically-declared bars and
-/// runtime-opened drawers/OSDs in one `Vec` (the blanket `EventHandler for Box<dyn EventHandler>` makes the
-/// box callable). All surfaces share this UI thread; isolation is the handler's own `ui_core::Surface`.
+/// The type driven every surface handler is boxed to, so one loop holds statically-declared bars and runtime-opened drawers/OSDs in one `Vec` (the blanket `EventHandler for Box<dyn EventHandler>` makes the box callable). All surfaces share this UI thread; isolation is the handler's own `ui_core::Surface`.
 pub(crate) type BoxedHandler = Box<dyn EventHandler<LayerWindow>>;
 
-/// The calloop sources (timers, channels) a surface registered while its handler ran, removed together when the
-/// surface is torn down. Shared by `Rc` so `with_current` can hand the sink to `interval`/`watch` without
-/// borrowing the driver's `SurfaceEntry`.
+/// The calloop sources (timers, channels) a surface registered while its handler ran, removed together when the surface is torn down. Shared by `Rc` so `with_current` can hand the sink to `interval`/`watch` without borrowing the driver's `SurfaceEntry`.
 type SourceSink = Rc<RefCell<Vec<RegistrationToken>>>;
 
-/// Where `on_close` files a surface's exit transition while its handler runs, on the same terms as
-/// [`SourceSink`]: shared by `Rc` so the driver can read the plan back without borrowing its entry.
+/// Where `on_close` files a surface's exit transition while its handler runs, on the same terms as [`SourceSink`]: shared by `Rc` so the driver can read the plan back without borrowing its entry.
 type ExitSink = Rc<RefCell<ExitPlan>>;
 
 thread_local! {
     static LOOP_HANDLE: RefCell<Option<LoopHandle<'static, Driver>>> = const { RefCell::new(None) };
     // The control channel of the surface whose handler is currently running, so `request_close` and `request_geometry` target it (a surface opened by `open_surface` has one; a lock surface does not). Set by the driver around each handler call.
     static CURRENT_LINK: RefCell<Option<Arc<SurfaceLink>>> = const { RefCell::new(None) };
-    // Where `interval`/`watch` file their registration tokens while a surface's handler runs, so the driver can
-    // drop them with that surface. `None` outside a surface (app-level setup), where sources are process-lived.
+    // Where `interval`/`watch` file their registration tokens while a surface's handler runs, so the driver can drop them with that surface. `None` outside a surface (app-level setup), where sources are process-lived.
     static CURRENT_SOURCES: RefCell<Option<SourceSink>> = const { RefCell::new(None) };
     // Where `on_close` files what the current surface does on its way out. `None` outside a surface.
     static CURRENT_EXIT: RefCell<Option<ExitSink>> = const { RefCell::new(None) };
@@ -94,8 +88,7 @@ thread_local! {
     static OUTPUTS_CHANGED: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
-/// Files `token` against the surface currently being driven, so its teardown removes the source. Outside a
-/// surface the token is dropped: app-level sources (the config watcher) live as long as the process.
+/// Files `token` against the surface currently being driven, so its teardown removes the source. Outside a surface the token is dropped: app-level sources (the config watcher) live as long as the process.
 fn track_source(token: RegistrationToken) {
     CURRENT_SOURCES.with(|s| {
         if let Some(sink) = s.borrow().as_ref() {
@@ -104,20 +97,15 @@ fn track_source(token: RegistrationToken) {
     });
 }
 
-/// Wayland surfaces the driver is holding, refreshed once a turn. An atomic rather than a thread-local because
-/// the point is to be readable as a number without being on the driver thread, which is what makes a surface
-/// leak observable from a script instead of from `top`.
+/// Wayland surfaces the driver is holding, refreshed once a turn. An atomic rather than a thread-local because the point is to be readable as a number without being on the driver thread, which is what makes a surface leak observable from a script instead of from `top`.
 static LIVE_SURFACES: AtomicUsize = AtomicUsize::new(0);
 
-/// How many surfaces are mapped right now — every bar, panel, drawer and popup the driver holds, not just the
-/// ones a user opened. Reported by `shell status`.
+/// How many surfaces are mapped right now — every bar, panel, drawer and popup the driver holds, not just the ones a user opened. Reported by `shell status`.
 pub fn live_surfaces() -> usize {
     LIVE_SURFACES.load(Ordering::Relaxed)
 }
 
-/// Registers a closure to run once on the driver thread just after its loop is set up (its `LOOP_HANDLE` and
-/// `SurfaceHost` installed), so app-level setup that needs `watch`/`open_surface` — e.g. the notification popup
-/// host — runs on the right thread. Call it before `run_multi_with_platform` (same thread as the driver).
+/// Registers a closure to run once on the driver thread just after its loop is set up (its `LOOP_HANDLE` and `SurfaceHost` installed), so app-level setup that needs `watch`/`open_surface` — e.g. the notification popup host — runs on the right thread. Call it before `run_multi_with_platform` (same thread as the driver).
 pub fn run_on_start(task: impl FnOnce() + 'static) {
     STARTUP.with(|s| s.borrow_mut().push(Box::new(task)));
 }
@@ -129,10 +117,7 @@ struct PendingSurface {
     link: Arc<SurfaceLink>,
 }
 
-/// Runs the handler closure with the current surface's worlds installed: `link` so `request_close` and
-/// `request_geometry` reach the right surface, `sources` as the sink `interval`/`watch` file their registration
-/// tokens into (so the surface's timers and channels die with it), and `exit` as the one `on_close` files its
-/// exit transition into. All three are restored afterwards.
+/// Runs the handler closure with the current surface's worlds installed: `link` so `request_close` and `request_geometry` reach the right surface, `sources` as the sink `interval`/`watch` file their registration tokens into (so the surface's timers and channels die with it), and `exit` as the one `on_close` files its exit transition into. All three are restored afterwards.
 fn with_current<R>(
     link: &Option<Arc<SurfaceLink>>,
     sources: &SourceSink,
@@ -157,37 +142,26 @@ fn with_current_link(read: impl FnOnce(&Arc<SurfaceLink>)) {
     });
 }
 
-/// Asks the *current* surface to close — for a dynamic surface (drawer/OSD), flips its close flag so the driver
-/// tears it down on the next loop turn, or plays out the exit transition it registered with [`on_close`] first.
-/// No-op on a surface the driver mounted itself (a lock surface), which has no control channel.
+/// Asks the *current* surface to close — for a dynamic surface (drawer/OSD), flips its close flag so the driver tears it down on the next loop turn, or plays out the exit transition it registered with [`on_close`] first. No-op on a surface the driver mounted itself (a lock surface), which has no control channel.
 pub fn request_close() {
     with_current_link(|link| link.request_close());
 }
 
-/// Asks the compositor to renegotiate the *current* surface's size, from inside its own handler — the drag of a
-/// float's resize grip, say. Layer-shell sizes are logical pixels; `0` on an axis hands that axis back to the
-/// compositor.
+/// Asks the compositor to renegotiate the *current* surface's size, from inside its own handler — the drag of a float's resize grip, say. Layer-shell sizes are logical pixels; `0` on an axis hands that axis back to the compositor.
 pub fn request_size(width: u32, height: u32) {
     with_current_link(|link| link.request_update(SurfaceUpdate::size(width, height)));
 }
 
-/// Asks the compositor to move the *current* surface relative to the edges it is anchored to, as
-/// `(top, right, bottom, left)` logical pixels. A margin only takes effect on an edge the surface is anchored
-/// to, and a negative one pushes it off that edge — which is how an auto-hidden bar leaves only a hover strip
-/// on screen.
+/// Asks the compositor to move the *current* surface relative to the edges it is anchored to, as `(top, right, bottom, left)` logical pixels. A margin only takes effect on an edge the surface is anchored to, and a negative one pushes it off that edge — which is how an auto-hidden bar leaves only a hover strip on screen.
 pub fn request_margin(margin: (i32, i32, i32, i32)) {
     with_current_link(|link| link.request_update(SurfaceUpdate::margin(margin)));
 }
 
-/// Registers what the *current* surface does when it is asked to close, and how long the driver keeps it mapped
-/// afterwards so that reaction can be seen — an exit transition, in other words.
+/// Registers what the *current* surface does when it is asked to close, and how long the driver keeps it mapped afterwards so that reaction can be seen — an exit transition, in other words.
 ///
-/// Call it while the surface's content is being built, which is the one time the surface is current. More than
-/// one caller per surface is expected and additive: the hosted scaffold fades its scrim out while the panel
-/// content slides back toward its bar edge, and the driver waits for the longer of the two.
+/// Call it while the surface's content is being built, which is the one time the surface is current. More than one caller per surface is expected and additive: the hosted scaffold fades its scrim out while the panel content slides back toward its bar edge, and the driver waits for the longer of the two.
 ///
-/// A zero `linger`, or no registration at all, is the original behaviour — the surface goes on the driver's next
-/// loop turn.
+/// A zero `linger`, or no registration at all, is the original behaviour — the surface goes on the driver's next loop turn.
 pub fn on_close(linger: Duration, react: impl FnOnce() + 'static) {
     CURRENT_EXIT.with(|e| {
         if let Some(sink) = e.borrow().as_ref() {
@@ -196,9 +170,7 @@ pub fn on_close(linger: Duration, react: impl FnOnce() + 'static) {
     });
 }
 
-/// Repeats `callback` every `period` on the shared loop. Bound to the surface that registered it: when that
-/// surface is torn down (a drawer closing, a bar replaced on config reload) the timer is removed with it, so a
-/// reopened panel never stacks a second ticker on the first.
+/// Repeats `callback` every `period` on the shared loop. Bound to the surface that registered it: when that surface is torn down (a drawer closing, a bar replaced on config reload) the timer is removed with it, so a reopened panel never stacks a second ticker on the first.
 pub fn interval(period: Duration, mut callback: impl FnMut() + 'static) {
     LOOP_HANDLE.with(|h| {
         if let Some(handle) = h.borrow().as_ref() {
@@ -216,8 +188,7 @@ pub fn interval(period: Duration, mut callback: impl FnMut() + 'static) {
     });
 }
 
-/// Runs `callback` once, `delay` from now, on the shared event loop, then drops the timer. Used for an OSD's
-/// auto-dismiss. No-op when called outside a surface loop (e.g. a headless test).
+/// Runs `callback` once, `delay` from now, on the shared event loop, then drops the timer. Used for an OSD's auto-dismiss. No-op when called outside a surface loop (e.g. a headless test).
 pub fn timeout(delay: Duration, callback: impl FnOnce() + 'static) {
     LOOP_HANDLE.with(|h| {
         if let Some(handle) = h.borrow().as_ref() {
@@ -247,10 +218,7 @@ impl<T> EventSender<T> {
 
     /// Whether the surface on the other end still exists — asked *without* sending anything.
     ///
-    /// A failed `send` answers the same question and was the only way to ask it, which meant a service could
-    /// not discover it was unwanted without first doing the work of a reading: the producer that nobody is
-    /// listening to is precisely the one that must not take one. The strong half of this handle lives in the
-    /// loop source's callback, so removing that source with its surface is what makes this `false`.
+    /// A failed `send` answers the same question and was the only way to ask it, which meant a service could not discover it was unwanted without first doing the work of a reading: the producer that nobody is listening to is precisely the one that must not take one. The strong half of this handle lives in the loop source's callback, so removing that source with its surface is what makes this `false`.
     pub fn alive(&self) -> bool {
         self.receiver.strong_count() > 0
     }
@@ -259,8 +227,7 @@ impl<T> EventSender<T> {
 /// The receiving end of a [`detached`] subscription, held by the caller instead of by a loop source.
 pub struct Subscription<T> {
     channel: Channel<T>,
-    /// Never read — holding it is the point. The sender's weak twin dies when this drops, which is what makes
-    /// `EventSender::alive` answer `false`.
+    /// Never read — holding it is the point. The sender's weak twin dies when this drops, which is what makes `EventSender::alive` answer `false`.
     #[allow(dead_code)]
     receiver: Arc<()>,
 }
@@ -272,9 +239,7 @@ impl<T> Subscription<T> {
     }
 }
 
-/// A subscription with no surface behind it: the caller holds the receiving end itself, and the producer's
-/// sender reports itself dead once that end is dropped. What stands in for a surface where there is no event
-/// loop to file one against — a test, or a producer consuming another service.
+/// A subscription with no surface behind it: the caller holds the receiving end itself, and the producer's sender reports itself dead once that end is dropped. What stands in for a surface where there is no event loop to file one against — a test, or a producer consuming another service.
 pub fn detached<T>() -> (EventSender<T>, Subscription<T>) {
     let (tx, rx) = channel::<T>();
     let receiver = Arc::new(());
@@ -291,15 +256,9 @@ pub fn detached<T>() -> (EventSender<T>, Subscription<T>) {
     )
 }
 
-/// Runs `producer` on its own thread and delivers what it sends to `on_event` on the loop thread. Bound to the
-/// surface that registered it: tearing that surface down removes the channel source, which drops the receiver
-/// so the producer's next `send` fails and it winds itself down (every producer here checks that result), and
-/// makes [`EventSender::alive`] answer `false` so a producer with nothing left to feed can retire before it
-/// takes another reading.
+/// Runs `producer` on its own thread and delivers what it sends to `on_event` on the loop thread. Bound to the surface that registered it: tearing that surface down removes the channel source, which drops the receiver so the producer's next `send` fails and it winds itself down (every producer here checks that result), and makes [`EventSender::alive`] answer `false` so a producer with nothing left to feed can retire before it takes another reading.
 ///
-/// Returns a handle to the registration for the app-level caller that has to be able to take it back — a watcher
-/// installed from the config, which a reload may switch off. A caller inside a surface can ignore it: the
-/// surface's own teardown already removes the source.
+/// Returns a handle to the registration for the app-level caller that has to be able to take it back — a watcher installed from the config, which a reload may switch off. A caller inside a surface can ignore it: the surface's own teardown already removes the source.
 pub fn watch<T, P, F>(producer: P, mut on_event: F) -> Option<WatchToken>
 where
     T: Send + 'static,
@@ -334,9 +293,7 @@ where
 /// A [`watch`] registration, so the caller that installed it can take it back.
 pub struct WatchToken(RegistrationToken);
 
-/// Removes a [`watch`], dropping the channel that fed it. The producer's next `send` fails and
-/// `EventSender::alive` turns false, so the service behind it winds down too — which is the point: switching a
-/// watcher off has to stop the thing it started, not just stop listening to it.
+/// Removes a [`watch`], dropping the channel that fed it. The producer's next `send` fails and `EventSender::alive` turns false, so the service behind it winds down too — which is the point: switching a watcher off has to stop the thing it started, not just stop listening to it.
 ///
 /// Must run on the driver thread, which is where every `watch` callback and every config reload already runs.
 pub fn unwatch(token: WatchToken) {
@@ -347,14 +304,12 @@ pub fn unwatch(token: WatchToken) {
     });
 }
 
-/// Registers the app's reaction to the compositor's output set changing after startup — a monitor plugged in or
-/// unplugged — so it can open bars on the new screen and drop the ones on the old. Fires on the driver thread.
+/// Registers the app's reaction to the compositor's output set changing after startup — a monitor plugged in or unplugged — so it can open bars on the new screen and drop the ones on the old. Fires on the driver thread.
 pub fn on_outputs_changed(callback: impl Fn() + 'static) {
     OUTPUTS_CHANGED.with(|c| *c.borrow_mut() = Some(Box::new(callback)));
 }
 
-/// The compositor's outputs. On the driver thread this reads the live set the driver already tracks; anywhere
-/// else (before the loop is up) it falls back to a throwaway connection via [`enumerate_outputs`].
+/// The compositor's outputs. On the driver thread this reads the live set the driver already tracks; anywhere else (before the loop is up) it falls back to a throwaway connection via [`enumerate_outputs`].
 pub fn outputs() -> Vec<OutputDescriptor> {
     let cached = OUTPUTS.with(|o| o.borrow().clone());
     if cached.is_empty() {
@@ -402,9 +357,7 @@ impl MultiSurfacePlatform for LayerShellPlatform {
     }
 }
 
-/// The shell object a surface is mounted through. Two roles share every other part of the driver — one
-/// connection, one seat, one loop, the same rsx handler and the same `LayerWindow` bridging it to wgpu — and
-/// differ only in which protocol object carries the surface and how it is configured.
+/// The shell object a surface is mounted through. Two roles share every other part of the driver — one connection, one seat, one loop, the same rsx handler and the same `LayerWindow` bridging it to wgpu — and differ only in which protocol object carries the surface and how it is configured.
 pub(crate) enum Shell {
     Layer(LayerSurface),
     /// A session-lock surface, which owns its `wl_surface` directly (there is no SCTK wrapper for it).
@@ -427,8 +380,7 @@ impl Shell {
     }
 }
 
-/// A single mounted surface: its shell object, wgpu-bridging window, and (unless it is a reservation-only
-/// strip) the rsx handler that renders it. All entries live on one thread and share one Wayland connection.
+/// A single mounted surface: its shell object, wgpu-bridging window, and (unless it is a reservation-only strip) the rsx handler that renders it. All entries live on one thread and share one Wayland connection.
 pub(crate) struct SurfaceEntry {
     pub(crate) shell: Shell,
     wl_id: ObjectId,
@@ -436,8 +388,7 @@ pub(crate) struct SurfaceEntry {
     handler: Option<BoxedHandler>,
     // `Some` for a surface opened through a `SurfaceHandle` (its close flag and geometry channel); `None` for one the driver mounted itself — a lock surface — which only goes on the shared shutdown.
     link: Option<Arc<SurfaceLink>>,
-    /// Timers and channel sources this surface registered (via `interval`/`watch`), removed from the loop when
-    /// it is torn down so a closed drawer stops ticking instead of outliving its own signals.
+    /// Timers and channel sources this surface registered (via `interval`/`watch`), removed from the loop when it is torn down so a closed drawer stops ticking instead of outliving its own signals.
     sources: SourceSink,
     /// What this surface's content asked to happen on its way out (via `on_close`), and for how long.
     exit: ExitSink,
@@ -447,16 +398,13 @@ pub(crate) struct SurfaceEntry {
     namespace: String,
     reserve_only: bool,
     interactive_input_region: bool,
-    /// The scale to render at, in 120ths — `wp_fractional_scale_v1`'s own unit, and the only one that can carry
-    /// the 1.25× and 1.5× a compositor rounds to 1 or 2 when it has to answer in whole numbers.
+    /// The scale to render at, in 120ths — `wp_fractional_scale_v1`'s own unit, and the only one that can carry the 1.25× and 1.5× a compositor rounds to 1 or 2 when it has to answer in whole numbers.
     scale_120: u32,
-    /// The pair that makes a fractional scale renderable, and `None` together on a compositor without them: the
-    /// viewport maps a device-pixel buffer back onto its logical size, and the scale object is what says which.
+    /// The pair that makes a fractional scale renderable, and `None` together on a compositor without them: the viewport maps a device-pixel buffer back onto its logical size, and the scale object is what says which.
     viewport: Option<WpViewport>,
     fractional: Option<WpFractionalScaleV1>,
     logical_size: (u32, u32),
-    /// The size or the scale moved and the buffer behind them has not caught up yet. Cleared once per turn by
-    /// [`Self::apply_geometry`], which is the only thing that resizes what the renderer draws into.
+    /// The size or the scale moved and the buffer behind them has not caught up yet. Cleared once per turn by [`Self::apply_geometry`], which is the only thing that resizes what the renderer draws into.
     geometry_dirty: bool,
     configured: bool,
     resumed: bool,
@@ -468,8 +416,7 @@ pub(crate) struct SurfaceEntry {
 }
 
 impl SurfaceEntry {
-    /// A surface the driver mounts with no layer-shell configuration of its own — currently only a lock
-    /// surface, whose size, anchoring and input are the compositor's to decide.
+    /// A surface the driver mounts with no layer-shell configuration of its own — currently only a lock surface, whose size, anchoring and input are the compositor's to decide.
     pub(crate) fn new(
         shell: Shell,
         wl_id: ObjectId,
@@ -521,11 +468,7 @@ impl SurfaceEntry {
 
     /// Tells the compositor how to put this surface's buffer on the screen.
     ///
-    /// Two routes, and the fractional one is the reason the pair is bound together: a viewport whose
-    /// destination is the *logical* size lets the buffer be any size at all, so 1.5× is a buffer 1.5× the
-    /// logical size rather than a 1× buffer the compositor stretches. The protocol asks for a buffer scale of 1
-    /// alongside it, since the destination already says everything about the mapping. Without the pair the only
-    /// thing that can be said is a whole number, which is what a compositor at 1.5× rounds for us.
+    /// Two routes, and the fractional one is the reason the pair is bound together: a viewport whose destination is the *logical* size lets the buffer be any size at all, so 1.5× is a buffer 1.5× the logical size rather than a 1× buffer the compositor stretches. The protocol asks for a buffer scale of 1 alongside it, since the destination already says everything about the mapping. Without the pair the only thing that can be said is a whole number, which is what a compositor at 1.5× rounds for us.
     fn map_buffer(&self) {
         let surface = self.shell.wl_surface();
         match &self.viewport {
@@ -538,8 +481,7 @@ impl SurfaceEntry {
         }
     }
 
-    /// Adopts a compositor-decided size, and (once the first configure has been taken) tells the handler to
-    /// re-lay-out. The buffer behind it is resized by [`Self::apply_geometry`] rather than here.
+    /// Adopts a compositor-decided size, and (once the first configure has been taken) tells the handler to re-lay-out. The buffer behind it is resized by [`Self::apply_geometry`] rather than here.
     pub(crate) fn apply_configure(&mut self, width: u32, height: u32) {
         self.logical_size = (width, height);
         self.geometry_dirty = true;
@@ -551,16 +493,14 @@ impl SurfaceEntry {
 
     /// Takes a new scale, or does nothing if it is the one already in use.
     ///
-    /// The resize is pushed as well as the scale: the logical size has not moved, but the buffer behind it has,
-    /// and a renderer told only that the scale changed would keep drawing at the old device size.
+    /// The resize is pushed as well as the scale: the logical size has not moved, but the buffer behind it has, and a renderer told only that the scale changed would keep drawing at the old device size.
     fn rescale(&mut self, scale_120: u32) {
         if scale_120 == 0 || scale_120 == self.scale_120 {
             return;
         }
         self.scale_120 = scale_120;
         self.geometry_dirty = true;
-        // The preferred scale usually lands before the first configure, where the size is still a placeholder
-        // and the window is built from the scale rather than told about it — so there is nothing to tell yet.
+        // The preferred scale usually lands before the first configure, where the size is still a placeholder and the window is built from the scale rather than told about it — so there is nothing to tell yet.
         if !self.configured {
             return;
         }
@@ -573,12 +513,7 @@ impl SurfaceEntry {
 
     /// Hands the size and scale the compositor last asked for to the surface and the renderer, once per turn.
     ///
-    /// **One change arrives as two events** — `configure` carries the logical size and `preferred_scale` the
-    /// scale — and acting on each as it lands is what makes a scale change expensive out of all proportion to
-    /// it: the renderer is handed the new size at the old scale, throws away its swapchain and every texture
-    /// sized to the old one to build them again, and is then handed the same size at the new scale and does it
-    /// all a second time. Deferring to the turn also collapses a *burst* — a scale flipped back and forth, a
-    /// monitor reconfigured — into the one resize its end state deserves, across every surface at once.
+    /// **One change arrives as two events** — `configure` carries the logical size and `preferred_scale` the scale — and acting on each as it lands is what makes a scale change expensive out of all proportion to it: the renderer is handed the new size at the old scale, throws away its swapchain and every texture sized to the old one to build them again, and is then handed the same size at the new scale and does it all a second time. Deferring to the turn also collapses a *burst* — a scale flipped back and forth, a monitor reconfigured — into the one resize its end state deserves, across every surface at once.
     fn apply_geometry(&mut self) {
         if !self.geometry_dirty {
             return;
@@ -599,12 +534,9 @@ impl SurfaceEntry {
         }
     }
 
-    /// Pushes whatever the surface asked to renegotiate since the last turn to the compositor. Only a layer
-    /// surface has state of its own to renegotiate; a lock surface's is the compositor's to decide, which is the
-    /// whole point of the protocol.
+    /// Pushes whatever the surface asked to renegotiate since the last turn to the compositor. Only a layer surface has state of its own to renegotiate; a lock surface's is the compositor's to decide, which is the whole point of the protocol.
     ///
-    /// A size change comes back as a `configure` and from there as a `WindowResized`, so the content is never
-    /// resized by this call directly — it learns its new size the same way it learns about a monitor's.
+    /// A size change comes back as a `configure` and from there as a `WindowResized`, so the content is never resized by this call directly — it learns its new size the same way it learns about a monitor's.
     fn apply_update(&mut self, change: SurfaceUpdate) {
         let Shell::Layer(layer) = &self.shell else {
             return;
@@ -622,9 +554,7 @@ impl SurfaceEntry {
             layer.set_anchor(anchor);
         }
         if let Some(shell_layer) = change.layer {
-            // Restacking a mapped surface arrived in version 2 of the protocol, and sending a request an
-            // object does not implement is a protocol error — which kills the whole connection, not the one
-            // surface. On an older compositor the surface keeps the layer it was created on instead.
+            // Restacking a mapped surface arrived in version 2 of the protocol, and sending a request an object does not implement is a protocol error — which kills the whole connection, not the one surface. On an older compositor the surface keeps the layer it was created on instead.
             match layer.kind() {
                 SurfaceKind::Wlr(wlr) if wlr.version() >= 2 => layer.set_layer(shell_layer),
                 _ => tracing::warn!(
@@ -642,15 +572,9 @@ impl SurfaceEntry {
 
     /// Applies what this thread has queued on the surface — or leaves it for the renderer's next frame to carry.
     ///
-    /// **A `wl_surface` has one set of pending state and nothing guarding it.** The renderer commits from its
-    /// own thread to present, so a commit from here can land between the buffer it attached and the commit it
-    /// was about to make — taking its explicit-sync acquire point with no buffer of our own behind it, which
-    /// the compositor answers with `wp_linux_drm_syncobj_surface_v1` error 3 and the death of the whole
-    /// connection. Asking for a frame instead lets the one thread that owns the surface's buffer carry both,
-    /// which costs a frame's delay on an input region or a renegotiated size and nothing else.
+    /// **A `wl_surface` has one set of pending state and nothing guarding it.** The renderer commits from its own thread to present, so a commit from here can land between the buffer it attached and the commit it was about to make — taking its explicit-sync acquire point with no buffer of our own behind it, which the compositor answers with `wp_linux_drm_syncobj_surface_v1` error 3 and the death of the whole connection. Asking for a frame instead lets the one thread that owns the surface's buffer carry both, which costs a frame's delay on an input region or a renegotiated size and nothing else.
     ///
-    /// A surface with no renderer — a reservation strip, or one that has not had its first frame — has no such
-    /// thread, and commits here.
+    /// A surface with no renderer — a reservation strip, or one that has not had its first frame — has no such thread, and commits here.
     fn commit_pending(&self) {
         match &self.window {
             Some(window) => window.request_redraw(),
@@ -658,13 +582,9 @@ impl SurfaceEntry {
         }
     }
 
-    /// Builds this surface's content again on the surface it is already on, and drops everything the outgoing
-    /// content had registered against the loop.
+    /// Builds this surface's content again on the surface it is already on, and drops everything the outgoing content had registered against the loop.
     ///
-    /// Those registrations are the whole reason a rebuild is more than one call: `interval` and `watch` file
-    /// their sources against the surface, and the tree being replaced is about to register its own — so a
-    /// rebuild that kept them would leave a clock ticking twice and a service feeding a tree nobody draws. Same
-    /// for the exit transition, whose reactions animate widgets that no longer exist.
+    /// Those registrations are the whole reason a rebuild is more than one call: `interval` and `watch` file their sources against the surface, and the tree being replaced is about to register its own — so a rebuild that kept them would leave a clock ticking twice and a service feeding a tree nobody draws. Same for the exit transition, whose reactions animate widgets that no longer exist.
     fn rebuild(&mut self, window: &LayerWindow, loop_handle: &LoopHandle<'static, Driver>) {
         for token in self.sources.borrow_mut().drain(..) {
             loop_handle.remove(token);
@@ -680,10 +600,7 @@ impl SurfaceEntry {
 
     /// Whether a surface that has been asked to close should be torn down *now*.
     ///
-    /// The first call is what starts its exit transition: the reactions its content registered with `on_close`
-    /// run, and the surface stays mapped until their linger is up. Without one — nothing registered, or the
-    /// user has animation switched off — this answers `true` immediately, which is what the driver did before
-    /// any exit transition existed.
+    /// The first call is what starts its exit transition: the reactions its content registered with `on_close` run, and the surface stays mapped until their linger is up. Without one — nothing registered, or the user has animation switched off — this answers `true` immediately, which is what the driver did before any exit transition existed.
     fn exit_elapsed(&mut self) -> bool {
         if let Some(deadline) = self.exit_deadline {
             return Instant::now() >= deadline;
@@ -700,10 +617,7 @@ impl SurfaceEntry {
         false
     }
 
-    /// How long the driver may sleep while this surface is on its way out. An exit is usually carried by an
-    /// animation, which paces the loop on its own — but one that settles early (or never starts, because the
-    /// reaction moved nothing) would otherwise let the loop sleep straight past the deadline and leave a
-    /// closed surface on screen.
+    /// How long the driver may sleep while this surface is on its way out. An exit is usually carried by an animation, which paces the loop on its own — but one that settles early (or never starts, because the reaction moved nothing) would otherwise let the loop sleep straight past the deadline and leave a closed surface on screen.
     fn exit_timeout(&self) -> Option<Duration> {
         self.exit_deadline
             .map(|deadline| deadline.saturating_duration_since(Instant::now()))
@@ -712,16 +626,12 @@ impl SurfaceEntry {
 
 /// A logical length in device pixels, at a scale given in 120ths.
 ///
-/// Rounded half away from zero, which is the rule `wp_fractional_scale_v1` states rather than one chosen here:
-/// a client that rounds the other way from its compositor hands over a buffer a row short of the destination
-/// it declared, and gets it stretched back. The integer arithmetic is the same rule without the float — 60 is
-/// half of 120.
+/// Rounded half away from zero, which is the rule `wp_fractional_scale_v1` states rather than one chosen here: a client that rounds the other way from its compositor hands over a buffer a row short of the destination it declared, and gets it stretched back. The integer arithmetic is the same rule without the float — 60 is half of 120.
 fn device_pixels(logical: u32, scale_120: u32) -> u32 {
     (logical.saturating_mul(scale_120).saturating_add(60) / 120).max(1)
 }
 
-/// The single-thread driver: one Wayland connection's shared globals (registry/output/seat/shm) plus every
-/// live surface. The SCTK delegate handlers route each event to its surface by `wl_surface` id.
+/// The single-thread driver: one Wayland connection's shared globals (registry/output/seat/shm) plus every live surface. The SCTK delegate handlers route each event to its surface by `wl_surface` id.
 pub(crate) struct Driver {
     registry_state: RegistryState,
     pub(crate) output_state: OutputState,
@@ -732,27 +642,22 @@ pub(crate) struct Driver {
     modifiers: ModifiersState,
     // The surface currently holding keyboard focus, so key events route to the right handler.
     keyboard_focus: Option<ObjectId>,
-    // The surface the pointer is currently over. Enter and leave are edges, not levels, so a surface that
-    // rebuilds its content between them has to be told where the pointer already is.
+    // The surface the pointer is currently over. Enter and leave are edges, not levels, so a surface that rebuilds its content between them has to be told where the pointer already is.
     pointer_focus: Option<ObjectId>,
     pub(crate) surfaces: Vec<SurfaceEntry>,
-    /// `None` where the compositor does not implement `ext-session-lock-v1`, which is what makes the shell
-    /// refuse to lock rather than draw an overlay it cannot enforce.
+    /// `None` where the compositor does not implement `ext-session-lock-v1`, which is what makes the shell refuse to lock rather than draw an overlay it cannot enforce.
     pub(crate) lock_manager: Option<ExtSessionLockManagerV1>,
     pub(crate) lock: Option<LockSession>,
     pub(crate) scaling: Option<Scaling>,
 }
 
-/// The two globals a surface needs to render on the device pixel grid, held together because either alone is
-/// useless: a preferred scale with no viewport is a number nothing can act on, and a viewport with no scale to
-/// put in it is a mapping with nothing to map.
+/// The two globals a surface needs to render on the device pixel grid, held together because either alone is useless: a preferred scale with no viewport is a number nothing can act on, and a viewport with no scale to put in it is a mapping with nothing to map.
 pub(crate) struct Scaling {
     manager: WpFractionalScaleManagerV1,
     viewporter: WpViewporter,
 }
 
-/// What the shell can ask about this compositor before it commits to a feature. Read from any thread that has
-/// gone through the driver, so a UI handler can grey out "lock" rather than fail on the attempt.
+/// What the shell can ask about this compositor before it commits to a feature. Read from any thread that has gone through the driver, so a UI handler can grey out "lock" rather than fail on the attempt.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct DriverFacts {
     pub(crate) lock_supported: bool,
@@ -773,8 +678,7 @@ impl Driver {
 
     /// Gives a freshly created surface its scale and viewport objects, where the compositor has them.
     ///
-    /// Called for every surface this driver mounts, lock surfaces included: a lock screen covers a whole output
-    /// with text, which is the last place a shell can afford to hand over a buffer for the compositor to blur.
+    /// Called for every surface this driver mounts, lock surfaces included: a lock screen covers a whole output with text, which is the last place a shell can afford to hand over a buffer for the compositor to blur.
     pub(crate) fn attach_scaling(&self, entry: &mut SurfaceEntry, qh: &QueueHandle<Driver>) {
         if let Some(scaling) = &self.scaling {
             let surface = entry.shell.wl_surface();
@@ -788,8 +692,7 @@ impl Driver {
         entry.map_buffer();
     }
 
-    /// The layer-shell namespace of the surface an event landed on, for diagnostics. `None` means the event
-    /// named a surface this driver does not own.
+    /// The layer-shell namespace of the surface an event landed on, for diagnostics. `None` means the event named a surface this driver does not own.
     fn surface_namespace(&self, wl_id: &ObjectId) -> Option<&str> {
         self.surfaces
             .iter()
@@ -811,8 +714,7 @@ impl Driver {
             .collect()
     }
 
-    /// Refreshes the cached output set and, once the shell is up, notifies the app when it actually changed so
-    /// it can open bars on a newly connected monitor and drop the ones on a disconnected one.
+    /// Refreshes the cached output set and, once the shell is up, notifies the app when it actually changed so it can open bars on a newly connected monitor and drop the ones on a disconnected one.
     fn refresh_outputs(&mut self) {
         let next = self.descriptors();
         let changed = OUTPUTS.with(|o| {
@@ -831,8 +733,7 @@ impl Driver {
     }
 }
 
-/// Outputs compared by name: the identity a `LayerConfig` pins a surface to, so a scale or resolution change
-/// (which the surface handles through `configure`) doesn't trigger a full surface reconciliation.
+/// Outputs compared by name: the identity a `LayerConfig` pins a surface to, so a scale or resolution change (which the surface handles through `configure`) doesn't trigger a full surface reconciliation.
 fn names(outputs: &[OutputDescriptor]) -> Vec<Option<String>> {
     outputs.iter().map(|o| o.name.clone()).collect()
 }
@@ -874,8 +775,7 @@ fn create_surface_entry(
     let (mt, mr, mb, ml) = config.margin;
     layer.set_margin(mt, mr, mb, ml);
     layer.set_keyboard_interactivity(config.keyboard_interactivity);
-    // A fully click-through surface, and an interactive-region one before its first frame computes its rects,
-    // both start with an empty input region so they never steal clicks from windows beneath.
+    // A fully click-through surface, and an interactive-region one before its first frame computes its rects, both start with an empty input region so they never steal clicks from windows beneath.
     if (config.input_transparent || config.interactive_input_region)
         && let Ok(region) = Region::new(compositor)
     {
@@ -924,8 +824,7 @@ where
         .map_err(|e| PlatformError(format!("zwlr_layer_shell_v1 unavailable: {e}")))?;
     let shm =
         Shm::bind(&globals, &qh).map_err(|e| PlatformError(format!("wl_shm unavailable: {e}")))?;
-    // Optional by design: a compositor without either protocol still runs every bar and panel. The features
-    // that need them ask first (`lock_supported`, `idle_supported`) rather than failing at the point of use.
+    // Optional by design: a compositor without either protocol still runs every bar and panel. The features that need them ask first (`lock_supported`, `idle_supported`) rather than failing at the point of use.
     let lock_manager = globals
         .bind::<ExtSessionLockManagerV1, Driver, ()>(&qh, 1..=1, ())
         .inspect_err(|e| tracing::info!("ext-session-lock-v1 unavailable: {e}"))
@@ -934,8 +833,7 @@ where
         .bind::<ExtIdleNotifierV1, Driver, ()>(&qh, 1..=2, ())
         .inspect_err(|e| tracing::info!("ext-idle-notify-v1 unavailable: {e}"))
         .ok();
-    // Both or neither, since neither is any use alone. A compositor without them still draws every surface —
-    // through the whole-number buffer scale, which is what this replaces.
+    // Both or neither, since neither is any use alone. A compositor without them still draws every surface — through the whole-number buffer scale, which is what this replaces.
     let scaling = globals
         .bind::<WpFractionalScaleManagerV1, Driver, ()>(&qh, 1..=1, ())
         .and_then(|manager| {
@@ -992,8 +890,7 @@ where
         }
     }
 
-    // After priming, since an idle notification is taken out against a seat and the seat only exists once the
-    // registry has been round-tripped. Absent either half, idle timers report themselves as unsupported.
+    // After priming, since an idle notification is taken out against a seat and the seat only exists once the registry has been round-tripped. Absent either half, idle timers report themselves as unsupported.
     if let (Some(notifier), Some(seat)) = (idle_notifier, driver.seat_state.seats().next()) {
         crate::idle::install(notifier, seat, qh.clone());
     }
@@ -1023,8 +920,7 @@ where
 
     let mut next_timeout: Option<Duration> = Some(Duration::ZERO);
     loop {
-        // Before the surface pass, so a lock taken during the last dispatch has its surfaces mounted — and an
-        // unlock has them torn down — in this same turn rather than one frame late.
+        // Before the surface pass, so a lock taken during the last dispatch has its surfaces mounted — and an unlock has them torn down — in this same turn rather than one frame late.
         crate::lock::poll(&mut driver, &compositor, &qh, &conn, &loop_handle);
 
         // Mount any dynamic surfaces requested since the last turn (drawers/OSDs opened via `open_surface`).
@@ -1041,10 +937,7 @@ where
             );
         }
 
-        // Bracket the dispatch in a reactive batch so signal writes from Wayland/calloop callbacks (an icon
-        // download landing, a service update) are deferred and flushed once here, not synchronously mid-callback
-        // — which under M3's shared runtime would re-enter a callback still holding a RefCell borrow. This
-        // mirrors the winit runner bracketing each dispatch with the handler's new_events/about_to_wait.
+        // Bracket the dispatch in a reactive batch so signal writes from Wayland/calloop callbacks (an icon download landing, a service update) are deferred and flushed once here, not synchronously mid-callback — which under M3's shared runtime would re-enter a callback still holding a RefCell borrow. This mirrors the winit runner bracketing each dispatch with the handler's new_events/about_to_wait.
         begin_batch();
         let dispatched = event_loop.dispatch(next_timeout, &mut driver);
         end_batch();
@@ -1110,8 +1003,7 @@ where
             }
             let window = entry.window.clone().expect("window built above");
 
-            // Taken whether or not it can be acted on: a rebuild asked for before the surface had ever been
-            // mounted *is* the mount below, whose first build already reads whatever the request was about.
+            // Taken whether or not it can be acted on: a rebuild asked for before the surface had ever been mounted *is* the mount below, whose first build already reads whatever the request was about.
             let rebuild = entry.link.as_ref().is_some_and(|link| link.take_rebuild());
 
             if !entry.resumed {
@@ -1136,9 +1028,7 @@ where
                 entry.resumed = true;
             } else if rebuild {
                 entry.rebuild(&window, &loop_handle);
-                // The pointer does not enter a surface twice, so a rebuilt surface under it would otherwise
-                // never hear that it is hovered — an auto-hidden bar rebuilt while it was out would slide away
-                // under the cursor and stay there until the pointer left and came back.
+                // The pointer does not enter a surface twice, so a rebuilt surface under it would otherwise never hear that it is hovered — an auto-hidden bar rebuilt while it was out would slide away under the cursor and stay there until the pointer left and came back.
                 if pointer_focus.as_ref() == Some(&entry.wl_id) {
                     entry.events.push(Event::CursorEntered);
                 }
@@ -1195,8 +1085,7 @@ where
     Ok(())
 }
 
-/// Suspends a surface's handler and then removes every loop source it registered, so its timers and watch
-/// channels stop with it. Dropping the channel receivers also ends the producer threads feeding them.
+/// Suspends a surface's handler and then removes every loop source it registered, so its timers and watch channels stop with it. Dropping the channel receivers also ends the producer threads feeding them.
 pub(crate) fn tear_down(mut entry: SurfaceEntry, loop_handle: &LoopHandle<'static, Driver>) {
     if let Some(mut handler) = entry.handler.take() {
         let sources = Rc::clone(&entry.sources);
@@ -1206,17 +1095,14 @@ pub(crate) fn tear_down(mut entry: SurfaceEntry, loop_handle: &LoopHandle<'stati
     for token in entry.sources.borrow_mut().drain(..) {
         loop_handle.remove(token);
     }
-    // Both hang off the wl_surface and neither is freed by dropping its handle, so they go before it does:
-    // every request on a viewport whose surface is gone is a protocol error, which kills the connection rather
-    // than the surface.
+    // Both hang off the wl_surface and neither is freed by dropping its handle, so they go before it does: every request on a viewport whose surface is gone is a protocol error, which kills the connection rather than the surface.
     if let Some(viewport) = entry.viewport.take() {
         viewport.destroy();
     }
     if let Some(fractional) = entry.fractional.take() {
         fractional.destroy();
     }
-    // A layer surface is destroyed by dropping SCTK's wrapper; a lock surface has no wrapper, so its two
-    // protocol objects are released here — the role object first, as the protocol's ordering requires.
+    // A layer surface is destroyed by dropping SCTK's wrapper; a lock surface has no wrapper, so its two protocol objects are released here — the role object first, as the protocol's ordering requires.
     if let Shell::Lock { surface, lock } = &entry.shell {
         lock.destroy();
         surface.destroy();
@@ -1230,8 +1116,7 @@ fn merge_timeout(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
     }
 }
 
-/// (Re)commits a fully-transparent shm buffer sized to the reservation strip so its exclusive_zone takes hold;
-/// only rebuilds when the pixel size changed.
+/// (Re)commits a fully-transparent shm buffer sized to the reservation strip so its exclusive_zone takes hold; only rebuilds when the pixel size changed.
 fn commit_reservation(shm: &Shm, entry: &mut SurfaceEntry) {
     let (w, h) = entry.device_size();
     if entry
@@ -1265,19 +1150,11 @@ fn commit_reservation(shm: &Shm, entry: &mut SurfaceEntry) {
     }
 }
 
-/// Rebuilds the surface's input region from its handler's pointer targets — the laid-out interactive widgets,
-/// in logical surface coordinates — committing only when the set changed (`last` is the previously applied set,
-/// sorted so a reordered read isn't mistaken for a change). An empty set yields an empty region, i.e. fully
-/// click-through, so an overlay with no interactive content never blocks the windows beneath.
+/// Rebuilds the surface's input region from its handler's pointer targets — the laid-out interactive widgets, in logical surface coordinates — committing only when the set changed (`last` is the previously applied set, sorted so a reordered read isn't mistaken for a change). An empty set yields an empty region, i.e. fully click-through, so an overlay with no interactive content never blocks the windows beneath.
 ///
-/// The rects come from the handler rather than from the global `telar::interactive_rects`, and that is the whole
-/// correctness of this function: the registry is one of the handler's *per-surface* worlds, live only inside
-/// its own calls. Read from out here — after the handler has returned — the ambient world answers, and it is
-/// always empty, so every surface using this was click-through everywhere.
+/// The rects come from the handler rather than from the global `telar::interactive_rects`, and that is the whole correctness of this function: the registry is one of the handler's *per-surface* worlds, live only inside its own calls. Read from out here — after the handler has returned — the ambient world answers, and it is always empty, so every surface using this was click-through everywhere.
 ///
-/// Returns whether the region moved, since the surface it was set on still has to be committed — which is the
-/// caller's to do, and not from this thread while a renderer owns the surface (see
-/// [`SurfaceEntry::commit_pending`]).
+/// Returns whether the region moved, since the surface it was set on still has to be committed — which is the caller's to do, and not from this thread while a renderer owns the surface (see [`SurfaceEntry::commit_pending`]).
 fn update_input_region(
     compositor: &CompositorState,
     surface: &wl_surface::WlSurface,
@@ -1321,9 +1198,7 @@ pub struct SurfaceHandle {
 }
 
 impl SurfaceHandle {
-    /// Asks the surface to close. Returns immediately; the driver tears it down on its next loop turn, or once
-    /// the exit transition the surface registered with [`on_close`] has played out. Deliberately non-blocking so
-    /// a UI event handler can close a drawer without stalling.
+    /// Asks the surface to close. Returns immediately; the driver tears it down on its next loop turn, or once the exit transition the surface registered with [`on_close`] has played out. Deliberately non-blocking so a UI event handler can close a drawer without stalling.
     pub fn close(&self) {
         self.link.request_close();
     }
@@ -1333,18 +1208,14 @@ impl SurfaceHandle {
         self.link.is_closing()
     }
 
-    /// Builds the surface's content again, in place: the window, its renderer and its position are kept, and
-    /// only the tree is built anew — from whatever the app reads now.
+    /// Builds the surface's content again, in place: the window, its renderer and its position are kept, and only the tree is built anew — from whatever the app reads now.
     ///
-    /// This is how a surface follows something that changed underneath it (a config file the user edited)
-    /// without being replaced by a new one. Non-blocking, and coalesced: several requests between two loop
-    /// turns are one rebuild.
+    /// This is how a surface follows something that changed underneath it (a config file the user edited) without being replaced by a new one. Non-blocking, and coalesced: several requests between two loop turns are one rebuild.
     pub fn rebuild(&self) {
         self.link.request_rebuild();
     }
 
-    /// Renegotiates any part of the surface's layer-shell state in one commit — the shape a caller
-    /// reconciling a surface against a changed configuration wants, rather than one request per field.
+    /// Renegotiates any part of the surface's layer-shell state in one commit — the shape a caller reconciling a surface against a changed configuration wants, rather than one request per field.
     pub fn update(&self, change: SurfaceUpdate) {
         self.link.request_update(change);
     }
@@ -1354,15 +1225,12 @@ impl SurfaceHandle {
         self.link.request_update(SurfaceUpdate::size(width, height));
     }
 
-    /// Moves the surface relative to the edges it is anchored to, as `(top, right, bottom, left)` logical
-    /// pixels. Only an edge the surface is anchored to honours its margin; a negative value pushes it off that
-    /// edge, which is how an auto-hidden bar keeps a hover strip on screen and nothing else.
+    /// Moves the surface relative to the edges it is anchored to, as `(top, right, bottom, left)` logical pixels. Only an edge the surface is anchored to honours its margin; a negative value pushes it off that edge, which is how an auto-hidden bar keeps a hover strip on screen and nothing else.
     pub fn set_margin(&self, margin: (i32, i32, i32, i32)) {
         self.link.request_update(SurfaceUpdate::margin(margin));
     }
 
-    /// Changes how much of the screen the surface reserves for itself. `0` reserves nothing (windows tile under
-    /// it), `-1` opts out of every other surface's reservation, and a positive value is a logical-pixel strip.
+    /// Changes how much of the screen the surface reserves for itself. `0` reserves nothing (windows tile under it), `-1` opts out of every other surface's reservation, and a positive value is a logical-pixel strip.
     pub fn set_exclusive_zone(&self, zone: i32) {
         self.link
             .request_update(SurfaceUpdate::exclusive_zone(zone));
@@ -1387,8 +1255,7 @@ impl SurfaceControl for SurfaceHandle {
     }
 }
 
-/// Opens a new layer-shell surface at runtime. Builds the handler on the UI thread and enqueues it for the
-/// driver to mount on its next loop turn — no new thread, so it shares the one reactive runtime (M3).
+/// Opens a new layer-shell surface at runtime. Builds the handler on the UI thread and enqueues it for the driver to mount on its next loop turn — no new thread, so it shares the one reactive runtime (M3).
 pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandle {
     let link = Arc::new(SurfaceLink::default());
     let handler = build_surface_handler::<LayerWindow, A>(
@@ -1406,9 +1273,7 @@ pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandl
     SurfaceHandle { link }
 }
 
-/// Opens a reservation-only strip (no rsx content — just its exclusive zone, an invisible transparent buffer),
-/// closeable like any dynamic surface. Used to reserve bar space so the strip and the visible bar are
-/// independent surfaces (see the bar/reservation split), reconcilable on config reload without a full teardown.
+/// Opens a reservation-only strip (no rsx content — just its exclusive zone, an invisible transparent buffer), closeable like any dynamic surface. Used to reserve bar space so the strip and the visible bar are independent surfaces (see the bar/reservation split), reconcilable on config reload without a full teardown.
 pub fn open_reservation(spec: LayerConfig) -> SurfaceHandle {
     let link = Arc::new(SurfaceLink::default());
     DYN_QUEUE.with(|q| {
@@ -1421,8 +1286,7 @@ pub fn open_reservation(spec: LayerConfig) -> SurfaceHandle {
     SurfaceHandle { link }
 }
 
-/// Maps rsx's backend-agnostic [`SurfaceAnchor`] to layer-shell edge flags. `Center` anchors to no edge, so
-/// the compositor centres the surface.
+/// Maps rsx's backend-agnostic [`SurfaceAnchor`] to layer-shell edge flags. `Center` anchors to no edge, so the compositor centres the surface.
 fn anchor_flags(anchor: SurfaceAnchor) -> Anchor {
     match anchor {
         SurfaceAnchor::Top => Anchor::TOP,
@@ -1433,9 +1297,7 @@ fn anchor_flags(anchor: SurfaceAnchor) -> Anchor {
     }
 }
 
-/// Derives the layer-shell surface config from a [`SurfacePlacement`]. A placement needing a scaffold
-/// (scrim or outside-dismiss) becomes a full-screen surface the `SurfaceScaffold` positions its panel
-/// within; a directly-anchored one is sized and anchored by the compositor.
+/// Derives the layer-shell surface config from a [`SurfacePlacement`]. A placement needing a scaffold (scrim or outside-dismiss) becomes a full-screen surface the `SurfaceScaffold` positions its panel within; a directly-anchored one is sized and anchored by the compositor.
 fn layer_config_for(placement: &SurfacePlacement) -> LayerConfig {
     let namespace = match placement.role {
         SurfaceRole::Drawer => "hogar-shell-drawer",
@@ -1445,9 +1307,7 @@ fn layer_config_for(placement: &SurfacePlacement) -> LayerConfig {
         SurfaceRole::Overlay => "hogar-shell-overlay",
     }
     .to_string();
-    // `exclusive` is an input grab, not merely a keyboard one: while such a surface is up the compositor stops
-    // delivering pointer events to every other surface, the shell's own bar included. Only a surface selecting
-    // part of the screen wants that — see `Placement::modal` for the launcher, which does not.
+    // `exclusive` is an input grab, not merely a keyboard one: while such a surface is up the compositor stops delivering pointer events to every other surface, the shell's own bar included. Only a surface selecting part of the screen wants that — see `Placement::modal` for the launcher, which does not.
     let keyboard_interactivity = match placement.keyboard {
         KeyboardMode::None => KeyboardInteractivity::None,
         KeyboardMode::OnDemand => KeyboardInteractivity::OnDemand,
@@ -1491,14 +1351,9 @@ fn layer_config_for(placement: &SurfacePlacement) -> LayerConfig {
     }
 }
 
-/// The internal rsx app for a hosted secondary surface: builds the content, wraps it in the placement's
-/// scaffold (scrim + outside-dismiss) or a plain full-surface root, and arms an auto-dismiss timer when the
-/// placement asks for one. The auto-dismiss captures this surface's own close flag directly, so it fires
-/// regardless of which surface is current when the timer elapses.
+/// The internal rsx app for a hosted secondary surface: builds the content, wraps it in the placement's scaffold (scrim + outside-dismiss) or a plain full-surface root, and arms an auto-dismiss timer when the placement asks for one. The auto-dismiss captures this surface's own close flag directly, so it fires regardless of which surface is current when the timer elapses.
 ///
-/// What is held here rather than built per call is what belongs to the *surface* rather than to one build of
-/// its content, and it is what makes a rebuild a rebuild: the app outlives the tree, so an entrance played
-/// once stays played and a dismissal armed once stays armed.
+/// What is held here rather than built per call is what belongs to the *surface* rather than to one build of its content, and it is what makes a rebuild a rebuild: the app outlives the tree, so an entrance played once stays played and a dismissal armed once stays armed.
 struct HostedSurfaceApp {
     placement: SurfacePlacement,
     content: SurfaceContent,
@@ -1511,8 +1366,7 @@ impl App for HostedSurfaceApp {
     fn root(&self) -> Box<dyn Component> {
         reset_layout_runtime();
         let content = (self.content)();
-        // Armed once for the surface, not once per build: a rebuilt OSD still goes away when it was always
-        // going to, rather than starting its countdown over — or running two.
+        // Armed once for the surface, not once per build: a rebuilt OSD still goes away when it was always going to, rather than starting its countdown over — or running two.
         if let Some(delay) = self.placement.timeout
             && !self.dismiss_armed.replace(true)
         {
@@ -1521,8 +1375,7 @@ impl App for HostedSurfaceApp {
         }
         // One transition drives both halves: it runs to 1 as the surface opens, and `on_close` runs it back to 0 while the driver holds the surface mapped for exactly as long as that takes.
         //
-        // Kept across rebuilds, because rebuilding content is not a second arrival: a fresh transition would
-        // replay the slide-in, so every edit to the config would look like the panel closing and opening.
+        // Kept across rebuilds, because rebuilding content is not a second arrival: a fresh transition would replay the slide-in, so every edit to the config would look like the panel closing and opening.
         let transition = self
             .transition
             .borrow_mut()
@@ -1631,8 +1484,7 @@ fn map_button(code: u32) -> Option<PointerButton> {
 }
 
 fn map_key(event: &KeyEvent) -> Option<Key> {
-    // Editing keys carry a control-char `utf8` (or none), so they must be resolved from the keysym — the
-    // printable `utf8` path below drops them.
+    // Editing keys carry a control-char `utf8` (or none), so they must be resolved from the keysym — the printable `utf8` path below drops them.
     if let Some(named) = named_from_keysym(event.keysym) {
         return Some(Key::Named(named));
     }
@@ -1644,8 +1496,7 @@ fn map_key(event: &KeyEvent) -> Option<Key> {
     Some(Key::Char(ch))
 }
 
-/// Maps an xkb keysym to the editing/navigation [`NamedKey`] it represents, or `None` for keys that carry
-/// their own printable character. Mirrors platform-winit's named-key mapping, over xkb keysyms.
+/// Maps an xkb keysym to the editing/navigation [`NamedKey`] it represents, or `None` for keys that carry their own printable character. Mirrors platform-winit's named-key mapping, over xkb keysyms.
 fn named_from_keysym(keysym: Keysym) -> Option<NamedKey> {
     match keysym {
         Keysym::Return | Keysym::KP_Enter => Some(NamedKey::Enter),
@@ -1678,8 +1529,7 @@ impl CompositorHandler for Driver {
         let Some(entry) = self.entry_mut(&id) else {
             return;
         };
-        // The whole-number scale keeps arriving alongside the fractional one and says less: a 1.5× output
-        // announces 2 here. Taking it would resize the buffer to something the viewport then squeezes.
+        // The whole-number scale keeps arriving alongside the fractional one and says less: a 1.5× output announces 2 here. Taking it would resize the buffer to something the viewport then squeezes.
         if entry.fractional.is_some() {
             return;
         }
@@ -1721,8 +1571,7 @@ impl CompositorHandler for Driver {
 
 /// The event this whole pair exists for: the scale the compositor actually wants, in 120ths.
 ///
-/// It arrives before the first configure and again whenever the surface moves to an output at another scale,
-/// so it is also what a surface dragged between a 1× and a 1.5× monitor redraws on.
+/// It arrives before the first configure and again whenever the surface moves to an output at another scale, so it is also what a surface dragged between a 1× and a 1.5× monitor redraws on.
 impl Dispatch<WpFractionalScaleV1, ObjectId> for Driver {
     fn event(
         state: &mut Self,
@@ -1762,8 +1611,7 @@ impl OutputHandler for Driver {
         _: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
-        // Before the refresh, so a monitor unplugged and plugged back in gets a fresh lock surface instead of
-        // being skipped as one this session already covered.
+        // Before the refresh, so a monitor unplugged and plugged back in gets a fresh lock surface instead of being skipped as one this session already covered.
         crate::lock::forget_output(self, &output);
         self.refresh_outputs();
     }
@@ -1955,9 +1803,7 @@ impl PointerHandler for Driver {
                     let Some(button) = map_button(button) else {
                         continue;
                     };
-                    // Whether a press reached a surface at all is the one thing that distinguishes "our input
-                    // region is wrong" from "the compositor acted on an event it also delivered to us". Logged
-                    // at debug so `RUST_LOG=platform_wayland=debug` can answer it without a custom build.
+                    // Whether a press reached a surface at all is the one thing that distinguishes "our input region is wrong" from "the compositor acted on an event it also delivered to us". Logged at debug so `RUST_LOG=platform_wayland=debug` can answer it without a custom build.
                     tracing::debug!(
                         "pointer press {button:?} at ({x:.0},{y:.0}) delivered to surface {:?}",
                         self.surface_namespace(&id)
@@ -2092,10 +1938,7 @@ pub fn enumerate_outputs() -> Vec<OutputDescriptor> {
 mod tests {
     use super::*;
 
-    /// `on_close`, `request_close` and `request_size` all name "the current surface", and outside one there is
-    /// no such thing. A silent no-op is the right answer — a preview render, a unit test and app-level setup all
-    /// run this code with no surface installed — but it has to be a no-op rather than a panic, and an exit
-    /// registered outside a surface must not leak into whichever surface runs next.
+    /// `on_close`, `request_close` and `request_size` all name "the current surface", and outside one there is no such thing. A silent no-op is the right answer — a preview render, a unit test and app-level setup all run this code with no surface installed — but it has to be a no-op rather than a panic, and an exit registered outside a surface must not leak into whichever surface runs next.
     #[test]
     fn asking_the_current_surface_for_anything_outside_one_does_nothing() {
         request_close();
@@ -2113,8 +1956,7 @@ mod tests {
         );
     }
 
-    /// Both halves of a hosted surface's exit — the scaffold fading its scrim, the panel content sliding back
-    /// toward its bar edge — register against the same surface, and the driver has to wait for the longer.
+    /// Both halves of a hosted surface's exit — the scaffold fading its scrim, the panel content sliding back toward its bar edge — register against the same surface, and the driver has to wait for the longer.
     #[test]
     fn every_exit_a_surface_registers_reaches_its_plan() {
         let fired = Rc::new(RefCell::new(Vec::new()));
@@ -2141,27 +1983,22 @@ mod tests {
         assert_eq!(device_pixels(1000, 180), 1500, "1.5×");
         assert_eq!(device_pixels(1000, 150), 1250, "1.25×");
         assert_eq!(device_pixels(1000, 240), 2000, "2×");
-        // What the integer buffer scale did instead, and the reason this exists: the same 1.5× output rounds
-        // to 2 there, so the buffer was a third larger than the screen and the compositor scaled it back down.
+        // What the integer buffer scale did instead, and the reason this exists: the same 1.5× output rounds to 2 there, so the buffer was a third larger than the screen and the compositor scaled it back down.
         assert_ne!(device_pixels(1000, 180), device_pixels(1000, 240));
     }
 
     #[test]
     fn a_size_that_does_not_land_on_a_pixel_rounds_the_way_the_compositor_does() {
-        // Half away from zero, per the protocol. Rounding down here would leave the last row of the surface
-        // outside the buffer that has to fill it.
+        // Half away from zero, per the protocol. Rounding down here would leave the last row of the surface outside the buffer that has to fill it.
         assert_eq!(device_pixels(31, 180), 47, "46.5 rounds up");
         assert_eq!(device_pixels(33, 180), 50, "49.5 rounds up");
         assert_eq!(device_pixels(7, 150), 9, "8.75 rounds up");
         assert_eq!(device_pixels(9, 150), 11, "11.25 rounds down");
-        // A surface can be configured to nothing on an axis it does not own; a zero-sized buffer is not a
-        // buffer, and every renderer behind this asks for at least one pixel.
+        // A surface can be configured to nothing on an axis it does not own; a zero-sized buffer is not a buffer, and every renderer behind this asks for at least one pixel.
         assert_eq!(device_pixels(0, 180), 1);
     }
 
-    /// Whether this compositor can be asked for a fractional scale at all — the one half of this a unit test
-    /// cannot answer, since the fallback is silent by design and looks like success from inside.
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_fractional -- --nocapture`
+    /// Whether this compositor can be asked for a fractional scale at all — the one half of this a unit test cannot answer, since the fallback is silent by design and looks like success from inside. `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_fractional -- --nocapture`
     #[test]
     fn advertises_fractional_scaling() {
         if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {

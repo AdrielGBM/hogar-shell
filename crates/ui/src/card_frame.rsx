@@ -1,10 +1,7 @@
 [logic]
-/// The card's own box: the panel background at the bar's radius, and the pointer tracking that keeps the popout
-/// up while it is hovered. `on_hover` is also what registers the box as an interactive target, which is how the
-/// surface knows which part of itself to take input over.
+/// The card's own box: the panel background at the bar's radius, and the pointer tracking that keeps the popout up while it is hovered. `on_hover` is also what registers the box as an interactive target, which is how the surface knows which part of itself to take input over.
 ///
-/// `fill` is a prop rather than a theme read, because it carries `[theme] opacity` — and a popout surface is
-/// not a bar, so the config it should resolve against is the one its opener had in hand.
+/// `fill` is a prop rather than a theme read, because it carries `[theme] opacity` — and a popout surface is not a bar, so the config it should resolve against is the one its opener had in hand.
 pub struct Props {
 pub fill: Color = Color::TRANSPARENT,
 pub width: f32 = 320.0,

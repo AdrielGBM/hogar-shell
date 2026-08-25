@@ -1,23 +1,12 @@
 //! Every window the shell opens that is not the wallpaper, the frame or a bar.
 //!
-//! [`Placement`] settled where a surface *sits*. This settles what a surface *is*: eleven windows that each
-//! resolved their own config, set their own theme, declared their own transparency and answered their own
-//! `clear_color`, in eleven copies of the same eight lines — and each one free to leave a line out.
+//! [`Placement`] settled where a surface *sits*. This settles what a surface *is*: eleven windows that each resolved their own config, set their own theme, declared their own transparency and answered their own `clear_color`, in eleven copies of the same eight lines — and each one free to leave a line out.
 //!
-//! Eight of them left out the same one. None installed a [`SurfaceEnv`], so their content resolved the *global*
-//! config through [`surface_env`](config::surface_env) instead of their own, per-monitor overrides never
-//! reached them, and [`panel_fill`] answered a solid colour to panels the user had configured translucent —
-//! silently, because falling back is not an error. That was not eleven bugs waiting to happen; it was one bug
-//! that had already happened eleven times over and only showed once.
+//! Eight of them left out the same one. None installed a [`SurfaceEnv`], so their content resolved the *global* config through [`surface_env`](config::surface_env) instead of their own, per-monitor overrides never reached them, and [`panel_fill`] answered a solid colour to panels the user had configured translucent — silently, because falling back is not an error. That was not eleven bugs waiting to happen; it was one bug that had already happened eleven times over and only showed once.
 //!
-//! So a panel names the four things that actually differ between one window and the next — where it sits
-//! ([`Placement`]), which edge its content resolves against, whether it slides in, and what it draws — and this
-//! does the rest. The next setting like `[panels] opacity` lands in one place.
+//! So a panel names the four things that actually differ between one window and the next — where it sits ([`Placement`]), which edge its content resolves against, whether it slides in, and what it draws — and this does the rest. The next setting like `[panels] opacity` lands in one place.
 //!
-//! **What is deliberately not a panel.** The wallpaper is opaque by definition and clears to a colour. The
-//! frame paints a ring and has no content to resolve anything for. A bar has zones, a reserved strip, per-edge
-//! shape and auto-hide. The lock screen is mounted by the compositor's session rather than opened here, and is
-//! the one surface that must never be translucent. Those four earn their own types; nothing else does.
+//! **What is deliberately not a panel.** The wallpaper is opaque by definition and clears to a colour. The frame paints a ring and has no content to resolve anything for. A bar has zones, a reserved strip, per-edge shape and auto-hide. The lock screen is mounted by the compositor's session rather than opened here, and is the one surface that must never be translucent. Those four earn their own types; nothing else does.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -35,12 +24,10 @@ use util::state::kept;
 use crate::placement::Placement;
 use telar::WindowRoot;
 
-/// What a panel draws, given the environment this build resolved. `Fn` rather than `FnOnce`: a surface outlives
-/// the config it opened under, and a rebuild is how it follows an edit.
+/// What a panel draws, given the environment this build resolved. `Fn` rather than `FnOnce`: a surface outlives the config it opened under, and a rebuild is how it follows an edit.
 pub type PanelContent = Rc<dyn Fn(&SurfaceEnv) -> Box<dyn LayoutItem>>;
 
-/// A window that is not a bar: a drawer, a float, a card, the launcher, an OSD, a toast stack, the region
-/// picker. Built from a [`Placement`] and its content, opened with [`open`](Self::open).
+/// A window that is not a bar: a drawer, a float, a card, the launcher, an OSD, a toast stack, the region picker. Built from a [`Placement`] and its content, opened with [`open`](Self::open).
 pub struct PanelSurface {
     placement: Placement,
     edge: Option<Edge>,
@@ -61,9 +48,7 @@ impl PanelSurface {
         }
     }
 
-    /// The edge this panel's content resolves against, for a placement that hangs off none — a float, the
-    /// launcher, the tray menu. It is the bar the panel came from, so a chip on the left bar opens a window
-    /// that reads the left bar's settings. Without one, the first edge the config draws a bar on.
+    /// The edge this panel's content resolves against, for a placement that hangs off none — a float, the launcher, the tray menu. It is the bar the panel came from, so a chip on the left bar opens a window that reads the left bar's settings. Without one, the first edge the config draws a bar on.
     pub fn edge(mut self, edge: Edge) -> Self {
         self.edge = Some(edge);
         self
@@ -75,8 +60,7 @@ impl PanelSurface {
         self
     }
 
-    /// Puts the panel on screen. Which of the two ways that happens — the surface host's scaffold, or a surface
-    /// that renders itself — is the placement's to answer, not the caller's.
+    /// Puts the panel on screen. Which of the two ways that happens — the surface host's scaffold, or a surface that renders itself — is the placement's to answer, not the caller's.
     pub fn open(self) -> SurfaceToken {
         if self.placement.is_hosted() {
             let placement = self.placement.hosted_placement();
@@ -86,10 +70,7 @@ impl PanelSurface {
         SurfaceToken::new(Box::new(self.open_handle()))
     }
 
-    /// The same, handing back the compositor's own handle — for a panel the shell renegotiates in place rather
-    /// than reopening (the notification popup follows a config edit the way a bar does). Self-rendered
-    /// placements only: a hosted shape lowered to a layer config is anchored to nothing, and the compositor
-    /// kills it.
+    /// The same, handing back the compositor's own handle — for a panel the shell renegotiates in place rather than reopening (the notification popup follows a config edit the way a bar does). Self-rendered placements only: a hosted shape lowered to a layer config is anchored to nothing, and the compositor kills it.
     pub fn open_handle(self) -> SurfaceHandle {
         debug_assert!(
             !self.placement.is_hosted(),
@@ -101,9 +82,7 @@ impl PanelSurface {
 
     /// One build of the panel: resolve this screen's config, put it in scope, and draw.
     ///
-    /// The environment is *installed*, not merely read, because that is the whole contract — every module,
-    /// icon lookup and `panel_fill` inside the tree reads it back through [`surface_env`], the way a chip does
-    /// inside its bar.
+    /// The environment is *installed*, not merely read, because that is the whole contract — every module, icon lookup and `panel_fill` inside the tree reads it back through [`surface_env`], the way a chip does inside its bar.
     fn build(&self) -> Box<dyn LayoutItem> {
         let output = self.placement.monitor().map(str::to_string);
         let config = config::config_for(output.as_deref());
@@ -128,8 +107,7 @@ impl PanelSurface {
     }
 }
 
-/// A self-rendered panel. Transparent and clearing to nothing, both of which every panel wants: what is behind
-/// a translucent surface is the desktop, and a colour cleared under it is what would hide it.
+/// A self-rendered panel. Transparent and clearing to nothing, both of which every panel wants: what is behind a translucent surface is the desktop, and a colour cleared under it is what would hide it.
 struct PanelApp {
     panel: PanelSurface,
 }
@@ -154,10 +132,7 @@ impl App for PanelApp {
 
 /// The background a panel paints, at `[panels] opacity` — or `[theme] opacity` where the panel names none.
 ///
-/// The surface's own config first, so a per-monitor override reaches it; the global config next, so a caller
-/// outside a surface still gets the *configured* opacity. Falling straight back to the theme token is what this
-/// used to do, and it answered a solid colour to every panel whose surface forgot to install its env — a
-/// translucent shell that silently was not one, with no error anywhere.
+/// The surface's own config first, so a per-monitor override reaches it; the global config next, so a caller outside a surface still gets the *configured* opacity. Falling straight back to the theme token is what this used to do, and it answered a solid colour to every panel whose surface forgot to install its env — a translucent shell that silently was not one, with no error anywhere.
 pub fn panel_fill() -> Color {
     if let Some(env) = surface_env() {
         return env.config.panel_fill();
@@ -168,24 +143,18 @@ pub fn panel_fill() -> Color {
     }
 }
 
-/// The corner radius content inside a panel rounds to — the bar's, so a notification card in a drawer matches
-/// the bar the drawer hangs off.
+/// The corner radius content inside a panel rounds to — the bar's, so a notification card in a drawer matches the bar the drawer hangs off.
 ///
-/// Derived from the panel's own environment rather than carried beside it. Two copies of one number is how a
-/// float ends up rounding its cards to a radius the drawer showing the same panel does not.
+/// Derived from the panel's own environment rather than carried beside it. Two copies of one number is how a float ends up rounding its cards to a radius the drawer showing the same panel does not.
 pub fn content_radius() -> f32 {
     surface_env()
         .map(|env| env.config.panel_radius(env.edge))
         .unwrap_or(0.0)
 }
 
-/// The base distance content inside a panel is spaced by — the bar's `spacing`, so a card in a drawer breathes
-/// like the bar the drawer hangs off. The base of the [`crate::scale::space`] scale, exactly as
-/// [`content_radius`] is the base of [`crate::scale::corner`].
+/// The base distance content inside a panel is spaced by — the bar's `spacing`, so a card in a drawer breathes like the bar the drawer hangs off. The base of the [`crate::scale::space`] scale, exactly as [`content_radius`] is the base of [`crate::scale::corner`].
 ///
-/// It falls back to the theme's own `spacing` rather than to zero, unlike the radius: a shell with no radius is
-/// square, and a shell with no spacing is illegible. Same three steps as [`card_gap`] — the surface's env, then
-/// the global config, then the token's default, which is what a preview and a headless test get.
+/// It falls back to the theme's own `spacing` rather than to zero, unlike the radius: a shell with no radius is square, and a shell with no spacing is illegible. Same three steps as [`card_gap`] — the surface's env, then the global config, then the token's default, which is what a preview and a headless test get.
 pub fn content_spacing() -> f32 {
     if let Some(env) = surface_env() {
         return env.config.resolved_spacing(env.edge);
@@ -199,12 +168,7 @@ pub fn content_spacing() -> f32 {
     )
 }
 
-/// The space between two stacked cards, from the panel's own environment — [`Config::card_gap`], the shell's
-/// `spacing` token. A toast stack and a notification stack are the same shape of thing and keep the same
-/// rhythm; each carrying its own key is how they stopped.
-/// The last resort is the token's own default rather than [`telar::use_theme`], unlike [`panel_fill`]: a stack
-/// asks for this while deciding how tall a surface to open, which is before any tree — and therefore any
-/// theme — exists.
+/// The space between two stacked cards, from the panel's own environment — [`Config::card_gap`], the shell's `spacing` token. A toast stack and a notification stack are the same shape of thing and keep the same rhythm; each carrying its own key is how they stopped. The last resort is the token's own default rather than [`telar::use_theme`], unlike [`panel_fill`]: a stack asks for this while deciding how tall a surface to open, which is before any tree — and therefore any theme — exists.
 pub fn card_gap() -> f32 {
     if let Some(env) = surface_env() {
         return env.config.card_gap();
@@ -215,8 +179,7 @@ pub fn card_gap() -> f32 {
     )
 }
 
-/// The first edge the config puts modules on — the bar the user looks at — falling back to the top for a config
-/// that has no bars at all. What a panel hanging off no edge in particular resolves against.
+/// The first edge the config puts modules on — the bar the user looks at — falling back to the top for a config that has no bars at all. What a panel hanging off no edge in particular resolves against.
 pub fn drawn_edge(config: &Config) -> Edge {
     Edge::ALL
         .into_iter()
@@ -224,23 +187,15 @@ pub fn drawn_edge(config: &Config) -> Edge {
         .unwrap_or(Edge::Top)
 }
 
-/// Slides and fades `content` in from the bar edge it hangs off, and back out to it when the surface is asked
-/// to close, over `[animation] panel_duration_ms` and the configured easing.
+/// Slides and fades `content` in from the bar edge it hangs off, and back out to it when the surface is asked to close, over `[animation] panel_duration_ms` and the configured easing.
 ///
-/// One progress carries both halves — 1 is off the bar edge and transparent, 0 is settled — so the exit is the
-/// entrance reversed rather than a second animation that has to be kept in step with the first.
+/// One progress carries both halves — 1 is off the bar edge and transparent, 0 is settled — so the exit is the entrance reversed rather than a second animation that has to be kept in step with the first.
 ///
-/// The exit only reaches the screen because the driver holds a closing surface mapped for as long as
-/// [`on_close`](platform_wayland::on_close) says to. Without that it would animate a surface that was torn
-/// down on the loop's next turn, which is exactly what this could not do before.
+/// The exit only reaches the screen because the driver holds a closing surface mapped for as long as [`on_close`](platform_wayland::on_close) says to. Without that it would animate a surface that was torn down on the loop's next turn, which is exactly what this could not do before.
 ///
-/// Constructed away from its goal and retargeted at once, never at the goal: an `Animated` born settled never
-/// registers with the ticker, so nothing would schedule the frames that carry it in — the same trap the
-/// workspace indicator hit.
+/// Constructed away from its goal and retargeted at once, never at the goal: an `Animated` born settled never registers with the ticker, so nothing would schedule the frames that carry it in — the same trap the workspace indicator hit.
 ///
-/// Kept across rebuilds ([`kept`]), because arriving is something the panel did once: a fresh `Animated` would
-/// start at 1 again and slide the panel back in, so every config edit would look like the drawer reopening.
-/// The one this finds on a rebuild has already settled at 0, which is exactly where the panel is.
+/// Kept across rebuilds ([`kept`]), because arriving is something the panel did once: a fresh `Animated` would start at 1 again and slide the panel back in, so every config edit would look like the drawer reopening. The one this finds on a rebuild has already settled at 0, which is exactly where the panel is.
 pub fn panel_transition(
     content: Box<dyn LayoutItem>,
     edge: Edge,
@@ -313,13 +268,9 @@ mod tests {
 
     /// The transition box is the node the scaffold measures, so its width is the drawer's dismiss area.
     ///
-    /// It was `width: 100%`, which made two things wrong at once and neither of them visible: a press anywhere
-    /// in the panel's horizontal band read as a press *on* the panel, so the only way to dismiss a drawer was to
-    /// click above or below it — and the panel was positioned at the start of a full-width box rather than by
-    /// the scaffold's own alignment, which is what puts it at the end of the bar its module sits on.
+    /// It was `width: 100%`, which made two things wrong at once and neither of them visible: a press anywhere in the panel's horizontal band read as a press *on* the panel, so the only way to dismiss a drawer was to click above or below it — and the panel was positioned at the start of a full-width box rather than by the scaffold's own alignment, which is what puts it at the end of the bar its module sits on.
     ///
-    /// Building proves none of that; the wrapper builds happily either way. This lays out the real tree the
-    /// surface host mounts and presses next to the panel.
+    /// Building proves none of that; the wrapper builds happily either way. This lays out the real tree the surface host mounts and presses next to the panel.
     #[test]
     fn a_press_beside_the_panel_dismisses_the_drawer() {
         use crate::placement::{OffChip, Placement};
@@ -401,13 +352,9 @@ mod tests {
         }
     }
 
-    /// **The test this module exists for.** Every panel-shaped window, built, and asked afterwards what it
-    /// could see: its own screen's config, on the edge it belongs to.
+    /// **The test this module exists for.** Every panel-shaped window, built, and asked afterwards what it could see: its own screen's config, on the edge it belongs to.
     ///
-    /// Eight of the eleven surfaces answered `None` here for as long as they had existed. Nothing failed —
-    /// every reader of [`surface_env`] falls back, which is exactly why it went unnoticed until `[panels]
-    /// opacity` was configured and did nothing. A fallback is not an error, so only a test can say the
-    /// environment is *there*.
+    /// Eight of the eleven surfaces answered `None` here for as long as they had existed. Nothing failed — every reader of [`surface_env`] falls back, which is exactly why it went unnoticed until `[panels] opacity` was configured and did nothing. A fallback is not an error, so only a test can say the environment is *there*.
     #[test]
     fn every_shape_a_panel_takes_can_see_its_own_config() {
         use crate::placement::{Centred, OffChip, Placement};
@@ -426,8 +373,7 @@ mod tests {
             output: None,
             config: Arc::new(Config::starter()),
         };
-        // Every primitive a window that is not a bar is built from, and the edge each must report: the one it
-        // hangs off, or the one named for a shape that hangs off none.
+        // Every primitive a window that is not a bar is built from, and the edge each must report: the one it hangs off, or the one named for a shape that hangs off none.
         let every: Vec<(&str, Placement, Option<Edge>)> = vec![
             (
                 "drawer",
@@ -475,8 +421,7 @@ mod tests {
             if let Some(edge) = edge {
                 panel = panel.edge(edge);
             }
-            // A surface that installs nothing would read back whatever the last one left in scope, so what it
-            // must not answer is planted first: only an env this build wrote can fail to be the sentinel.
+            // A surface that installs nothing would read back whatever the last one left in scope, so what it must not answer is planted first: only an env this build wrote can fail to be the sentinel.
             set_surface_env(SurfaceEnv {
                 bar_size: u32::MAX,
                 ..env.clone()
@@ -505,17 +450,11 @@ mod tests {
         }
     }
 
-    /// The other half: the test above proves a [`PanelSurface`] installs its environment, and this proves
-    /// nothing opens a window without being one.
+    /// The other half: the test above proves a [`PanelSurface`] installs its environment, and this proves nothing opens a window without being one.
     ///
-    /// The check that would have caught the original bug on the day it was written. Nothing about a raw
-    /// `open_surface` call is wrong-looking — it is how a surface was opened for as long as there have been
-    /// surfaces — so eleven of them accumulated, each a little different, and the difference that mattered was
-    /// invisible in every one.
+    /// The check that would have caught the original bug on the day it was written. Nothing about a raw `open_surface` call is wrong-looking — it is how a surface was opened for as long as there have been surfaces — so eleven of them accumulated, each a little different, and the difference that mattered was invisible in every one.
     ///
-    /// One exception, and it is the three non-panels in the module doc: the reconciler mounts the bars, the
-    /// wallpaper and the frame. The fourth, the lock screen, is mounted by the compositor's lock session and
-    /// never opens a surface of its own.
+    /// One exception, and it is the three non-panels in the module doc: the reconciler mounts the bars, the wallpaper and the frame. The fourth, the lock screen, is mounted by the compositor's lock session and never opens a surface of its own.
     #[test]
     fn nothing_opens_a_window_except_through_a_panel_surface() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -523,8 +462,7 @@ mod tests {
             .and_then(std::path::Path::parent)
             .expect("the workspace root is two levels above this crate")
             .to_path_buf();
-        // Where a surface that is *not* a panel is opened. The reconciler owns the three the shell reconciles
-        // against the config; the platform crate is the door itself.
+        // Where a surface that is *not* a panel is opened. The reconciler owns the three the shell reconciles against the config; the platform crate is the door itself.
         let allowed = [
             "crates/surfaces/src/reconcile.rs",
             "crates/ui/src/panel.rs",
@@ -573,8 +511,7 @@ mod tests {
         );
     }
 
-    /// The radius comes from the panel's own environment, so the drawer and the float showing the same panel
-    /// round their cards the same way — which they did not while each carried its own copy of the number.
+    /// The radius comes from the panel's own environment, so the drawer and the float showing the same panel round their cards the same way — which they did not while each carried its own copy of the number.
     #[test]
     fn content_rounds_to_the_bar_of_the_edge_the_panel_hangs_off() {
         let config = Arc::new(Config::starter());

@@ -5,11 +5,9 @@ use ::config::theme::NordTheme;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// The base container every simple module sits in: a rounded, pressable box with hover/press feedback.
-/// `Filled` overrides the resting background with a solid accent.
+/// The base container every simple module sits in: a rounded, pressable box with hover/press feedback. `Filled` overrides the resting background with a solid accent.
 ///
-/// Every handler is optional and forwarded as one: a chip with nothing to do must stay transparent to the
-/// pointer, and a no-op stand-in would report the event handled instead.
+/// Every handler is optional and forwarded as one: a chip with nothing to do must stay transparent to the pointer, and a no-op stand-in would report the event handled instead.
 pub struct Props {
     pub variant: Variant = Variant::Default,
     /// The resting background: transparent when blending into the bar, the surface token as a free-standing chip.
@@ -18,8 +16,7 @@ pub struct Props {
     pub radius: f32 = 0.0,
     /// A square icon chip that scales with the bar, rather than a content-width text pill.
     pub square: bool = false,
-    /// Gives up width when the bar is short of it, instead of holding the chip's content width. Only for a
-    /// chip whose label elides — otherwise it hides its own tail with nothing to say so.
+    /// Gives up width when the bar is short of it, instead of holding the chip's content width. Only for a chip whose label elides — otherwise it hides its own tail with nothing to say so.
     pub elastic: bool = false,
     pub on_press: Option<Box<dyn Fn()>> = None,
     pub on_scroll: Option<Box<dyn Fn(f32, f32)>> = None,
@@ -38,10 +35,7 @@ let (base, hover, active) = match props.variant {
 let inset_x = if props.square { chip_pad() } else { 8.0 };
 let inset_y = if props.square { chip_pad() } else { 2.0 };
 
-// An elastic chip needs the floor out from under it as well as the willingness to shrink: a flex item's own
-// minimum is its content, and a label that has not been told it may elide reports the whole title as content.
-// Only along a horizontal bar, where there is a length to give up — down a vertical one a chip's width is the
-// bar's, and these modules show their glyph alone anyway.
+// An elastic chip needs the floor out from under it as well as the willingness to shrink: a flex item's own minimum is its content, and a label that has not been told it may elide reports the whole title as content. Only along a horizontal bar, where there is a length to give up — down a vertical one a chip's width is the bar's, and these modules show their glyph alone anyway.
 let elastic = props.elastic && !crate::module::bar_is_vertical();
 let shrink = if elastic { 1.0 } else { 0.0 };
 let floor = if elastic {
@@ -83,8 +77,7 @@ row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shr
     children
 
 [preview "Module chip" fixture:crate::preview::bar_chip]
-// Wrapped in a row so the chip keeps its own width: on the preview page's column it would stretch the full
-// width instead, which is the one shape a bar never gives it.
+// Wrapped in a row so the chip keeps its own width: on the preview page's column it would stretch the full width instead, which is the one shape a bar never gives it.
 row
     module_shell radius:8 square:true rest:(use_theme::<::config::theme::NordTheme>().overlay)
         icon_glyph name(|| "cpu".to_string()) size:18

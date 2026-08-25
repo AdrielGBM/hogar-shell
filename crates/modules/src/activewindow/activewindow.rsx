@@ -20,9 +20,7 @@ fn text_for(window: &ActiveWindow, config: &::config::ActiveWindowConfig) -> Str
     }
 }
 
-// Seeded from the service's last reading rather than from Hyprland's socket, so the chip draws on a
-// compositor that has none. The subscription below delivers the first one, but only on the next turn of
-// the loop, which would leave the chip empty for a frame.
+// Seeded from the service's last reading rather than from Hyprland's socket, so the chip draws on a compositor that has none. The subscription below delivers the first one, but only on the next turn of the loop, which would leave the chip empty for a frame.
 let initial = hyprland::current_active_window().unwrap_or_default();
 
 let title = signal(text_for(&initial, &config));
@@ -40,16 +38,13 @@ platform_wayland::watch(
 
 let fg = ui::module::module_fg();
 let size = ui::module::icon_px();
-// The app's own artwork, not a tinted glyph: the point of this chip is recognising the app at a glance. A class
-// with no installed icon simply renders nothing, leaving the title to carry the chip.
+// The app's own artwork, not a tinted glyph: the point of this chip is recognising the app at a glance. A class with no installed icon simply renders nothing, leaving the title to carry the chip.
 let inverted = config.inverted;
 let leading = config.show_icon && !inverted;
 let trailing = config.show_icon && inverted;
 
 [view]
-// Which side the icon sits on is config, decided once; *which* icon is the focused window, so the slot is keyed
-// on the class and rebuilt whenever that changes — the artwork is a widget of a different kind per class
-// (vector or raster), which no amount of reactive props can swap in place.
+// Which side the icon sits on is config, decided once; *which* icon is the focused window, so the slot is keyed on the class and rebuilt whenever that changes — the artwork is a widget of a different kind per class (vector or raster), which no amount of reactive props can swap in place.
 row align:center
     if leading
         match $icon_view as class key class.clone()

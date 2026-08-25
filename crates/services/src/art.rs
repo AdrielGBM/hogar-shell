@@ -1,14 +1,8 @@
 //! Cover art: the local file for whatever `mpris:artUrl` a player handed over.
 //!
-//! Three cases behind one call, which is the point of the module. A `file://` URL is already on disk and needs
-//! nothing but percent-decoding. An `http(s)://` one has to be downloaded, and downloading it on the UI thread
-//! would stall the frame for as long as the server takes — so it goes through the same request/worker shape
-//! the Iconify store uses: ask, get a signal, and let the worker fill it in. A `data:` URL carries the bytes
-//! inline and is written straight to the cache.
+//! Three cases behind one call, which is the point of the module. A `file://` URL is already on disk and needs nothing but percent-decoding. An `http(s)://` one has to be downloaded, and downloading it on the UI thread would stall the frame for as long as the server takes — so it goes through the same request/worker shape the Iconify store uses: ask, get a signal, and let the worker fill it in. A `data:` URL carries the bytes inline and is written straight to the cache.
 //!
-//! The cache is keyed by the URL rather than by the track, because that is what actually identifies the image:
-//! two tracks from one album share an `artUrl` and should share one download, and a player that reuses a
-//! temporary path for every track (several do) would otherwise poison a track-keyed cache.
+//! The cache is keyed by the URL rather than by the track, because that is what actually identifies the image: two tracks from one album share an `artUrl` and should share one download, and a player that reuses a temporary path for every track (several do) would otherwise poison a track-keyed cache.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -22,8 +16,7 @@ use telar::{ReadSignal, RwSignal, signal};
 use util::paths;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
-/// Cover art is a few hundred KB at most; anything far larger is a server handing back something that is not
-/// an image, and writing it to the user's cache would be the only lasting effect.
+/// Cover art is a few hundred KB at most; anything far larger is a server handing back something that is not an image, and writing it to the user's cache would be the only lasting effect.
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 /// Where a request has got to. Mirrors the icon store's states so a view can branch the same way.
@@ -42,9 +35,7 @@ pub fn cache_dir() -> PathBuf {
 
 /// A stable, filesystem-safe name for a URL.
 ///
-/// Hashed rather than sanitised: an `artUrl` can be a query string hundreds of characters long, longer than
-/// any filesystem's name limit, and two URLs differing only past that limit would collide. The extension is
-/// carried over where the URL has a plausible one, purely so the cache is browsable.
+/// Hashed rather than sanitised: an `artUrl` can be a query string hundreds of characters long, longer than any filesystem's name limit, and two URLs differing only past that limit would collide. The extension is carried over where the URL has a plausible one, purely so the cache is browsable.
 fn cache_name(url: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in url.as_bytes() {
@@ -72,8 +63,7 @@ pub fn cache_path(url: &str) -> PathBuf {
     cache_dir().join(cache_name(url))
 }
 
-/// Percent-decodes a `file://` URL into a path. Players emit them encoded, so a track in a directory with a
-/// space or an accent resolves to a path that does not exist unless this runs.
+/// Percent-decodes a `file://` URL into a path. Players emit them encoded, so a track in a directory with a space or an accent resolves to a path that does not exist unless this runs.
 fn decode_file_url(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("file://")?;
     // `file://localhost/path` and `file:///path` both mean the local machine.
@@ -96,8 +86,7 @@ fn decode_file_url(url: &str) -> Option<PathBuf> {
     Some(PathBuf::from(String::from_utf8(out).ok()?))
 }
 
-/// The local file for `url` without touching the network: a decoded `file://` path, or a cache entry that is
-/// already there. `None` means it would have to be fetched.
+/// The local file for `url` without touching the network: a decoded `file://` path, or a cache entry that is already there. `None` means it would have to be fetched.
 pub fn ready(url: &str) -> Option<PathBuf> {
     let url = url.trim();
     if url.is_empty() {
@@ -170,8 +159,7 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Whether the bytes start with a magic number the shell's decoders understand. A server answering an error
-/// page with a 200 is common enough that trusting the content type is not enough.
+/// Whether the bytes start with a magic number the shell's decoders understand. A server answering an error page with a 200 is common enough that trusting the content type is not enough.
 fn looks_like_an_image(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0x89, b'P', b'N', b'G'])
         || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
@@ -189,8 +177,7 @@ thread_local! {
 
 /// The state of `url`, starting a fetch if this is the first time it has been asked for.
 ///
-/// The signal is cached per URL, so a card rebuilt on every track change does not re-download art it already
-/// has, and two surfaces showing the same player share one request.
+/// The signal is cached per URL, so a card rebuilt on every track change does not re-download art it already has, and two surfaces showing the same player share one request.
 pub fn art(url: &str) -> ReadSignal<ArtState> {
     let url = url.trim().to_string();
     if url.is_empty() {
@@ -232,8 +219,7 @@ fn ensure_store() {
             requests,
         });
     });
-    // Headless, `watch` is a no-op: no worker runs and every request stays on `Loading`, which is what an
-    // offline render shows.
+    // Headless, `watch` is a no-op: no worker runs and every request stays on `Loading`, which is what an offline render shows.
     watch(
         move |sender| run_worker(incoming, sender),
         |(url, path)| deliver(url, path),
@@ -259,8 +245,7 @@ fn deliver(url: String, path: Option<PathBuf>) {
         let Some(store) = borrow.as_ref() else {
             return;
         };
-        // Clone the handle out and drop the map borrow BEFORE `set`: a signal write flushes effects
-        // synchronously, and an effect that asks for another URL would re-enter this borrow and panic.
+        // Clone the handle out and drop the map borrow BEFORE `set`: a signal write flushes effects synchronously, and an effect that asks for another URL would re-enter this borrow and panic.
         let handle = store.signals.borrow().get(&url).cloned();
         if let Some(handle) = handle {
             handle.set(match path {

@@ -1,7 +1,4 @@
-//! The UI language as a shared source: one current locale broadcast to every UI thread, so a language switch in
-//! one panel updates the bars and other panels live. The locale signal is a thread-local (like the theme), so
-//! propagation uses the same watch/subscribe channel pattern as the notification and battery services — `set`
-//! fans the new tag out to each subscribed loop, which applies it on its own thread and redraws.
+//! The UI language as a shared source: one current locale broadcast to every UI thread, so a language switch in one panel updates the bars and other panels live. The locale signal is a thread-local (like the theme), so propagation uses the same watch/subscribe channel pattern as the notification and battery services — `set` fans the new tag out to each subscribed loop, which applies it on its own thread and redraws.
 
 use std::cell::Cell;
 use std::sync::Mutex;
@@ -38,8 +35,7 @@ pub fn current_or(fallback: String) -> String {
     }
 }
 
-/// Registers `tx` (bound to a surface's event loop) and immediately sends the current language so the surface
-/// starts in sync. The `watch` producer for [`attach`].
+/// Registers `tx` (bound to a surface's event loop) and immediately sends the current language so the surface starts in sync. The `watch` producer for [`attach`].
 pub fn subscribe(tx: EventSender<String>) {
     let mut state = STATE.lock().unwrap();
     let current = state.current.clone();
@@ -57,20 +53,14 @@ pub fn set(lang: impl Into<String>) {
     state.subscribers.retain(|tx| tx.send(lang.clone()));
 }
 
-/// Applies the current language on this thread. Call at the top of a surface builder (after loading config):
-/// it is what stops a surface appearing in the configured language one frame after it appeared.
+/// Applies the current language on this thread. Call at the top of a surface builder (after loading config): it is what stops a surface appearing in the configured language one frame after it appeared.
 pub fn attach(fallback: String) {
     telar::set_locale(current_or(fallback));
 }
 
 /// Subscribes the UI thread to language switches, once, for as long as the process runs.
 ///
-/// **At app level, not from a surface build**, for the same reason as the icon store: `watch` binds its channel
-/// to whichever surface is being built, and that channel dies when the surface's content is rebuilt — which a
-/// config reload does to every bar. Registered from a surface, the subscription would be taken down by the
-/// first reload and the guard below would stop anything registering it again, so a language switch would go
-/// nowhere for the rest of the session. The locale signal is one per *thread* rather than per surface, so one
-/// subscription is all there is to make.
+/// **At app level, not from a surface build**, for the same reason as the icon store: `watch` binds its channel to whichever surface is being built, and that channel dies when the surface's content is rebuilt — which a config reload does to every bar. Registered from a surface, the subscription would be taken down by the first reload and the guard below would stop anything registering it again, so a language switch would go nowhere for the rest of the session. The locale signal is one per *thread* rather than per surface, so one subscription is all there is to make.
 pub fn follow_switches() {
     SUBSCRIBED.with(|done| {
         if !done.replace(true) {

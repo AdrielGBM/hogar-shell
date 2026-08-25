@@ -2,8 +2,7 @@
 //!
 //! What is *drawn over* it is `[widgets]`, on a surface of its own — see [`crate::sections::widgets`].
 //!
-//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
+//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -79,10 +78,7 @@ impl BackgroundConfig {
         self.enabled || self.image.is_some() || !self.monitors.is_empty()
     }
 
-    /// The image `[background]` alone would paint on `output`: its per-monitor entry, else the global `image`.
-    /// The runtime override lives in the wallpaper service, so read
-    /// `wallpaper::current_image` rather than this at a
-    /// call site that draws.
+    /// The image `[background]` alone would paint on `output`: its per-monitor entry, else the global `image`. The runtime override lives in the wallpaper service, so read `wallpaper::current_image` rather than this at a call site that draws.
     pub fn image_for(&self, output: Option<&str>) -> Option<&PathBuf> {
         output
             .and_then(|name| self.monitors.get(name))

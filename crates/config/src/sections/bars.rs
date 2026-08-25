@@ -1,7 +1,6 @@
 //! `[bars]`, `[panels]`, and every `[toml]` section a chip on a bar reads.
 //!
-//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
+//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -13,17 +12,12 @@ use crate::sections::*;
 /// Fallback gap a panel keeps from a hugging bar (one with no outer gap of its own) and from the screen edges.
 pub const DEFAULT_PANEL_GAP: u32 = 8;
 
-/// What the settings application spends on its own title bar, search row and padding before any form is drawn.
-/// Subtracted from the surface height to size the scrolling page area — see [`Config::settings_page_height`].
+/// What the settings application spends on its own title bar, search row and padding before any form is drawn. Subtracted from the surface height to size the scrolling page area — see [`Config::settings_page_height`].
 pub(crate) const SETTINGS_CHROME: f32 = 108.0;
 
 /// Modules whose panel is an *application* rather than a card, and the float each needs, as `(id, w, h)`.
 ///
-/// The default open mode is a drawer because that is what a panel is: a card dropped under the chip you
-/// pressed. Settings is not that — it is a nav pane with a page beside it — and in a 320px drawer the nav
-/// leaves no room for a form at all. Putting the answer here rather than in [`Config::starter`] is what makes
-/// it true for the installs that already have a config file, which is all of them after the first run; an
-/// explicit `[modules.<id>]` still wins over it.
+/// The default open mode is a drawer because that is what a panel is: a card dropped under the chip you pressed. Settings is not that — it is a nav pane with a page beside it — and in a 320px drawer the nav leaves no room for a form at all. Putting the answer here rather than in [`Config::starter`] is what makes it true for the installs that already have a config file, which is all of them after the first run; an explicit `[modules.<id>]` still wins over it.
 const APPLICATION_PANELS: &[(&str, u32, u32)] = &[("settings", 920, 680)];
 
 pub(crate) fn application_panel(id: &str) -> Option<(u32, u32)> {
@@ -104,14 +98,9 @@ pub enum Zone {
 
 /// One module placed on a bar.
 ///
-/// Written as a bare id in the common case (`start = ["clock", "workspaces"]`) and as a table when an instance
-/// needs settings of its own (`{ id = "clock", accent = "red" }`). The table form is what lets the same module
-/// appear on a bar twice looking different — a `[modules.<id>]` override is keyed by id and so applies to every
-/// copy at once.
+/// Written as a bare id in the common case (`start = ["clock", "workspaces"]`) and as a table when an instance needs settings of its own (`{ id = "clock", accent = "red" }`). The table form is what lets the same module appear on a bar twice looking different — a `[modules.<id>]` override is keyed by id and so applies to every copy at once.
 ///
-/// Deliberately presentation-only. `open` stays under `[modules.<id>]` because a panel is toggled by module id
-/// from three places — a chip, `hogar-shell panel toggle`, a keybind — and only one of them has an entry in hand;
-/// an entry-scoped answer would make the same panel open differently depending on how you asked for it.
+/// Deliberately presentation-only. `open` stays under `[modules.<id>]` because a panel is toggled by module id from three places — a chip, `hogar-shell panel toggle`, a keybind — and only one of them has an entry in hand; an entry-scoped answer would make the same panel open differently depending on how you asked for it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModuleEntry {
     pub id: String,
@@ -165,8 +154,7 @@ impl<'de> Deserialize<'de> for ModuleEntry {
     }
 }
 impl Serialize for ModuleEntry {
-    /// A bare entry writes back as the string it was read from, so a config that never used the table form
-    /// round-trips through the settings panel unchanged.
+    /// A bare entry writes back as the string it was read from, so a config that never used the table form round-trips through the settings panel unchanged.
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         if self.is_bare() {
             return serializer.serialize_str(&self.id);
@@ -216,11 +204,7 @@ impl Default for FloatConfig {
 
 /// The compact status cluster (`[status_icons]`): several service readings sharing one chip.
 ///
-/// `icons` is a list rather than a set of flags because the order is the point — it is what a user reads
-/// left-to-right, and a fixed order would make the cluster the shell's priority instead of theirs. The names
-/// match the module ids the same readings have as standalone chips, so moving one between the two is not a
-/// rename; `caps` and `num` are the exception, since `lockstatus` is one module drawing two indicators and a
-/// cluster should be able to take only one of them.
+/// `icons` is a list rather than a set of flags because the order is the point — it is what a user reads left-to-right, and a fixed order would make the cluster the shell's priority instead of theirs. The names match the module ids the same readings have as standalone chips, so moving one between the two is not a rename; `caps` and `num` are the exception, since `lockstatus` is one module drawing two indicators and a cluster should be able to take only one of them.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct StatusIconsConfig {
@@ -241,13 +225,9 @@ impl Default for StatusIconsConfig {
     }
 }
 
-/// Hover popouts (`[popouts]`): the readout a chip shows while the pointer rests on it, distinct from the
-/// drawer a click opens.
+/// Hover popouts (`[popouts]`): the readout a chip shows while the pointer rests on it, distinct from the drawer a click opens.
 ///
-/// The delays are what separate a popout from a flicker. Without `open_delay`, dragging the pointer across the
-/// bar would fire every chip's popout in turn; without `close_delay`, the popout would vanish in the gap
-/// between the chip and itself. Both are clamped on read, so a typo can make a popout slow but never instant
-/// or permanent.
+/// The delays are what separate a popout from a flicker. Without `open_delay`, dragging the pointer across the bar would fire every chip's popout in turn; without `close_delay`, the popout would vanish in the gap between the chip and itself. Both are clamped on read, so a typo can make a popout slow but never instant or permanent.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct PopoutsConfig {
@@ -258,8 +238,7 @@ pub struct PopoutsConfig {
     /// How long the popout survives after the pointer leaves, in ms.
     pub close_delay: u64,
     pub width: f32,
-    /// The tallest a popout may grow. Its surface is this tall whatever the card needs; the surplus is carved
-    /// out of the input region, so it stays click-through rather than swallowing presses.
+    /// The tallest a popout may grow. Its surface is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
     pub max_height: f32,
 }
 
@@ -281,8 +260,7 @@ impl PopoutsConfig {
         Duration::from_millis(self.open_delay.clamp(60, 5_000))
     }
 
-    /// The grace after leaving. Never zero either — the pointer has to cross the gap between the chip and the
-    /// popout to reach it, and a zero grace would close it mid-crossing.
+    /// The grace after leaving. Never zero either — the pointer has to cross the gap between the chip and the popout to reach it, and a zero grace would close it mid-crossing.
     pub fn close_after(&self) -> Duration {
         Duration::from_millis(self.close_delay.clamp(60, 5_000))
     }
@@ -296,20 +274,13 @@ impl PopoutsConfig {
     }
 }
 
-/// Panel presentation shared by drawers and floating windows (`[panels]`): each form's size, and the gesture
-/// that opens one. One home for both so a drawer and a float are configured the same way.
+/// Panel presentation shared by drawers and floating windows (`[panels]`): each form's size, and the gesture that opens one. One home for both so a drawer and a float are configured the same way.
 ///
-/// **What is deliberately not here.** The gap a panel keeps from the bar is derived, never set: the bar's own
-/// outer gap when it floats, else a default so a hugging bar's panels still breathe. And its opacity is
-/// `[theme] opacity`, for every surface at once. Both used to be overridable per-panel, and neither key
-/// bought anything but the chance for a drawer to sit at a distance, or at an opacity, that nothing else on
-/// the screen shares.
+/// **What is deliberately not here.** The gap a panel keeps from the bar is derived, never set: the bar's own outer gap when it floats, else a default so a hugging bar's panels still breathe. And its opacity is `[theme] opacity`, for every surface at once. Both used to be overridable per-panel, and neither key bought anything but the chance for a drawer to sit at a distance, or at an opacity, that nothing else on the screen shares.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct PanelsConfig {
-    /// How far a chip must be dragged away from the bar before letting go opens its panel, in px. `0` switches
-    /// the gesture off. One threshold for every panel rather than one each: the gesture is the same everywhere
-    /// on the bar, and a per-panel distance would make the bar feel inconsistent under the same finger.
+    /// How far a chip must be dragged away from the bar before letting go opens its panel, in px. `0` switches the gesture off. One threshold for every panel rather than one each: the gesture is the same everywhere on the bar, and a per-panel distance would make the bar feel inconsistent under the same finger.
     pub drag_threshold: f32,
     pub drawer: DrawerConfig,
     pub float: FloatConfig,
@@ -326,9 +297,7 @@ impl Default for PanelsConfig {
 }
 
 impl PanelsConfig {
-    /// The drag distance that opens a panel, or `None` when the gesture is off. Floored well above the tap
-    /// slop: a threshold a stray press could cross would open a panel every time a chip was clicked slightly
-    /// unsteadily.
+    /// The drag distance that opens a panel, or `None` when the gesture is off. Floored well above the tap slop: a threshold a stray press could cross would open a panel every time a chip was clicked slightly unsteadily.
     pub fn drag_threshold(&self) -> Option<f32> {
         (self.drag_threshold.is_finite() && self.drag_threshold > 0.0)
             .then(|| self.drag_threshold.clamp(16.0, 400.0))
@@ -344,17 +313,11 @@ pub enum Align {
     End,
 }
 
-/// The `active_window` module. `compact` shows the app's class instead of the document title — stable while you
-/// move around inside one app, and much narrower.
+/// The `active_window` module. `compact` shows the app's class instead of the document title — stable while you move around inside one app, and much narrower.
 ///
-/// Nothing bounds the title's length. The chip gives up width when its side of the bar runs short and the label
-/// elides, so a browser tab that runs to a paragraph costs the modules beside it nothing. A character count
-/// bounded it once and could not tell the two cases apart: it cut a short title on a wide bar exactly as
-/// readily as a long one on a narrow bar, which is the wrong unit for a question about room.
+/// Nothing bounds the title's length. The chip gives up width when its side of the bar runs short and the label elides, so a browser tab that runs to a paragraph costs the modules beside it nothing. A character count bounded it once and could not tell the two cases apart: it cut a short title on a wide bar exactly as readily as a long one on a narrow bar, which is the wrong unit for a question about room.
 ///
-/// `inverted` puts the icon after the title instead of before it. Which reads better depends on where the chip
-/// sits: leading the icon points into the bar from the left, and trailing it does the same from the right, so
-/// a chip in the end zone usually wants this on.
+/// `inverted` puts the icon after the title instead of before it. Which reads better depends on where the chip sits: leading the icon points into the bar from the left, and trailing it does the same from the right, so a chip in the end zone usually wants this on.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct ActiveWindowConfig {
@@ -373,8 +336,7 @@ impl Default for ActiveWindowConfig {
     }
 }
 
-/// How a rendered label is cased. Applied after the template, so it works on `{name}` (which Hyprland reports
-/// however the user named the workspace) without every template having to spell the casing out.
+/// How a rendered label is cased. Applied after the template, so it works on `{name}` (which Hyprland reports however the user named the workspace) without every template having to spell the casing out.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Capitalize {
@@ -397,8 +359,7 @@ impl Capitalize {
     }
 }
 
-/// Uppercases the first letter of every whitespace-separated word and lowers the rest, preserving the original
-/// separators so `my-notes  2` keeps its dash and its double space.
+/// Uppercases the first letter of every whitespace-separated word and lowers the rest, preserving the original separators so `my-notes  2` keeps its dash and its double space.
 fn title_case(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut at_word_start = true;
@@ -418,13 +379,9 @@ fn title_case(text: &str) -> String {
 
 /// The `workspaces` module.
 ///
-/// `shown` pins how many pills the bar draws regardless of how many workspaces exist, which is what keeps the
-/// bar's width from shifting every time one is created or destroyed; `0` shows exactly the ones that exist.
-/// `label` is a `{id}`/`{name}`/`{index}` template so a user can have numbers, names or icons without the
-/// shell enumerating presets, and `special_icons` maps a scratchpad's bare name to an Iconify glyph.
+/// `shown` pins how many pills the bar draws regardless of how many workspaces exist, which is what keeps the bar's width from shifting every time one is created or destroyed; `0` shows exactly the ones that exist. `label` is a `{id}`/`{name}`/`{index}` template so a user can have numbers, names or icons without the shell enumerating presets, and `special_icons` maps a scratchpad's bare name to an Iconify glyph.
 ///
-/// `occupied_label` and `active_label` override that template for a pill holding windows and for the focused
-/// one; both empty (the default) means every pill renders the same way, which is what most bars want.
+/// `occupied_label` and `active_label` override that template for a pill holding windows and for the focused one; both empty (the default) means every pill renders the same way, which is what most bars want.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct WorkspacesConfig {
@@ -435,14 +392,11 @@ pub struct WorkspacesConfig {
     /// Draw an app icon per window inside each pill, capped at `max_window_icons`.
     pub window_icons: bool,
     pub max_window_icons: u32,
-    /// Tint a pill that holds windows differently from an empty one. Ignored while `indicator` is on, which
-    /// needs every pill transparent to slide under them; the label colour carries occupancy there.
+    /// Tint a pill that holds windows differently from an empty one. Ignored while `indicator` is on, which needs every pill transparent to slide under them; the label colour carries occupancy there.
     pub occupied_background: bool,
-    /// Mark the active workspace with one box that slides between pills instead of recolouring each pill in
-    /// place. Off restores the older look exactly — the pill paints its own accent and nothing moves.
+    /// Mark the active workspace with one box that slides between pills instead of recolouring each pill in place. Off restores the older look exactly — the pill paints its own accent and nothing moves.
     pub indicator: bool,
-    /// How far the indicator stretches along its direction of travel, as a fraction of the distance still to
-    /// cover. `0` keeps it exactly one pill wide the whole way; the default gives it a little speed.
+    /// How far the indicator stretches along its direction of travel, as a fraction of the distance still to cover. `0` keeps it exactly one pill wide the whole way; the default gives it a little speed.
     pub indicator_trail: f32,
     /// The wheel over the pills switches workspace.
     pub scroll: bool,
@@ -477,9 +431,7 @@ impl Default for WorkspacesConfig {
 }
 
 impl WorkspacesConfig {
-    /// The trail fraction, bounded: at `1` the box would reach the whole way to its goal on every frame and
-    /// read as one long bar rather than as a pill in motion, and the indicator has to be off entirely for a
-    /// trail to mean nothing.
+    /// The trail fraction, bounded: at `1` the box would reach the whole way to its goal on every frame and read as one long bar rather than as a pill in motion, and the indicator has to be off entirely for a trail to mean nothing.
     pub fn trail(&self) -> f32 {
         if !self.indicator || !self.indicator_trail.is_finite() {
             return 0.0;
@@ -487,8 +439,7 @@ impl WorkspacesConfig {
         self.indicator_trail.clamp(0.0, 0.9)
     }
 
-    /// The template a pill in this state renders from: the most specific one the user set, falling back to the
-    /// general `label` so setting only `active_label` leaves every other pill alone.
+    /// The template a pill in this state renders from: the most specific one the user set, falling back to the general `label` so setting only `active_label` leaves every other pill alone.
     fn template(&self, occupied: bool, active: bool) -> &str {
         let specific = if active {
             [&self.active_label, &self.occupied_label]
@@ -503,8 +454,7 @@ impl WorkspacesConfig {
             .unwrap_or(&self.label)
     }
 
-    /// Renders a pill's label from the template for its state, then applies `capitalize`. `{index}` is the
-    /// pill's position, which is what a fixed-width bar wants when the ids themselves are sparse.
+    /// Renders a pill's label from the template for its state, then applies `capitalize`. `{index}` is the pill's position, which is what a fixed-width bar wants when the ids themselves are sparse.
     pub fn render_label(
         &self,
         id: i32,
@@ -546,17 +496,13 @@ impl TemperatureUnit {
         }
     }
 
-    /// A whole degree plus its unit — the reading a bar chip has room for, and unambiguous once a user has
-    /// switched scales.
+    /// A whole degree plus its unit — the reading a bar chip has room for, and unambiguous once a user has switched scales.
     pub fn format(self, celsius: f32) -> String {
         format!("{:.0}{}", self.from_celsius(celsius), self.suffix())
     }
 }
 
-/// The `temperature` module. `sensor` names an hwmon chip (`k10temp`, `coretemp`) or a sensor label (`Tctl`,
-/// `Package id 0`) to follow; empty tracks the hottest sensor on the machine, which is what works without a
-/// per-machine config. `warn`/`critical` are the °C the chip tints amber and red at — a desktop CPU that idles
-/// at 65 °C should not show a permanent warning, so they are the user's numbers.
+/// The `temperature` module. `sensor` names an hwmon chip (`k10temp`, `coretemp`) or a sensor label (`Tctl`, `Package id 0`) to follow; empty tracks the hottest sensor on the machine, which is what works without a per-machine config. `warn`/`critical` are the °C the chip tints amber and red at — a desktop CPU that idles at 65 °C should not show a permanent warning, so they are the user's numbers.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct TemperatureConfig {
@@ -577,13 +523,9 @@ impl Default for TemperatureConfig {
     }
 }
 
-/// One charge level worth interrupting the user about, declared as a `[[battery.warn_levels]]` table. It fires
-/// once as the charge crosses down through `level` while discharging, and re-arms once the battery is charging
-/// again — so a laptop left at 19 % does not warn every minute.
+/// One charge level worth interrupting the user about, declared as a `[[battery.warn_levels]]` table. It fires once as the charge crosses down through `level` while discharging, and re-arms once the battery is charging again — so a laptop left at 19 % does not warn every minute.
 ///
-/// `title` and `message` left empty take the shell's own translated text, so the defaults follow the UI
-/// language instead of pinning English into everyone's config; `{level}` in either is replaced with the charge
-/// at the moment it fired.
+/// `title` and `message` left empty take the shell's own translated text, so the defaults follow the UI language instead of pinning English into everyone's config; `{level}` in either is replaced with the charge at the moment it fired.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct BatteryWarning {
@@ -591,8 +533,7 @@ pub struct BatteryWarning {
     pub title: String,
     pub message: String,
     pub icon: String,
-    /// Raise it at `Critical` urgency, so with the default `critical_sticky` it waits to be read rather than
-    /// timing out behind whatever the user is doing.
+    /// Raise it at `Critical` urgency, so with the default `critical_sticky` it waits to be read rather than timing out behind whatever the user is doing.
     pub critical: bool,
 }
 
@@ -629,9 +570,7 @@ impl BatteryWarning {
     }
 }
 
-/// Low-battery behaviour (`[battery]`): the levels that raise a notification, and the action to take once the
-/// charge is low enough that the machine should put itself away. On a desktop none of it ever fires, since
-/// there is no battery to read.
+/// Low-battery behaviour (`[battery]`): the levels that raise a notification, and the action to take once the charge is low enough that the machine should put itself away. On a desktop none of it ever fires, since there is no battery to read.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct BatteryConfig {
@@ -647,8 +586,7 @@ impl Default for BatteryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            // Two warnings out of the box: a laptop shell that silently runs a battery flat is a bug, and a
-            // desktop never reaches this code because it has no battery to report.
+            // Two warnings out of the box: a laptop shell that silently runs a battery flat is a bug, and a desktop never reaches this code because it has no battery to report.
             warn_levels: vec![
                 BatteryWarning::default(),
                 BatteryWarning {
@@ -664,9 +602,7 @@ impl Default for BatteryConfig {
     }
 }
 
-/// The `lockstatus` module: caps- and num-lock indicators. `hide_inactive` shows an indicator only while its
-/// key is engaged, for a bar that should stay quiet; off (the default) keeps both glyphs in place, muted, so
-/// the module is visible the moment it is added and the bar's width never shifts.
+/// The `lockstatus` module: caps- and num-lock indicators. `hide_inactive` shows an indicator only while its key is engaged, for a bar that should stay quiet; off (the default) keeps both glyphs in place, muted, so the module is visible the moment it is added and the bar's width never shifts.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct LockStatusConfig {
@@ -687,17 +623,13 @@ impl Default for LockStatusConfig {
 
 /// The system tray (`[tray]`).
 ///
-/// `hidden` drops an application's icon by its `Id`, and `icon_subs` swaps one for an Iconify glyph so an
-/// application shipping a mismatched icon can be made to sit with the rest of the bar. Both match the id as a
-/// `*` pattern rather than a literal, because a good number of applications bury a PID in theirs.
+/// `hidden` drops an application's icon by its `Id`, and `icon_subs` swaps one for an Iconify glyph so an application shipping a mismatched icon can be made to sit with the rest of the bar. Both match the id as a `*` pattern rather than a literal, because a good number of applications bury a PID in theirs.
 ///
-/// `recolour` tints every icon to the bar's foreground. Coherent, but it flattens an application that uses
-/// colour to report state — a sync client going red — so it stays off unless asked for.
+/// `recolour` tints every icon to the bar's foreground. Coherent, but it flattens an application that uses colour to report state — a sync client going red — so it stays off unless asked for.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct TrayConfig {
-    /// Off costs nothing: the module draws nothing and the service — three threads and a D-Bus name — is
-    /// never started.
+    /// Off costs nothing: the module draws nothing and the service — three threads and a D-Bus name — is never started.
     pub enabled: bool,
     /// Drop the spacing between icons, for a bar with many of them.
     pub compact: bool,
@@ -726,9 +658,7 @@ impl TrayConfig {
         self.hidden.iter().any(|p| glob_matches(p, id))
     }
 
-    /// The Iconify glyph standing in for this application's own icon, if one is configured. The most specific
-    /// pattern wins, so a blanket `*` can set a default without shadowing the entry that names one application
-    /// — and the answer never depends on the map's iteration order.
+    /// The Iconify glyph standing in for this application's own icon, if one is configured. The most specific pattern wins, so a blanket `*` can set a default without shadowing the entry that names one application — and the answer never depends on the map's iteration order.
     pub fn icon_sub_for(&self, id: &str) -> Option<&str> {
         self.icon_subs
             .iter()
@@ -738,9 +668,7 @@ impl TrayConfig {
     }
 }
 
-/// The `clock` module and its panel. `format` and `date_format` are `strftime` patterns, so a user can have
-/// anything from `%H:%M` to a full locale date without the shell enumerating presets; `twelve_hour` is the one
-/// switch worth naming, since it is what most people actually mean by "change the clock format".
+/// The `clock` module and its panel. `format` and `date_format` are `strftime` patterns, so a user can have anything from `%H:%M` to a full locale date without the shell enumerating presets; `twelve_hour` is the one switch worth naming, since it is what most people actually mean by "change the clock format".
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct ClockConfig {

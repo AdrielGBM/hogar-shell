@@ -1,7 +1,6 @@
 //! `[theme]`, `[shape]`, `[icons]` and the rest of how the shell looks.
 //!
-//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a
-//! field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
+//! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -171,11 +170,7 @@ impl Default for IconsConfig {
 
 /// The design tokens themselves, overridable from `~/.config/hogar-shell/tokens.toml`.
 ///
-/// **Unstable, and deliberately so.** `[theme]` is the supported surface: it names the handful of knobs a
-/// theme is *meant* to expose, and those keys will keep working. This file reaches past that into the token
-/// set the shell draws from, which exists to serve the widgets and moves when they do — a token can be
-/// renamed or dropped in any release. It is here because a user building a palette wants every number in one
-/// place without waiting for each to grow a config key, not because it is a stable API.
+/// **Unstable, and deliberately so.** `[theme]` is the supported surface: it names the handful of knobs a theme is *meant* to expose, and those keys will keep working. This file reaches past that into the token set the shell draws from, which exists to serve the widgets and moves when they do — a token can be renamed or dropped in any release. It is here because a user building a palette wants every number in one place without waiting for each to grow a config key, not because it is a stable API.
 ///
 /// Applied last in [`Config::resolve_theme`], after `[theme]` and after `[theme.scale]`, so it always wins.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -191,9 +186,7 @@ pub struct TokenOverrides {
 }
 
 impl TokenOverrides {
-    /// Reads `tokens.toml` from the config directory. A missing file is the normal case and reads as "no
-    /// overrides"; an unparseable one is warned about and ignored, because a token file is a garnish and must
-    /// never be the reason a shell refuses to start.
+    /// Reads `tokens.toml` from the config directory. A missing file is the normal case and reads as "no overrides"; an unparseable one is warned about and ignored, because a token file is a garnish and must never be the reason a shell refuses to start.
     pub fn load(config_path: &Path) -> Self {
         let path = Self::path(config_path);
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -250,12 +243,9 @@ impl TokenOverrides {
     }
 }
 
-/// One text role's overrides (`[theme.fonts.<role>]`), each unset by default so a role keeps the size the
-/// theme derives for it.
+/// One text role's overrides (`[theme.fonts.<role>]`), each unset by default so a role keeps the size the theme derives for it.
 ///
-/// No `family`: rsx's `TextStyle` carries no font family — the family is process-wide, applied through
-/// `telar::set_default_font_family` from `[theme] font_family`. Per-role families need `TextStyle` to carry one
-/// and the renderer to select on it, which is an upstream change rather than a config key.
+/// No `family`: rsx's `TextStyle` carries no font family — the family is process-wide, applied through `telar::set_default_font_family` from `[theme] font_family`. Per-role families need `TextStyle` to carry one and the renderer to select on it, which is an upstream change rather than a config key.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct FontSpec {
@@ -274,8 +264,7 @@ impl FontSpec {
     }
 }
 
-/// Per-role text overrides (`[theme.fonts]`). The roles are the ones the shell actually draws with, so there is
-/// no role here that nothing reads.
+/// Per-role text overrides (`[theme.fonts]`). The roles are the ones the shell actually draws with, so there is no role here that nothing reads.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct FontsConfig {
@@ -287,14 +276,9 @@ pub struct FontsConfig {
 
 /// How the shell moves (`[animation]`).
 ///
-/// Two curve families rather than one, because rsx has two motion models and they answer different questions.
-/// `curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace
-/// indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a
-/// **timing function**, for a transition with a start, an end and a duration — a panel opening.
+/// Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration — a panel opening.
 ///
-/// `duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled
-/// = false` collapses every duration to zero, which is the accessibility answer (and what a user on a remote
-/// desktop wants) rather than a per-surface opt-out.
+/// `duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, which is the accessibility answer (and what a user on a remote desktop wants) rather than a per-surface opt-out.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct AnimationConfig {
@@ -321,8 +305,7 @@ impl Default for AnimationConfig {
 }
 
 impl AnimationConfig {
-    /// The multiplier, bounded: `0` (or a negative, or NaN) would make every animation instant by accident
-    /// rather than by the `enabled` switch that says so, and an unbounded one makes the shell feel broken.
+    /// The multiplier, bounded: `0` (or a negative, or NaN) would make every animation instant by accident rather than by the `enabled` switch that says so, and an unbounded one makes the shell feel broken.
     fn scale(&self) -> f32 {
         if self.duration_scale.is_finite() {
             self.duration_scale.clamp(0.1, 10.0)
@@ -331,8 +314,7 @@ impl AnimationConfig {
         }
     }
 
-    /// `base` scaled by `duration_scale`, or zero while animation is off. The one place a duration is derived,
-    /// so every surface shortens and lengthens together instead of each carrying its own constant.
+    /// `base` scaled by `duration_scale`, or zero while animation is off. The one place a duration is derived, so every surface shortens and lengthens together instead of each carrying its own constant.
     pub fn duration(&self, base: Duration) -> Duration {
         if !self.enabled {
             return Duration::ZERO;
@@ -364,8 +346,7 @@ impl AnimationConfig {
         self.tween_ms(self.panel_duration_ms, 2_000)
     }
 
-    /// A tween of `base_ms`, scaled and eased by `[animation]`, and bounded by `max_ms` so a mistyped duration
-    /// is a slow transition rather than one that never ends. The general form `panel_tween` is a preset of.
+    /// A tween of `base_ms`, scaled and eased by `[animation]`, and bounded by `max_ms` so a mistyped duration is a slow transition rather than one that never ends. The general form `panel_tween` is a preset of.
     pub fn tween_ms(&self, base_ms: u64, max_ms: u64) -> telar::motion::Tween {
         telar::motion::tween(
             self.duration(Duration::from_millis(base_ms.clamp(0, max_ms))),
@@ -376,10 +357,7 @@ impl AnimationConfig {
 
 /// Proportional multipliers over the theme's numeric tokens (`[theme.scale]`).
 ///
-/// An absolute override answers "what should the radius be"; a scale answers "make everything a bit rounder",
-/// which is the question a user actually has and the one that keeps a palette's proportions intact. Applied
-/// last in [`Config::resolve_theme`], so scaling a token the user also pinned scales *their* number, not the
-/// palette's — otherwise the two settings would silently fight.
+/// An absolute override answers "what should the radius be"; a scale answers "make everything a bit rounder", which is the question a user actually has and the one that keeps a palette's proportions intact. Applied last in [`Config::resolve_theme`], so scaling a token the user also pinned scales *their* number, not the palette's — otherwise the two settings would silently fight.
 ///
 /// `font` scales the base size every other role steps off, so one number moves all the text at once.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
@@ -403,16 +381,14 @@ impl Default for ScaleConfig {
 }
 
 impl ScaleConfig {
-    /// Whether every multiplier is the identity, so `resolve_theme` can skip the whole step — and so a config
-    /// that never mentions scaling reads exactly as it did before the section existed.
+    /// Whether every multiplier is the identity, so `resolve_theme` can skip the whole step — and so a config that never mentions scaling reads exactly as it did before the section existed.
     pub(crate) fn is_identity(self) -> bool {
         [self.rounding, self.spacing, self.font, self.icon]
             .iter()
             .all(|f| *f == 1.0)
     }
 
-    /// A multiplier bounded away from the two ways it breaks a surface: `0` (or negative, or NaN) collapses
-    /// what it scales to nothing, and an unbounded one grows a chip past the screen it sits on.
+    /// A multiplier bounded away from the two ways it breaks a surface: `0` (or negative, or NaN) collapses what it scales to nothing, and an unbounded one grows a chip past the screen it sits on.
     pub(crate) fn factor(value: f32) -> f32 {
         if value.is_finite() {
             value.clamp(0.25, 4.0)
@@ -428,14 +404,11 @@ impl ScaleConfig {
 pub struct ThemeConfig {
     pub name: String,
     pub accent: String,
-    /// `dark`, `light`, or `auto` (the default) to keep whatever the named palette already is. A built-in with
-    /// a sibling in the asked-for mode switches to it (`gruvbox` ↔ `gruvbox-light`); one without keeps its own.
+    /// `dark`, `light`, or `auto` (the default) to keep whatever the named palette already is. A built-in with a sibling in the asked-for mode switches to it (`gruvbox` ↔ `gruvbox-light`); one without keeps its own.
     pub mode: String,
-    /// How much colour a `dynamic` scheme carries: `vibrant` (the default), `content`, `expressive`, `fidelity`
-    /// or `muted`. Ignored by the built-in palettes, which carry their own.
+    /// How much colour a `dynamic` scheme carries: `vibrant` (the default), `content`, `expressive`, `fidelity` or `muted`. Ignored by the built-in palettes, which carry their own.
     pub variant: String,
-    /// The palette a `dynamic` theme falls back to before a wallpaper has been quantised — on the very first
-    /// start, or with no wallpaper set at all.
+    /// The palette a `dynamic` theme falls back to before a wallpaper has been quantised — on the very first start, or with no wallpaper set at all.
     pub fallback: String,
     pub export: SchemeExportConfig,
     pub radius: Option<u32>,
@@ -446,13 +419,9 @@ pub struct ThemeConfig {
     pub font_family: Option<String>,
     /// Stroke width forced on stroke-based icon glyphs (e.g. `1.5`). Unset keeps each glyph's own stroke.
     pub icon_stroke: Option<f32>,
-    /// How opaque every surface the shell paints is, from `0.2` to `1.0` — bars, panels, cards and flashes
-    /// alike. One key for the whole shell and no way to break it apart: a drawer at an opacity the bar it
-    /// hangs off does not share is not a look anybody chooses, it is two settings that drifted.
+    /// How opaque every surface the shell paints is, from `0.2` to `1.0` — bars, panels, cards and flashes alike. One key for the whole shell and no way to break it apart: a drawer at an opacity the bar it hangs off does not share is not a look anybody chooses, it is two settings that drifted.
     ///
-    /// **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job — a
-    /// `layer_rule = blur, ^hogar-shell`, which needs no code here — and it shows nothing through a surface
-    /// painted opaque. Lowering this is what gives it something to blur.
+    /// **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job — a `layer_rule = blur, ^hogar-shell`, which needs no code here — and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
     pub opacity: f32,
     pub scale: ScaleConfig,
     pub fonts: FontsConfig,
@@ -461,11 +430,7 @@ pub struct ThemeConfig {
 
 /// Where the resolved palette is written for the rest of the desktop to read (`[theme.export]`).
 ///
-/// A wallpaper-driven scheme is only worth having if the applications around the shell follow it, and none of
-/// them reads `config.toml`. Each switch writes one flat file of the same tokens into `dir`: `scheme.json`,
-/// `scheme.css` (GTK `@define-color`), `scheme.conf` (an ini for Qt/Kvantum themes) and `scheme.sh` plus
-/// `sequences` (shell variables and the OSC escapes that recolour a running terminal). `hooks` are commands run
-/// once the files are on disk, which is where a `gsettings`/`makoctl reload` belongs.
+/// A wallpaper-driven scheme is only worth having if the applications around the shell follow it, and none of them reads `config.toml`. Each switch writes one flat file of the same tokens into `dir`: `scheme.json`, `scheme.css` (GTK `@define-color`), `scheme.conf` (an ini for Qt/Kvantum themes) and `scheme.sh` plus `sequences` (shell variables and the OSC escapes that recolour a running terminal). `hooks` are commands run once the files are on disk, which is where a `gsettings`/`makoctl reload` belongs.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct SchemeExportConfig {

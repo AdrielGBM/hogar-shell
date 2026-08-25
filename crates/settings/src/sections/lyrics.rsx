@@ -9,8 +9,7 @@ let l = &config.lyrics;
 let enabled = signal(l.enabled);
 let online = signal(l.online);
 
-// Cloned into the write rather than moved: `[logic]` runs before `[view]`, so the fields below still need the
-// handles this closure reads.
+// Cloned into the write rather than moved: `[logic]` runs before `[view]`, so the fields below still need the handles this closure reads.
 let save: Box<dyn Fn()> = Box::new({
     let (enabled, online) = (enabled.clone(), online.clone());
     move || {

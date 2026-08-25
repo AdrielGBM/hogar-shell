@@ -2,8 +2,7 @@
 use ::config::theme::{FontRole, NordTheme};
 use ::services::hyprland::{self, KeyboardLayout};
 
-// Hyprland names layouts in full ("English (US)"); a bar has room for the two-letter code people actually scan
-// for, so this takes the initials of the leading words — "English (US)" → "EN", "Spanish" → "ES".
+// Hyprland names layouts in full ("English (US)"); a bar has room for the two-letter code people actually scan for, so this takes the initials of the leading words — "English (US)" → "EN", "Spanish" → "ES".
 fn short_name(layout: &KeyboardLayout) -> String {
     let base = layout.name.split('(').next().unwrap_or(&layout.name).trim();
     let code: String = base
@@ -14,8 +13,7 @@ fn short_name(layout: &KeyboardLayout) -> String {
         .filter(|c| c.is_alphabetic())
         .take(2)
         .collect();
-    // An empty code would render an empty string, and a chip with no glyphs collapses to no area at all: the
-    // module does not read as absent, it disappears while still occupying a slot.
+    // An empty code would render an empty string, and a chip with no glyphs collapses to no area at all: the module does not read as absent, it disappears while still occupying a slot.
     if code.is_empty() {
         return "--".to_string();
     }

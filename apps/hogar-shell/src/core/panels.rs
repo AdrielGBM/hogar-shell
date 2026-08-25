@@ -1,12 +1,8 @@
 //! Which module has a panel, what builds it, and whether opening it takes the keyboard.
 //!
-//! The other half of the composition root, beside [`crate::core::registry`]: the drawer, the float and the
-//! settings preview all present *a module's panel*, and this is the one place that says which module that is.
-//! Keeping it here rather than beside the drawer is what lets a surface be built without the modules it shows.
+//! The other half of the composition root, beside [`crate::core::registry`]: the drawer, the float and the settings preview all present *a module's panel*, and this is the one place that says which module that is. Keeping it here rather than beside the drawer is what lets a surface be built without the modules it shows.
 //!
-//! `session` takes the keyboard for the second reason the mode exists: its tiles are a list, and a menu whose
-//! most destructive entries are two presses away is exactly the one a user wants to reach without moving their
-//! hand to the mouse.
+//! `session` takes the keyboard for the second reason the mode exists: its tiles are a list, and a menu whose most destructive entries are two presses away is exactly the one a user wants to reach without moving their hand to the mouse.
 
 use platform_wayland::KeyboardMode;
 use ui::panels::PanelRegistry;
@@ -29,8 +25,7 @@ pub fn default_panels() -> PanelRegistry {
     panels.register("windowinfo", modules::windowinfo::window_panel, display);
     panels.register("session", modules::session::session_panel, typing);
     panels.register("logo", modules::session::session_panel, typing);
-    // The settings window keeps its Revert snapshot for as long as it is open, and must not keep it across a
-    // user closing it.
+    // The settings window keeps its Revert snapshot for as long as it is open, and must not keep it across a user closing it.
     panels.on_close("settings", settings::panel::forget_panel_state);
     panels
 }

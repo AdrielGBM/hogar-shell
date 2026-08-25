@@ -5,10 +5,7 @@ use crate::widget;
 
 /// One popout's content, described rather than built.
 ///
-/// A popout is a glance, not a panel: a heading, at most one meter, and a handful of label/value rows. Saying
-/// that once — as data a module fills in rather than a tree each module builds — is what keeps twelve of them
-/// looking like one shell instead of twelve small designs. [`crate::card::Card`] is this struct under the name
-/// its builders use.
+/// A popout is a glance, not a panel: a heading, at most one meter, and a handful of label/value rows. Saying that once — as data a module fills in rather than a tree each module builds — is what keeps twelve of them looking like one shell instead of twelve small designs. [`crate::card::Card`] is this struct under the name its builders use.
 pub struct Props {
     pub icon: Option<Live<String>> = None,
     pub icon_tint: Option<Live<Color>> = None,
@@ -33,8 +30,7 @@ let title = props.title;
 let subtitle = props.subtitle;
 let rows = props.rows;
 
-// The bar grows from its left edge by transforming a filled child against its own laid-out rect, which is the
-// one piece of a card no attribute reaches: a declarative scale pivots on the centre.
+// The bar grows from its left edge by transforming a filled child against its own laid-out rect, which is the one piece of a card no attribute reaches: a declarative scale pivots on the centre.
 let bar = props
     .meter
     .map(|(fraction, tint)| widget::meter(fraction, tint, theme.overlay, METER_HEIGHT))

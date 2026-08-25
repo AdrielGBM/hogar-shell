@@ -4,8 +4,7 @@ use ::config::BatteryConfig;
 
 let (config, path) = source();
 let b = &config.battery;
-// `warn_levels` is a list of tables, so it stays hand-edited in the TOML like `theme.colors`; carrying it
-// through means saving here does not silently drop the user's thresholds.
+// `warn_levels` is a list of tables, so it stays hand-edited in the TOML like `theme.colors`; carrying it through means saving here does not silently drop the user's thresholds.
 let base = b.clone();
 let enabled = signal(b.enabled);
 let critical_level = signal(b.critical_level.to_string());

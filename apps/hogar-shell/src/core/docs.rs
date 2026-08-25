@@ -1,18 +1,10 @@
 //! The prose documentation under `docs/`, and the three pages of it that are generated.
 //!
-//! Same argument as [`super::man`], applied to the other audience. The manual is what a distribution installs;
-//! `docs/` is what someone reads on the web before installing anything, and a reference typed out there is a
-//! third copy of the command table and the config schema — two of which would be wrong by the next release.
-//! So `docs/reference/` is walked out of the same two tables the manual is, and only the *prose* pages are
-//! written by hand.
+//! Same argument as [`super::man`], applied to the other audience. The manual is what a distribution installs; `docs/` is what someone reads on the web before installing anything, and a reference typed out there is a third copy of the command table and the config schema — two of which would be wrong by the next release. So `docs/reference/` is walked out of the same two tables the manual is, and only the *prose* pages are written by hand.
 //!
-//! The other half is what keeps the hand-written pages honest. Every feature page carries front matter naming
-//! the dependencies, config sections and IPC targets it describes, **by id**, and the checks below fail if a
-//! page names one that does not exist — or if a module exists that no page describes. A page that drifts from
-//! the build is a test failure rather than something a reader discovers.
+//! The other half is what keeps the hand-written pages honest. Every feature page carries front matter naming the dependencies, config sections and IPC targets it describes, **by id**, and the checks below fail if a page names one that does not exist — or if a module exists that no page describes. A page that drifts from the build is a test failure rather than something a reader discovers.
 //!
-//! Test-only on purpose: nothing here is reachable from the running shell. Exposing it as a command would put
-//! a documentation generator in the IPC table, which is a surface users would have to be told to ignore.
+//! Test-only on purpose: nothing here is reachable from the running shell. Exposing it as a command would put a documentation generator in the IPC table, which is a surface users would have to be told to ignore.
 #![cfg(test)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -108,8 +100,7 @@ fn config_page() -> Result<String, String> {
     Ok(out)
 }
 
-/// One table and everything under it. A sub-table becomes a heading of its own rather than an indent, which is
-/// what the file itself does: `[theme.scale]` is a header a reader types.
+/// One table and everything under it. A sub-table becomes a heading of its own rather than an indent, which is what the file itself does: `[theme.scale]` is a header a reader types.
 fn render_table(table: &Table, depth: usize, out: &mut String) {
     let _ = writeln!(out, "{} `[{}]`\n", "#".repeat(depth), table.path);
     if let Some(doc) = table.doc {
@@ -336,9 +327,7 @@ impl Page {
     }
 }
 
-/// The front matter of one page. Deliberately a few lines rather than a YAML dependency: the grammar is
-/// `key: scalar` and `key: [a, b]`, and a parser that accepts more than the pages use would accept a page the
-/// checks below cannot read.
+/// The front matter of one page. Deliberately a few lines rather than a YAML dependency: the grammar is `key: scalar` and `key: [a, b]`, and a parser that accepts more than the pages use would accept a page the checks below cannot read.
 fn parse(path: &Path, root: &Path) -> Option<Page> {
     let text = std::fs::read_to_string(path).ok()?;
     let body = text.strip_prefix("---\n")?;
@@ -429,9 +418,7 @@ fn generated() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// The check that makes a checked-in generated file safe to have: a command added to the table, a key added to
-/// the config or a page added to `docs/features/` without regenerating fails here rather than shipping a
-/// reference that quietly lies.
+/// The check that makes a checked-in generated file safe to have: a command added to the table, a key added to the config or a page added to `docs/features/` without regenerating fails here rather than shipping a reference that quietly lies.
 ///
 /// `UPDATE_DOCS=1 cargo test -p hogar-shell --lib docs` rewrites them.
 #[test]
@@ -452,9 +439,7 @@ fn the_committed_reference_matches_what_this_build_generates() {
     }
 }
 
-/// Front matter is only worth having if it cannot lie. Every id a page names has to exist in the registry that
-/// owns it, which is what makes "does this feature need a Wayland protocol?" answerable from the page and
-/// correct.
+/// Front matter is only worth having if it cannot lie. Every id a page names has to exist in the registry that owns it, which is what makes "does this feature need a Wayland protocol?" answerable from the page and correct.
 #[test]
 fn every_page_names_ids_that_exist() {
     let dep_ids: BTreeSet<&str> = deps::ALL.iter().map(|entry| entry.id).collect();
@@ -492,8 +477,7 @@ fn every_page_names_ids_that_exist() {
     }
 }
 
-/// The vocabulary of the front matter itself. A typo in `kind` would silently drop a page out of the index,
-/// which is the one failure a generated index cannot show you.
+/// The vocabulary of the front matter itself. A typo in `kind` would silently drop a page out of the index, which is the one failure a generated index cannot show you.
 #[test]
 fn every_page_declares_a_known_kind_and_status() {
     for page in pages() {
@@ -530,8 +514,7 @@ fn every_page_declares_a_known_kind_and_status() {
     }
 }
 
-/// A module a user can put on a bar and cannot read about is the gap this catches, and it closes in both
-/// directions: a page for a module that no longer exists is just as wrong as a module with no page.
+/// A module a user can put on a bar and cannot read about is the gap this catches, and it closes in both directions: a page for a module that no longer exists is just as wrong as a module with no page.
 #[test]
 fn every_module_has_a_page_and_every_module_page_has_a_module() {
     let popouts = crate::core::popouts::default_popouts();
@@ -558,8 +541,7 @@ fn every_module_has_a_page_and_every_module_page_has_a_module() {
     }
 }
 
-/// A dependency nobody documents is one a user has no way to know they want. The row already says what its
-/// absence costs; this is what makes some page say what to do about it.
+/// A dependency nobody documents is one a user has no way to know they want. The row already says what its absence costs; this is what makes some page say what to do about it.
 #[test]
 fn every_dependency_is_claimed_by_a_page() {
     let claimed: BTreeSet<String> = pages().iter().flat_map(|page| page.list("deps")).collect();

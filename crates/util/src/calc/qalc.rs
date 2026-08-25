@@ -1,11 +1,8 @@
 //! The fallback evaluator: whatever `qalc` can answer that the in-house one cannot.
 //!
-//! Qalculate knows currencies, physical constants, date arithmetic and a units table far larger than the one next
-//! door. It is also a process, and starting one per keystroke on the UI thread would stall the frame for as long
-//! as it takes to load — so this goes through `shared::asset`: ask, get a signal, and let the worker fill it in.
+//! Qalculate knows currencies, physical constants, date arithmetic and a units table far larger than the one next door. It is also a process, and starting one per keystroke on the UI thread would stall the frame for as long as it takes to load — so this goes through `shared::asset`: ask, get a signal, and let the worker fill it in.
 //!
-//! Asked *only* when the query is explicitly a calculation (the `=` prefix) and the in-house evaluator has already
-//! declined. An app search must never spawn a process, and a question with a local answer must never wait for one.
+//! Asked *only* when the query is explicitly a calculation (the `=` prefix) and the in-house evaluator has already declined. An app search must never spawn a process, and a question with a local answer must never wait for one.
 
 use std::cell::RefCell;
 use std::time::Duration;
@@ -15,8 +12,7 @@ use telar::ReadSignal;
 use crate::asset::{Load, Loader};
 use crate::deps::{self, Dep};
 
-/// Long enough for a cold start of a program that loads a units database, short enough that a wedged one is not
-/// mistaken for a hard question.
+/// Long enough for a cold start of a program that loads a units database, short enough that a wedged one is not mistaken for a hard question.
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Anything longer is not an answer to a one-line sum, and the row can only show a line of it anyway.
@@ -28,8 +24,7 @@ thread_local! {
 
 /// `qalc`'s answer to `query`, starting one the first time it is asked for.
 ///
-/// `None` covers all three of "still running", "no qalc installed" and "it had nothing to say" — none of which a
-/// launcher row can usefully distinguish for the user, who is typing and will see the answer or will not.
+/// `None` covers all three of "still running", "no qalc installed" and "it had nothing to say" — none of which a launcher row can usefully distinguish for the user, who is typing and will see the answer or will not.
 pub fn answer(query: &str) -> Option<String> {
     let query = query.trim();
     if query.is_empty() {
@@ -60,19 +55,16 @@ fn ensure_store() {
     ANSWERS.with(|cell| *cell.borrow_mut() = Some(store));
 }
 
-/// Runs `qalc` once. Blocking — only ever called on the worker thread, and never without the deadline
-/// `shared::process` puts on it: one wedged child would otherwise park the worker for the life of the shell.
+/// Runs `qalc` once. Blocking — only ever called on the worker thread, and never without the deadline `shared::process` puts on it: one wedged child would otherwise park the worker for the life of the shell.
 fn run(query: &str) -> Option<String> {
-    // `-t` is terse (the result alone, no echo of the question), and the expression goes after `--` so a query
-    // starting with a dash is an expression rather than an unknown flag.
+    // `-t` is terse (the result alone, no echo of the question), and the expression goes after `--` so a query starting with a dash is an expression rather than an unknown flag.
     let stdout = deps::output(Dep::Qalc, &["-t", "--", query], TIMEOUT)?;
     clean(&stdout)
 }
 
 /// The answer out of qalc's terse output, or `None` when it did not really answer.
 ///
-/// Qalculate answers an expression it cannot parse by echoing it back, so an app name typed after `=` would come
-/// back as itself and read as a result. An answer identical to the question is therefore treated as no answer.
+/// Qalculate answers an expression it cannot parse by echoing it back, so an app name typed after `=` would come back as itself and read as a result. An answer identical to the question is therefore treated as no answer.
 fn clean(stdout: &str) -> Option<String> {
     let answer = stdout.trim();
     if answer.is_empty() || answer.len() > MAX_LEN {

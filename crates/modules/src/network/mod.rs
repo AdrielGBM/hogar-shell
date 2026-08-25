@@ -1,8 +1,6 @@
 //! The network panel: the radio, the networks in range, and joining one.
 //!
-//! The bar chip stays what it was — a sysfs link verdict that needs no NetworkManager — and this panel is the
-//! NetworkManager view layered on top. So a machine without NM keeps a working chip and gets a panel that says
-//! why it is empty, rather than the chip going blank because the panel's dependency is missing.
+//! The bar chip stays what it was — a sysfs link verdict that needs no NetworkManager — and this panel is the NetworkManager view layered on top. So a machine without NM keeps a working chip and gets a panel that says why it is empty, rather than the chip going blank because the panel's dependency is missing.
 
 use telar::{
     AlignItems, Container, Input, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
@@ -29,9 +27,7 @@ struct Row {
 }
 
 impl Row {
-    /// Keyed on what the row draws — but deliberately *not* on the signal strength, which moves on every scan.
-    /// Folding it in would rebuild the row several times a second, and a rebuilt row destroys the password
-    /// field mid-typing along with its focus. The strength is drawn from a signal instead.
+    /// Keyed on what the row draws — but deliberately *not* on the signal strength, which moves on every scan. Folding it in would rebuild the row several times a second, and a rebuilt row destroys the password field mid-typing along with its focus. The strength is drawn from a signal instead.
     fn key(&self) -> String {
         format!(
             "{}|{}|{}|{}",
@@ -50,8 +46,7 @@ pub fn network_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     network_view(config)
 }
 
-/// The panel's whole content, taking its config rather than reading the surface's, so a caller that already
-/// resolved one — a drawer, a float — does not have to be a surface for this to build.
+/// The panel's whole content, taking its config rather than reading the surface's, so a caller that already resolved one — a drawer, a float — does not have to be a surface for this to build.
 pub fn network_view(config: NetworkConfig) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
 
@@ -89,8 +84,7 @@ fn header(state: RwSignal<Wifi>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
     let scan_label = state.read_only();
     let scan_active = state.read_only();
 
-    // Read out, then translate: `status_line` calls `t!`, and a `with` here would still hold the reactive
-    // runtime's borrow when it read the locale signal.
+    // Read out, then translate: `status_line` calls `t!`, and a `with` here would still hold the reactive runtime's borrow when it read the locale signal.
     let subtitle = Text::auto(
         move || status_line(&subtitle_state.get()),
         LayoutStyle::new(),
@@ -242,8 +236,7 @@ fn empty_line(wifi: &Wifi, config: NetworkConfig) -> String {
     }
 }
 
-/// One network. Press joins or leaves it; a secured network with no saved connection opens a password field
-/// first. Right-click forgets a saved one, arming before it fires — forgetting is not undoable from here.
+/// One network. Press joins or leaves it; a secured network with no saved connection opens a password field first. Right-click forgets a saved one, arming before it fires — forgetting is not undoable from here.
 fn network_row(
     row: Row,
     state: RwSignal<Wifi>,
@@ -265,8 +258,7 @@ fn network_row(
         move |signal: &telar::ReadSignal<String>| signal.get() == ssid
     };
 
-    // The strength is read from the live state rather than baked into the row, so a scan repaints the arc
-    // without rebuilding the row (see `Row::key`).
+    // The strength is read from the live state rather than baked into the row, so a scan repaints the arc without rebuilding the row (see `Row::key`).
     let strength = {
         let state = state.read_only();
         let ssid = ssid.clone();
@@ -421,14 +413,12 @@ fn network_row(
     )?))
 }
 
-/// Whether joining this network needs a password from the user: secured, not already saved, and something the
-/// shell can actually authenticate on its own.
+/// Whether joining this network needs a password from the user: secured, not already saved, and something the shell can actually authenticate on its own.
 fn needs_prompt(point: &AccessPoint) -> bool {
     point.security.needs_password() && !point.saved && point.security.joinable_with_a_password()
 }
 
-/// The password field, shown under the row it belongs to. Masked: a shell panel is on screen in front of
-/// whoever is in the room.
+/// The password field, shown under the row it belongs to. Masked: a shell panel is on screen in front of whoever is in the room.
 fn prompt(
     ssid: String,
     asking: RwSignal<String>,
@@ -486,8 +476,7 @@ fn prompt(
     )?))
 }
 
-/// Joins by name rather than by object path: the strongest radio for an SSID changes as you move, and the row
-/// was built from a snapshot. Resolving at press time joins the one that is actually best right now.
+/// Joins by name rather than by object path: the strongest radio for an SSID changes as you move, and the row was built from a snapshot. Resolving at press time joins the one that is actually best right now.
 fn join(ssid: &str, password: Option<String>) {
     let Some(point) =
         network::current_wifi().and_then(|w| w.networks().into_iter().find(|p| p.ssid == ssid))
@@ -678,8 +667,7 @@ mod tests {
         assert_eq!(listed(&wifi, capped).len(), 1);
     }
 
-    /// The same trap the bluetooth panel hit: a closure reading a second signal inside another's `with` panics
-    /// at build time and nowhere else.
+    /// The same trap the bluetooth panel hit: a closure reading a second signal inside another's `with` panics at build time and nowhere else.
     #[test]
     fn the_panel_builds_without_a_re_entrant_borrow() {
         telar::reset_layout_runtime();

@@ -1,12 +1,8 @@
 //! The shape every dashboard card takes.
 //!
-//! A dashboard card is a page section, not a glance: a heading, an optional readout on the right, and whatever
-//! the card puts under it. Saying the frame once — as data a page fills in rather than a tree each page builds
-//! — is what keeps eight of them reading as one page instead of eight small designs.
+//! A dashboard card is a page section, not a glance: a heading, an optional readout on the right, and whatever the card puts under it. Saying the frame once — as data a page fills in rather than a tree each page builds — is what keeps eight of them reading as one page instead of eight small designs.
 //!
-//! The card sits on the *base* token while the panel around it is *surface*, which is the pairing every theme
-//! guarantees is distinct in both directions: an inset well on a dark palette, a raised one on a light palette,
-//! never a card that vanishes into its panel.
+//! The card sits on the *base* token while the panel around it is *surface*, which is the pairing every theme guarantees is distinct in both directions: an inset well on a dark palette, a raised one on a light palette, never a card that vanishes into its panel.
 
 use telar::{
     AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension,
@@ -22,8 +18,7 @@ use util::reactive::{Live, fixed_text};
 const HEADING_ICON: f32 = 18.0;
 /// A page card's meter is thicker than a popout's: it is the card's subject, not a footnote under a heading.
 pub const METER_HEIGHT: f32 = 8.0;
-/// Tall enough that a minute of history reads as a shape rather than a jagged line, short enough that six of
-/// them stack inside one drawer.
+/// Tall enough that a minute of history reads as a shape rather than a jagged line, short enough that six of them stack inside one drawer.
 pub const CHART_HEIGHT: f32 = 40.0;
 pub const CARD_GAP: f32 = 10.0;
 
@@ -90,8 +85,7 @@ impl Card {
     }
 }
 
-/// The card's own box, at the same corner radius the bar carries so a drawer full of cards rounds like the
-/// shell around it.
+/// The card's own box, at the same corner radius the bar carries so a drawer full of cards rounds like the shell around it.
 pub fn frame(
     children: Vec<Box<dyn LayoutItem>>,
     theme: NordTheme,

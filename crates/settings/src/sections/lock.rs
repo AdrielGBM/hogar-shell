@@ -1,7 +1,6 @@
 //! The session lock and the idle stages that lead to it.
 //!
-//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine
-//! decides the length of. The static-shape forms are `.rsx` components beside this file.
+//! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
 use std::rc::Rc;
 
@@ -12,8 +11,7 @@ use crate::table::*;
 use config::theme::NordTheme;
 use config::{IdleConfig, IdleStage};
 
-/// The `[[idle.stages]]` editor. `hogar-shell --list` is what the action fields accept; the placeholders name
-/// the three a user reaches for.
+/// The `[[idle.stages]]` editor. `hogar-shell --list` is what the action fields accept; the placeholders name the three a user reaches for.
 pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let (config, path) = crate::form::source();
     let theme = telar::use_theme::<NordTheme>();

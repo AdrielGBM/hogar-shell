@@ -10,8 +10,7 @@ Bind them in hyprland.conf:
   bind = SUPER, N, exec, hogar-shell panel toggle notifications
 ";
 
-/// The usage block, from the same invocation forms the manual's synopsis is built from — a new way to call the
-/// binary appears in both or in neither.
+/// The usage block, from the same invocation forms the manual's synopsis is built from — a new way to call the binary appears in both or in neither.
 fn usage() -> String {
     let mut out = String::from("hogar-shell — a Wayland shell for Hyprland\n\nUsage:\n");
     for (form, help) in hogar_shell::USAGE_FORMS {
@@ -68,9 +67,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        // Same reason as the schema, and one more for `deps`: what a dependency panel is *for* is the machine
-        // where something is missing, and "the shell will not start" is exactly the case where there is no
-        // shell to ask. Probing is a function of the machine, not of a running process.
+        // Same reason as the schema, and one more for `deps`: what a dependency panel is *for* is the machine where something is missing, and "the shell will not start" is exactly the case where there is no shell to ask. Probing is a function of the machine, not of a running process.
         Some("deps" | "man") => match hogar_shell::dispatch_locally(&args.join(" ")) {
             Ok(text) => {
                 print!("{text}");
@@ -85,11 +82,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Forwards a command to the running shell and mirrors its verdict into the exit code, so a keybind or script
-/// can tell a refused command from one that worked without parsing the reply.
+/// Forwards a command to the running shell and mirrors its verdict into the exit code, so a keybind or script can tell a refused command from one that worked without parsing the reply.
 fn send(args: &[String]) -> ExitCode {
-    // `hogar-shell toggle x` is the one shorthand worth having: opening a panel is what a keybind almost always
-    // wants, and `panel toggle x` in every hyprland.conf line is noise.
+    // `hogar-shell toggle x` is the one shorthand worth having: opening a panel is what a keybind almost always wants, and `panel toggle x` in every hyprland.conf line is noise.
     let request = match args.first().map(String::as_str) {
         Some("toggle") => format!("panel {}", args.join(" ")),
         // The launcher is the one surface people bind a key to before anything else.
@@ -122,14 +117,7 @@ fn send(args: &[String]) -> ExitCode {
 
 /// Logging that a stalled reader cannot stop, which is the only kind a shell may have.
 ///
-/// The subscriber writes from whichever thread logged, and that includes the driver thread — the one that
-/// mounts every surface and paints every frame. Writing straight to stdout ties that thread's progress to
-/// whoever is draining the pipe: a dev harness that stopped reading, a terminal paused with Ctrl-S, a logger
-/// that died. Once the pipe's 64 KB fill, `write` blocks and never returns, and the shell is parked mid-log
-/// holding the stdout lock — bars half-mounted, IPC unanswered, nothing on screen and no message saying why.
-/// Hands the bytes to a writer thread instead, dropping them when its queue is full: a reader that stops
-/// costs log lines, never frames. `shell quit` exits the process rather than unwinding, so the last lines can
-/// go with it; that is the trade this makes deliberately.
+/// The subscriber writes from whichever thread logged, and that includes the driver thread — the one that mounts every surface and paints every frame. Writing straight to stdout ties that thread's progress to whoever is draining the pipe: a dev harness that stopped reading, a terminal paused with Ctrl-S, a logger that died. Once the pipe's 64 KB fill, `write` blocks and never returns, and the shell is parked mid-log holding the stdout lock — bars half-mounted, IPC unanswered, nothing on screen and no message saying why. Hands the bytes to a writer thread instead, dropping them when its queue is full: a reader that stops costs log lines, never frames. `shell quit` exits the process rather than unwinding, so the last lines can go with it; that is the trade this makes deliberately.
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     let (writer, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .lossy(true)

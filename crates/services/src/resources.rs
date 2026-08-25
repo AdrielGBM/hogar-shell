@@ -1,12 +1,8 @@
 //! CPU, memory, storage and temperature as one shared reading.
 //!
-//! These four are polled rather than event-driven — the kernel has no "usage changed" signal — so they are
-//! deliberately a *single* service with one timer and one publish per tick, not four. A bar with a CPU chip and
-//! a dashboard with five cards then cost one wakeup a second between them, which is the difference between a
-//! shell that idles and one that keeps a core warm.
+//! These four are polled rather than event-driven — the kernel has no "usage changed" signal — so they are deliberately a *single* service with one timer and one publish per tick, not four. A bar with a CPU chip and a dashboard with five cards then cost one wakeup a second between them, which is the difference between a shell that idles and one that keeps a core warm.
 //!
-//! Everything here reads `/proc` and sysfs directly: no `lm-sensors`, no `nvidia-smi`, nothing to install. A
-//! machine that doesn't expose a reading (no hwmon, no swap) reports `None` for it and the UI omits it.
+//! Everything here reads `/proc` and sysfs directly: no `lm-sensors`, no `nvidia-smi`, nothing to install. A machine that doesn't expose a reading (no hwmon, no swap) reports `None` for it and the UI omits it.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -18,15 +14,13 @@ use platform_wayland::EventSender;
 
 use util::broadcast::{Broadcast, Service};
 
-/// How often the reading is refreshed. A second is the granularity a person can actually read off a bar chip;
-/// anything faster costs wakeups for numbers nobody can follow.
+/// How often the reading is refreshed. A second is the granularity a person can actually read off a bar chip; anything faster costs wakeups for numbers nobody can follow.
 const POLL: Duration = Duration::from_secs(1);
 
 /// How many readings a sparkline keeps — a minute of history at [`POLL`].
 pub const HISTORY: usize = 60;
 
-/// A fixed-length window of recent readings, oldest first. Kept by the service rather than by each card, so
-/// several cards charting the same series show the same history instead of each starting blank on open.
+/// A fixed-length window of recent readings, oldest first. Kept by the service rather than by each card, so several cards charting the same series show the same history instead of each starting blank on open.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct History(VecDeque<f32>);
 
@@ -127,9 +121,7 @@ pub struct Resources {
 }
 
 impl Resources {
-    /// The reading `[temperature] sensor` names: the first sensor whose chip or label matches, case-insensitively.
-    /// An empty name — or one that matches nothing, because the user moved the config to another machine —
-    /// falls back to the hottest sensor rather than blanking the chip.
+    /// The reading `[temperature] sensor` names: the first sensor whose chip or label matches, case-insensitively. An empty name — or one that matches nothing, because the user moved the config to another machine — falls back to the hottest sensor rather than blanking the chip.
     pub fn temperature_of(&self, name: &str) -> Option<f32> {
         let name = name.trim();
         if name.is_empty() {
@@ -145,9 +137,7 @@ impl Resources {
 
 /// The CPU's marketing name, from the first `model name` line of `/proc/cpuinfo`.
 ///
-/// Read once and cached: it cannot change while the machine is running, and re-reading a file of one block per
-/// core every second to learn a string that never moves is exactly the kind of cost this service exists to
-/// avoid. Trimmed of the padding Intel bakes into the field (`Intel(R) Core(TM) i7   @ 2.60GHz`).
+/// Read once and cached: it cannot change while the machine is running, and re-reading a file of one block per core every second to learn a string that never moves is exactly the kind of cost this service exists to avoid. Trimmed of the padding Intel bakes into the field (`Intel(R) Core(TM) i7   @ 2.60GHz`).
 fn parse_cpu_model(text: &str) -> String {
     text.lines()
         .find_map(|line| line.strip_prefix("model name"))
@@ -158,9 +148,7 @@ fn parse_cpu_model(text: &str) -> String {
 
 /// Mean current clock across the cores, in MHz.
 ///
-/// Averaged rather than reported per core because a bar shows one number, and the per-core spread is what
-/// `cores` already carries. `/proc/cpuinfo`'s `cpu MHz` is the live frequency on every kernel that has one; a
-/// machine that reports none (a VM, some ARM) yields `None` rather than a zero that reads as "stopped".
+/// Averaged rather than reported per core because a bar shows one number, and the per-core spread is what `cores` already carries. `/proc/cpuinfo`'s `cpu MHz` is the live frequency on every kernel that has one; a machine that reports none (a VM, some ARM) yields `None` rather than a zero that reads as "stopped".
 fn parse_cpu_mhz(text: &str) -> Option<f32> {
     let readings: Vec<f32> = text
         .lines()
@@ -176,9 +164,7 @@ fn parse_cpu_mhz(text: &str) -> Option<f32> {
 
 /// Cumulative sectors read and written across every physical disk, from `/proc/diskstats`.
 ///
-/// Partitions are skipped, not summed: `/proc/diskstats` lists `sda` *and* `sda1`, so counting both would
-/// double every byte. A partition is recognised by its parent existing in sysfs — `/sys/block/<name>` holds
-/// whole devices only, which is the kernel's own answer to the question and needs no name-shape guessing.
+/// Partitions are skipped, not summed: `/proc/diskstats` lists `sda` *and* `sda1`, so counting both would double every byte. A partition is recognised by its parent existing in sysfs — `/sys/block/<name>` holds whole devices only, which is the kernel's own answer to the question and needs no name-shape guessing.
 fn parse_diskstats(text: &str, is_whole_disk: impl Fn(&str) -> bool) -> (u64, u64) {
     let (mut read, mut written) = (0u64, 0u64);
     for line in text.lines() {
@@ -198,9 +184,7 @@ fn is_whole_disk(name: &str) -> bool {
     Path::new("/sys/block").join(name).is_dir()
 }
 
-/// Bytes per second between two cumulative samples, over `POLL`. A counter that went backwards means it was
-/// reset (a device disappearing), which reports as idle rather than as a nonsense spike — the same rule the CPU
-/// sampler uses.
+/// Bytes per second between two cumulative samples, over `POLL`. A counter that went backwards means it was reset (a device disappearing), which reports as idle rather than as a nonsense spike — the same rule the CPU sampler uses.
 fn rate_between(previous: u64, now: u64) -> f64 {
     now.saturating_sub(previous) as f64 / POLL.as_secs_f64()
 }
@@ -219,8 +203,7 @@ struct CpuTimes {
     idle: u64,
 }
 
-/// Parses a `/proc/stat` `cpu…` line. Fields are `user nice system idle iowait irq softirq steal …`; idle time
-/// is `idle + iowait`, since a core waiting on disk is not doing work.
+/// Parses a `/proc/stat` `cpu…` line. Fields are `user nice system idle iowait irq softirq steal …`; idle time is `idle + iowait`, since a core waiting on disk is not doing work.
 fn parse_cpu_line(line: &str) -> Option<CpuTimes> {
     let mut fields = line.split_whitespace();
     let label = fields.next()?;
@@ -237,8 +220,7 @@ fn parse_cpu_line(line: &str) -> Option<CpuTimes> {
     })
 }
 
-/// Busy percentage between two cumulative samples. Counters only ever grow, so a smaller `now` means they were
-/// reset (a suspend/resume) and the sample is reported as idle rather than as a nonsense spike.
+/// Busy percentage between two cumulative samples. Counters only ever grow, so a smaller `now` means they were reset (a suspend/resume) and the sample is reported as idle rather than as a nonsense spike.
 fn busy_between(previous: CpuTimes, now: CpuTimes) -> f32 {
     let total = now.total.saturating_sub(previous.total);
     let idle = now.idle.saturating_sub(previous.idle);
@@ -253,8 +235,7 @@ fn read_cpu_times(text: &str) -> Vec<CpuTimes> {
     text.lines().map_while(parse_cpu_line).collect()
 }
 
-/// Parses `/proc/meminfo`. "Used" follows what `free` reports: total minus available, which counts reclaimable
-/// cache as free — the number a user recognises as their memory pressure.
+/// Parses `/proc/meminfo`. "Used" follows what `free` reports: total minus available, which counts reclaimable cache as free — the number a user recognises as their memory pressure.
 fn parse_meminfo(text: &str) -> Memory {
     let field = |name: &str| -> u64 {
         text.lines()
@@ -278,9 +259,7 @@ fn parse_meminfo(text: &str) -> Memory {
 
 const HWMON_DIR: &str = "/sys/class/hwmon";
 
-/// Every `tempN_input` across every hwmon device, in °C (the files are millidegrees), carrying the chip and
-/// sensor labels the kernel publishes so `[temperature] sensor` has something to name. Sorted so the list a
-/// picker shows is stable between ticks rather than in directory order.
+/// Every `tempN_input` across every hwmon device, in °C (the files are millidegrees), carrying the chip and sensor labels the kernel publishes so `[temperature] sensor` has something to name. Sorted so the list a picker shows is stable between ticks rather than in directory order.
 fn read_sensors(hwmon: &Path) -> Vec<Sensor> {
     let mut sensors = Vec::new();
     let Ok(devices) = fs::read_dir(hwmon) else {
@@ -329,8 +308,7 @@ fn read_sensors(hwmon: &Path) -> Vec<Sensor> {
     sensors
 }
 
-/// The hottest plausible reading, which is what a chip shows when no sensor is named — it keeps working across
-/// AMD, Intel and laptops without a per-machine config.
+/// The hottest plausible reading, which is what a chip shows when no sensor is named — it keeps working across AMD, Intel and laptops without a per-machine config.
 fn hottest(sensors: &[Sensor]) -> Option<f32> {
     sensors
         .iter()
@@ -340,8 +318,7 @@ fn hottest(sensors: &[Sensor]) -> Option<f32> {
         })
 }
 
-/// A mount's capacity, straight from the `statvfs` syscall. "Used" is total minus what an unprivileged user can
-/// claim, which is what `df` reports: it excludes the root-reserved blocks, so a full disk reads as full.
+/// A mount's capacity, straight from the `statvfs` syscall. "Used" is total minus what an unprivileged user can claim, which is what `df` reports: it excludes the root-reserved blocks, so a full disk reads as full.
 fn read_disk(mount: &Path) -> Option<Disk> {
     let stats = rustix::fs::statvfs(mount).ok()?;
     // `f_frsize` is the fragment size the block counts are in; kernels that leave it 0 mean `f_bsize`.
@@ -375,8 +352,7 @@ fn interesting_mounts() -> Vec<PathBuf> {
     mounts
 }
 
-/// Ticks between disk re-reads. Free space moves in minutes, not seconds, so `statvfs`-ing every mount once a
-/// second would be pure wakeup cost for a number that hasn't changed.
+/// Ticks between disk re-reads. Free space moves in minutes, not seconds, so `statvfs`-ing every mount once a second would be pure wakeup cost for a number that hasn't changed.
 const DISK_EVERY: u32 = 30;
 
 const CPUINFO: &str = "/proc/cpuinfo";

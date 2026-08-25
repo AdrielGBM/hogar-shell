@@ -4,8 +4,7 @@ use telar::{LayoutError, LayoutItem};
 
 const OS_RELEASE: &str = "/etc/os-release";
 
-/// The Iconify glyph for a distribution `ID` from `os-release`. Only the families with a recognisable mark in
-/// the default set are listed; anything else falls back to a generic penguin rather than a wrong logo.
+/// The Iconify glyph for a distribution `ID` from `os-release`. Only the families with a recognisable mark in the default set are listed; anything else falls back to a generic penguin rather than a wrong logo.
 fn glyph_for(id: &str) -> &'static str {
     match id {
         "nixos" => "simple-icons:nixos",
@@ -24,8 +23,7 @@ fn glyph_for(id: &str) -> &'static str {
     }
 }
 
-/// The `ID=` field of an `os-release` file, unquoted. The spec allows the value to be quoted or bare, and
-/// `ID_LIKE` must not be mistaken for it — hence matching the key exactly rather than by prefix.
+/// The `ID=` field of an `os-release` file, unquoted. The spec allows the value to be quoted or bare, and `ID_LIKE` must not be mistaken for it — hence matching the key exactly rather than by prefix.
 fn parse_id(text: &str) -> Option<String> {
     text.lines()
         .filter_map(|line| line.split_once('='))
@@ -40,8 +38,7 @@ fn parse_id(text: &str) -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
-/// The icon the logo chip shows: the configured `[general] logo` when set, else the running distribution's mark
-/// detected from `/etc/os-release`.
+/// The icon the logo chip shows: the configured `[general] logo` when set, else the running distribution's mark detected from `/etc/os-release`.
 pub fn logo_icon() -> String {
     let configured = ui::module::surface_env()
         .map(|env| env.config.general.logo.clone())

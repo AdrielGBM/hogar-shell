@@ -2,8 +2,7 @@
 use crate::form::{LANGUAGES, record_field};
 use ::config::theme::FontRole;
 
-/// The UI language, as a cycle rather than a picker: there are two of them, and each press both stores the
-/// code and broadcasts it, so every surface on screen switches with the form.
+/// The UI language, as a cycle rather than a picker: there are two of them, and each press both stores the code and broadcasts it, so every surface on screen switches with the form.
 pub struct Props {
     pub label: Box<dyn Fn() -> String> = Box::new(String::new),
     pub value: RwSignal<String> = signal(String::new()),

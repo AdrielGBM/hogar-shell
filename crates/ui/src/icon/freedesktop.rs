@@ -8,12 +8,10 @@ use telar::{ImageData, SvgData};
 
 use config::surface_env;
 
-/// The desktop icon size a notification card asks the theme for; the card renders it at 36px, so a 48px source
-/// downscales cleanly, and scalable (SVG) entries match regardless.
+/// The desktop icon size a notification card asks the theme for; the card renders it at 36px, so a 48px source downscales cleanly, and scalable (SVG) entries match regardless.
 const REQUEST_SIZE: u32 = 48;
 
-/// A resolved application icon, ready to hand to the matching rsx widget: a parsed SVG (rendered untinted, so
-/// the app's own colours show) or decoded raster pixels.
+/// A resolved application icon, ready to hand to the matching rsx widget: a parsed SVG (rendered untinted, so the app's own colours show) or decoded raster pixels.
 #[derive(Clone)]
 pub enum AppIcon {
     Vector(Arc<SvgData>),
@@ -21,14 +19,11 @@ pub enum AppIcon {
 }
 
 thread_local! {
-    /// Memoizes each reference's resolution per surface thread, so a snapshot-driven card rebuild doesn't
-    /// re-walk the theme directories (or re-decode the file) on every render.
+    /// Memoizes each reference's resolution per surface thread, so a snapshot-driven card rebuild doesn't re-walk the theme directories (or re-decode the file) on every render.
     static CACHE: RefCell<HashMap<String, Option<AppIcon>>> = RefCell::new(HashMap::new());
 }
 
-/// Resolves a freedesktop notification icon `reference` — an absolute path, a `file://` URI, or an icon name
-/// per the [Icon Theme Specification](https://specifications.freedesktop.org/icon-theme-spec/latest/) — to a
-/// loaded icon, or `None` when it is empty, unresolvable, or of an undecodable format. Memoized per thread.
+/// Resolves a freedesktop notification icon `reference` — an absolute path, a `file://` URI, or an icon name per the [Icon Theme Specification](https://specifications.freedesktop.org/icon-theme-spec/latest/) — to a loaded icon, or `None` when it is empty, unresolvable, or of an undecodable format. Memoized per thread.
 pub fn resolve_app_icon(reference: &str) -> Option<AppIcon> {
     if reference.is_empty() {
         return None;
@@ -44,8 +39,7 @@ pub fn resolve_app_icon(reference: &str) -> Option<AppIcon> {
     icon
 }
 
-/// A filesystem path for `reference`: the file itself when it is a path or `file://` URI, otherwise the theme
-/// lookup for an icon name.
+/// A filesystem path for `reference`: the file itself when it is a path or `file://` URI, otherwise the theme lookup for an icon name.
 fn locate(reference: &str, theme: &str) -> Option<PathBuf> {
     if let Some(rest) = reference.strip_prefix("file://") {
         let path = PathBuf::from(rest);
@@ -80,8 +74,7 @@ fn load(path: &Path) -> Option<AppIcon> {
     }
 }
 
-/// The base directories searched for icon themes, in the spec's precedence: per-user (`$HOME/.icons`,
-/// `$XDG_DATA_HOME/icons`) before system (`$XDG_DATA_DIRS/icons`), so a user override wins.
+/// The base directories searched for icon themes, in the spec's precedence: per-user (`$HOME/.icons`, `$XDG_DATA_HOME/icons`) before system (`$XDG_DATA_DIRS/icons`), so a user override wins.
 fn icon_base_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
@@ -103,8 +96,7 @@ fn icon_base_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// The ordered theme names to search: the preferred theme, then every theme it `Inherits` (transitively), and
-/// finally `hicolor`, the spec-mandated fallback that every theme implicitly inherits.
+/// The ordered theme names to search: the preferred theme, then every theme it `Inherits` (transitively), and finally `hicolor`, the spec-mandated fallback that every theme implicitly inherits.
 fn theme_search_order(preferred: &str, bases: &[PathBuf]) -> Vec<String> {
     let start = if preferred.is_empty() {
         detected_icon_theme()
@@ -139,8 +131,7 @@ fn theme_search_order(preferred: &str, bases: &[PathBuf]) -> Vec<String> {
     order
 }
 
-/// The user's configured icon theme, read from the GTK settings file (the de-facto source most desktops honour),
-/// or empty when none is set — the caller then falls back to `hicolor`.
+/// The user's configured icon theme, read from the GTK settings file (the de-facto source most desktops honour), or empty when none is set — the caller then falls back to `hicolor`.
 fn detected_icon_theme() -> String {
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -163,9 +154,7 @@ fn detected_icon_theme() -> String {
     String::new()
 }
 
-/// Finds `name` for `size` across `bases`/`themes` per the spec's lookup: theme priority dominates (a match in
-/// an earlier theme wins over any parent), and a bare fallback in the base directories (and `/usr/share/pixmaps`)
-/// covers themeless icons.
+/// Finds `name` for `size` across `bases`/`themes` per the spec's lookup: theme priority dominates (a match in an earlier theme wins over any parent), and a bare fallback in the base directories (and `/usr/share/pixmaps`) covers themeless icons.
 fn lookup(name: &str, size: u32, bases: &[PathBuf], themes: &[String]) -> Option<PathBuf> {
     themes
         .iter()
@@ -173,8 +162,7 @@ fn lookup(name: &str, size: u32, bases: &[PathBuf], themes: &[String]) -> Option
         .or_else(|| fallback_icon(name, bases))
 }
 
-/// The best `name` for `size` within a single theme: a size-exact SVG (crispest), else a size-exact raster,
-/// else the nearest-sized icon. `None` when the theme has no `index.theme` or holds the icon at no size.
+/// The best `name` for `size` within a single theme: a size-exact SVG (crispest), else a size-exact raster, else the nearest-sized icon. `None` when the theme has no `index.theme` or holds the icon at no size.
 fn lookup_in_theme(name: &str, size: u32, bases: &[PathBuf], theme: &str) -> Option<PathBuf> {
     let index = theme_index(bases, theme)?;
     let dirs = index.get("Icon Theme").and_then(|s| s.get("Directories"))?;
@@ -205,8 +193,7 @@ fn lookup_in_theme(name: &str, size: u32, bases: &[PathBuf], theme: &str) -> Opt
     exact_raster.or(closest.map(|(_, path)| path))
 }
 
-/// The best icon file for `name` in a single directory: a scalable SVG if present, else the first decodable
-/// raster. `None` when the directory holds neither.
+/// The best icon file for `name` in a single directory: a scalable SVG if present, else the first decodable raster. `None` when the directory holds neither.
 fn icon_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
     let svg = dir.join(format!("{name}.svg"));
     if svg.is_file() {
@@ -221,8 +208,7 @@ fn icon_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-/// A last-resort lookup for icons that live outside any theme: directly under a base directory, or in the
-/// legacy `/usr/share/pixmaps`.
+/// A last-resort lookup for icons that live outside any theme: directly under a base directory, or in the legacy `/usr/share/pixmaps`.
 fn fallback_icon(name: &str, bases: &[PathBuf]) -> Option<PathBuf> {
     bases
         .iter()
@@ -231,10 +217,7 @@ fn fallback_icon(name: &str, bases: &[PathBuf]) -> Option<PathBuf> {
         .find_map(|dir| icon_in_dir(&dir, name))
 }
 
-/// Whether a theme directory holds icons usable at `size`, per its `Type` (`Fixed`/`Scalable`/`Threshold`). The
-/// spec's `Scale` key is intentionally not gated: a notification icon renders at one fixed logical size, so a
-/// `@2x` directory's higher-density source is fine (and, for themes that keep an app icon only under `@2x`, it
-/// is the difference between resolving the icon and falling back to the dot).
+/// Whether a theme directory holds icons usable at `size`, per its `Type` (`Fixed`/`Scalable`/`Threshold`). The spec's `Scale` key is intentionally not gated: a notification icon renders at one fixed logical size, so a `@2x` directory's higher-density source is fine (and, for themes that keep an app icon only under `@2x`, it is the difference between resolving the icon and falling back to the dot).
 fn directory_matches_size(props: &HashMap<String, String>, size: u32) -> bool {
     let dir_size = prop(props, "Size", 0);
     match props.get("Type").map(String::as_str).unwrap_or("Threshold") {
@@ -292,8 +275,7 @@ fn theme_index(bases: &[PathBuf], theme: &str) -> Option<Arc<ThemeIndex>> {
     parsed
 }
 
-/// A minimal desktop-INI parser: `[section]` headers and `key=value` lines into a section→key→value map.
-/// Enough for `index.theme` and GTK settings; comments (`#`) and blank lines are ignored.
+/// A minimal desktop-INI parser: `[section]` headers and `key=value` lines into a section→key→value map. Enough for `index.theme` and GTK settings; comments (`#`) and blank lines are ignored.
 fn parse_ini(text: &str) -> ThemeIndex {
     let mut sections: ThemeIndex = HashMap::new();
     let mut current = String::new();
