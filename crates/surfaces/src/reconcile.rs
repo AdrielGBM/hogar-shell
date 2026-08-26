@@ -163,6 +163,7 @@ impl Surfaces {
 
 impl Live {
     fn open(planned: Planned) -> Self {
+
         let Planned { key, layer, config } = planned;
         let config = config::LiveConfig::new(config);
         let output = key.output.clone();

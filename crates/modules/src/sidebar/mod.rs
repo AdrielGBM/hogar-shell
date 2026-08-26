@@ -97,13 +97,13 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
 ///
 /// The close button is not decoration: a surface docked to an edge has no "outside" for a press to land in, and this one takes no keyboard on purpose — a centre held open while the user works must not keep focus away from what they are typing in — so Escape never reaches it either. Without the ✕ the only way to dismiss it is the IPC command that opened it, which is not a way a user has.
 fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("sidebar.title"),
         LayoutStyle::new().flex_grow(1.0),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     let glyph = ui::icon::icon_view(|| "x".to_string(), move || theme.text, 18.0)?;

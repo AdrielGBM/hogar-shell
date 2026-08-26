@@ -840,7 +840,7 @@ fn tile(
     )?;
 
     let selected_label = is_selected.clone();
-    let label = Text::auto(
+    let label = Text::new(
         move || name.clone(),
         LayoutStyle::new()
             .width(SizeDimension::Percent(1.0))
@@ -853,8 +853,8 @@ fn tile(
             };
             theme
                 .text_style(FontRole::Caption, colour)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
 
@@ -958,7 +958,7 @@ fn row(
     let dangerous = entry.is_dangerous();
 
     let armed_title = is_armed.clone();
-    let title = Text::auto(
+    let title = Text::new(
         move || name.clone(),
         LayoutStyle::new(),
         move || {
@@ -966,8 +966,8 @@ fn row(
             let colour = if armed_title() { theme.red } else { theme.text };
             theme
                 .text_style(FontRole::Body, colour)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
 
@@ -975,7 +975,7 @@ fn row(
     let armed_caption_style = is_armed.clone();
     let mut lines: Vec<Box<dyn LayoutItem>> = vec![box_item(title)];
     if !description.is_empty() || dangerous {
-        let subtitle = Text::auto(
+        let subtitle = Text::new(
             move || {
                 if armed_caption() {
                     telar::t!("launcher.confirm")
@@ -992,8 +992,8 @@ fn row(
                 };
                 theme
                     .text_style(FontRole::Caption, colour)
-                    .with_max_lines(1)
-                    .with_ellipsis(true)
+                    .with_clamp(1, true)
+                    
             },
         )?;
         lines.push(box_item(subtitle));

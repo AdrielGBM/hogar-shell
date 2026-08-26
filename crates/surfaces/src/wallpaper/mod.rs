@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use telar::{
-    App, Color, Component, Container, Image, ImageData, ImageFilter, LayoutError, LayoutItem,
+    App, Color, Component, Container, Image, ImageData, Raster, LayoutError, LayoutItem,
     LayoutStyle, ObjectFit, RectStyle, SizeDimension, StyledContainer, WindowConfig, box_item,
     motion::Animated, reset_layout_runtime, set_theme, signal,
 };
@@ -232,7 +232,7 @@ fn image_layer(
     let image = Image::new(
         fill(),
         move || data.get().unwrap_or_else(blank),
-        || ImageFilter::Linear,
+        || Raster::Smooth,
         || ObjectFit::Cover,
     )?;
 

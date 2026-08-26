@@ -1048,14 +1048,14 @@ accent = "orange"
         );
 
         let styled = theme.text_style(FontRole::Caption, theme.text);
-        assert_eq!(styled.weight, 700);
-        assert!(styled.italic);
+        assert_eq!(styled.font_weight, 700);
+        assert_eq!(styled.font_style, telar::FontStyle::Italic);
         let plain = theme.text_style(FontRole::Body, theme.text);
         assert_eq!(
-            plain.weight, 400,
+            plain.font_weight, 400,
             "a role with no override keeps the default weight"
         );
-        assert!(!plain.italic);
+        assert_eq!(plain.font_style, telar::FontStyle::Normal);
 
         // Bounded on read: a size a screen cannot render is not a size.
         let absurd: Config = toml::from_str("[theme.fonts.body]\nsize = 100000.0\n").unwrap();

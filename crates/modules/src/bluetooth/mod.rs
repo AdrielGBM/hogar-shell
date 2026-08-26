@@ -91,18 +91,18 @@ fn header(
     let scan_active = state.read_only();
 
     // Read out, then translate: `adapter_line` calls `t!`, and a `with` here would still hold the reactive runtime's borrow when it read the locale signal.
-    let subtitle = Text::auto(
+    let subtitle = Text::new(
         move || adapter_line(&subtitle_state.get()),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.subtle),
     )?;
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("bluetooth.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     let labels = Container::new(
@@ -197,7 +197,7 @@ fn list(
         6.0,
     )?;
 
-    let empty = Text::auto(
+    let empty = Text::new(
         move || empty_line(&empty_state.get(), config),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.muted),
@@ -266,12 +266,12 @@ fn row(
         ROW_ICON,
     )?;
 
-    let name = Text::auto(
+    let name = Text::new(
         move || label.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Body, theme.text),
     )?;
-    let status = Text::auto(
+    let status = Text::new(
         {
             let device = device.clone();
             let is_armed = is_armed.clone();
@@ -304,7 +304,7 @@ fn row(
         vec![box_item(name), box_item(status)],
     )?;
 
-    let trailing = Text::auto(
+    let trailing = Text::new(
         {
             let device = device.clone();
             move || trailing_line(&device)
@@ -403,7 +403,7 @@ fn pill(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let active = std::rc::Rc::new(active);
     let (fill_active, hover_active, text_active) = (active.clone(), active.clone(), active.clone());
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         let tint = if text_active() {
             theme.accent.most_readable(&[theme.text, theme.base])
         } else {

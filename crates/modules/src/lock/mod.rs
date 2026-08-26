@@ -140,16 +140,16 @@ fn clock(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layou
     let time = parts.read_only();
     let date = parts.read_only();
 
-    let hhmm = Text::auto(
+    let hhmm = Text::new(
         move || time.get().0,
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Display, theme.text)
-                .with_weight(600)
+                .with_font_weight(600)
         },
     )?;
-    let day = Text::auto(
+    let day = Text::new(
         move || date.get().1,
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.muted),
@@ -180,7 +180,7 @@ fn avatar(config: &Arc<Config>) -> Option<Box<dyn LayoutItem>> {
 
 fn user_name(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let name = services::pam::current_user();
-    centred(box_item(Text::auto(
+    centred(box_item(Text::new(
         move || name.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Title, theme.text),
@@ -251,7 +251,7 @@ fn status_line(
     let text = state.clone();
     let tint = state;
     // The line is drawn even when it says nothing, so a wrong password does not resize the card under the hand that is about to retype the password.
-    centred(box_item(Text::auto(
+    centred(box_item(Text::new(
         move || {
             let state = text.get();
             if state.is_locked_out() {

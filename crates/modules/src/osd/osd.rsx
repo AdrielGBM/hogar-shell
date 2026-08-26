@@ -49,10 +49,10 @@ let rad = current_osd_radius();
 
 [view]
 // No `height:100%`: this is a card in the shell's one column now, not a surface of its own, and a card is as tall as what is in it. Filling was right while the OSD had a 280×60 surface to fill; in a column sized for a full run of cards it stretched one OSD over the lot.
-box direction:row align:center justify:center gap(::ui::scale::space::xl()) pad_x(::ui::scale::space::xl()) pad_y(::ui::scale::space::xl()) width:100% fill:panel_fill() radius:rad
+box axis:row align:center justify:center gap(::ui::scale::space::xl()) pad_x(::ui::scale::space::xl()) pad_y(::ui::scale::space::xl()) width:100% fill:panel_fill() radius:rad
     icon_glyph name(move || glyph.to_string()) tint(move || osd_tint(dimmed)) size:theme.icon_size
-    box direction:row align:center width:TRACK_W height:TRACK_H fill:muted radius:track_rad
-        box width:fill_w height:TRACK_H fill:accent radius:track_rad
+    box axis:row align:center width:TRACK_W height:TRACK_H fill:theme.muted radius:track_rad
+        box width:fill_w height:TRACK_H fill:theme.accent radius:track_rad
 
 [preview "Osd" fixture:crate::preview::osd]
 osd

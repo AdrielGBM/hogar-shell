@@ -87,7 +87,7 @@ fn current_card(
                     .gap(space::xs()),
                 vec![
                     unit_toggle(reading, unit.clone(), theme)?,
-                    box_item(Text::auto(
+                    box_item(Text::new(
                         move || condition.get(),
                         LayoutStyle::new(),
                         move || theme.text_style(FontRole::Body, theme.subtle),
@@ -137,13 +137,13 @@ fn unit_toggle(
     unit: RwSignal<TemperatureUnit>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(
+    let text = Text::new(
         move || reading.get(),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Display, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     Ok(Box::new(
@@ -227,18 +227,18 @@ fn forecast_row(
     let caption = theme.font(FontRole::Caption);
 
     let cells: Vec<Box<dyn LayoutItem>> = vec![
-        box_item(Text::auto(
+        box_item(Text::new(
             move || label.clone(),
             LayoutStyle::new().width(40.0).flex_shrink(0.0),
-            move || TextStyle::new(caption, theme.text).with_weight(700),
+            move || TextStyle::new(caption, theme.text).with_font_weight(700),
         )?),
         icon,
-        box_item(Text::auto(
+        box_item(Text::new(
             move || rain.clone(),
             LayoutStyle::new().flex_grow(1.0),
             move || TextStyle::new(caption, theme.info),
         )?),
-        box_item(Text::auto(
+        box_item(Text::new(
             move || range.clone(),
             LayoutStyle::new().flex_shrink(0.0),
             move || TextStyle::new(caption, theme.subtle),

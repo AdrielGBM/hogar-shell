@@ -10,7 +10,7 @@ use ui::scale::space;
 
 use platform_wayland::EventSender;
 use telar::{
-    AlignItems, Container, Image, ImageData, ImageFilter, JustifyContent, LayoutError, LayoutItem,
+    AlignItems, Container, Image, ImageData, Raster, JustifyContent, LayoutError, LayoutItem,
     LayoutStyle, ObjectFit, RectStyle, SizeDimension, StyledContainer, Text, box_item, signal,
     use_theme,
 };
@@ -59,7 +59,7 @@ pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
         move |_: hyprland::ActiveWindow| follow.set(current_focus()),
     );
 
-    let title = Text::auto(
+    let title = Text::new(
         {
             let source = focused.read_only();
             move || match source.get() {
@@ -71,9 +71,9 @@ pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_font_weight(700)
+                .with_clamp(1, true)
+                
         },
     )?;
 
@@ -128,7 +128,7 @@ fn preview(
                 .get()
                 .unwrap_or_else(|| Arc::new(ImageData::new(Vec::new(), 0, 0)))
         },
-        || ImageFilter::Linear,
+        || Raster::Smooth,
         // Contained, not cropped: a preview is for recognising the window, and a cover crop of a tall window shows a strip of its middle.
         || ObjectFit::Contain,
     )?;
@@ -328,7 +328,7 @@ fn workspace_row(
         return Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?));
     }
 
-    let label = Text::auto(
+    let label = Text::new(
         || telar::t!("window.move_to"),
         LayoutStyle::new().flex_shrink(0.0),
         move || theme.text_style(FontRole::Caption, theme.subtle),
@@ -377,7 +377,7 @@ fn pill(
     press: impl Fn() + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         theme.text_style(FontRole::Caption, theme.text)
     })?;
     let mut children: Vec<Box<dyn LayoutItem>> = Vec::new();

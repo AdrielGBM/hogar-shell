@@ -104,13 +104,13 @@ pub fn mixer_view(
 }
 
 fn title(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(
+    let text = Text::new(
         || telar::t!("mixer.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     Ok(Box::new(text))
@@ -145,7 +145,7 @@ fn group_list(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let heading_source = graph.read_only();
-    let heading = Text::auto(
+    let heading = Text::new(
         move || {
             if listed(&heading_source.get(), group).is_empty() {
                 String::new()
@@ -161,7 +161,7 @@ fn group_list(
         move || {
             theme
                 .text_style(FontRole::Caption, theme.muted)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
 
@@ -250,7 +250,7 @@ fn node_row(
     .on_press(move || volume::toggle_node_mute(id));
 
     let label = row.node.label();
-    let name = Text::auto(
+    let name = Text::new(
         move || label.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Body, theme.text),
@@ -258,7 +258,7 @@ fn node_row(
     let detail = {
         let node = row.node.clone();
         let default = row.default;
-        Text::auto(
+        Text::new(
             move || detail_line(&node, default),
             LayoutStyle::new(),
             move || theme.text_style(FontRole::Caption, theme.subtle),
@@ -286,7 +286,7 @@ fn node_row(
     };
 
     let percent_reading = reading.clone();
-    let percent = Text::auto(
+    let percent = Text::new(
         move || match percent_reading() {
             Some(v) => format!("{}%", v.level),
             None => String::new(),
@@ -351,7 +351,7 @@ fn empty_line(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source = graph.read_only();
-    let text = Text::auto(
+    let text = Text::new(
         move || {
             if source.get().nodes.is_empty() {
                 telar::t!("mixer.unavailable")

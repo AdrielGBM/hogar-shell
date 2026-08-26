@@ -126,7 +126,7 @@ fn tracked_pill_view(
         None => {
             let label = pill.label.clone();
             let theme = style.theme;
-            content.push(box_item(Text::auto(
+            content.push(box_item(Text::new(
                 move || label.clone(),
                 LayoutStyle::new(),
                 move || theme.text_style(FontRole::Caption, fg),

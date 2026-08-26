@@ -107,6 +107,7 @@ where
             factory(output),
             std::sync::Arc::new(telar::NoPaths),
             "hogar-shell",
+            crate::platform::surface_fonts_for_lock(),
         )
     });
     LOCK_QUEUE.with(|queue| {

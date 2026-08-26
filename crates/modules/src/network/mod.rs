@@ -85,18 +85,18 @@ fn header(state: RwSignal<Wifi>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
     let scan_active = state.read_only();
 
     // Read out, then translate: `status_line` calls `t!`, and a `with` here would still hold the reactive runtime's borrow when it read the locale signal.
-    let subtitle = Text::auto(
+    let subtitle = Text::new(
         move || status_line(&subtitle_state.get()),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.subtle),
     )?;
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("network.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     let labels = Container::new(
@@ -208,7 +208,7 @@ fn list(
         6.0,
     )?;
 
-    let empty = Text::auto(
+    let empty = Text::new(
         move || empty_line(&empty_state.get(), config),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.muted),
@@ -281,7 +281,7 @@ fn network_row(
         ROW_ICON,
     )?;
 
-    let name = Text::auto(
+    let name = Text::new(
         {
             let ssid = ssid.clone();
             move || ssid.clone()
@@ -289,7 +289,7 @@ fn network_row(
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Body, theme.text),
     )?;
-    let status = Text::auto(
+    let status = Text::new(
         {
             let point = point.clone();
             let is_armed = is_armed.clone();
@@ -322,7 +322,7 @@ fn network_row(
         vec![box_item(name), box_item(status)],
     )?;
 
-    let trailing = Text::auto(
+    let trailing = Text::new(
         move || format!("{}%", strength_text()),
         LayoutStyle::new().flex_shrink(0.0),
         move || theme.text_style(FontRole::Caption, theme.muted),
@@ -516,7 +516,7 @@ fn pill(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let active = std::rc::Rc::new(active);
     let (fill_active, hover_active, text_active) = (active.clone(), active.clone(), active.clone());
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         let tint = if text_active() {
             theme.accent.most_readable(&[theme.text, theme.base])
         } else {

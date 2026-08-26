@@ -44,19 +44,19 @@ col width:100% gap(crate::scale::space::md())
                 icon_glyph name(move || glyph.get()) tint(move || icon_tint.as_ref().map(|t| t.get()).unwrap_or(ink)) size:HEADER_ICON
             None
         col grow:1 gap(crate::scale::space::xs())
-            text "{$title}" size:heading color:text
+            text "{$title}" font_size:heading color:theme.text
             match subtitle
                 Some(line)
-                    text "{$line}" size:caption color:subtle
+                    text "{$line}" color:theme.subtle
                 None
     match bar
         Some(bar)
             widget "bar"
         None
     for (label, value) in rows
-        row width:100% gap(crate::scale::space::lg()) align:center justify:between
-            text "{$label}" size:caption color:muted shrink:0
-            text "{$value}" size:caption color:text
+        row width:100% gap(crate::scale::space::lg()) align:center justify:between font_size:caption
+            text "{$label}" color:theme.muted shrink:0
+            text "{$value}" color:theme.text
 
 [preview "Popout card"]
 popout_card title:(fixed_text("Volume")) subtitle:(fixed_text("64%")) icon:(fixed_text("audio-volume-high")) meter:((fixed(0.64), fixed(use_theme::<NordTheme>().accent))) rows:(vec![(fixed_text("Device"), fixed_text("Built-in Audio"))])

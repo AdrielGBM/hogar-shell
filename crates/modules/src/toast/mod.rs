@@ -62,7 +62,7 @@ pub(crate) fn card(
         ICON,
     )?;
 
-    let title = Text::auto(
+    let title = Text::new(
         {
             let title = toast.title.clone();
             move || title.clone()
@@ -71,14 +71,14 @@ pub(crate) fn card(
         move || {
             theme
                 .text_style(FontRole::Body, theme.text)
-                .with_weight(700)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_font_weight(700)
+                .with_clamp(1, true)
+                
         },
     )?;
     let mut column: Vec<Box<dyn LayoutItem>> = vec![box_item(title)];
     if !toast.body.trim().is_empty() {
-        let body = Text::auto(
+        let body = Text::new(
             {
                 let body = toast.body.clone();
                 move || body.clone()
@@ -87,8 +87,8 @@ pub(crate) fn card(
             move || {
                 theme
                     .text_style(FontRole::Caption, theme.muted)
-                    .with_max_lines(2)
-                    .with_ellipsis(true)
+                    .with_clamp(2, true)
+                    
             },
         )?;
         column.push(box_item(body));

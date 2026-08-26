@@ -20,4 +20,4 @@ col width:width pad:crate::scale::space::xl() shrink:0 fill:fill radius:radius o
 
 [preview "Popout frame"]
 card_frame width:240 radius:12 fill:(use_theme::<::config::theme::NordTheme>().overlay)
-    text "A card sits in here" color:text
+    text "A card sits in here" color:theme.text

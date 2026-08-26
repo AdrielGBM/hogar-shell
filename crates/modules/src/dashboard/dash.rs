@@ -43,16 +43,16 @@ fn clock_card(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutIte
     });
     let date = derive(now, move |t| t.format(&config.date_format).to_string());
 
-    let time_text = Text::auto(
+    let time_text = Text::new(
         move || time.get(),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Display, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
-    let date_text = Text::auto(
+    let date_text = Text::new(
         move || date.get(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Body, theme.subtle),
@@ -92,7 +92,7 @@ fn calendar_card(
             .width(SizeDimension::Percent(1.0)),
         vec![
             step_button("chevron-left", anchor.clone(), -1, theme)?,
-            box_item(Text::auto(
+            box_item(Text::new(
                 move || title.get(),
                 LayoutStyle::new()
                     .flex_grow(1.0)
@@ -100,7 +100,7 @@ fn calendar_card(
                 move || {
                     theme
                         .text_style(FontRole::Title, theme.text)
-                        .with_weight(700)
+                        .with_font_weight(700)
                 },
             )?),
             step_button("chevron-right", anchor.clone(), 1, theme)?,
@@ -150,7 +150,7 @@ fn weekday_header(first: Weekday, theme: NordTheme) -> Result<Box<dyn LayoutItem
     let mut cells: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(7);
     for offset in 0..7 {
         let weekday = shift_weekday(first, offset);
-        cells.push(box_item(Text::auto(
+        cells.push(box_item(Text::new(
             move || weekday_label(weekday),
             LayoutStyle::new()
                 .flex_grow(1.0)
@@ -159,7 +159,7 @@ fn weekday_header(first: Weekday, theme: NordTheme) -> Result<Box<dyn LayoutItem
             move || {
                 theme
                     .text_style(FontRole::Caption, theme.muted)
-                    .with_weight(700)
+                    .with_font_weight(700)
             },
         )?));
     }
@@ -220,7 +220,7 @@ fn day_cell(
         theme.muted
     };
     let label = date.day().to_string();
-    let text = Text::auto(
+    let text = Text::new(
         move || label.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, ink),
@@ -278,16 +278,16 @@ fn user_card(
         .on_press(move || open.set(!open.peek())),
     );
 
-    let name_text = Text::auto(
+    let name_text = Text::new(
         move || name.clone(),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
-    let host_text = Text::auto(
+    let host_text = Text::new(
         move || host.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.subtle),
@@ -301,7 +301,7 @@ fn user_card(
         Some(seconds) => telar::t!("dashboard.uptime", time = duration_label(seconds)),
         None => telar::t!("sysinfo.no_reading"),
     });
-    let uptime_text = Text::auto(
+    let uptime_text = Text::new(
         move || uptime.get(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.muted),
@@ -377,14 +377,14 @@ fn browser(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source_folder = folder.read_only();
 
-    let path_label = Text::auto(
+    let path_label = Text::new(
         move || source_folder.get().display().to_string(),
         LayoutStyle::new().flex_grow(1.0),
         move || {
             theme
                 .text_style(FontRole::Caption, theme.muted)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
 
@@ -502,14 +502,14 @@ fn choice_tile(
         )?
     };
     let name = choice.name.clone();
-    let label = Text::auto(
+    let label = Text::new(
         move || name.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
         move || {
             theme
                 .text_style(FontRole::Caption, theme.subtle)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
 

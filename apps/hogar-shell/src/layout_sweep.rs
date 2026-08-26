@@ -45,7 +45,6 @@ fn seed_world(edge: Edge, mode: Shape) {
 
     let config = Arc::new(config);
     services::locale::init(config.language());
-    telar::set_default_font_family(config.theme.font_family.clone());
     ui::icon::init_store(&config.icons);
     set_theme(config.resolve_theme());
     config::set_config(config);
@@ -78,9 +77,6 @@ fn painted_rect(command: &DrawCommand) -> Option<Rect> {
     match command {
         DrawCommand::Rect { rect, .. } | DrawCommand::Image { rect, .. } => Some(*rect),
         DrawCommand::Text { rect, text, .. } => (!text.is_empty()).then_some(*rect),
-        DrawCommand::RichText { rect, runs, .. } => {
-            runs.iter().any(|run| !run.text.is_empty()).then_some(*rect)
-        }
         // A viewport clipped to nothing is the canonical shape of the bug this file exists for: the content inside keeps its own honest rects and is cut away wholesale, so only the clip itself shows the fault.
         DrawCommand::PushClip { rect, .. } => Some(*rect),
         _ => None,
@@ -201,7 +197,6 @@ fn kind(command: &DrawCommand) -> &'static str {
     match command {
         DrawCommand::Rect { .. } => "a rect",
         DrawCommand::Text { .. } => "text",
-        DrawCommand::RichText { .. } => "rich text",
         DrawCommand::Image { .. } => "an image",
         DrawCommand::PushClip { .. } => "a viewport",
         _ => "a draw",

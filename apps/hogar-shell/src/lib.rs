@@ -61,10 +61,20 @@ fn preview_window() -> telar::AppConfig {
 /// The ambient world a `[preview]` builds against: config, locale, font, icon store and theme. Deliberately not `apply_config` — that also arms the idle stages, the notification policy and the toast watchers, which reach the machine and have no business running to render a component.
 ///
 /// [`install_hooks`] is part of it because three of the previews are surfaces that dispatch by module id — the bar, the drawer and the popout all ask a registry what to draw, and a registry nobody installed answers "nothing". It publishes tables and function pointers and starts nothing.
+/// What every surface this shell opens shapes its text in. A family belongs to a surface's configuration
+/// now rather than to the process, and this is where the shell says which one — the same place, and the same
+/// three moments, that used to set the global.
+fn surface_fonts(config: &Config) -> telar::AppConfig {
+    telar::AppConfig {
+        font_family: config.theme.font_family.clone(),
+        ..telar::AppConfig::default()
+    }
+}
+
 fn seed_preview_world() {
     let config = Arc::new(Config::load_or_default(&Config::default_path()));
     services::locale::init(config.language());
-    telar::set_default_font_family(config.theme.font_family.clone());
+    platform_wayland::set_surface_fonts(surface_fonts(&config));
     ui::icon::init_store(&config.icons);
     telar::set_theme(config.resolve_theme());
     config::set_config(config);
@@ -90,7 +100,7 @@ pub fn run() {
     // Seed the shared UI-language source so every surface starts in the configured locale and stays live.
     services::locale::init(initial.language());
     // Process-wide so every surface — bars, drawers, popups, OSD — renders in the theme's font family. `run_once` re-applies (and warns) on every reload, so the popup host spawned here also gets it.
-    telar::set_default_font_family(initial.theme.font_family.clone());
+    platform_wayland::set_surface_fonts(surface_fonts(&initial));
     services::notifications::init(notification_policy(&initial));
 
     // Non-destructive reload: one persistent driver. Every surface is opened dynamically on the driver thread (via `setup_shell`, deferred with `run_on_start`) and reconciled on config change, so a reload never tears down the connection, the popup, or the shared services — only the surfaces that changed.
@@ -301,7 +311,7 @@ fn install_hooks() {
 fn apply_config(config: &Arc<Config>) {
     services::locale::init(config.language());
     warn_if_font_missing(config.theme.font_family.as_deref());
-    telar::set_default_font_family(config.theme.font_family.clone());
+    platform_wayland::set_surface_fonts(surface_fonts(config));
     config::set_config(Arc::clone(config));
     ui::icon::init_store(&config.icons);
     // After `set_config`: deriving a palette needs to know which wallpaper is up, and that answer comes from the config that was just published. Cheap when the palette is already cached, which is every start after the first; a miss quantises the image on a thread of its own and lands through the scheme watcher below.

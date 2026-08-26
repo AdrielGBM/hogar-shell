@@ -70,7 +70,7 @@ let save: Box<dyn Fn()> = Box::new({
 [view]
 form_section title(|| telar::t!("settings.section.toasts"))
     toggle_row label(|| telar::t!("settings.field.enabled")) value:$enabled
-    text "{telar::t!(\"settings.subheader.events\")}" color:muted size:theme.font(FontRole::Caption) weight:700
+    text "{telar::t!(\"settings.subheader.events\")}" color:theme.muted font_size:theme.font(FontRole::Caption) font_weight:700
     toggle_row label(|| telar::t!("settings.field.event_config_loaded")) value:$config_loaded
     toggle_row label(|| telar::t!("settings.field.event_charging")) value:$charging
     toggle_row label(|| telar::t!("settings.field.event_game_mode")) value:$game_mode

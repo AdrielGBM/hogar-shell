@@ -1262,6 +1262,7 @@ pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandl
         app,
         std::sync::Arc::new(telar::NoPaths),
         "hogar-shell",
+        surface_fonts(),
     );
     DYN_QUEUE.with(|q| {
         q.borrow_mut().push(PendingSurface {
@@ -1427,6 +1428,32 @@ impl App for HostedSurfaceApp {
 /// Installed once so the shell's rsx world can open drawers/OSDs/popups via `telar::open_surface`.
 struct LayerShellSurfaceHost;
 
+thread_local! {
+    /// What every surface this shell opens shapes its text in.
+    ///
+    /// Telar's process-wide font family is gone — a family belongs to a surface's own configuration — but
+    /// this crate is below `config` and cannot read the live one, and `SurfaceHost::open` is a trait method
+    /// with no room for a parameter. So the shell sets it here, wherever it sets its theme, and every
+    /// surface opened afterwards carries it. A *shell's* default rather than a framework's, which is the
+    /// difference that matters: it is one application deciding for its own windows.
+    static SURFACE_FONTS: std::cell::RefCell<telar::AppConfig> =
+        std::cell::RefCell::new(telar::AppConfig::default());
+}
+
+/// Sets what the surfaces opened from here on shape their text in. Called at startup and on every config
+/// reload, so a reopened bar follows a font change.
+pub fn set_surface_fonts(fonts: telar::AppConfig) {
+    SURFACE_FONTS.with(|f| *f.borrow_mut() = fonts);
+}
+
+fn surface_fonts() -> telar::AppConfig {
+    SURFACE_FONTS.with(|f| f.borrow().clone())
+}
+
+pub(crate) fn surface_fonts_for_lock() -> telar::AppConfig {
+    surface_fonts()
+}
+
 /// Lowers this backend's own anchor/align onto what the framework scaffold takes.
 fn scaffold_edge(anchor: SurfaceAnchor) -> Edge {
     match anchor {
@@ -1461,6 +1488,7 @@ impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
             app,
             std::sync::Arc::new(telar::NoPaths),
             "hogar-shell",
+            surface_fonts(),
         );
         DYN_QUEUE.with(|q| {
             q.borrow_mut().push(PendingSurface {

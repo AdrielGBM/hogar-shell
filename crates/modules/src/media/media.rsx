@@ -47,7 +47,7 @@ let show_text = memo(move || !vertical && !text_empty.get().is_empty());
 row align:center gap(::ui::scale::space::md())
     icon_glyph name(move || icon_view.get()) tint(move || fg_icon.get()) size:(ui::module::icon_px())
     if $show_text
-        text "{$text_view}" size:theme.font(FontRole::Body) color:$fg lines:1 ellipsis:true
+        text "{$text_view}" font_size:theme.font(FontRole::Body) color:$fg lines:1 ellipsis
 
 [preview "Media" fixture:ui::preview::bar_chip]
 media

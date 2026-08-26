@@ -160,13 +160,13 @@ fn pill(
         move || ink(icon_state.get()),
         TAB_ICON,
     )?;
-    let label = Text::auto(
+    let label = Text::new(
         move || tab_label(tab),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Caption, ink(label_state.get()))
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
 

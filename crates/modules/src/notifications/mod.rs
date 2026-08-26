@@ -3,9 +3,9 @@ use std::sync::Arc;
 use ui::scale::paint;
 
 use telar::{
-    AlignItems, Color, Container, Image, ImageData, ImageFilter, JustifyContent, LayoutError,
-    LayoutItem, LayoutStyle, Memo, ObjectFit, ReactiveList, ReadSignal, RectStyle, RichText,
-    RwSignal, SizeDimension, StyledContainer, Text, TextRun, box_item, memo, signal, use_theme,
+    AlignItems, Color, Container, Image, ImageData, Raster, JustifyContent, LayoutError,
+    Declared, LayoutItem, LayoutStyle, Memo, ObjectFit, ReactiveList, ReadSignal, RectStyle,
+    RwSignal, SizeDimension, Span, StyledContainer, Text, box_item, memo, signal, use_theme,
 };
 
 use config::surface_env;
@@ -16,9 +16,17 @@ use services::notifications::{self, Notification, SharedSnapshot, Snapshot, Urge
 use ui::panel::{card_gap, panel_fill};
 use ui::scale::space;
 
-/// Parses the freedesktop notification body's limited HTML markup into styled runs for a [`RichText`]: `<b>`/ `<strong>` bold, `<i>`/`<em>` italic, `<a href>` links (painted `link_color`), `<br>` a newline, and an `<img>`'s `alt` text. Each run carries its own weight/slant/colour; unknown tags are dropped, keeping their inner text, and entities are decoded per segment.
-fn body_runs(markup: &str, text_color: Color, link_color: Color) -> Vec<TextRun> {
-    let mut runs: Vec<TextRun> = Vec::new();
+/// Parses the freedesktop notification body's limited HTML markup into one string and the byte ranges of it
+/// that style themselves differently: `<b>`/`<strong>` bold, `<i>`/`<em>` italic, `<a href>` links (painted
+/// `link_color`), `<br>` a newline, and an `<img>`'s `alt` text. Unknown tags are dropped, keeping their
+/// inner text, and entities are decoded per segment.
+///
+/// One string rather than a list of runs, which is what lets the body be *clamped*: an ellipsis has to cut
+/// across the text, and runs that each owned their slice could not be cut across. A stretch that says
+/// nothing about itself costs nothing — it is simply not a span.
+fn body_runs(markup: &str, text_color: Color, link_color: Color) -> (String, Vec<Span>) {
+    let mut text = String::new();
+    let mut spans: Vec<Span> = Vec::new();
     let mut current = String::new();
     let (mut bold, mut italic, mut link) = (0i32, 0i32, 0i32);
     let mut chars = markup.chars();
@@ -58,7 +66,8 @@ fn body_runs(markup: &str, text_color: Color, link_color: Color) -> Vec<TextRun>
             _ => continue,
         };
         push_run(
-            &mut runs,
+            &mut text,
+            &mut spans,
             &mut current,
             bold > 0,
             italic > 0,
@@ -73,7 +82,8 @@ fn body_runs(markup: &str, text_color: Color, link_color: Color) -> Vec<TextRun>
         }
     }
     push_run(
-        &mut runs,
+        &mut text,
+        &mut spans,
         &mut current,
         bold > 0,
         italic > 0,
@@ -81,13 +91,15 @@ fn body_runs(markup: &str, text_color: Color, link_color: Color) -> Vec<TextRun>
         text_color,
         link_color,
     );
-    runs
+    (text, spans)
 }
 
-/// Flushes the accumulated segment as one [`TextRun`] with the active weight/slant/colour, decoding entities.
+/// Appends the accumulated segment to the body, decoding entities, and records a span for it when it says
+/// anything the paragraph does not already say.
 #[allow(clippy::too_many_arguments)]
 fn push_run(
-    runs: &mut Vec<TextRun>,
+    text: &mut String,
+    spans: &mut Vec<Span>,
     current: &mut String,
     bold: bool,
     italic: bool,
@@ -98,17 +110,28 @@ fn push_run(
     if current.is_empty() {
         return;
     }
-    let text = decode_entities(current);
+    let segment = decode_entities(current);
     current.clear();
-    if text.is_empty() {
+    if segment.is_empty() {
         return;
     }
-    runs.push(TextRun {
-        text: Arc::from(text.as_str()),
-        weight: if bold { 700 } else { 400 },
-        italic,
-        color: if link { link_color } else { text_color },
-    });
+    let start = text.len() as u32;
+    text.push_str(&segment);
+    let mut over = Declared::default();
+    if bold {
+        over = over.with_font_weight(700);
+    }
+    if italic {
+        over = over.with_font_style(telar::FontStyle::Italic);
+    }
+    if link {
+        over = over.with_color(link_color);
+    }
+    let _ = text_color;
+    // Plain text at the paragraph's own colour is not a span: it is the paragraph.
+    if !over.is_empty() {
+        spans.push(Span::new(start..text.len() as u32, over));
+    }
 }
 
 /// The value of `name="..."` (or `name='...'`) within a tag body, if present.
@@ -304,28 +327,30 @@ fn notification_card(
 
     let leading = leading_visual(notification, accent)?;
 
-    let summary_text = Text::auto(
+    let summary_text = Text::new(
         move || summary.clone(),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Body, theme.text)
-                .with_weight(700)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_font_weight(700)
+                .with_clamp(1, true)
+                
         },
     )?;
 
     let mut column: Vec<Box<dyn LayoutItem>> = vec![Box::new(summary_text)];
-    if !body.is_empty() {
+    if !body.0.is_empty() {
         let body_lines = style.body_lines;
-        let body_text = RichText::auto(
-            move || body.clone(),
+        let (body_text_content, body_spans) = body;
+        let body_text = Text::spanned(
+            move || body_text_content.clone(),
+            move || body_spans.clone(),
             LayoutStyle::new(),
             move || {
                 let base = theme.text_style(FontRole::Caption, theme.muted);
                 match body_lines {
-                    Some(lines) => base.with_max_lines(lines).with_ellipsis(true),
+                    Some(lines) => base.with_clamp(lines, true),
                     None => base,
                 }
             },
@@ -419,7 +444,7 @@ fn leading_visual(
         let image = Image::new(
             LayoutStyle::new().width(36.0).height(36.0).flex_shrink(0.0),
             move || data.clone(),
-            || ImageFilter::Linear,
+            || Raster::Smooth,
             || ObjectFit::Cover,
         )?;
         return Ok(Box::new(image));
@@ -471,7 +496,7 @@ fn action_pill(
     label: String,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(
+    let text = Text::new(
         move || label.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.text),
@@ -538,13 +563,13 @@ pub fn bell_module() -> Result<Box<dyn LayoutItem>, LayoutError> {
         },
         ui::module::icon_px(),
     )?;
-    let badge = Text::auto(
+    let badge = Text::new(
         move || badge_text(unread_read.get()),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Caption, fg.get())
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     let row = Container::new(
@@ -600,13 +625,13 @@ fn panel_header(
     read: ReadSignal<SharedSnapshot>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("notifications.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     let dnd_label = read.clone();
@@ -651,7 +676,7 @@ fn pill_button(
     on_press: impl Fn() + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         theme.text_style(FontRole::Caption, theme.text)
     })?;
     let pill = StyledContainer::new(
@@ -829,19 +854,19 @@ fn group_header(
     } else {
         app.clone()
     };
-    let label = Text::auto(
+    let label = Text::new(
         move || name.clone(),
         LayoutStyle::new().flex_grow(1.0),
         move || {
             theme
                 .text_style(FontRole::Caption, theme.muted)
-                .with_weight(700)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_font_weight(700)
+                .with_clamp(1, true)
+                
         },
     )?;
     // A count of one is what a header without a badge already says.
-    let badge = Text::auto(
+    let badge = Text::new(
         move || {
             if count > 1 {
                 count.to_string()
@@ -898,7 +923,7 @@ fn expander_row(
             telar::t!("notifications.show_more", count = hidden.to_string())
         }
     };
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         theme.text_style(FontRole::Caption, theme.accent)
     })?;
     let row = StyledContainer::new(
@@ -1033,37 +1058,35 @@ mod tests {
     }
 
     #[test]
-    fn body_runs_parses_inline_markup_into_styled_runs() {
+    fn body_runs_parses_inline_markup_into_one_string_and_its_spans() {
         let text = Color::rgb(1.0, 1.0, 1.0);
         let link = Color::rgb(0.0, 0.0, 1.0);
 
-        let runs = body_runs("<b>Bold</b> &amp; <i>italic</i>", text, link);
-        assert_eq!(runs.len(), 3);
-        assert_eq!(
-            (&*runs[0].text, runs[0].weight, runs[0].italic),
-            ("Bold", 700, false)
-        );
-        assert_eq!((&*runs[1].text, runs[1].weight), (" & ", 400));
-        assert_eq!((&*runs[2].text, runs[2].italic), ("italic", true));
+        // The body is one string: that is what lets it be clamped, and what runs could never be cut across.
+        let (body, spans) = body_runs("<b>Bold</b> &amp; <i>italic</i>", text, link);
+        assert_eq!(body, "Bold & italic");
+        // Two spans, not three runs: the " & " between them says nothing the paragraph does not.
+        assert_eq!(spans.len(), 2);
+        assert_eq!(&body[spans[0].range.start as usize..spans[0].range.end as usize], "Bold");
+        assert_eq!(spans[0].over.font_weight, Some(700));
+        assert_eq!(&body[spans[1].range.start as usize..spans[1].range.end as usize], "italic");
+        assert_eq!(spans[1].over.font_style, Some(telar::FontStyle::Italic));
 
-        // A link carries the link colour; `<br>` stays within the run as a newline.
-        let linked = body_runs(r#"a <a href="http://x">click</a> b"#, text, link);
-        let click = linked.iter().find(|r| &*r.text == "click").unwrap();
-        assert_eq!(click.color.to_rgba8(), link.to_rgba8());
+        // A link carries the link colour; `<br>` stays within the text as a newline.
+        let (linked, link_spans) = body_runs(r#"a <a href="http://x">click</a> b"#, text, link);
+        let clicked = link_spans
+            .iter()
+            .find(|s| &linked[s.range.start as usize..s.range.end as usize] == "click")
+            .expect("the link is a span of its own");
+        assert_eq!(clicked.over.color, Some(link.into()));
 
-        let br = body_runs("line1<br>line2", text, link);
-        assert_eq!((br.len(), &*br[0].text), (1, "line1\nline2"));
+        let (br, br_spans) = body_runs("line1<br>line2", text, link);
+        assert_eq!((br.as_str(), br_spans.len()), ("line1\nline2", 0));
 
         // `<img>` alt text, decoded entities, and unknown tags (kept inner, tag dropped).
-        assert_eq!(
-            &*body_runs(r#"<img src="a.png" alt="pic"/>"#, text, link)[0].text,
-            "pic"
-        );
-        assert_eq!(
-            &*body_runs("&lt;tag&gt; &#65;&#x42;", text, link)[0].text,
-            "<tag> AB"
-        );
-        assert_eq!(&*body_runs("Q&A", text, link)[0].text, "Q&A");
+        assert_eq!(body_runs(r#"<img src="a.png" alt="pic"/>"#, text, link).0, "pic");
+        assert_eq!(body_runs("&lt;tag&gt; &#65;&#x42;", text, link).0, "<tag> AB");
+        assert_eq!(body_runs("Q&A", text, link).0, "Q&A");
     }
 
     /// One notification, with the fields a presentation test actually varies.

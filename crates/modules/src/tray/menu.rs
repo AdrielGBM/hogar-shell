@@ -184,7 +184,7 @@ fn row(
     }
 
     let label = item.label.clone();
-    let text = Text::auto(
+    let text = Text::new(
         move || label.clone(),
         LayoutStyle::new().flex_grow(1.0),
         move || theme.text_style(FontRole::Body, fg),

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use telar::{
-    Image, ImageData, ImageFilter, LayoutError, LayoutItem, LayoutStyle, ObjectFit, SizeDimension,
+    Image, ImageData, Raster, LayoutError, LayoutItem, LayoutStyle, ObjectFit, SizeDimension,
 };
 
 /// Decodes an image file into RGBA, or `None` when the path is missing or the format is unsupported.
@@ -48,7 +48,7 @@ fn fitted(path: &Path, style: LayoutStyle, radius: f32) -> Option<Box<dyn Layout
     let image: Result<Image, LayoutError> = Image::new(
         style,
         move || data.clone(),
-        || ImageFilter::Linear,
+        || Raster::Smooth,
         || ObjectFit::Cover,
     );
     match image {

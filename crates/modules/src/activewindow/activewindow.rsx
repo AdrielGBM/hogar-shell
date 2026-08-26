@@ -50,7 +50,7 @@ row align:center
         match $icon_view as class key class.clone()
             class
                 build "crate::activewindow::icon_slot(&class, size, inverted)?"
-    text "{$title_view}" size:theme.font(FontRole::Body) color:$fg lines:1 ellipsis:true
+    text "{$title_view}" font_size:theme.font(FontRole::Body) color:$fg lines:1 ellipsis
     if trailing
         match $icon_view as class key class.clone()
             class

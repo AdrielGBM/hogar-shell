@@ -110,15 +110,15 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
         .then(|| Shadow::new(0.0, 2.0, 12.0, Color::BLACK.with_alpha(0.55)));
 
     let reading = now.read_only();
-    let time = Text::auto(
+    let time = Text::new(
         move || reading.get(),
         LayoutStyle::new(),
         move || {
             let style = theme
                 .text_style_at(FontRole::Display, ink, size)
-                .with_weight(600);
+                .with_font_weight(600);
             match shadow {
-                Some(shadow) => style.with_shadow(shadow),
+                Some(shadow) => style.with_text_shadow(shadow),
                 None => style,
             }
         },
@@ -128,13 +128,13 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     if settings.show_date {
         let reading = today.read_only();
         let date_size = (size * 0.28).max(theme.font(FontRole::Body));
-        let date = Text::auto(
+        let date = Text::new(
             move || reading.get(),
             LayoutStyle::new(),
             move || {
                 let style = theme.text_style_at(FontRole::Title, ink, date_size);
                 match shadow {
-                    Some(shadow) => style.with_shadow(shadow),
+                    Some(shadow) => style.with_text_shadow(shadow),
                     None => style,
                 }
             },

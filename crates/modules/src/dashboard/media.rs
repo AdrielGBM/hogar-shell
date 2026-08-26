@@ -141,7 +141,7 @@ fn lyrics_card(
                         } else {
                             telar::t!("dashboard.lyrics_none")
                         };
-                        Ok(box_item(Text::auto(
+                        Ok(box_item(Text::new(
                             move || message.clone(),
                             LayoutStyle::new().width(SizeDimension::Percent(1.0)),
                             move || theme.text_style(FontRole::Caption, theme.muted),
@@ -202,7 +202,7 @@ fn lyric_row(
     }
     let shown = text;
     let styled = is_current.clone();
-    Ok(box_item(Text::auto(
+    Ok(box_item(Text::new(
         move || shown.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
         move || {
@@ -545,12 +545,12 @@ fn text(
     color: Color,
     bold: bool,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    Ok(box_item(Text::auto(
+    Ok(box_item(Text::new(
         move || value.get(),
         LayoutStyle::new(),
         move || {
             let style = TextStyle::new(size, color);
-            if bold { style.with_weight(700) } else { style }
+            if bold { style.with_font_weight(700) } else { style }
         },
     )?))
 }

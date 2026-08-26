@@ -23,10 +23,10 @@ let arrow_size = (ui::module::icon_px() * 0.55).round();
 col justify:center gap(::ui::scale::space::xs())
     row align:center gap(::ui::scale::space::sm())
         icon_glyph name(|| "arrow-down".to_string()) tint(move || fg_down.get()) size:(arrow_size)
-        text "{$down_view}" size:theme.font(FontRole::Caption) color:$fg
+        text "{$down_view}" font_size:theme.font(FontRole::Caption) color:$fg
     row align:center gap(::ui::scale::space::sm())
         icon_glyph name(|| "arrow-up".to_string()) tint(move || fg_up.get()) size:(arrow_size)
-        text "{$up_view}" size:theme.font(FontRole::Caption) color:$fg
+        text "{$up_view}" font_size:theme.font(FontRole::Caption) color:$fg
 
 [preview "Netspeed" fixture:ui::preview::bar_chip]
 netspeed

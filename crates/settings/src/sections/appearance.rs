@@ -8,7 +8,7 @@ use ui::scale::space;
 
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, RectStyle,
-    RwSignal, ShapeStyle, StyledContainer, Text, box_item, signal,
+    RwSignal, StyledContainer, Text, box_item, signal,
 };
 
 use crate::form::*;
@@ -77,7 +77,7 @@ fn palette_preview(palette: Palette, theme: NordTheme) -> Result<Box<dyn LayoutI
             LayoutStyle::new().width(SWATCH).height(SWATCH),
             move |_r| {
                 RectStyle::filled(palette().token(token), SWATCH_RADIUS)
-                    .with_stroke(telar::Stroke::new(theme.overlay, 1.0))
+                    .with_border(telar::Border::uniform(theme.overlay, 1.0))
             },
             vec![],
         )?));
@@ -144,7 +144,7 @@ fn theme_tile(
     };
 
     let ink = swatch_of.clone();
-    let label = Text::auto(
+    let label = Text::new(
         move || option.to_string(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, ink().text),
@@ -178,7 +178,7 @@ fn theme_tile(
             let palette = fill();
             let border = if chosen { theme.accent } else { theme.overlay };
             RectStyle::filled(palette.surface, SWATCH_RADIUS)
-                .with_stroke(telar::Stroke::new(border, if chosen { 2.0 } else { 1.0 }))
+                .with_border(telar::Border::uniform(border, if chosen { 2.0 } else { 1.0 }))
         },
         vec![Box::new(row)],
     )?
@@ -205,7 +205,7 @@ fn accent_swatches(
                     let colour = palette().accent_by_name(option);
                     let border = if chosen { theme.text } else { theme.overlay };
                     RectStyle::filled(colour, SWATCH_RADIUS)
-                        .with_stroke(telar::Stroke::new(border, if chosen { 2.0 } else { 1.0 }))
+                        .with_border(telar::Border::uniform(border, if chosen { 2.0 } else { 1.0 }))
                 },
                 vec![],
             )?

@@ -75,7 +75,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
 
     let empty_library = library.read_only();
     let empty_query = query.read_only();
-    let empty = Text::auto(
+    let empty = Text::new(
         move || {
             let entries = empty_library.get();
             let query = empty_query.get();
@@ -213,14 +213,14 @@ fn wallpaper_tile(
     )?;
 
     let name = entry.name.clone();
-    let label = Text::auto(
+    let label = Text::new(
         move || name.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
         move || {
             theme
                 .text_style(FontRole::Caption, theme.subtle)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
 

@@ -96,12 +96,12 @@ pub fn label_value(
     label_color: Color,
     value_color: Color,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let label = Text::auto(
+    let label = Text::new(
         move || label.get(),
         LayoutStyle::new().flex_shrink(0.0),
         move || TextStyle::new(size, label_color),
     )?;
-    let value = Text::auto(
+    let value = Text::new(
         move || value.get(),
         LayoutStyle::new(),
         move || TextStyle::new(size, value_color),

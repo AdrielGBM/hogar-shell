@@ -29,13 +29,13 @@ pub fn session_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let armed = signal(String::new());
     let actions = session::available();
 
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("session.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
 
@@ -176,7 +176,7 @@ fn tile(
         24.0,
     )?;
 
-    let caption = Text::auto(
+    let caption = Text::new(
         move || {
             if !offered {
                 // Says *why* rather than greying a tile out silently: a Lock that does nothing on press is indistinguishable from a broken shell.

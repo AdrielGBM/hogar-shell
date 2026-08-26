@@ -16,7 +16,7 @@ let muted = props.muted;
 let label = props.text;
 
 [view]
-text "{label()}" size:theme.font(FontRole::Body) color:tint(muted)
+text "{label()}" font_size:theme.font(FontRole::Body) color:tint(muted)
 
 [preview "Chip label"]
 chip_label text:"12:04"

@@ -15,7 +15,7 @@ use ui::scale::{paint, space};
 
 use platform_wayland::{SurfaceHandle, request_close};
 use telar::{
-    AlignItems, Canvas, Color, Container, Image, ImageData, ImageFilter, JustifyContent, Key,
+    AlignItems, Canvas, Color, Container, Image, ImageData, Raster, JustifyContent, Key,
     LayoutError, LayoutItem, LayoutStyle, NamedKey, ObjectFit, PathData, PathStyle, Point, Rect,
     RectStyle, RenderNode, RwSignal, ShapeStyle, SizeDimension, Stroke, StyledContainer, Text,
     box_item, signal,
@@ -266,7 +266,7 @@ fn still_image(
     let image = Image::new(
         LayoutStyle::new().absolute_fill(),
         move || data.clone(),
-        || ImageFilter::Linear,
+        || Raster::Smooth,
         || ObjectFit::Cover,
     )?;
     Ok(Some(Box::new(image)))
@@ -323,7 +323,7 @@ fn readout(
     selection: telar::ReadSignal<Option<Area>>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(
+    let text = Text::new(
         move || match selection.get().filter(|area| !area.is_empty()) {
             Some(area) => format!("{} × {}", area.width, area.height),
             None => telar::t!("capture.pick_hint"),
@@ -332,7 +332,7 @@ fn readout(
         move || {
             theme
                 .text_style(FontRole::Body, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     let pill = StyledContainer::new(

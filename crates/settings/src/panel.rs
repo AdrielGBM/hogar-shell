@@ -86,13 +86,13 @@ fn header(
     path: Arc<PathBuf>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("settings.title"),
         LayoutStyle::new().flex_grow(1.0),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
 
@@ -122,13 +122,13 @@ fn header(
             .flex_shrink(0.0)
             .justify_content(JustifyContent::CENTER),
         paint::md(theme.base),
-        vec![box_item(Text::auto(
+        vec![box_item(Text::new(
             || telar::t!("settings.revert"),
             LayoutStyle::new(),
             move || {
                 theme
                     .text_style(FontRole::Caption, revert_ink)
-                    .with_weight(700)
+                    .with_font_weight(700)
             },
         )?)],
     )?
@@ -197,7 +197,7 @@ fn nav_row(
         }
     };
     let label_ink = ink.clone();
-    let label = Text::auto(
+    let label = Text::new(
         move || crate::pages::label("settings.page", page.label),
         LayoutStyle::new().flex_grow(1.0),
         move || theme.text_style(FontRole::Body, label_ink()),

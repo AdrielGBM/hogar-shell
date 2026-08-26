@@ -55,7 +55,7 @@ pub fn app_icon_view_tinted(
         AppIcon::Raster(data) => Box::new(telar::Image::new(
             style,
             move || data.clone(),
-            || telar::ImageFilter::Linear,
+            || telar::Raster::Smooth,
             || ObjectFit::Contain,
         )?),
     };

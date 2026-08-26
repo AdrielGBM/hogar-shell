@@ -10,5 +10,5 @@ let title = props.title;
 
 [view]
 col gap(::ui::scale::space::md()) width:100%
-    text "{title()}" color:text size:theme.font(FontRole::Body) weight:700
+    text "{title()}" color:theme.text font_size:theme.font(FontRole::Body) font_weight:700
     children

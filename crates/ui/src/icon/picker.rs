@@ -333,7 +333,7 @@ fn message(
     text: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let label = Text::auto(text, LayoutStyle::new(), move || {
+    let label = Text::new(text, LayoutStyle::new(), move || {
         theme.text_style(FontRole::Caption, theme.muted)
     })?;
     let wrap = Container::new(

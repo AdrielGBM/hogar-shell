@@ -97,7 +97,7 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let count_apps = installed.read_only();
     let count_query = query.read_only();
-    let count = Text::auto(
+    let count = Text::new(
         move || {
             let apps = count_apps.get();
             let query = count_query.get();
@@ -180,13 +180,13 @@ fn app_row(
     )?);
 
     let name = row.app.name.clone();
-    let name_text = Text::auto(
+    let name_text = Text::new(
         move || name.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Body, theme.text),
     )?;
     let subtitle = id.clone();
-    let id_text = Text::auto(
+    let id_text = Text::new(
         move || subtitle.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.subtle),

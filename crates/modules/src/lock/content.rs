@@ -50,7 +50,7 @@ fn caption(
     value: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    super::centred(box_item(Text::auto(
+    super::centred(box_item(Text::new(
         value,
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.muted),

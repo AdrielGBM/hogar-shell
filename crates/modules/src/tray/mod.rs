@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use telar::{
-    AlignItems, Color, ImageData, ImageFilter, JustifyContent, LayoutError, LayoutItem,
+    AlignItems, Color, ImageData, Raster, JustifyContent, LayoutError, LayoutItem,
     LayoutStyle, ObjectFit, PointerButton, ReadSignal, Rect, RectStyle, StyledContainer,
     track_layout,
 };
@@ -57,7 +57,7 @@ fn pixmap_widget(pixmap: &Arc<Pixmap>, size: f32) -> Result<Box<dyn LayoutItem>,
     Ok(Box::new(telar::Image::new(
         LayoutStyle::new().width(size).height(size).flex_shrink(0.0),
         move || data.clone(),
-        || ImageFilter::Linear,
+        || Raster::Smooth,
         || ObjectFit::Contain,
     )?))
 }

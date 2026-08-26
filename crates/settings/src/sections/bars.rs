@@ -227,7 +227,7 @@ fn zone_row(
             RectStyle::filled(fill, PILL_RADIUS)
         },
         vec![
-            box_item(Text::auto(
+            box_item(Text::new(
                 move || crate::pages::label("settings.field", label),
                 LayoutStyle::new().width(90.0).flex_shrink(0.0),
                 move || theme.text_style(FontRole::Caption, theme.subtle),
@@ -252,7 +252,7 @@ fn module_pill(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let id = entry.id.clone();
-    let label = Text::auto(
+    let label = Text::new(
         move || id.clone(),
         LayoutStyle::new(),
         move || theme.text_style(FontRole::Caption, theme.text),
@@ -301,7 +301,7 @@ fn module_palette(
     for id in ui::module::with_registry(|registry| registry.ids()) {
         let editor = editor.clone();
         let label = id.clone();
-        let text = Text::auto(
+        let text = Text::new(
             move || label.clone(),
             LayoutStyle::new(),
             move || theme.text_style(FontRole::Caption, theme.subtle),

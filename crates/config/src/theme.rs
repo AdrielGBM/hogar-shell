@@ -1,4 +1,4 @@
-use telar::{Color, TextStyle, ThemeTokens};
+use telar::{Color, Declared, TextStyle, ThemeTokens};
 
 use crate::{FontSpec, FontsConfig};
 
@@ -19,6 +19,8 @@ pub enum FontRole {
 #[derive(Clone, Copy, ThemeTokens)]
 // Whichever of the theme's two foregrounds reads on the accent, rather than always the dark one: a light accent takes `base`, a dark one takes `text`. A component that fills with `primary` and writes with `on_primary` is otherwise unreadable on half the palettes this shell ships.
 #[theme(on_primary = self.accent.most_readable(&[self.text, self.base]))]
+// Text size inherits, so the configured base enters the tree at the root and flows down rather than being a question each component asks. A bar that wants another size declares it over this one.
+#[theme(root = Declared::default().with_font_size(self.font_size))]
 pub struct NordTheme {
     /// Base corner radius the theme rounds panels and bars to (the design default; `[shape]`/per-bar can override).
     pub radius: f32,
@@ -688,7 +690,7 @@ impl NordTheme {
 
     /// A [`TextStyle`] carrying everything `[theme.fonts.<role>]` has to say — size, weight and slant.
     ///
-    /// The one way to start a text style, so a per-role override reaches every label instead of only the ones that remembered to ask. A call site that chains `.with_weight(…)` afterwards still wins, which is what keeps a deliberately bold heading bold when the body weight is lowered: that is emphasis relative to the role, not the role itself.
+    /// The one way to start a text style, so a per-role override reaches every label instead of only the ones that remembered to ask. A call site that chains `.with_font_weight(…)` afterwards still wins, which is what keeps a deliberately bold heading bold when the body weight is lowered: that is emphasis relative to the role, not the role itself.
     pub fn text_style(&self, role: FontRole, paint: impl Into<telar::Paint>) -> TextStyle {
         self.text_style_at(role, paint, self.font(role))
     }
@@ -703,10 +705,14 @@ impl NordTheme {
         let spec = self.font_spec(role);
         let mut style = TextStyle::new(size, paint);
         if let Some(weight) = spec.weight {
-            style = style.with_weight(weight.clamp(100, 900));
+            style = style.with_font_weight(weight.clamp(100, 900));
         }
         if let Some(italic) = spec.italic {
-            style = style.with_italic(italic);
+            // Three-valued now, and a config that asks for upright says so rather than saying nothing.
+            style = style.with_font_style(match italic {
+                true => telar::FontStyle::Italic,
+                false => telar::FontStyle::Normal,
+            });
         }
         style
     }
@@ -801,7 +807,11 @@ mod tests {
         let theme = NordTheme::rose_pine();
         assert_eq!(ThemeTokens::radius(&theme), theme.radius);
         assert_eq!(ThemeTokens::spacing(&theme), theme.spacing);
-        assert_eq!(ThemeTokens::font_size(&theme), theme.font_size);
+        assert_eq!(
+            ThemeTokens::root(&theme).font_size,
+            Some(theme.font_size),
+            "the configured base size reaches the document root"
+        );
         assert_eq!(ThemeTokens::icon_size(&theme), theme.icon_size);
         assert_ne!(
             ThemeTokens::radius(&theme),

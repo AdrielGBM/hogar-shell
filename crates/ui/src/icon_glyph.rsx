@@ -24,7 +24,7 @@ let side = size - inset * 2.0;
 [view]
 match $state as s key s.as_ready().map(|svg| svg.id())
     AssetState::Ready(svg)
-        svg src:svg tint:$tint stroke:stroke width:size height:size
+        svg src:svg color:$tint stroke:stroke width:size height:size
     AssetState::Failed
         box width:side height:side margin_start:inset margin_end:inset fill:$tint radius:side
     _

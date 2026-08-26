@@ -34,5 +34,5 @@ let rad = ::ui::scale::corner::md();
 
 [view]
 field_row label(move || label())
-    box grow:1 pad_x(::ui::scale::space::md()) pad_y(::ui::scale::space::sm()) fill:base radius:rad hover_style(fill:overlay) on_press(|| cycle())
-        text "{language_name(&$value)}" color:text size:theme.font(FontRole::Body)
+    box grow:1 pad_x(::ui::scale::space::md()) pad_y(::ui::scale::space::sm()) fill:theme.base radius:rad hover_style(fill:theme.overlay) on_press(|| cycle())
+        text "{language_name(&$value)}" color:theme.text font_size:theme.font(FontRole::Body)

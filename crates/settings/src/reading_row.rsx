@@ -12,4 +12,4 @@ let value = props.value;
 
 [view]
 field_row label(move || label())
-    text "{value()}" grow:1 color:text size:theme.font(FontRole::Body)
+    text "{value()}" grow:1 color:theme.text font_size:theme.font(FontRole::Body)

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use telar::{
-    AlignItems, Image, ImageFilter, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
+    AlignItems, Image, Raster, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
     ObjectFit, ReactiveList, ReadSignal, RectStyle, StyledContainer, signal,
 };
 
@@ -89,7 +89,7 @@ fn picture(path: &Path, width: f32, height: f32, radius: f32) -> Option<Box<dyn 
             .height(height)
             .flex_shrink(0.0),
         move || data.clone(),
-        || ImageFilter::Linear,
+        || Raster::Smooth,
         || ObjectFit::Cover,
     )
     .map(|image| image.with_radius(radius));

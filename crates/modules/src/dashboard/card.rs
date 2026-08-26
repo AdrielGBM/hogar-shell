@@ -117,23 +117,23 @@ fn heading(
             HEADING_ICON,
         )?);
     }
-    row.push(box_item(Text::auto(
+    row.push(box_item(Text::new(
         move || title.get(),
         LayoutStyle::new().flex_grow(1.0),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?));
     if let Some(value) = trailing {
-        row.push(box_item(Text::auto(
+        row.push(box_item(Text::new(
             move || value.get(),
             LayoutStyle::new().flex_shrink(0.0),
             move || {
                 theme
                     .text_style(FontRole::Title, theme.accent)
-                    .with_weight(700)
+                    .with_font_weight(700)
             },
         )?));
     }
@@ -149,7 +149,7 @@ fn heading(
 
 /// A line of de-emphasised detail under a card's subject — the sentence a number needs to mean something.
 pub fn detail(text: Live<String>, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    Ok(box_item(Text::auto(
+    Ok(box_item(Text::new(
         move || text.get(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
         move || theme.text_style(FontRole::Caption, theme.subtle),

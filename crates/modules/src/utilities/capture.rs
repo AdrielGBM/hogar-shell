@@ -22,13 +22,13 @@ const ROW_ICON: f32 = 20.0;
 
 /// The screenshot buttons, the recorder's own control, and a line about the last capture.
 pub fn capture_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let heading = Text::auto(
+    let heading = Text::new(
         || telar::t!("capture.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Body, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
 
@@ -139,7 +139,7 @@ fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let elapsed_state = live.read_only();
     let elapsed_tick = tick.read_only();
-    let elapsed = Text::auto(
+    let elapsed = Text::new(
         move || {
             // Both signals are read, and both matter: the recorder says whether anything is running, the tick is what brings the closure back a second later. Reading only the state would freeze the readout.
             elapsed_tick.get();
@@ -177,7 +177,7 @@ fn last_capture(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     );
     let text_state = last.read_only();
     let tint_state = last.read_only();
-    let line = Text::auto(
+    let line = Text::new(
         move || match text_state.get() {
             Some(Ok(shot)) => shot_line(&shot),
             Some(Err(reason)) => reason,
@@ -189,8 +189,8 @@ fn last_capture(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
             let tint = if failed { theme.red } else { theme.subtle };
             theme
                 .text_style(FontRole::Caption, tint)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
     Ok(box_item(line))
@@ -224,13 +224,13 @@ pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutEr
         refresh.set(recorder::recordings(&refresh_dir, limit));
     });
 
-    let heading = Text::auto(
+    let heading = Text::new(
         || telar::t!("capture.recordings"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Body, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
 
@@ -258,7 +258,7 @@ pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutEr
     )?;
 
     let empty_state = entries.read_only();
-    let empty = Text::auto(
+    let empty = Text::new(
         move || {
             if empty_state.get().is_empty() {
                 telar::t!("capture.no_recordings")
@@ -313,7 +313,7 @@ fn row(
 
     let icon = icon_view(|| "film".to_string(), move || theme.text, ROW_ICON)?;
 
-    let name = Text::auto(
+    let name = Text::new(
         {
             let label = entry.name();
             move || label.clone()
@@ -322,11 +322,11 @@ fn row(
         move || {
             theme
                 .text_style(FontRole::Body, theme.text)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
-    let subtitle = Text::auto(
+    let subtitle = Text::new(
         {
             let size = entry.size_label();
             let is_armed = is_armed.clone();
@@ -493,7 +493,7 @@ fn pill_live(
         },
         16.0,
     )?;
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         let tint = if !enabled {
             theme.muted
         } else if text_active() {

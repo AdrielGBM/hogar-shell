@@ -200,13 +200,13 @@ pub fn utilities_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
         services::locale::attach(env.config.language());
     }
 
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("utilities.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
 
@@ -310,7 +310,7 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
         TILE_ICON,
     )?;
 
-    let label = Text::auto(
+    let label = Text::new(
         move || quick.label(),
         LayoutStyle::new(),
         move || {
@@ -325,19 +325,19 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
             };
             theme
                 .text_style(FontRole::Caption, tint)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
 
-    let detail = Text::auto(
+    let detail = Text::new(
         move || detail_state.get().detail,
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Caption, theme.subtle)
-                .with_max_lines(1)
-                .with_ellipsis(true)
+                .with_clamp(1, true)
+                
         },
     )?;
 

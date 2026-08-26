@@ -59,13 +59,13 @@ pub fn notes_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
 }
 
 fn header(state: &PanelState, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::auto(
+    let title = Text::new(
         || telar::t!("notes.title"),
         LayoutStyle::new(),
         move || {
             theme
                 .text_style(FontRole::Title, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?;
     let add_state = state.clone();
@@ -152,7 +152,7 @@ fn note_card(
         move || {
             theme
                 .text_style(FontRole::Body, theme.text)
-                .with_weight(700)
+                .with_font_weight(700)
         },
     )?
     .placeholder(telar::t!("notes.title_placeholder"));
@@ -301,7 +301,7 @@ fn pill_button(
     on_press: impl Fn() + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         theme.text_style(FontRole::Caption, theme.text)
     })?;
     let rounded = corner::md();

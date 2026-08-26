@@ -272,10 +272,10 @@ pub(crate) fn section_label(
     label: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         theme
             .text_style(FontRole::Body, theme.text)
-            .with_weight(700)
+            .with_font_weight(700)
     })?;
     Ok(Box::new(text))
 }
@@ -284,10 +284,10 @@ pub(crate) fn subheader(
     label: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::auto(label, LayoutStyle::new(), move || {
+    let text = Text::new(label, LayoutStyle::new(), move || {
         theme
             .text_style(FontRole::Caption, theme.muted)
-            .with_weight(700)
+            .with_font_weight(700)
     })?;
     Ok(Box::new(text))
 }
@@ -297,7 +297,7 @@ pub(crate) fn labelled(
     control: Box<dyn LayoutItem>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let label_text = Text::auto(label, LayoutStyle::new().width(120.0), move || {
+    let label_text = Text::new(label, LayoutStyle::new().width(120.0), move || {
         theme.text_style(FontRole::Body, theme.subtle)
     })?;
     let row = Container::new(
