@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use telar::{
-    Image, ImageData, Raster, LayoutError, LayoutItem, LayoutStyle, ObjectFit, SizeDimension,
+    Image, ImageData, LayoutError, LayoutItem, LayoutStyle, ObjectFit, Raster, SizeDimension,
 };
 
 /// Decodes an image file into RGBA, or `None` when the path is missing or the format is unsupported.

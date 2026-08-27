@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use telar::{
-    AlignItems, Image, Raster, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
-    ObjectFit, ReactiveList, ReadSignal, RectStyle, StyledContainer, signal,
+    AlignItems, Image, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ObjectFit, Raster,
+    ReactiveList, ReadSignal, RectStyle, StyledContainer, signal,
 };
 
 use config::theme::NordTheme;

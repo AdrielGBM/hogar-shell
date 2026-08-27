@@ -73,7 +73,6 @@ pub(crate) fn card(
                 .text_style(FontRole::Body, theme.text)
                 .with_font_weight(700)
                 .with_clamp(1, true)
-                
         },
     )?;
     let mut column: Vec<Box<dyn LayoutItem>> = vec![box_item(title)];
@@ -88,7 +87,6 @@ pub(crate) fn card(
                 theme
                     .text_style(FontRole::Caption, theme.muted)
                     .with_clamp(2, true)
-                    
             },
         )?;
         column.push(box_item(body));
