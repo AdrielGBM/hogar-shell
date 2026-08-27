@@ -28,7 +28,7 @@ pub fn chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
             .map(|bt| bt.status())
             .unwrap_or_default(),
     );
-    let sink = state.clone();
+    let sink = state;
     platform_wayland::watch(bluetooth::subscribe, move |bt| sink.set(bt.status()));
 
     let fg = module_fg();
@@ -57,7 +57,7 @@ pub fn bluetooth_view(config: BluetoothConfig) -> Result<Box<dyn LayoutItem>, La
     let theme = use_theme::<NordTheme>();
 
     let state = signal(bluetooth::current().unwrap_or_default());
-    let sink = state.clone();
+    let sink = state;
     platform_wayland::watch(bluetooth::subscribe, move |bt| sink.set(bt));
 
     // Opening the panel is the gesture that means "find me a device", so it is also what starts looking. The scan stops itself; see `bluetooth::set_discovering`.
@@ -66,10 +66,7 @@ pub fn bluetooth_view(config: BluetoothConfig) -> Result<Box<dyn LayoutItem>, La
     }
 
     let armed = signal(String::new());
-    let children = vec![
-        header(state.clone(), theme)?,
-        list(state.clone(), armed, config, theme)?,
-    ];
+    let children = vec![header(state, theme)?, list(state, armed, config, theme)?];
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
@@ -190,10 +187,7 @@ fn list(
         move || listed(&source.get(), config),
         // Keyed on what the row draws, not on the device's identity: a headset keeps its path while it connects, gains a battery reading and changes its subtitle, and a row keyed on the path alone would still be showing "Paired" long after it came up.
         |d: &Device| row_key(d),
-        {
-            let armed = armed.clone();
-            move |device: Device| row(device, armed.clone(), theme)
-        },
+        move |device: Device| row(device, armed, theme),
         6.0,
     )?;
 
@@ -316,7 +310,7 @@ fn row(
     let paired = device.paired;
     let press_path = path.clone();
     let alt_path = path.clone();
-    let disarm = armed.clone();
+    let disarm = armed;
     let row = StyledContainer::new(
         LayoutStyle::new()
             .flex_row()

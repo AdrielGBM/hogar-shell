@@ -212,11 +212,8 @@ pub fn panel_transition(
         progress.retarget(0.0);
         progress
     });
-    platform_wayland::on_close(tween.duration, {
-        let progress = progress.clone();
-        move || progress.retarget(1.0)
-    });
-    let slide = progress.clone();
+    platform_wayland::on_close(tween.duration, move || progress.retarget(1.0));
+    let slide = progress;
     let fade = progress;
     let (dx, dy) = match edge {
         Edge::Top => (0.0, -travel),

@@ -197,10 +197,7 @@ pub fn art(url: &str) -> ReadSignal<ArtState> {
             None => ArtState::Loading,
         };
         let handle = signal(initial.clone());
-        store
-            .signals
-            .borrow_mut()
-            .insert(url.clone(), handle.clone());
+        store.signals.borrow_mut().insert(url.clone(), handle);
         if initial == ArtState::Loading {
             let _ = store.requests.send(url);
         }

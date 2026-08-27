@@ -28,7 +28,7 @@ pub(crate) fn swipe_aside(
     retire: impl Fn() + 'static,
 ) -> StyledContainer {
     let swiped = signal(0.0f32);
-    with_offset(card, swiped.clone(), swiped.read_only(), threshold, retire)
+    with_offset(card, swiped, swiped.read_only(), threshold, retire)
 }
 
 /// [`swipe_aside`] against a caller's own offset signal, for a card that draws something from how far it has travelled — and for the tests, which read the offset to check the card was put back.
@@ -42,9 +42,9 @@ pub(crate) fn with_offset(
     // The drag reports the pointer local to the card, so the *start* has to be remembered to get a delta — a press near the right edge would otherwise read as an instant swipe of nearly the card's width.
     let start: Rc<RefCell<Option<f32>>> = Rc::new(RefCell::new(None));
     let began = Rc::clone(&start);
-    let tracking = swiped.clone();
+    let tracking = swiped;
     let settling = swiped;
-    let fade = offset.clone();
+    let fade = offset;
     card.on_drag(move |x, _y| {
         let from = *began.borrow_mut().get_or_insert(x);
         tracking.set(x - from);
@@ -106,13 +106,9 @@ mod tests {
             vec![],
         )
         .expect("the box builds");
-        let mut card = with_offset(
-            box_,
-            swiped.clone(),
-            swiped.read_only(),
-            threshold,
-            move || sink.set(true),
-        );
+        let mut card = with_offset(box_, swiped, swiped.read_only(), threshold, move || {
+            sink.set(true)
+        });
         let root = new_container(
             LayoutStyle::new().flex_column().width(WIDTH).height(200.0),
             &[card.layout_node()],

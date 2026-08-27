@@ -151,28 +151,18 @@ fn bar_rows(
 ) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
     let mut rows = vec![
         subheader(label, theme)?,
-        text_field(
-            || telar::t!("settings.field.size"),
-            s.size.clone(),
-            "34",
-            theme,
-        )?,
+        text_field(|| telar::t!("settings.field.size"), s.size, "34", theme)?,
         toggle_field(
             || telar::t!("settings.field.persistent"),
-            s.persistent.clone(),
+            s.persistent,
             theme,
         )?,
         toggle_field(
             || telar::t!("settings.field.show_on_hover"),
-            s.show_on_hover.clone(),
+            s.show_on_hover,
             theme,
         )?,
-        text_field(
-            || telar::t!("settings.field.peek"),
-            s.peek.clone(),
-            "2",
-            theme,
-        )?,
+        text_field(|| telar::t!("settings.field.peek"), s.peek, "2", theme)?,
     ];
     for (zone, label) in ZONE_LABELS.iter().enumerate() {
         rows.push(zone_row(label, zone, &s.zones, theme)?);
@@ -209,7 +199,7 @@ fn zone_row(
     )?;
 
     let selected = editor.target.read_only();
-    let choose = editor.target.clone();
+    let choose = editor.target;
     let row = StyledContainer::new(
         LayoutStyle::new()
             .flex_row()
@@ -278,7 +268,7 @@ fn module_pill(
     let rect = telar::track_layout(pill.layout_node())
         .expect("a container registers its rect")
         .read_only();
-    editor.track(zone, index, rect.clone());
+    editor.track(zone, index, rect);
 
     let dropped = editor.clone();
     let pill = pill.on_drag_end(move |x, y| {
@@ -439,31 +429,31 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
         rows.push(subheader(move || id.clone(), theme)?);
         rows.push(enum_field(
             || telar::t!("settings.field.variant_style"),
-            entry.variant.clone(),
+            entry.variant,
             VARIANT_STYLES,
             theme,
         )?);
         rows.push(text_field(
             || telar::t!("settings.field.accent"),
-            entry.accent.clone(),
+            entry.accent,
             "(theme)",
             theme,
         )?);
         rows.push(enum_field(
             || telar::t!("settings.field.open"),
-            entry.open.clone(),
+            entry.open,
             OPEN_MODES,
             theme,
         )?);
         rows.push(text_field(
             || telar::t!("settings.field.width"),
-            entry.width.clone(),
+            entry.width,
             "(panels)",
             theme,
         )?);
         rows.push(text_field(
             || telar::t!("settings.field.height"),
-            entry.height.clone(),
+            entry.height,
             "(panels)",
             theme,
         )?);
@@ -519,7 +509,7 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
             let Some(warning) = list.get(id) else {
                 return Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?));
             };
-            let (level, a) = bound_field(
+            let level = bound_field(
                 || telar::t!("settings.field.level"),
                 &list,
                 id,
@@ -528,7 +518,7 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 theme,
                 |entry: &mut BatteryWarning, text| entry.level = parse_i32(text, entry.level),
             )?;
-            let (title, b) = bound_field(
+            let title = bound_field(
                 || telar::t!("settings.field.title"),
                 &list,
                 id,
@@ -537,7 +527,7 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 theme,
                 |entry: &mut BatteryWarning, text| entry.title = text.to_string(),
             )?;
-            let (message, c) = bound_field(
+            let message = bound_field(
                 || telar::t!("settings.field.message"),
                 &list,
                 id,
@@ -546,7 +536,7 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 theme,
                 |entry: &mut BatteryWarning, text| entry.message = text.to_string(),
             )?;
-            let (icon, d) = bound_field(
+            let icon = bound_field(
                 || telar::t!("settings.field.icon"),
                 &list,
                 id,
@@ -555,7 +545,7 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 theme,
                 |entry: &mut BatteryWarning, text| entry.icon = text.to_string(),
             )?;
-            let (critical, e) = bound_toggle(
+            let critical = bound_toggle(
                 || telar::t!("settings.field.critical_urgency"),
                 &list,
                 id,
@@ -568,7 +558,6 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 &list,
                 id,
                 theme,
-                vec![a, b, c, d, e],
             )
         })?
     };

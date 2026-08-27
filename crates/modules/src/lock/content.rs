@@ -50,19 +50,16 @@ fn caption(
     value: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    super::centred(box_item(Text::new(
-        value,
-        LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
-    )?))
+    super::centred(box_item(Text::new(value, LayoutStyle::new(), move || {
+        theme.text_style(FontRole::Caption, theme.muted)
+    })?))
 }
 
 fn now_playing(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     use services::mpris;
     let player = signal(mpris::current());
-    platform_wayland::watch(mpris::subscribe, {
-        let player = player.clone();
-        move |next: mpris::Player| player.set(Some(next))
+    platform_wayland::watch(mpris::subscribe, move |next: mpris::Player| {
+        player.set(Some(next))
     });
     let read = player.read_only();
     caption(
@@ -78,9 +75,8 @@ fn weather(config: &Arc<Config>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
     use services::weather;
     let unit = config.temperature.unit;
     let current = signal(weather::current());
-    platform_wayland::watch(weather::subscribe, {
-        let current = current.clone();
-        move |next: weather::Weather| current.set(Some(next))
+    platform_wayland::watch(weather::subscribe, move |next: weather::Weather| {
+        current.set(Some(next))
     });
     let read = current.read_only();
     caption(
@@ -95,9 +91,8 @@ fn weather(config: &Arc<Config>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
 fn resources(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     use services::resources;
     let current = signal(resources::current());
-    platform_wayland::watch(resources::subscribe, {
-        let current = current.clone();
-        move |next: resources::Resources| current.set(Some(next))
+    platform_wayland::watch(resources::subscribe, move |next: resources::Resources| {
+        current.set(Some(next))
     });
     let read = current.read_only();
     caption(
@@ -119,9 +114,8 @@ fn resources(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 fn notifications(hide: bool, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     use services::notifications as notifs;
     let snapshot = signal(notifs::snapshot_now());
-    platform_wayland::watch(notifs::subscribe, {
-        let snapshot = snapshot.clone();
-        move |next: SharedSnapshot| snapshot.set(Some(next))
+    platform_wayland::watch(notifs::subscribe, move |next: SharedSnapshot| {
+        snapshot.set(Some(next))
     });
     let read = snapshot.read_only();
     caption(

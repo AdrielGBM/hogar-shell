@@ -83,7 +83,7 @@ fn picker_body(
     let query = signal(String::new());
     let filtered = signal(Vec::<String>::new());
 
-    let filter_effect = debounced_filter(query.read_only(), collection.clone(), filtered.clone());
+    let filter_effect = debounced_filter(query.read_only(), collection, filtered);
 
     let search = search_box(query, theme)?;
     let scroll = LayoutScrollArea::new_with(
@@ -121,8 +121,8 @@ fn debounced_filter(
         let seq = generation.get().wrapping_add(1);
         generation.set(seq);
         let guard = Rc::clone(&generation);
-        let collection = collection.clone();
-        let filtered = filtered.clone();
+        let collection = collection;
+        let filtered = filtered;
         timeout(FILTER_DEBOUNCE, move || {
             if guard.get() != seq {
                 return;
@@ -169,7 +169,7 @@ fn results_view(
     pick: Rc<dyn Fn(String)>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source_collection = collection;
-    let source_filtered = filtered.clone();
+    let source_filtered = filtered;
     let build_filtered = filtered;
     let list = ReactiveList::new(
         move || vec![view_kind(&source_collection, &source_filtered)],
@@ -178,7 +178,7 @@ fn results_view(
             0 => message(|| telar::t!("icon_picker.loading"), theme),
             1 => message(|| telar::t!("icon_picker.load_error"), theme),
             2 => message(|| telar::t!("icon_picker.no_match"), theme),
-            _ => grid(vp.clone(), build_filtered.clone(), theme, pick.clone()),
+            _ => grid(vp.clone(), build_filtered, theme, pick.clone()),
         },
         0.0,
     )?;
@@ -511,13 +511,13 @@ mod tests {
         let node = trigger.layout_node();
         let rect = track_layout(node).expect("trigger node");
 
-        let picking_src = picking.clone();
+        let picking_src = picking;
         let holder = ReactiveList::new(
             move || vec![picking_src.get()],
             |open: &bool| *open,
             move |open: bool| -> Result<Box<dyn LayoutItem>, LayoutError> {
                 if open {
-                    icon_picker_overlay(node, rect.clone(), |_| {}, || {})
+                    icon_picker_overlay(node, rect, |_| {}, || {})
                 } else {
                     Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?))
                 }
@@ -557,7 +557,7 @@ mod tests {
         let open = signal(false);
         let filtered = signal(Vec::<String>::new());
 
-        let open_src = open.clone();
+        let open_src = open;
         let filtered_read = filtered.read_only();
         let holder = ReactiveList::new(
             move || vec![open_src.get()],
@@ -566,7 +566,7 @@ mod tests {
                 if !is_open {
                     return Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?));
                 }
-                let filtered = filtered_read.clone();
+                let filtered = filtered_read;
                 let pick: Rc<dyn Fn(String)> = Rc::new(|_| {});
                 let scroll = LayoutScrollArea::new_with(
                     LayoutStyle::new()

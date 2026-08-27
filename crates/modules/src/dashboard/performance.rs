@@ -23,9 +23,9 @@ const FULL_SCALE: f32 = 100.0;
 pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let machine = throttled_resources(config.dashboard.resource_interval());
     card::page(vec![
-        cpu_card(machine.clone(), config, theme)?,
+        cpu_card(machine, config, theme)?,
         gpu_card(config, theme)?,
-        memory_card(machine.clone(), theme)?,
+        memory_card(machine, theme)?,
         storage_card(machine, theme)?,
         network_card(theme)?,
         battery_card(theme)?,
@@ -37,7 +37,7 @@ pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
 /// The service publishes every second for the bar; a dashboard configured to refresh every ten would otherwise redraw six cards and six charts nine times for nothing. Dropping the reading here rather than asking the service to slow down is the only version that leaves the chips alone.
 fn throttled_resources(interval: Duration) -> RwSignal<Option<resources::Resources>> {
     let state = signal(resources::current());
-    let sink = state.clone();
+    let sink = state;
     let mut last = Instant::now() - interval;
     platform_wayland::watch(resources::subscribe, move |r| {
         let now = Instant::now();
@@ -57,10 +57,10 @@ fn cpu_card(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let unit = config.temperature.unit;
     let sensor = config.temperature.sensor.clone();
-    let chart = derive(machine.clone(), |r| {
+    let chart = derive(machine, |r| {
         r.map(|r| r.cpu_history.values()).unwrap_or_default()
     });
-    let detail = derive(machine.clone(), move |r| {
+    let detail = derive(machine, move |r| {
         let Some(r) = r else {
             return telar::t!("sysinfo.no_reading");
         };
@@ -98,11 +98,11 @@ fn cpu_card(
 fn gpu_card(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let unit = config.temperature.unit;
     let state = signal(gpu::current().unwrap_or_default());
-    let sink = state.clone();
+    let sink = state;
     platform_wayland::watch(gpu::subscribe, move |g| sink.set(g));
 
-    let chart = derive(state.clone(), |g| g.usage_history.values());
-    let detail = derive(state.clone(), move |g| {
+    let chart = derive(state, |g| g.usage_history.values());
+    let detail = derive(state, move |g| {
         let name = g.name.trim();
         let name = if name.is_empty() {
             telar::t!("sysinfo.gpu")
@@ -118,7 +118,7 @@ fn gpu_card(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
 
     Card::titled(telar::t!("sysinfo.gpu"))
         .icon(glyph::gpu())
-        .trailing(derive(state.clone(), |g| percent(g.usage)))
+        .trailing(derive(state, |g| percent(g.usage)))
         .child(widget::sparkline(
             chart,
             fixed(FULL_SCALE),
@@ -133,10 +133,10 @@ fn memory_card(
     machine: RwSignal<Option<resources::Resources>>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let chart = derive(machine.clone(), |r| {
+    let chart = derive(machine, |r| {
         r.map(|r| r.memory_history.values()).unwrap_or_default()
     });
-    let detail = derive(machine.clone(), |r| {
+    let detail = derive(machine, |r| {
         let Some(r) = r else {
             return telar::t!("sysinfo.no_reading");
         };
@@ -176,9 +176,7 @@ fn storage_card(
     machine: RwSignal<Option<resources::Resources>>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let mounts = derive(machine.clone(), |r| {
-        r.map(|r| r.disks.clone()).unwrap_or_default()
-    });
+    let mounts = derive(machine, |r| r.map(|r| r.disks.clone()).unwrap_or_default());
     let bars = ReactiveList::new(
         move || mounts.get(),
         |disk: &resources::Disk| disk.mount.to_string_lossy().into_owned(),
@@ -240,14 +238,12 @@ fn disk_row(disk: resources::Disk, theme: NordTheme) -> Result<Box<dyn LayoutIte
 /// Down and up share one chart because they share one scale: a card that drew them separately would show a 50 KB/s upload as tall as a 50 MB/s download, which is the opposite of what a throughput chart is for.
 fn network_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let state = signal(netspeed::current().unwrap_or_default());
-    let sink = state.clone();
+    let sink = state;
     platform_wayland::watch(netspeed::subscribe, move |s| sink.set(s));
 
-    let chart = derive(state.clone(), |s| s.down_history.values());
-    let ceiling = derive(state.clone(), |s| {
-        s.down_history.peak().max(s.up_history.peak())
-    });
-    let detail = derive(state.clone(), |s| {
+    let chart = derive(state, |s| s.down_history.values());
+    let ceiling = derive(state, |s| s.down_history.peak().max(s.up_history.peak()));
+    let detail = derive(state, |s| {
         format!(
             "↓ {} · ↑ {} · {} {} / {}",
             netspeed::format_rate(s.down),
@@ -274,26 +270,24 @@ fn network_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 /// On a desktop the battery service reports nothing, and the card says so rather than drawing an empty meter that reads as a flat battery.
 fn battery_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let state = signal(battery::details());
-    let sink = state.clone();
+    let sink = state;
     platform_wayland::watch(battery::stream_details, move |d| sink.set(Some(d)));
 
-    let fraction = derive(state.clone(), |d| {
-        d.map(|d| d.level as f32 / 100.0).unwrap_or(0.0)
-    });
-    let tint = derive(state.clone(), move |d| match d {
+    let fraction = derive(state, |d| d.map(|d| d.level as f32 / 100.0).unwrap_or(0.0));
+    let tint = derive(state, move |d| match d {
         Some(d) => glyph::battery_tint(d.level, d.state.is_charging(), theme, theme.accent),
         None => theme.muted,
     });
-    let detail = derive(state.clone(), |d| match d {
+    let detail = derive(state, |d| match d {
         Some(d) => battery_detail(&d),
         None => telar::t!("battery.none"),
     });
 
     Card::titled(telar::t!("dashboard.battery"))
-        .live_icon(derive(state.clone(), |d| {
+        .live_icon(derive(state, |d| {
             glyph::battery(d.is_some_and(|d| d.state.is_charging())).to_string()
         }))
-        .icon_tint(derive(state.clone(), move |d| match d {
+        .icon_tint(derive(state, move |d| match d {
             Some(d) => glyph::battery_tint(d.level, d.state.is_charging(), theme, theme.subtle),
             None => theme.muted,
         }))

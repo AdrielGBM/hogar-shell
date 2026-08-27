@@ -126,14 +126,17 @@ impl AssetSource for IconStore {
     fn svg(&self, id: &str) -> ReadSignal<AssetState<Arc<SvgData>>> {
         let icon_id = IconId::parse(id, &self.default_set);
         let mut signals = self.signals.borrow_mut();
+        // Detached: this cache outlives every scope that reads from it, and the first read is somebody's build. Attributed to that build, the glyph would be freed when it went away and every later reader would find a dead signal.
         let handle = signals.entry(icon_id.clone()).or_insert_with(|| {
-            // A closed channel means no worker is listening — `watch` starts none without a layer-shell event loop, which is every `[preview]` and every headless test. The glyph is then read from the disk cache here or never at all, so a preview shows real icons instead of a page of spinners.
-            if self.requests.send(icon_id.clone()).is_err()
-                && let Some(svg) = cached_icon(&icon_id, &self.cache_dir)
-            {
-                return signal(AssetState::Ready(svg));
-            }
-            signal(AssetState::Loading)
+            telar::detached(|| {
+                // A closed channel means no worker is listening — `watch` starts none without a layer-shell event loop, which is every `[preview]` and every headless test. The glyph is then read from the disk cache here or never at all, so a preview shows real icons instead of a page of spinners.
+                if self.requests.send(icon_id.clone()).is_err()
+                    && let Some(svg) = cached_icon(&icon_id, &self.cache_dir)
+                {
+                    return signal(AssetState::Ready(svg));
+                }
+                signal(AssetState::Loading)
+            })
         });
         handle.read_only()
     }
@@ -396,11 +399,11 @@ pub fn icon_collection(set: &str) -> ReadSignal<CollectionState> {
     }
     let result = signal(CollectionState::Loading);
     let read = result.read_only();
-    COLLECTIONS.with(|c| c.borrow_mut().insert(set.to_string(), read.clone()));
+    COLLECTIONS.with(|c| c.borrow_mut().insert(set.to_string(), read));
 
     let provider = search_provider();
     let set = set.to_string();
-    let setter = result.clone();
+    let setter = result;
     watch(
         move |sender| {
             let _ = sender.send(load_collection(&provider, &set));

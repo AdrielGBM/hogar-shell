@@ -98,7 +98,7 @@ fn clock_face(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let date_format = settings.date_format(&config.clock).to_string();
     let now = signal(chrono::Local::now().format(&format).to_string());
     let today = signal(chrono::Local::now().format(&date_format).to_string());
-    let (tick_time, tick_date) = (now.clone(), today.clone());
+    let (tick_time, tick_date) = (now, today);
     platform_wayland::watch(clock::subscribe, move |at: clock::Now| {
         tick_time.set(at.format(&format).to_string());
         tick_date.set(at.format(&date_format).to_string());
@@ -216,7 +216,7 @@ fn visualiser_row(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let start = visualiser::Spectrum::quiet(config.visualiser.band_count());
     let bands = signal(start.bars.clone());
     let silent = signal(start.silent);
-    let (next_bands, next_silent) = (bands.clone(), silent.clone());
+    let (next_bands, next_silent) = (bands, silent);
     platform_wayland::watch(
         visualiser::subscribe,
         move |spectrum: visualiser::Spectrum| {
@@ -284,7 +284,7 @@ fn visualiser_fade(config: &Config, silent: telar::ReadSignal<bool>) -> Box<dyn 
         return Box::new(move || if silent.get() { 0.0 } else { 1.0 });
     }
     let fade = Animated::new(0.0f32, config.animation.tween_ms(400, 5_000));
-    let target = fade.clone();
+    let target = fade;
     Box::new(move || {
         // Read out first: the retarget is what makes the row appear, and it has to be registered as a dependency on the frame that draws nothing too.
         let quiet = silent.get();

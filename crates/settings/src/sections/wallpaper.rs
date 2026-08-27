@@ -30,7 +30,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
     let query = signal(String::new());
 
     let library = signal(services::wallpaper::all());
-    let sink = library.clone();
+    let sink = library;
     platform_wayland::watch(services::wallpaper::subscribe_library, move |entries| {
         sink.set(entries)
     });
@@ -38,7 +38,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
     // Which tile reads as the current one. The runtime choice first, then whatever `[background]` resolves to, so a fresh session with nothing chosen at runtime still marks the picture actually on screen.
     let configured = services::wallpaper::current_image(&config, None);
     let current = signal(services::wallpaper::assignment().global.or(configured));
-    let current_sink = current.clone();
+    let current_sink = current;
     platform_wayland::watch(
         services::wallpaper::subscribe,
         move |assignment: services::wallpaper::Assignment| current_sink.set(assignment.global),
@@ -46,7 +46,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
 
     let search = text_field(
         || telar::t!("settings.field.search"),
-        query.clone(),
+        query,
         "sunset",
         theme,
     )?;
@@ -166,7 +166,7 @@ fn wallpaper_group(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut tiles: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(group.entries.len());
     for entry in group.entries {
-        tiles.push(wallpaper_tile(entry, current.clone(), theme)?);
+        tiles.push(wallpaper_tile(entry, current, theme)?);
     }
     let grid = Container::new(
         LayoutStyle::new()
@@ -220,7 +220,6 @@ fn wallpaper_tile(
             theme
                 .text_style(FontRole::Caption, theme.subtle)
                 .with_clamp(1, true)
-                
         },
     )?;
 
@@ -278,26 +277,22 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let transition_ms = signal(b.transition_ms.to_string());
 
     let mut rows = vec![
-        toggle_field(
-            || telar::t!("settings.field.enabled"),
-            enabled.clone(),
-            theme,
-        )?,
+        toggle_field(|| telar::t!("settings.field.enabled"), enabled, theme)?,
         text_field(
             || telar::t!("settings.field.image"),
-            image.clone(),
+            image,
             "~/wall.png",
             theme,
         )?,
         enum_field(
             || telar::t!("settings.field.transition"),
-            transition.clone(),
+            transition,
             TRANSITIONS,
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.transition_ms"),
-            transition_ms.clone(),
+            transition_ms,
             "600",
             theme,
         )?,
@@ -322,7 +317,7 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
         let label = name.clone();
         rows.push(text_field(
             move || label.clone(),
-            value.clone(),
+            value,
             "(global image)",
             theme,
         )?);

@@ -74,7 +74,7 @@ fn park(build: impl FnOnce(RwSignal<u64>) -> telar::Effect) {
             revision: signal(0u64),
             subscriptions: Vec::new(),
         });
-        let effect = build(recorder.revision.clone());
+        let effect = build(recorder.revision);
         recorder.subscriptions.push(effect);
     });
 }
@@ -105,7 +105,7 @@ pub(crate) fn option_index(
     let index_of = |current: &str| options.iter().position(|o| *o == current).unwrap_or(0) as u32;
     let picked = signal(index_of(&value.peek()));
     let follow_value = value.read_only();
-    let follow_index = picked.clone();
+    let follow_index = picked;
     park(move |_| {
         telar::effect(move || {
             let at = index_of(&follow_value.get());
@@ -145,7 +145,7 @@ pub(crate) fn live_apply(apply: Rc<dyn Fn()>) -> Vec<telar::Effect> {
             return;
         }
         let apply = Rc::clone(&apply);
-        let watched = watched.clone();
+        let watched = watched;
         // Debounced by re-reading the counter when the timer fires: a change that arrived in the meantime has its own timer running, so only the last one in a burst applies.
         platform_wayland::timeout(LIVE_DEBOUNCE, move || {
             if watched.peek() == at {
@@ -359,7 +359,7 @@ pub(crate) fn enum_field(
     options: &'static [&'static str],
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let picked = option_index(value.clone(), options);
+    let picked = option_index(value, options);
     let control = telar::select(
         telar::SelectProps {
             selected: Some(picked),
@@ -394,7 +394,7 @@ pub(crate) fn save_button(
     on_press: impl Fn() + 'static,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let on_press: Rc<dyn Fn()> = Rc::new(on_press);
-    let live = live_apply(Rc::clone(&on_press));
+    live_apply(Rc::clone(&on_press));
 
     // The catalogue's button with no `fill` of its own: unset means "the theme's `primary`", which is this theme's accent, darkened on hover — the three states this form used to spell out by hand.
     let button = telar::button(telar::ButtonProps {
@@ -402,10 +402,7 @@ pub(crate) fn save_button(
         on_press: Box::new(move || on_press()),
         ..Default::default()
     })?;
-    if live.is_empty() {
-        return Ok(button);
-    }
-    Ok(Box::new(telar::Holding::new(button, live)))
+    Ok(button)
 }
 
 pub(crate) fn opt_num<T: ToString>(value: Option<T>) -> String {

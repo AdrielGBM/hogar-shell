@@ -412,8 +412,8 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
     // Which row is armed, by key. A dangerous action needs a second Enter, and arming in place costs no extra surface — the same rule the session menu's destructive tiles follow.
     let armed = kept("launcher.armed", || signal(String::new()));
     // Typing changes the result set, so the old index would point at a different app — or past the end. Resetting to the top on every query change keeps "type a few letters, press Enter" landing on the best match. It also disarms: a row you have navigated away from must not still be one keystroke from running.
-    let reset_on_query = selected.clone();
-    let disarm_on_query = armed.clone();
+    let reset_on_query = selected;
+    let disarm_on_query = armed;
     let query_watch = query.read_only();
     // An effect fires once when it is registered, and on a rebuild that run is the *tree* being seeded, not the user typing — counting it would put the selection back to the top every time the config changed.
     let seeded = std::cell::Cell::new(false);
@@ -431,14 +431,14 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
     let field_height = theme.font(FontRole::Title) * 1.8 + 12.0;
     let list_height = (config.height as f32 - field_height - 38.0).max(80.0);
     let list = result_list(
-        shown.clone(),
-        columns.clone(),
-        selected.clone(),
+        shown,
+        columns,
+        selected,
         armed.read_only(),
         list_height,
         theme,
     )?;
-    let keys_shown = shown.clone();
+    let keys_shown = shown;
     let keys_columns = columns;
     // The shared list bindings, so the launcher and every other list surface agree on what a key means.
     let nav = keynav::from_config(&config::config().map(|c| c.keynav).unwrap_or_default());
@@ -523,7 +523,7 @@ fn results_memo(
 /// Subscribed rather than read once, for the same reason the wallpaper library is: the service answers with its current list immediately, so the mode is populated on the frame it opens, and a window closing behind the launcher drops out of the list rather than leaving a row that focuses nothing.
 fn open_windows() -> telar::ReadSignal<Vec<ManagedToplevel>> {
     let windows = signal(Vec::new());
-    let sink = windows.clone();
+    let sink = windows;
     platform_wayland::watch(services::windows::subscribe, move |open| sink.set(open));
     windows.read_only()
 }
@@ -539,7 +539,7 @@ fn library() -> telar::ReadSignal<Vec<wallpaper::Entry>> {
     if !enabled {
         return images.read_only();
     }
-    let sink = images.clone();
+    let sink = images;
     platform_wayland::watch(wallpaper::subscribe_library, move |entries| {
         sink.set(entries)
     });
@@ -658,15 +658,15 @@ fn result_list(
             // A *definite* height, and it has to be: a scroll area is a layout leaf whose content is laid out as its own root, so nothing inside it contributes to its size. With `max_height` alone — which is what this was — the leaf measured 612×0 and the whole result list drew nothing. It is also why the panel is the size `[launcher] height` declares rather than shrinking to a one-row answer.
             .height(height),
         move |viewport| {
-            let for_source = matches.clone();
-            let for_columns = columns.clone();
+            let for_source = matches;
+            let for_columns = columns;
             // Both read *out* of their cells before either is used: a nested signal read holds the runtime's borrow and panics at build time.
             let source = move || {
                 let across = for_columns.get();
                 lines(for_source.get(), across)
             };
             let key = |line: &Line| line.key();
-            let tile_columns = columns.clone();
+            let tile_columns = columns;
             // Cloned per row rather than moved: `ReactiveList` needs an `Fn`, so the builder may run many times.
             let build = move |line: Line| -> Result<Box<dyn LayoutItem>, LayoutError> {
                 let keys = match &line {
@@ -676,18 +676,17 @@ fn result_list(
                 let item = match line {
                     Line::Row(entry) => {
                         // A row highlights when it *is* the selection, resolved by key rather than by position, so the reactive list can reorder rows without the highlight following the wrong one.
-                        let is_selected =
-                            selection_is(matches.clone(), selected.read_only(), keys.clone());
+                        let is_selected = selection_is(matches, selected.read_only(), keys.clone());
                         let armed_key = entry.key();
-                        let armed = armed.clone();
+                        let armed = armed;
                         let is_armed = move || armed.get() == armed_key;
-                        let select = select_onto(matches.clone(), selected.clone(), entry.key());
+                        let select = select_onto(matches, selected, entry.key());
                         row(entry, theme, is_selected, is_armed, select)?
                     }
                     Line::Tiles(entries) => tile_row(
                         entries,
-                        matches.clone(),
-                        selected.clone(),
+                        matches,
+                        selected,
                         tile_columns.with(|across| *across),
                         theme,
                     )?,
@@ -696,13 +695,13 @@ fn result_list(
                 // Follow the selection: when this line holds the selected entry, ask the viewport to bring it into view. Already-visible lines are left alone, so arrowing within the visible window doesn't yank the list. The subscription is tied to the line, since the list rebuilds them and an effect that outlived one would keep revealing a node that is gone.
                 let node = item.layout_node();
                 let viewport = viewport.clone();
-                let holds_selection = selection_is(matches.clone(), selected.read_only(), keys);
-                let follow_selection = telar::effect(move || {
+                let holds_selection = selection_is(matches, selected.read_only(), keys);
+                telar::effect(move || {
                     if holds_selection() {
                         viewport.reveal(node, 4.0);
                     }
                 });
-                Ok(Box::new(telar::Holding::new(item, vec![follow_selection])))
+                Ok(item)
             };
             // `with_style` rather than `new`: the convenience constructors carry no width, so a grid line asking for `100%` inside one resolves against nothing and lays its tiles out at their intrinsic size.
             Ok(Box::new(telar::ReactiveList::with_style(
@@ -770,8 +769,8 @@ fn tile_row(
         .unwrap_or(DEFAULT_PANEL_WIDTH);
     let mut children: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(entries.len());
     for entry in entries {
-        let is_selected = selection_is(matches.clone(), selected.read_only(), vec![entry.key()]);
-        let select = select_onto(matches.clone(), selected.clone(), entry.key());
+        let is_selected = selection_is(matches, selected.read_only(), vec![entry.key()]);
+        let select = select_onto(matches, selected, entry.key());
         children.push(tile(entry, columns, theme, is_selected, select)?);
     }
     let row = Container::new(
@@ -854,7 +853,6 @@ fn tile(
             theme
                 .text_style(FontRole::Caption, colour)
                 .with_clamp(1, true)
-                
         },
     )?;
 
@@ -964,10 +962,7 @@ fn row(
         move || {
             // An armed row reads in the warning colour, so the state is visible and not only implied by the caption underneath it.
             let colour = if armed_title() { theme.red } else { theme.text };
-            theme
-                .text_style(FontRole::Body, colour)
-                .with_clamp(1, true)
-                
+            theme.text_style(FontRole::Body, colour).with_clamp(1, true)
         },
     )?;
 
@@ -993,7 +988,6 @@ fn row(
                 theme
                     .text_style(FontRole::Caption, colour)
                     .with_clamp(1, true)
-                    
             },
         )?;
         lines.push(box_item(subtitle));
@@ -1747,19 +1741,12 @@ mod tests {
         let selected = signal(1usize);
 
         assert!(
-            tile_row(
-                images.clone(),
-                shown.clone(),
-                selected.clone(),
-                3,
-                NordTheme::new(),
-            )
-            .is_ok(),
+            tile_row(images.clone(), shown, selected, 3, NordTheme::new(),).is_ok(),
             "a row of tiles builds"
         );
 
         // By key, so the selection survives the list being re-chunked under it by a change of column count.
-        let holds = selection_is(shown.clone(), selected.read_only(), vec![images[1].key()]);
+        let holds = selection_is(shown, selected.read_only(), vec![images[1].key()]);
         assert!(holds(), "the tile holding the selected entry knows it does");
         let elsewhere = selection_is(shown, selected.read_only(), vec![images[0].key()]);
         assert!(!elsewhere());
@@ -1778,7 +1765,7 @@ mod tests {
         let shown = memo(move || read.get());
         let selected = signal(0usize);
 
-        let hover_second = select_onto(shown.clone(), selected.clone(), images[1].key());
+        let hover_second = select_onto(shown, selected, images[1].key());
         hover_second();
         assert_eq!(
             selected.peek(),
@@ -1786,8 +1773,8 @@ mod tests {
             "the hovered entry becomes the selection"
         );
 
-        let holds = selection_is(shown.clone(), selected.read_only(), vec![images[1].key()]);
-        let elsewhere = selection_is(shown.clone(), selected.read_only(), vec![images[0].key()]);
+        let holds = selection_is(shown, selected.read_only(), vec![images[1].key()]);
+        let elsewhere = selection_is(shown, selected.read_only(), vec![images[0].key()]);
         assert!(holds(), "and is the entry that reads as selected");
         assert!(
             !elsewhere(),
@@ -1795,11 +1782,7 @@ mod tests {
         );
 
         // An entry the query has since filtered out cannot be selected by pointing at where it used to be.
-        let gone = select_onto(
-            shown,
-            selected.clone(),
-            "wallpaper:/nowhere.png".to_string(),
-        );
+        let gone = select_onto(shown, selected, "wallpaper:/nowhere.png".to_string());
         gone();
         assert_eq!(
             selected.peek(),
@@ -1825,7 +1808,7 @@ mod tests {
         let list = result_list(
             shown,
             columns,
-            selected.clone(),
+            selected,
             armed.read_only(),
             260.0,
             NordTheme::new(),
@@ -1887,7 +1870,7 @@ mod tests {
                 result_list(
                     shown,
                     columns,
-                    selected.clone(),
+                    selected,
                     armed.read_only(),
                     300.0,
                     NordTheme::new(),

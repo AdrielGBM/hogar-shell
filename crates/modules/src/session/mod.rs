@@ -43,13 +43,7 @@ pub fn session_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let selected = signal(None::<usize>);
     let mut tiles: Vec<Box<dyn LayoutItem>> = Vec::new();
     for (index, action) in actions.iter().enumerate() {
-        tiles.push(tile(
-            *action,
-            armed.clone(),
-            theme,
-            selected.read_only(),
-            index,
-        )?);
+        tiles.push(tile(*action, armed, theme, selected.read_only(), index)?);
     }
 
     let grid = Container::new(
@@ -153,7 +147,7 @@ fn tile(
     index: usize,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let id = action.id();
-    let selected_fill = selected.clone();
+    let selected_fill = selected;
     // One handle per closure: a signal is not `Copy`, and each of the four readers below outlives the others.
     let armed_icon = armed.read_only();
     let armed_caption = armed.read_only();

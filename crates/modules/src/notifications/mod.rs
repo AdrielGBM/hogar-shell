@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ui::scale::paint;
 
 use telar::{
-    AlignItems, Color, Container, Image, ImageData, Raster, JustifyContent, LayoutError,
-    Declared, LayoutItem, LayoutStyle, Memo, ObjectFit, ReactiveList, ReadSignal, RectStyle,
+    AlignItems, Color, Container, Declared, Image, ImageData, JustifyContent, LayoutError,
+    LayoutItem, LayoutStyle, Memo, ObjectFit, Raster, ReactiveList, ReadSignal, RectStyle,
     RwSignal, SizeDimension, Span, StyledContainer, Text, box_item, memo, signal, use_theme,
 };
 
@@ -234,11 +234,11 @@ fn fullscreen_focus(cfg: &NotificationsConfig) -> Option<Memo<bool>> {
     }
     let clients = signal(Vec::<Client>::new());
     let active = signal(ActiveWindow::default());
-    let publish_clients = clients.clone();
+    let publish_clients = clients;
     platform_wayland::watch(hyprland::subscribe_clients, move |list: Vec<Client>| {
         publish_clients.set(list)
     });
-    let publish_active = active.clone();
+    let publish_active = active;
     platform_wayland::watch(
         hyprland::subscribe_active_window,
         move |window: ActiveWindow| publish_active.set(window),
@@ -335,7 +335,6 @@ fn notification_card(
                 .text_style(FontRole::Body, theme.text)
                 .with_font_weight(700)
                 .with_clamp(1, true)
-                
         },
     )?;
 
@@ -551,16 +550,10 @@ pub fn bell_module() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let fg = ui::module::module_fg();
     let theme = use_theme::<NordTheme>();
-    let glyph = {
-        let dnd_read = dnd_read.clone();
-        memo(move || if dnd_read.get() { "bell-off" } else { "bell" })
-    };
+    let glyph = memo(move || if dnd_read.get() { "bell-off" } else { "bell" });
     let icon = ui::icon::icon_view(
         move || glyph.get().to_string(),
-        {
-            let fg = fg.clone();
-            move || fg.get()
-        },
+        move || fg.get(),
         ui::module::icon_px(),
     )?;
     let badge = Text::new(
@@ -598,7 +591,7 @@ pub fn bell_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     }
     let theme = use_theme::<NordTheme>();
     let snapshot = signal(notifications::snapshot_now().unwrap_or_default());
-    let setter = snapshot.clone();
+    let setter = snapshot;
     platform_wayland::watch(notifications::subscribe, move |snap: SharedSnapshot| {
         setter.set(snap)
     });
@@ -609,7 +602,7 @@ pub fn bell_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let cfg = surface_env().map_or_else(NotificationsConfig::default, |env| {
         env.config.notifications.clone()
     });
-    let header = panel_header(read.clone(), theme)?;
+    let header = panel_header(read, theme)?;
     let list = history_list(read, &cfg, theme, radius)?;
     let panel = Container::new(
         LayoutStyle::new()
@@ -634,8 +627,8 @@ fn panel_header(
                 .with_font_weight(700)
         },
     )?;
-    let dnd_label = read.clone();
-    let dnd_toggle = read.clone();
+    let dnd_label = read;
+    let dnd_toggle = read;
     let dnd = pill_button(
         move || {
             if dnd_label.get().dnd {
@@ -801,12 +794,12 @@ fn history_list(
             history_rows(&snapshot, &cfg, &open)
         }
     };
-    let toggle = expanded.clone();
+    let toggle = expanded;
     let build = move |row: HistoryRow| -> Result<Box<dyn LayoutItem>, LayoutError> {
         match row {
             HistoryRow::Group {
                 app, count, muted, ..
-            } => group_header(app, count, muted, toggle.clone(), theme),
+            } => group_header(app, count, muted, toggle, theme),
             HistoryRow::Card(n) => notification_card(
                 &n,
                 SizeDimension::Percent(1.0),
@@ -817,7 +810,7 @@ fn history_list(
                 app,
                 hidden,
                 expanded,
-            } => expander_row(app, hidden, expanded, toggle.clone(), theme),
+            } => expander_row(app, hidden, expanded, toggle, theme),
         }
     };
     // Gap on the list itself (which lays the cards out); the wrapper only pins the full width so the percent-width cards resolve against it.
@@ -862,7 +855,6 @@ fn group_header(
                 .text_style(FontRole::Caption, theme.muted)
                 .with_font_weight(700)
                 .with_clamp(1, true)
-                
         },
     )?;
     // A count of one is what a header without a badge already says.
@@ -1039,7 +1031,7 @@ pub(crate) fn panel_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
             .padding_all(space::xl())
             .width(PANEL_CARD_WIDTH),
         vec![
-            panel_header(read.clone(), theme)?,
+            panel_header(read, theme)?,
             history_list(read, &NotificationsConfig::default(), theme, 12.0)?,
         ],
     )?))
@@ -1067,9 +1059,15 @@ mod tests {
         assert_eq!(body, "Bold & italic");
         // Two spans, not three runs: the " & " between them says nothing the paragraph does not.
         assert_eq!(spans.len(), 2);
-        assert_eq!(&body[spans[0].range.start as usize..spans[0].range.end as usize], "Bold");
+        assert_eq!(
+            &body[spans[0].range.start as usize..spans[0].range.end as usize],
+            "Bold"
+        );
         assert_eq!(spans[0].over.font_weight, Some(700));
-        assert_eq!(&body[spans[1].range.start as usize..spans[1].range.end as usize], "italic");
+        assert_eq!(
+            &body[spans[1].range.start as usize..spans[1].range.end as usize],
+            "italic"
+        );
         assert_eq!(spans[1].over.font_style, Some(telar::FontStyle::Italic));
 
         // A link carries the link colour; `<br>` stays within the text as a newline.
@@ -1084,8 +1082,14 @@ mod tests {
         assert_eq!((br.as_str(), br_spans.len()), ("line1\nline2", 0));
 
         // `<img>` alt text, decoded entities, and unknown tags (kept inner, tag dropped).
-        assert_eq!(body_runs(r#"<img src="a.png" alt="pic"/>"#, text, link).0, "pic");
-        assert_eq!(body_runs("&lt;tag&gt; &#65;&#x42;", text, link).0, "<tag> AB");
+        assert_eq!(
+            body_runs(r#"<img src="a.png" alt="pic"/>"#, text, link).0,
+            "pic"
+        );
+        assert_eq!(
+            body_runs("&lt;tag&gt; &#65;&#x42;", text, link).0,
+            "<tag> AB"
+        );
         assert_eq!(body_runs("Q&A", text, link).0, "Q&A");
     }
 

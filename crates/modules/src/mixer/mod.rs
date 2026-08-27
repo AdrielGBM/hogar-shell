@@ -84,13 +84,13 @@ pub fn mixer_view(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let graph = signal(pipewire::current().unwrap_or_default());
-    let sink = graph.clone();
+    let sink = graph;
     platform_wayland::watch(pipewire::subscribe, move |g| sink.set(g));
 
     let mut children: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(GROUPS.len() + 2);
     children.push(title(theme)?);
     for group in &GROUPS {
-        children.push(group_list(group, graph.clone(), config, theme)?);
+        children.push(group_list(group, graph, config, theme)?);
     }
     children.push(empty_line(graph, theme)?);
 
@@ -169,10 +169,7 @@ fn group_list(
     let rows = ReactiveList::new(
         move || listed(&source.get(), group),
         |row: &Row| row.key(),
-        {
-            let graph = graph.clone();
-            move |row: Row| node_row(row, graph.clone(), config, theme)
-        },
+        move |row: Row| node_row(row, graph, config, theme),
         6.0,
     )?;
 
@@ -203,17 +200,14 @@ fn node_row(
         let graph = graph.read_only();
         move || graph.get().node(id).cloned()
     };
-    let reading = {
-        let live = live.clone();
-        move || {
-            live().map(|node| Volume {
-                level: node.level,
-                muted: node.muted,
-            })
-        }
+    let reading = move || {
+        live().map(|node| Volume {
+            level: node.level,
+            muted: node.muted,
+        })
     };
 
-    let glyph_reading = reading.clone();
+    let glyph_reading = reading;
     let icon = icon_view(
         move || {
             let volume = glyph_reading().unwrap_or(Volume {
@@ -225,16 +219,13 @@ fn node_row(
                 _ => glyph::volume(volume).to_string(),
             }
         },
-        {
-            let reading = reading.clone();
-            move || {
-                if reading().is_some_and(|v| v.muted) {
-                    theme.red
-                } else if row.default {
-                    theme.accent
-                } else {
-                    theme.text
-                }
+        move || {
+            if reading().is_some_and(|v| v.muted) {
+                theme.red
+            } else if row.default {
+                theme.accent
+            } else {
+                theme.text
             }
         },
         ROW_ICON,
@@ -285,7 +276,7 @@ fn node_row(
         Box::new(labels)
     };
 
-    let percent_reading = reading.clone();
+    let percent_reading = reading;
     let percent = Text::new(
         move || match percent_reading() {
             Some(v) => format!("{}%", v.level),

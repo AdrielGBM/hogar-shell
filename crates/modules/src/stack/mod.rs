@@ -412,23 +412,23 @@ pub fn reconcile_config() {
 fn cards(env: &config::SurfaceEnv) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let config = &env.config;
     let snapshot = signal(Arc::new(Snapshot::default()));
-    let sink = snapshot.clone();
+    let sink = snapshot;
     watch(
         services::notifications::subscribe,
         move |snap: SharedSnapshot| sink.set(snap),
     );
     let toasts = signal(toaster::current());
-    let sink = toasts.clone();
+    let sink = toasts;
     watch(toaster::subscribe, move |live: Vec<Toast>| sink.set(live));
     let osd = signal(OSD.get());
-    let sink = osd.clone();
+    let sink = osd;
     watch(
         |tx| OSD.subscribe(tx),
         move |live: Option<OsdKind>| sink.set(live),
     );
     // The column re-runs when a card's exit is over, which no source can tell it: by then every one of them has already dropped the card.
     let departures = signal(DEPARTURES.get());
-    let sink = departures.clone();
+    let sink = departures;
     watch(
         |tx| DEPARTURES.subscribe(tx),
         move |tick: u64| sink.set(tick),

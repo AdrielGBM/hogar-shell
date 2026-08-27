@@ -35,9 +35,9 @@ let save: Box<dyn Fn()> = Box::new({
 
 [view]
 form_section title(|| telar::t!("settings.section.paths"))
-    text_row label(|| telar::t!("settings.field.wallpapers")) value:$wallpapers placeholder:wallpapers_hint.clone()
-    text_row label(|| telar::t!("settings.field.lyrics")) value:$lyrics placeholder:lyrics_hint.clone()
-    text_row label(|| telar::t!("settings.field.recordings")) value:$recordings placeholder:recordings_hint.clone()
-    text_row label(|| telar::t!("settings.field.screenshots")) value:$screenshots placeholder:screenshots_hint.clone()
+    text_row label(|| telar::t!("settings.field.wallpapers")) value:$wallpapers placeholder:wallpapers_hint
+    text_row label(|| telar::t!("settings.field.lyrics")) value:$lyrics placeholder:lyrics_hint
+    text_row label(|| telar::t!("settings.field.recordings")) value:$recordings placeholder:recordings_hint
+    text_row label(|| telar::t!("settings.field.screenshots")) value:$screenshots placeholder:screenshots_hint
     text_row label(|| telar::t!("settings.field.assets")) value:$assets
     save_row label(|| telar::t!("settings.save.paths")) on_press(save)

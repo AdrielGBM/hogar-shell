@@ -41,23 +41,18 @@ const LYRIC_REVEAL_MARGIN: f32 = 28.0;
 
 pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let player = signal(mpris::current().unwrap_or_default());
-    let sink = player.clone();
+    let sink = player;
     platform_wayland::watch(mpris::subscribe, move |p| sink.set(p));
 
     let position = signal(mpris::position().unwrap_or(0));
-    let ticker = position.clone();
+    let ticker = position;
     let interval = config.dashboard.media_interval();
     platform_wayland::watch(
         move |tx| poll_position(tx, interval),
         move |micros| ticker.set(micros),
     );
 
-    let mut cards = vec![now_playing(
-        player.clone(),
-        position.clone(),
-        config,
-        theme,
-    )?];
+    let mut cards = vec![now_playing(player, position, config, theme)?];
     if config.lyrics.enabled {
         cards.push(lyrics_card(player, position, theme)?);
     }
@@ -121,7 +116,7 @@ fn lyrics_card(
             .height(LYRICS_HEIGHT),
         move |viewport| {
             let source = {
-                let player = player.clone();
+                let player = player;
                 move || {
                     // Read the track out of its cell first, then ask for its words: a signal read nested inside another's borrow panics, and `lyrics::of` takes a signal of its own.
                     let track = player.get();
@@ -155,16 +150,16 @@ fn lyrics_card(
                             let now = at.get();
                             now >= from && now < until
                         };
-                        let row = lyric_row(text, is_current.clone(), theme)?;
+                        let row = lyric_row(text, is_current, theme)?;
                         // Follow the song: the current line is brought into view, and only when it becomes the current one, so a user who scrolled ahead is not fighting the card. Tied to the row, since the list rebuilds these on every track change.
                         let node = row.layout_node();
                         let viewport = viewport.clone();
-                        let follow = telar::effect(move || {
+                        telar::effect(move || {
                             if is_current() {
                                 viewport.reveal(node, LYRIC_REVEAL_MARGIN);
                             }
                         });
-                        Ok(Box::new(telar::Holding::new(row, vec![follow])))
+                        Ok(row)
                     }
                 }
             };
@@ -231,7 +226,7 @@ fn now_playing(
     config: &Config,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = derive(player.clone(), |p| {
+    let title = derive(player, |p| {
         let title = p.title.trim();
         if title.is_empty() {
             telar::t!("popout.nothing_playing")
@@ -239,9 +234,9 @@ fn now_playing(
             title.to_string()
         }
     });
-    let artist = derive(player.clone(), |p| non_empty(&p.artist));
-    let album = derive(player.clone(), |p| non_empty(&p.album));
-    let identity = derive(player.clone(), |p| non_empty(&p.identity));
+    let artist = derive(player, |p| non_empty(&p.artist));
+    let album = derive(player, |p| non_empty(&p.album));
+    let identity = derive(player, |p| non_empty(&p.identity));
 
     let heading = Container::new(
         LayoutStyle::new()
@@ -250,7 +245,7 @@ fn now_playing(
             .gap(space::xl())
             .width(SizeDimension::Percent(1.0)),
         vec![
-            cover(player.clone(), config, theme)?,
+            cover(player, config, theme)?,
             Box::new(Container::new(
                 LayoutStyle::new()
                     .flex_column()
@@ -269,7 +264,7 @@ fn now_playing(
         .icon("disc-3")
         .trailing(identity)
         .child(Box::new(heading))
-        .child(scrubber(player.clone(), position, theme)?)
+        .child(scrubber(player, position, theme)?)
         .child(transport(player, theme)?);
     card.build(theme)
 }
@@ -288,7 +283,7 @@ fn cover(
     }
 
     let bands = signal(visualiser::Spectrum::quiet(config.visualiser.band_count()).bars);
-    let sink = bands.clone();
+    let sink = bands;
     platform_wayland::watch(
         visualiser::subscribe,
         move |spectrum: visualiser::Spectrum| sink.set(spectrum.bars),
@@ -370,10 +365,10 @@ fn scrubber(
     position: RwSignal<i64>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let length = derive(player.clone(), |p| p.length);
+    let length = derive(player, |p| p.length);
     let seekable = derive(player, |p| p.can_seek);
 
-    let for_fraction = length.clone();
+    let for_fraction = length;
     let fraction = derive(position.read_only(), move |micros| {
         let total = for_fraction.get();
         if total <= 0 {
@@ -382,9 +377,12 @@ fn scrubber(
             (micros as f32 / total as f32).clamp(0.0, 1.0)
         }
     });
-    let tint = derive(seekable.clone(), move |can| {
-        if can { theme.accent } else { theme.muted }
-    });
+    let tint = derive(
+        seekable,
+        move |can| {
+            if can { theme.accent } else { theme.muted }
+        },
+    );
     let bar = widget::meter(fraction, tint, theme.overlay, METER_HEIGHT)?;
 
     let track = StyledContainer::new(
@@ -397,7 +395,7 @@ fn scrubber(
     let rect = track_layout(track.layout_node())
         .expect("a container registers its rect")
         .read_only();
-    let (seek_length, seek_position) = (length.clone(), position.read_only());
+    let (seek_length, seek_position) = (length, position.read_only());
     let track = track.on_drag(move |px, _py| {
         if !seekable.get() {
             return;
@@ -436,25 +434,28 @@ fn transport(
     player: RwSignal<Player>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let shuffle_tint = derive(player.clone(), move |p| {
-        if p.shuffle { theme.accent } else { theme.muted }
-    });
-    let loop_tint = derive(player.clone(), move |p| {
+    let shuffle_tint = derive(
+        player,
+        move |p| {
+            if p.shuffle { theme.accent } else { theme.muted }
+        },
+    );
+    let loop_tint = derive(player, move |p| {
         if p.loop_status == LoopStatus::Off {
             theme.muted
         } else {
             theme.accent
         }
     });
-    let loop_glyph = derive(player.clone(), |p| {
+    let loop_glyph = derive(player, |p| {
         if p.loop_status == LoopStatus::Track {
             "repeat-1".to_string()
         } else {
             "repeat".to_string()
         }
     });
-    let previous_tint = derive(player.clone(), move |p| enabled(p.can_go_previous, theme));
-    let next_tint = derive(player.clone(), move |p| enabled(p.can_go_next, theme));
+    let previous_tint = derive(player, move |p| enabled(p.can_go_previous, theme));
+    let next_tint = derive(player, move |p| enabled(p.can_go_next, theme));
     let play_glyph = derive(player, |p| {
         if p.playback == Playback::Playing {
             "pause".to_string()
@@ -550,7 +551,11 @@ fn text(
         LayoutStyle::new(),
         move || {
             let style = TextStyle::new(size, color);
-            if bold { style.with_font_weight(700) } else { style }
+            if bold {
+                style.with_font_weight(700)
+            } else {
+                style
+            }
         },
     )?))
 }

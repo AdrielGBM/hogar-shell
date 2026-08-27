@@ -24,7 +24,7 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
             let Some(stage) = list.get(id) else {
                 return Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?));
             };
-            let (timeout, a) = bound_field(
+            let timeout = bound_field(
                 || telar::t!("settings.field.timeout_seconds"),
                 &list,
                 id,
@@ -33,7 +33,7 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
                 theme,
                 |entry: &mut IdleStage, text| entry.timeout = parse_u64(text, entry.timeout),
             )?;
-            let (action, b) = bound_field(
+            let action = bound_field(
                 || telar::t!("settings.field.action"),
                 &list,
                 id,
@@ -42,7 +42,7 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
                 theme,
                 |entry: &mut IdleStage, text| entry.action = text.to_string(),
             )?;
-            let (return_action, c) = bound_field(
+            let return_action = bound_field(
                 || telar::t!("settings.field.return_action"),
                 &list,
                 id,
@@ -51,13 +51,7 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
                 theme,
                 |entry: &mut IdleStage, text| entry.return_action = text.to_string(),
             )?;
-            entry_card(
-                vec![timeout, action, return_action],
-                &list,
-                id,
-                theme,
-                vec![a, b, c],
-            )
+            entry_card(vec![timeout, action, return_action], &list, id, theme)
         })?
     };
 

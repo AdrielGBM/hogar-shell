@@ -45,12 +45,7 @@ pub(crate) fn media_aliases_section() -> Result<Box<dyn LayoutItem>, LayoutError
     }
     for (key, value) in &fields {
         let label = key.clone();
-        rows.push(text_field(
-            move || label.clone(),
-            value.clone(),
-            key,
-            theme,
-        )?);
+        rows.push(text_field(move || label.clone(), *value, key, theme)?);
     }
 
     let path = path.to_path_buf();

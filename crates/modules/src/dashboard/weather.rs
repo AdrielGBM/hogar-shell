@@ -35,12 +35,12 @@ pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
     }
 
     let state = signal(weather::current().unwrap_or_default());
-    let sink = state.clone();
+    let sink = state;
     platform_wayland::watch(weather::subscribe, move |w| sink.set(w));
     let unit = signal(config.temperature.unit);
 
     card::page(vec![
-        current_card(state.clone(), unit.clone(), theme)?,
+        current_card(state, unit, theme)?,
         forecast_card(state, unit, config.weather.forecast_days(), theme)?,
     ])
 }
@@ -50,7 +50,7 @@ fn current_card(
     unit: RwSignal<TemperatureUnit>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let icon_state = derive(state.clone(), |w| {
+    let icon_state = derive(state, |w| {
         glyph::weather(w.condition(), w.is_day).to_string()
     });
     let icon = icon_view(
@@ -62,8 +62,8 @@ fn current_card(
     let reading = derive_pair(state.read_only(), unit.read_only(), |w, unit| {
         unit.format(w.temperature)
     });
-    let condition = derive(state.clone(), |w| w.condition().label());
-    let place = derive(state.clone(), |w| {
+    let condition = derive(state, |w| w.condition().label());
+    let place = derive(state, |w| {
         let place = w.place.trim();
         if place.is_empty() {
             telar::t!("sysinfo.no_reading")
@@ -86,7 +86,7 @@ fn current_card(
                     .flex_grow(1.0)
                     .gap(space::xs()),
                 vec![
-                    unit_toggle(reading, unit.clone(), theme)?,
+                    unit_toggle(reading, unit, theme)?,
                     box_item(Text::new(
                         move || condition.get(),
                         LayoutStyle::new(),
@@ -110,14 +110,14 @@ fn current_card(
         )?,
         widget::label_value(
             fixed_text(telar::t!("dashboard.humidity")),
-            derive(state.clone(), |w| format!("{}%", w.humidity)),
+            derive(state, |w| format!("{}%", w.humidity)),
             caption,
             theme.muted,
             theme.text,
         )?,
         widget::label_value(
             fixed_text(telar::t!("dashboard.wind")),
-            derive(state.clone(), |w| format!("{:.0} km/h", w.wind)),
+            derive(state, |w| format!("{:.0} km/h", w.wind)),
             caption,
             theme.muted,
             theme.text,

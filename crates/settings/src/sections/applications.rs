@@ -38,12 +38,12 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let icons = signal(config.launcher.icons.clone());
 
     let installed = signal(apps::all());
-    let sink = installed.clone();
+    let sink = installed;
     platform_wayland::watch(apps::subscribe, move |apps| sink.set(apps));
 
     let search = text_field(
         || telar::t!("settings.field.search"),
-        query.clone(),
+        query,
         "firefox",
         theme,
     )?;
@@ -69,16 +69,8 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     };
     let key = |row: &AppRow| format!("{}|{}|{}", row.app.id, row.favourite, row.hidden);
     let build = {
-        let (favourites, hidden, icons) = (favourites.clone(), hidden.clone(), icons.clone());
-        move |row: AppRow| {
-            app_row(
-                row,
-                favourites.clone(),
-                hidden.clone(),
-                icons.clone(),
-                theme,
-            )
-        }
+        let (favourites, hidden, icons) = (favourites, hidden, icons);
+        move |row: AppRow| app_row(row, favourites, hidden, icons, theme)
     };
 
     // Every application the machine has, not a capped slice of them: a list this long only ever shows a dozen rows, so it builds the dozen. Outside a page — a preview, a test — there is no scroll window to compute one against, and a plain list is both correct and what the caller can see anyway.
@@ -204,7 +196,7 @@ fn app_row(
     let icon_field = signal(override_now);
     let watched = icon_field.read_only();
     let key = id.clone();
-    let sync = telar::effect(move || {
+    telar::effect(move || {
         let text = watched.get();
         let mut map = icons.peek();
         let changed = match text.trim() {
@@ -274,7 +266,7 @@ fn app_row(
         ],
     )?;
     // The wrapper is what holds the field's effect for exactly this row's lifetime; it paints nothing and is full-width, which is what the row already is.
-    Ok(Box::new(telar::Holding::new(Box::new(row), vec![sync])))
+    Ok(Box::new(row))
 }
 
 #[cfg(test)]

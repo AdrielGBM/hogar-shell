@@ -181,10 +181,7 @@ fn tracked_pill_view(
     }
 
     // The subscription lives exactly as long as the pill: the list rebuilds its rows, and an effect outliving one would keep reporting a rect for a workspace that is no longer active.
-    Ok(Box::new(telar::Holding::new(
-        Box::new(container.on_press(move || on_press(id))),
-        tracking,
-    )))
+    Ok(Box::new(container.on_press(move || on_press(id))))
 }
 
 /// The pills, with the active-workspace indicator sliding behind them.
@@ -196,7 +193,7 @@ pub fn grid(
     on_press: fn(i32),
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let slot = signal(ZERO_RECT);
-    let for_rows = slot.clone();
+    let for_rows = slot;
     // `with_style` rather than `with_gap`: the gap constructors hardcode a column, so a bottom bar would stack its pills downwards inside a strip one pill high and show nothing at all.
     let axis = if style.vertical {
         LayoutStyle::new().flex_column()
@@ -209,7 +206,7 @@ pub fn grid(
         move || items.get(),
         |pill: &Pill| pill.key(),
         move |pill: Pill| {
-            let slot = style.indicator.then(|| for_rows.clone());
+            let slot = style.indicator.then_some(for_rows);
             tracked_pill_view(pill, style, on_press, slot)
         },
     )?;
@@ -268,7 +265,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
                 return;
             }
             // Cloned out before `retarget`, which writes a signal and flushes: reaching back through the `RefCell` while this one is still borrowed is the re-entrant panic, not a compile error.
-            let existing = motion.borrow().clone();
+            let existing = *motion.borrow();
             match existing {
                 Some(animated) => animated.retarget(wanted),
                 None => {
@@ -307,9 +304,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
         // Painted rather than transformed. Scaling one box down to a pill would squash its corner radius with it — the row is far wider than a pill, so the rounding came out flattened on one axis — and drawing the rect where it belongs costs one command either way.
         //
         // The raw goal until the animation exists, so the first paint lands in the right place rather than waiting a frame for the spring to be built.
-        let target = motion
-            .borrow()
-            .clone()
+        let target = (*motion.borrow())
             .map(|animated| animated.get())
             .unwrap_or(goal);
         if target.width <= 0.0 || target.height <= 0.0 {
@@ -332,7 +327,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
     if let Some(rect) = track_layout(canvas.layout_node()) {
         held.push(telar::effect(move || origin.set(rect.get())));
     }
-    Ok(Box::new(telar::Holding::new(Box::new(canvas), held)))
+    Ok(Box::new(canvas))
 }
 
 /// The pills to draw for a snapshot.

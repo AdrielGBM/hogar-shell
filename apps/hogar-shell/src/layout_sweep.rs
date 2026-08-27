@@ -111,8 +111,13 @@ fn sweep(mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand
             for entry in crate::preview_entries() {
                 reset_layout_runtime();
                 seed_world(edge, mode);
+                // Scoped, and disposed before the next reset. Replacing the layout runtime starts its node ids over, so an unscoped entry keeps its effects running against ids the next entry now owns — and taffy answers a stale one with "invalid SlotMap key used".
+                let scope = telar::owner_scope();
+                let owner = scope.id();
                 let measured = measure(&entry);
+                drop(scope);
                 each(&entry, edge, mode, measured);
+                telar::dispose_owner(owner);
             }
         }
     }

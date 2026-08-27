@@ -10,8 +10,8 @@ use ui::scale::space;
 
 use platform_wayland::EventSender;
 use telar::{
-    AlignItems, Container, Image, ImageData, Raster, JustifyContent, LayoutError, LayoutItem,
-    LayoutStyle, ObjectFit, RectStyle, SizeDimension, StyledContainer, Text, box_item, signal,
+    AlignItems, Container, Image, ImageData, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
+    ObjectFit, Raster, RectStyle, SizeDimension, StyledContainer, Text, box_item, signal,
     use_theme,
 };
 
@@ -49,11 +49,11 @@ pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     // The focused window, live: the panel follows focus rather than pinning whatever was focused when it opened, which is what makes it usable for looking at one window after another.
     let focused = signal(current_focus());
-    let sink = focused.clone();
+    let sink = focused;
     platform_wayland::watch(hyprland::subscribe_clients, move |_: Vec<Client>| {
         sink.set(current_focus())
     });
-    let follow = focused.clone();
+    let follow = focused;
     platform_wayland::watch(
         hyprland::subscribe_active_window,
         move |_: hyprland::ActiveWindow| follow.set(current_focus()),
@@ -73,7 +73,6 @@ pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
                 .text_style(FontRole::Title, theme.text)
                 .with_font_weight(700)
                 .with_clamp(1, true)
-                
         },
     )?;
 
@@ -112,7 +111,7 @@ fn preview(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let frame = signal(None::<Arc<ImageData>>);
-    let sink = frame.clone();
+    let sink = frame;
     platform_wayland::watch(
         move |tx| capture_loop(tx, interval),
         move |image: Option<Arc<ImageData>>| sink.set(image),
@@ -187,8 +186,8 @@ fn details(
     let size = theme.font(FontRole::Caption);
     let row = |label: fn() -> String, read: fn(&Client) -> String| {
         label_value(
-            util::reactive::derive(focused.clone(), move |_| label()),
-            util::reactive::derive(focused.clone(), move |client: Option<Client>| {
+            util::reactive::derive(focused, move |_| label()),
+            util::reactive::derive(focused, move |client: Option<Client>| {
                 client.as_ref().map(read).unwrap_or_default()
             }),
             size,
@@ -259,9 +258,9 @@ fn actions(
     focused: telar::ReadSignal<Option<Client>>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let float = focused.clone();
-    let fullscreen = focused.clone();
-    let close = focused.clone();
+    let float = focused;
+    let fullscreen = focused;
+    let close = focused;
     let children = vec![
         pill(
             || telar::t!("window.float"),
@@ -335,7 +334,7 @@ fn workspace_row(
     )?;
     let mut children: Vec<Box<dyn LayoutItem>> = vec![box_item(label)];
     for workspace in workspaces {
-        let source = focused.clone();
+        let source = focused;
         children.push(pill(
             move || workspace.to_string(),
             "",

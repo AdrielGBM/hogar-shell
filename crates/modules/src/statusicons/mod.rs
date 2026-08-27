@@ -204,7 +204,7 @@ pub fn cluster() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let mut items: Vec<Box<dyn LayoutItem>> = Vec::new();
     for which in icons(&config) {
-        items.push(icon(which, fg.clone(), theme, size)?);
+        items.push(icon(which, fg, theme, size)?);
     }
 
     let style = if vertical {
@@ -282,7 +282,7 @@ mod tests {
             StatusIcon::Num,
         ] {
             assert!(
-                icon(which, fg.clone(), NordTheme::new(), 16.0).is_ok(),
+                icon(which, fg, NordTheme::new(), 16.0).is_ok(),
                 "'{}' builds",
                 which.as_str()
             );

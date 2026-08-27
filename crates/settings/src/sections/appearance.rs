@@ -104,13 +104,7 @@ fn theme_swatches(
     let config = Arc::new(config);
     let mut tiles: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(theme_options().len());
     for option in theme_options() {
-        tiles.push(theme_tile(
-            option,
-            name.clone(),
-            mode.clone(),
-            &config,
-            theme,
-        )?);
+        tiles.push(theme_tile(option, name, mode, &config, theme)?);
     }
     let grid = Container::new(
         LayoutStyle::new()
@@ -177,8 +171,10 @@ fn theme_tile(
             let chosen = selected.get() == option;
             let palette = fill();
             let border = if chosen { theme.accent } else { theme.overlay };
-            RectStyle::filled(palette.surface, SWATCH_RADIUS)
-                .with_border(telar::Border::uniform(border, if chosen { 2.0 } else { 1.0 }))
+            RectStyle::filled(palette.surface, SWATCH_RADIUS).with_border(telar::Border::uniform(
+                border,
+                if chosen { 2.0 } else { 1.0 },
+            ))
         },
         vec![Box::new(row)],
     )?
@@ -196,7 +192,7 @@ fn accent_swatches(
     for option in ACCENT_NAMES {
         let selected = accent.read_only();
         let palette = palette.clone();
-        let set = accent.clone();
+        let set = accent;
         swatches.push(Box::new(
             StyledContainer::new(
                 LayoutStyle::new().width(SWATCH).height(SWATCH),
@@ -204,8 +200,10 @@ fn accent_swatches(
                     let chosen = selected.get() == *option;
                     let colour = palette().accent_by_name(option);
                     let border = if chosen { theme.text } else { theme.overlay };
-                    RectStyle::filled(colour, SWATCH_RADIUS)
-                        .with_border(telar::Border::uniform(border, if chosen { 2.0 } else { 1.0 }))
+                    RectStyle::filled(colour, SWATCH_RADIUS).with_border(telar::Border::uniform(
+                        border,
+                        if chosen { 2.0 } else { 1.0 },
+                    ))
                 },
                 vec![],
             )?
@@ -255,89 +253,84 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let rows = vec![
         palette_preview(pending.clone(), theme)?,
-        theme_swatches(name.clone(), mode.read_only(), config.clone(), theme)?,
-        accent_swatches(accent.clone(), pending, theme)?,
+        theme_swatches(name, mode.read_only(), config.clone(), theme)?,
+        accent_swatches(accent, pending, theme)?,
         enum_field(
             || telar::t!("settings.field.color_mode"),
-            mode.clone(),
+            mode,
             MODES,
             theme,
         )?,
         enum_field(
             || telar::t!("settings.field.variant"),
-            variant.clone(),
+            variant,
             VARIANTS,
             theme,
         )?,
         enum_field(
             || telar::t!("settings.field.fallback"),
-            fallback.clone(),
+            fallback,
             BUILT_IN_THEMES,
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.font_family"),
-            font_family.clone(),
+            font_family,
             "(default)",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.radius"),
-            radius.clone(),
+            radius,
             "(theme)",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.spacing"),
-            spacing.clone(),
+            spacing,
             "(theme)",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.font_size"),
-            font_size.clone(),
+            font_size,
             "(theme)",
             theme,
         )?,
-        text_field(
-            || telar::t!("settings.field.opacity"),
-            opacity.clone(),
-            "1",
-            theme,
-        )?,
+        text_field(|| telar::t!("settings.field.opacity"), opacity, "1", theme)?,
         text_field(
             || telar::t!("settings.field.icon_size"),
-            icon_size.clone(),
+            icon_size,
             "(theme)",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.icon_stroke"),
-            icon_stroke.clone(),
+            icon_stroke,
             "(glyph)",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.scale_rounding"),
-            scale_rounding.clone(),
+            scale_rounding,
             "1",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.scale_spacing"),
-            scale_spacing.clone(),
+            scale_spacing,
             "1",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.scale_font"),
-            scale_font.clone(),
+            scale_font,
             "1",
             theme,
         )?,
         text_field(
             || telar::t!("settings.field.scale_icon"),
-            scale_icon.clone(),
+            scale_icon,
             "1",
             theme,
         )?,
@@ -402,7 +395,7 @@ pub(crate) fn theme_colors_section() -> Result<Box<dyn LayoutItem>, LayoutError>
         .collect();
 
     let mut rows: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(fields.len());
-    for (token, value) in fields.iter().map(|(t, v)| (*t, v.clone())) {
+    for (token, value) in fields.iter().map(|(t, v)| (*t, *v)) {
         rows.push(text_field(
             move || token.to_string(),
             value,

@@ -121,16 +121,10 @@ fn note_card(
     let title = signal(note.title);
     let body = signal(note.body);
     let picking = signal(false);
-    wire_persist(state, id, icon.clone(), title.clone(), body.clone());
+    wire_persist(state, id, icon, title, body);
 
-    let glyph = {
-        let icon = icon.clone();
-        move || icon.get().unwrap_or_else(|| "plus".to_string())
-    };
-    let toggle_picking = {
-        let picking = picking.clone();
-        move || picking.update(|p| *p = !*p)
-    };
+    let glyph = move || icon.get().unwrap_or_else(|| "plus".to_string());
+    let toggle_picking = move || picking.update(|p| *p = !*p);
     // Resolved once and captured: a style closure runs on every paint, and the lookup behind it is not free.
     let rounded = corner::md();
     let icon_button = StyledContainer::new(
@@ -211,7 +205,7 @@ fn wire_persist(
     title: RwSignal<String>,
     body: RwSignal<String>,
 ) {
-    let notes = state.notes.clone();
+    let notes = state.notes;
     let generation = Rc::clone(&state.save_generation);
     let sync = effect(move || {
         let icon = icon.get();
@@ -236,7 +230,7 @@ fn picker_overlay(
     trigger_node: NodeId,
     trigger_rect: RwSignal<Rect>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let source_picking = picking.clone();
+    let source_picking = picking;
     let list = ReactiveList::new(
         move || vec![source_picking.get()],
         |open: &bool| *open,
@@ -244,11 +238,11 @@ fn picker_overlay(
             if !open {
                 return Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?));
             }
-            let icon = icon.clone();
-            let closing = picking.clone();
+            let icon = icon;
+            let closing = picking;
             icon_picker_overlay(
                 trigger_node,
-                trigger_rect.clone(),
+                trigger_rect,
                 move |id: String| icon.set(Some(id)),
                 move || closing.set(false),
             )

@@ -32,7 +32,7 @@ mod tests {
     fn a_derived_value_follows_its_source() {
         telar::reset_runtime();
         let source = signal(2i32);
-        let doubled = derive(source.clone(), |n| n * 2);
+        let doubled = derive(source, |n| n * 2);
         assert_eq!(
             doubled.get(),
             4,
@@ -64,7 +64,7 @@ mod tests {
     fn a_derivation_outlives_the_call_that_made_it() {
         telar::reset_runtime();
         let source = signal(1i32);
-        let derived = derive(source.clone(), |n| n * 10);
+        let derived = derive(source, |n| n * 10);
         // Whatever a widget would do: hold the handle in a closure and read it later.
         let read: Box<dyn Fn() -> i32> = Box::new(move || derived.get());
         source.set(7);

@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use telar::{
-    App, Color, Component, Container, Image, ImageData, Raster, LayoutError, LayoutItem,
-    LayoutStyle, ObjectFit, RectStyle, SizeDimension, StyledContainer, WindowConfig, box_item,
+    App, Color, Component, Container, Image, ImageData, LayoutError, LayoutItem, LayoutStyle,
+    ObjectFit, Raster, RectStyle, SizeDimension, StyledContainer, WindowConfig, box_item,
     motion::Animated, reset_layout_runtime, set_theme, signal,
 };
 
@@ -158,7 +158,7 @@ impl WallpaperApp {
             .animation
             .tween_ms(config.background.transition_ms, 10_000);
         let fade = Animated::new(0.0f32, tween);
-        let reading = fade.clone();
+        let reading = fade;
         (
             Rc::new(move || reading.get()),
             Box::new(move |to| fade.retarget(to)),
@@ -228,7 +228,7 @@ fn image_layer(
     transition: WallpaperTransition,
     travel: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let data = slot.clone();
+    let data = slot;
     let image = Image::new(
         fill(),
         move || data.get().unwrap_or_else(blank),

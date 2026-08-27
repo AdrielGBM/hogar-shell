@@ -73,10 +73,7 @@ pub(crate) fn screen_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
 fn screen(config: &Arc<Config>) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let state = signal(lock::current());
-    platform_wayland::watch(lock::subscribe, {
-        let state = state.clone();
-        move |next: LockState| state.set(next)
-    });
+    platform_wayland::watch(lock::subscribe, move |next: LockState| state.set(next));
 
     let mut column: Vec<Box<dyn LayoutItem>> = Vec::new();
     column.push(clock(config, theme)?);
@@ -133,10 +130,10 @@ fn clock(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layou
         )
     };
     let parts = signal(render(&chrono::Local::now()));
-    platform_wayland::watch(services::clock::subscribe, {
-        let parts = parts.clone();
-        move |now: services::clock::Now| parts.set(render(&now))
-    });
+    platform_wayland::watch(
+        services::clock::subscribe,
+        move |now: services::clock::Now| parts.set(render(&now)),
+    );
     let time = parts.read_only();
     let date = parts.read_only();
 
@@ -194,8 +191,6 @@ fn field(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let password = signal(String::new());
     let submit = {
-        let password = password.clone();
-        let state = state.clone();
         move || {
             if !state.peek().accepts_input() {
                 return;
@@ -220,7 +215,7 @@ fn field(
     .on_submit(submit);
 
     let rounded = corner::xl();
-    let outline = state.clone();
+    let outline = state;
     Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
             .flex_row()
@@ -248,7 +243,7 @@ fn status_line(
     state: telar::ReadSignal<LockState>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = state.clone();
+    let text = state;
     let tint = state;
     // The line is drawn even when it says nothing, so a wrong password does not resize the card under the hand that is about to retype the password.
     centred(box_item(Text::new(

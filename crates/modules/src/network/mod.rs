@@ -51,7 +51,7 @@ pub fn network_view(config: NetworkConfig) -> Result<Box<dyn LayoutItem>, Layout
     let theme = use_theme::<NordTheme>();
 
     let state = signal(network::current_wifi().unwrap_or_default());
-    let sink = state.clone();
+    let sink = state;
     platform_wayland::watch(network::subscribe_wifi, move |wifi| sink.set(wifi));
 
     // Opening the panel is the gesture that means "show me what is around", so it is also what looks.
@@ -64,7 +64,7 @@ pub fn network_view(config: NetworkConfig) -> Result<Box<dyn LayoutItem>, Layout
     let armed = signal(String::new());
 
     let children = vec![
-        header(state.clone(), theme)?,
+        header(state, theme)?,
         list(state, asking, password, armed, config, theme)?,
     ];
     Ok(Box::new(Container::new(
@@ -192,19 +192,7 @@ fn list(
                 .collect()
         },
         |row: &Row| row.key(),
-        {
-            let state = state.clone();
-            move |row: Row| {
-                network_row(
-                    row,
-                    state.clone(),
-                    asking.clone(),
-                    password.clone(),
-                    armed.clone(),
-                    theme,
-                )
-            }
-        },
+        move |row: Row| network_row(row, state, asking, password, armed, theme),
         6.0,
     )?;
 
@@ -330,9 +318,9 @@ fn network_row(
 
     let saved = point.saved;
     let press_ssid = ssid.clone();
-    let press_asking = asking.clone();
-    let press_password = password.clone();
-    let disarm = armed.clone();
+    let press_asking = asking;
+    let press_password = password;
+    let disarm = armed;
     let head = StyledContainer::new(
         LayoutStyle::new()
             .flex_row()
@@ -427,8 +415,6 @@ fn prompt(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let submit = {
         let ssid = ssid.clone();
-        let asking = asking.clone();
-        let password = password.clone();
         move || {
             join(&ssid, Some(password.peek()));
             password.set(String::new());

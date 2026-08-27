@@ -74,12 +74,12 @@ pub fn capture_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError
 /// The recorder's controls: one button that starts or stops, a pause beside it on a backend that can, and the elapsed time while it runs.
 fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let live = signal(recorder::current());
-    let sink = live.clone();
+    let sink = live;
     platform_wayland::watch(recorder::subscribe, move |state: Recording| sink.set(state));
 
     // The clock is what makes the readout move: a recording's elapsed time changes with the wall clock, not with anything the recorder publishes.
     let tick = signal(0u32);
-    let ticker = tick.clone();
+    let ticker = tick;
     platform_wayland::watch(
         services::clock::subscribe,
         move |_: services::clock::Now| ticker.set(ticker.peek().wrapping_add(1)),
@@ -170,7 +170,7 @@ fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 /// What the last capture did — the file it wrote, or why it did not. Blank until the first one, so the card does not open with a line about nothing.
 fn last_capture(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let last = signal(screenshot::current());
-    let sink = last.clone();
+    let sink = last;
     platform_wayland::watch(
         screenshot::subscribe,
         move |shot: Option<Result<Shot, String>>| sink.set(shot),
@@ -190,7 +190,6 @@ fn last_capture(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
             theme
                 .text_style(FontRole::Caption, tint)
                 .with_clamp(1, true)
-                
         },
     )?;
     Ok(box_item(line))
@@ -218,7 +217,7 @@ pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutEr
 
     let entries = signal(recorder::recordings(&dir, limit));
     // A finished recording is a new file in the list, and the recorder is the only thing that puts one there — so its state change is the refresh signal, rather than a watch on the directory.
-    let refresh = entries.clone();
+    let refresh = entries;
     let refresh_dir = dir.clone();
     platform_wayland::watch(recorder::subscribe, move |_: Recording| {
         refresh.set(recorder::recordings(&refresh_dir, limit));
@@ -237,23 +236,11 @@ pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutEr
     let armed = signal(String::new());
     let source = entries.read_only();
     let list_dir = dir.clone();
-    let list_entries = entries.clone();
+    let list_entries = entries;
     let rows = ReactiveList::new(
         move || source.get(),
         |entry: &Entry| row_key(entry),
-        {
-            let armed = armed.clone();
-            move |entry: Entry| {
-                row(
-                    entry,
-                    armed.clone(),
-                    list_entries.clone(),
-                    list_dir.clone(),
-                    limit,
-                    theme,
-                )
-            }
-        },
+        move |entry: Entry| row(entry, armed, list_entries, list_dir.clone(), limit, theme),
         6.0,
     )?;
 
@@ -323,7 +310,6 @@ fn row(
             theme
                 .text_style(FontRole::Body, theme.text)
                 .with_clamp(1, true)
-                
         },
     )?;
     let subtitle = Text::new(
@@ -360,7 +346,7 @@ fn row(
 
     let open_path = path.clone();
     let delete_path = path.clone();
-    let disarm = armed.clone();
+    let disarm = armed;
     let row = StyledContainer::new(
         LayoutStyle::new()
             .flex_row()

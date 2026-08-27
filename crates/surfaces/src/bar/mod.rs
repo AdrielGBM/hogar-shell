@@ -652,7 +652,7 @@ mod tests {
             )
             .expect("the bar lays out");
             let rect = CENTRED
-                .with(|c| c.borrow().clone())
+                .with(|c| *c.borrow())
                 .expect("the centre chip published its rect")
                 .get();
             rect.x + rect.width / 2.0
@@ -788,7 +788,7 @@ mod tests {
             )
             .expect("the bar lays out");
             YIELDED
-                .with(|y| y.borrow().clone())
+                .with(|y| *y.borrow())
                 .expect("the module published its rect")
                 .get()
                 .width
@@ -938,7 +938,7 @@ mod tests {
                 })
                 .fold(f32::INFINITY, f32::min);
             let centre = CENTRED
-                .with(|c| c.borrow().clone())
+                .with(|c| *c.borrow())
                 .expect("the centre chip published its rect")
                 .get();
             centre.x - cut

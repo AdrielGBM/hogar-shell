@@ -286,7 +286,7 @@ fn grid(config: &UtilitiesConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem
 
 fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let state = signal(TileState::default());
-    subscribe(quick, state.clone());
+    subscribe(quick, state);
 
     let icon_state = state.read_only();
     let tint_state = state.read_only();
@@ -326,7 +326,6 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
             theme
                 .text_style(FontRole::Caption, tint)
                 .with_clamp(1, true)
-                
         },
     )?;
 
@@ -337,7 +336,6 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
             theme
                 .text_style(FontRole::Caption, theme.subtle)
                 .with_clamp(1, true)
-                
         },
     )?;
 

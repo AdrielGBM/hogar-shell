@@ -70,10 +70,9 @@ where
             None => Load::Loading,
         };
         let pending = matches!(initial, Load::Loading);
-        let handle = signal(initial);
-        self.signals
-            .borrow_mut()
-            .insert(key.clone(), handle.clone());
+        // Detached: this cache outlives every scope that reads from it, and the first read for a key is somebody's build. Attributed to that build, the entry would be freed when it went away and every later reader would find a dead signal.
+        let handle = telar::detached(|| signal(initial));
+        self.signals.borrow_mut().insert(key.clone(), handle);
         if pending {
             let _ = self.requests.send(key);
         }
@@ -137,7 +136,7 @@ mod tests {
     fn a_delivered_answer_replaces_the_placeholder_and_a_failed_one_says_so() {
         let signals: Signals<String, u32> = Rc::new(RefCell::new(HashMap::new()));
         let handle = signal(Load::Loading);
-        signals.borrow_mut().insert("a".to_string(), handle.clone());
+        signals.borrow_mut().insert("a".to_string(), handle);
         deliver(&signals, "a".to_string(), Some(3));
         assert_eq!(handle.peek(), Load::Ready(3));
 

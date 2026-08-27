@@ -35,12 +35,10 @@ pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
 fn clock_card(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let for_tick = config.clone();
     let now = signal(Local::now());
-    let sink = now.clone();
+    let sink = now;
     platform_wayland::watch(clock::subscribe, move |t| sink.set(t));
 
-    let time = derive(now.clone(), move |t| {
-        t.format(for_tick.time_format()).to_string()
-    });
+    let time = derive(now, move |t| t.format(for_tick.time_format()).to_string());
     let date = derive(now, move |t| t.format(&config.date_format).to_string());
 
     let time_text = Text::new(
@@ -80,7 +78,7 @@ fn calendar_card(
     let today = Local::now().date_naive();
     let anchor = signal(first_of_month(today));
 
-    let title = derive(anchor.clone(), |month| {
+    let title = derive(anchor, |month| {
         format!("{} {}", month_label(month.month()), month.year())
     });
 
@@ -91,7 +89,7 @@ fn calendar_card(
             .gap(space::md())
             .width(SizeDimension::Percent(1.0)),
         vec![
-            step_button("chevron-left", anchor.clone(), -1, theme)?,
+            step_button("chevron-left", anchor, -1, theme)?,
             box_item(Text::new(
                 move || title.get(),
                 LayoutStyle::new()
@@ -103,7 +101,7 @@ fn calendar_card(
                         .with_font_weight(700)
                 },
             )?),
-            step_button("chevron-right", anchor.clone(), 1, theme)?,
+            step_button("chevron-right", anchor, 1, theme)?,
         ],
     )?;
 
@@ -264,7 +262,7 @@ fn user_card(
         )?,
     };
     // F4a: the picture is the control. A press opens the browser below it, which is the only affordance the card has room for and the only one a user would look for — nothing else on this card is pressable.
-    let open = picking.clone();
+    let open = picking;
     let avatar: Box<dyn LayoutItem> = Box::new(
         StyledContainer::new(
             LayoutStyle::new()
@@ -295,7 +293,7 @@ fn user_card(
 
     // Uptime rides the shared clock rather than arming a ticker of its own; it changes once a minute, and the second boundary is already being published to every surface.
     let now = signal(Local::now());
-    let sink = now.clone();
+    let sink = now;
     platform_wayland::watch(clock::subscribe, move |t| sink.set(t));
     let uptime = derive(now, |_| match read_uptime() {
         Some(seconds) => telar::t!("dashboard.uptime", time = duration_label(seconds)),
@@ -361,7 +359,7 @@ fn avatar_picker(
         |open: &bool| open.to_string(),
         move |open: bool| {
             if open {
-                browser(folder.clone(), picking.clone(), theme)
+                browser(folder, picking, theme)
             } else {
                 Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?) as Box<dyn LayoutItem>)
             }
@@ -384,11 +382,10 @@ fn browser(
             theme
                 .text_style(FontRole::Caption, theme.muted)
                 .with_clamp(1, true)
-                
         },
     )?;
 
-    let up_folder = folder.clone();
+    let up_folder = folder;
     let up = StyledContainer::new(
         LayoutStyle::new()
             .flex_shrink(0.0)
@@ -410,7 +407,7 @@ fn browser(
     });
 
     let list_folder = folder.read_only();
-    let into = folder.clone();
+    let into = folder;
     let tiles = ReactiveList::with_style(
         LayoutStyle::new()
             .flex_row()
@@ -419,7 +416,7 @@ fn browser(
             .width(SizeDimension::Percent(1.0)),
         move || entries_in(&list_folder.get()),
         |choice: &Choice| choice.path.display().to_string(),
-        move |choice: Choice| choice_tile(choice, into.clone(), picking.clone(), theme),
+        move |choice: Choice| choice_tile(choice, into, picking, theme),
     )?;
 
     let header = Container::new(
@@ -509,7 +506,6 @@ fn choice_tile(
             theme
                 .text_style(FontRole::Caption, theme.subtle)
                 .with_clamp(1, true)
-                
         },
     )?;
 

@@ -45,16 +45,16 @@ pub(crate) fn arriving(
         return Ok(content);
     }
     let progress = PROGRESS.with(|held| {
-        held.borrow_mut()
+        *held
+            .borrow_mut()
             .entry(slot.to_string())
             .or_insert_with(|| {
                 let progress = Animated::new(1.0f32, tween);
                 progress.retarget(0.0);
                 progress
             })
-            .clone()
     });
-    let slide = progress.clone();
+    let slide = progress;
     let fade = progress;
     let was_at: Rc<Cell<Option<f32>>> = Rc::new(Cell::new(None));
     let closing: Rc<RefCell<Option<Closing>>> = Rc::new(RefCell::new(None));

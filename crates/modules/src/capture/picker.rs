@@ -15,8 +15,8 @@ use ui::scale::{paint, space};
 
 use platform_wayland::{SurfaceHandle, request_close};
 use telar::{
-    AlignItems, Canvas, Color, Container, Image, ImageData, Raster, JustifyContent, Key,
-    LayoutError, LayoutItem, LayoutStyle, NamedKey, ObjectFit, PathData, PathStyle, Point, Rect,
+    AlignItems, Canvas, Color, Container, Image, ImageData, JustifyContent, Key, LayoutError,
+    LayoutItem, LayoutStyle, NamedKey, ObjectFit, PathData, PathStyle, Point, Raster, Rect,
     RectStyle, RenderNode, RwSignal, ShapeStyle, SizeDimension, Stroke, StyledContainer, Text,
     box_item, signal,
 };
@@ -148,11 +148,11 @@ fn overlay(
     children.push(readout(selection.read_only(), theme)?);
 
     let drag_anchor = Rc::clone(&anchor);
-    let drag_selection = selection.clone();
+    let drag_selection = selection;
     let drag_windows = windows.clone();
-    let end_selection = selection.clone();
+    let end_selection = selection;
     let end_windows = windows.clone();
-    let click_selection = selection.clone();
+    let click_selection = selection;
     let click_windows = windows;
     let commit_frozen = Rc::clone(&frozen);
     let commit = move |area: Area| finish(area, screen, &commit_frozen, &then);

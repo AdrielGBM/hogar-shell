@@ -4,9 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use telar::{
-    AlignItems, Color, ImageData, Raster, JustifyContent, LayoutError, LayoutItem,
-    LayoutStyle, ObjectFit, PointerButton, ReadSignal, Rect, RectStyle, StyledContainer,
-    track_layout,
+    AlignItems, Color, ImageData, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ObjectFit,
+    PointerButton, Raster, ReadSignal, Rect, RectStyle, StyledContainer, track_layout,
 };
 
 mod menu;
@@ -160,13 +159,13 @@ pub fn tray_icon(
     let rect = track_layout(container.layout_node())
         .expect("a container registers its rect")
         .read_only();
-    let alt_rect = rect.clone();
+    let alt_rect = rect;
     let container = container
         .hover_style(move |_r| RectStyle::filled(hover, radius))
         .active_style(move |_r| RectStyle::filled(hover.darken(0.14), radius))
-        .on_press(move || primary(&press_item, rect.clone()))
+        .on_press(move || primary(&press_item, rect))
         .on_alt_press(move |button| match button {
-            PointerButton::Secondary => open_menu(&alt_item, alt_rect.clone()),
+            PointerButton::Secondary => open_menu(&alt_item, alt_rect),
             _ => secondary(&alt_item),
         })
         .on_scroll(move |dx, dy| {

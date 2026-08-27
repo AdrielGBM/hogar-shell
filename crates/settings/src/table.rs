@@ -38,7 +38,7 @@ impl<T: Clone + 'static> TableList<T> {
 
     pub(crate) fn clone_handle(&self) -> Self {
         Self {
-            order: self.order.clone(),
+            order: self.order,
             values: Rc::clone(&self.values),
             next: Rc::clone(&self.next),
         }
@@ -109,15 +109,15 @@ pub(crate) fn bound_field<T: Clone + 'static>(
     placeholder: &str,
     theme: NordTheme,
     apply: impl Fn(&mut T, &str) + 'static,
-) -> Result<(Box<dyn LayoutItem>, telar::Effect), LayoutError> {
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let value = signal(initial);
     let watched = value.read_only();
     let list = list.clone_handle();
-    let sync = telar::effect(move || {
+    telar::effect(move || {
         let text = watched.get();
         list.edit(id, |entry| apply(entry, &text));
     });
-    Ok((text_field(label, value, placeholder, theme)?, sync))
+    text_field(label, value, placeholder, theme)
 }
 
 /// [`bound_field`] for a switch.
@@ -128,15 +128,15 @@ pub(crate) fn bound_toggle<T: Clone + 'static>(
     initial: bool,
     theme: NordTheme,
     apply: impl Fn(&mut T, bool) + 'static,
-) -> Result<(Box<dyn LayoutItem>, telar::Effect), LayoutError> {
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let value = signal(initial);
     let watched = value.read_only();
     let list = list.clone_handle();
-    let sync = telar::effect(move || {
+    telar::effect(move || {
         let on = watched.get();
         list.edit(id, |entry| apply(entry, on));
     });
-    Ok((toggle_field(label, value, theme)?, sync))
+    toggle_field(label, value, theme)
 }
 
 /// One entry of a [`TableList`]: its fields in a filled card, with the control that deletes it.
@@ -145,7 +145,6 @@ pub(crate) fn entry_card<T: Clone + 'static>(
     list: &TableList<T>,
     id: u64,
     theme: NordTheme,
-    subscriptions: Vec<telar::Effect>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let remove = {
         let list = list.clone_handle();
@@ -167,7 +166,7 @@ pub(crate) fn entry_card<T: Clone + 'static>(
         paint::md(theme.surface),
         fields,
     )?;
-    Ok(Box::new(telar::Holding::new(Box::new(card), subscriptions)))
+    Ok(Box::new(card))
 }
 
 /// Adds `id` to a list or takes it out again — what both switches on an application row do.

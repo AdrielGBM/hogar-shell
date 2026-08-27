@@ -27,7 +27,7 @@ pub fn meter(
     height: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let radius = height / 2.0;
-    let empty = fraction.clone();
+    let empty = fraction;
     let fill = StyledContainer::new(
         LayoutStyle::new().absolute_fill(),
         move |_r| {

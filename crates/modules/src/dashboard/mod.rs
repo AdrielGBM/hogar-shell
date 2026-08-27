@@ -73,7 +73,7 @@ pub fn dashboard_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     if active.peek() != TAB.get() {
         set_tab(active.peek());
     }
-    let sink = active.clone();
+    let sink = active;
     let offered = tabs.clone();
     platform_wayland::watch(subscribe_tab, move |tab| {
         if offered.contains(&tab) {
@@ -127,7 +127,7 @@ fn strip(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut pills: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(tabs.len());
     for tab in tabs {
-        pills.push(pill(*tab, active.clone(), theme)?);
+        pills.push(pill(*tab, active, theme)?);
     }
     Ok(Box::new(Container::new(
         LayoutStyle::new()

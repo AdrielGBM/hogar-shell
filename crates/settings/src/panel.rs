@@ -52,7 +52,7 @@ pub fn settings_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
             .gap(NAV_GAP)
             .width(SizeDimension::Percent(1.0)),
         vec![
-            nav_pane(selected.clone(), query.read_only(), theme)?,
+            nav_pane(selected, query.read_only(), theme)?,
             page_stack(
                 selected.read_only(),
                 query.read_only(),
@@ -157,13 +157,7 @@ fn nav_pane(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut rows: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(crate::pages::PAGES.len());
     for (index, page) in crate::pages::PAGES.iter().enumerate() {
-        rows.push(nav_row(
-            index,
-            page,
-            selected.clone(),
-            query.clone(),
-            theme,
-        )?);
+        rows.push(nav_row(index, page, selected, query, theme)?);
     }
     Ok(Box::new(Container::new(
         LayoutStyle::new()
@@ -185,7 +179,7 @@ fn nav_row(
     let on_fg = theme.accent.most_readable(&[theme.text, theme.base]);
     // Read out of the two signals in one place: a row's colour depends on both, and the ink has to match whatever fill the same frame drew.
     let ink = {
-        let (selected, query) = (selected.read_only(), query.clone());
+        let (selected, query) = (selected.read_only(), query);
         move || {
             if selected.get() == index {
                 on_fg
@@ -196,7 +190,7 @@ fn nav_row(
             }
         }
     };
-    let label_ink = ink.clone();
+    let label_ink = ink;
     let label = Text::new(
         move || crate::pages::label("settings.page", page.label),
         LayoutStyle::new().flex_grow(1.0),
@@ -260,9 +254,9 @@ fn page_stack(
             // A page is *replaced*, not resized: three screens down the Appearance page is not a place to be dropped into Network, and neither is three screens down the forms a search has just narrowed away. The scroll area puts a too-short page back in range on its own; only this knows that what is in the viewport is now a different thing rather than the same thing resized.
             //
             // Not on the first run, which is the effect being seeded rather than the user choosing a page — and on a rebuild that seeding run is exactly what would throw away the position being kept.
-            let (page, search) = (selected.clone(), query.clone());
+            let (page, search) = (selected, query);
             let seeded = std::cell::Cell::new(false);
-            let follow_page = telar::effect(move || {
+            telar::effect(move || {
                 page.get();
                 search.get();
                 if seeded.replace(true) {
@@ -270,7 +264,7 @@ fn page_stack(
                 }
             });
             let page_area = build_page_area(selected, query, reseed, config, path, theme)?;
-            Ok(Box::new(telar::Holding::new(page_area, vec![follow_page])))
+            Ok(page_area)
         },
     )?;
     Ok(Box::new(scroll))
