@@ -49,7 +49,8 @@ pub(crate) fn arriving(
             .borrow_mut()
             .entry(slot.to_string())
             .or_insert_with(|| {
-                let progress = Animated::new(1.0f32, tween);
+                // Detached, because this map outlives every scope that can reach it: `arriving` runs inside the `ReactiveList` row's owner, the row is disposed the instant its card leaves the source, and `leaving` retargets the progress *after* that — owned by the row, the exit would read a freed signal. The map is the owner instead, and `forget`/`retain` are its disposal.
+                let progress = Animated::detached(1.0f32, tween);
                 progress.retarget(0.0);
                 progress
             })
@@ -143,6 +144,17 @@ pub(crate) fn settled() -> Vec<String> {
 pub(crate) fn forget(slot: &str) {
     LEAVING.with(|held| held.borrow_mut().remove(slot));
     PROGRESS.with(|held| held.borrow_mut().remove(slot));
+}
+
+/// Drops the progress of every slot that is neither drawn nor on its way out.
+///
+/// The entries are detached, so no scope frees them: what the column stops drawing, it has to say. The card the cap kept out is the one that needs this — its row is disposed while the card is still alive in its source, so no departure will ever [`forget`] it, and holding on would leak a slot for every card the column never had room for and then hand it a settled entrance if it were finally admitted.
+pub(crate) fn retain(drawn: &[String]) {
+    PROGRESS.with(|held| {
+        held.borrow_mut().retain(|slot, _| {
+            drawn.contains(slot) || LEAVING.with(|leaving| leaving.borrow().contains_key(slot))
+        })
+    });
 }
 
 /// Cancels a departure because the card came back before its exit finished — a notification re-sent, an OSD retriggered while the last one was fading. Without this the returning card would keep fading out.
@@ -247,5 +259,58 @@ mod tests {
         );
         assert!(leaving("toast\u{1}dnd", &off).is_zero());
         assert!(!anything_leaving());
+    }
+
+    /// The progress outlives the row that built it, which is the whole reason it is detached. `ReactiveList` disposes a row's owner the moment its card leaves the source, and the column retargets the progress *after* that — owned by the row, the exit reads a signal whose storage was freed and the shell goes down with it.
+    #[test]
+    fn a_progress_outlives_the_row_that_built_it() {
+        telar::reset_layout_runtime();
+        clear();
+        let animation = AnimationConfig::default();
+        let row = telar::owner_scope();
+        let id = row.id();
+        arriving("notification\u{1}7", content(), &animation).expect("build");
+        drop(row);
+        telar::dispose_owner(id);
+
+        assert!(
+            !leaving("notification\u{1}7", &animation).is_zero(),
+            "the exit still plays for a card whose row is gone"
+        );
+        assert!(still_leaving("notification\u{1}7"));
+        returning("notification\u{1}7");
+        assert!(!still_leaving("notification\u{1}7"));
+    }
+
+    /// A card queued behind [`super::super::admit`] has no row and never departs, so nothing would ever forget its progress: it would leak a slot per card the column had no room for, and hand that card a settled entrance the day it was finally admitted.
+    #[test]
+    fn a_slot_the_cap_kept_out_is_forgotten() {
+        telar::reset_layout_runtime();
+        clear();
+        let animation = AnimationConfig::default();
+        arriving("toast\u{1}vpn", content(), &animation).expect("shown");
+        arriving("toast\u{1}dnd", content(), &animation).expect("queued");
+
+        retain(&["toast\u{1}vpn".to_string()]);
+
+        assert!(PROGRESS.with(|held| held.borrow().contains_key("toast\u{1}vpn")));
+        assert!(
+            !PROGRESS.with(|held| held.borrow().contains_key("toast\u{1}dnd")),
+            "the card that never made it on screen kept nothing"
+        );
+    }
+
+    /// A departing card keeps its progress whether or not the caller listed it: the exit is mid-flight, and dropping the progress under it would snap the card back to settled for the frames it has left.
+    #[test]
+    fn retain_keeps_a_slot_that_is_still_leaving() {
+        telar::reset_layout_runtime();
+        clear();
+        let animation = AnimationConfig::default();
+        arriving("osd\u{1}volume", content(), &animation).expect("build");
+        leaving("osd\u{1}volume", &animation);
+
+        retain(&[]);
+
+        assert!(PROGRESS.with(|held| held.borrow().contains_key("osd\u{1}volume")));
     }
 }

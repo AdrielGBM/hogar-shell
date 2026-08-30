@@ -246,6 +246,8 @@ fn reconcile_departures(shown: &mut Vec<Card>, alive: &[String], animation: &Ani
             shown.insert(at.min(shown.len()), card);
         }
     });
+    // After the ghosts are back in, so a card playing its exit counts as drawn: what is left over is what the cap kept out, and nothing will ever come back for it.
+    transition::retain(&shown.iter().map(Card::slot).collect::<Vec<_>>());
 }
 
 /// Which of `ordered` fit on screen, and which wait.
