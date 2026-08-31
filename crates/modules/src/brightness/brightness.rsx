@@ -1,4 +1,5 @@
 [logic]
+use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
 use ::services::brightness;
 
 // A dimmer sun below 40%, a full sun above — so the single glyph still reads the level at a glance.
@@ -22,7 +23,7 @@ platform_wayland::watch(
 let glyph = memo(move || bright_glyph(level_glyph.get()));
 
 [view]
-icon_glyph name(move || glyph.get().to_string()) tint(move || fg.get()) size:(ui::module::icon_px())
+icon_glyph name:(Reactive::of(move || glyph.get().to_string())) tint:(Reactive::of(move || fg.get())) size:(ui::module::icon_px())
 
 [preview "Brightness" fixture:ui::preview::bar_chip]
 brightness

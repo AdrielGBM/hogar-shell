@@ -1,4 +1,9 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::enum_row::{enum_row, EnumRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{PLACEMENTS, opt_string, parse_f32, parse_u32, persist, source};
 use ::config::{ClockPlacement, DesktopClockConfig, WidgetsConfig};
 
@@ -19,7 +24,7 @@ let opacity = signal(c.background_opacity.to_string());
 let blur = signal(c.background_blur.to_string());
 let shadow = signal(c.shadow);
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (enabled, position, scale, margin) = (
         enabled.clone(),
         position.clone(),
@@ -62,17 +67,17 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.desktop_clock"))
-    toggle_row label(|| telar::t!("settings.field.enabled")) value:$enabled
-    enum_row label(|| telar::t!("settings.field.position")) value:$position options:PLACEMENTS
-    text_row label(|| telar::t!("settings.field.scale")) value:$scale placeholder:"3"
-    text_row label(|| telar::t!("settings.field.margin")) value:$margin placeholder:"48"
-    toggle_row label(|| telar::t!("settings.field.invert")) value:$invert
-    toggle_row label(|| telar::t!("settings.field.show_date")) value:$show_date
-    text_row label(|| telar::t!("settings.field.time_format")) value:$format placeholder:"(clock)"
-    text_row label(|| telar::t!("settings.field.date_format")) value:$date_format placeholder:"(clock)"
-    toggle_row label(|| telar::t!("settings.field.plate")) value:$background
-    text_row label(|| telar::t!("settings.field.plate_opacity")) value:$opacity placeholder:"0.35"
-    text_row label(|| telar::t!("settings.field.blur")) value:$blur placeholder:"0"
-    toggle_row label(|| telar::t!("settings.field.shadow")) value:$shadow
-    save_row label(|| telar::t!("settings.save.desktop_clock")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.desktop_clock")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.enabled"))) value:$enabled
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.position"))) value:$position options:PLACEMENTS
+    text_row label:(Reactive::of(|| telar::t!("settings.field.scale"))) value:$scale placeholder:"3"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.margin"))) value:$margin placeholder:"48"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.invert"))) value:$invert
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_date"))) value:$show_date
+    text_row label:(Reactive::of(|| telar::t!("settings.field.time_format"))) value:$format placeholder:"(clock)"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.date_format"))) value:$date_format placeholder:"(clock)"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.plate"))) value:$background
+    text_row label:(Reactive::of(|| telar::t!("settings.field.plate_opacity"))) value:$opacity placeholder:"0.35"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.blur"))) value:$blur placeholder:"0"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.shadow"))) value:$shadow
+    save_row label:(Reactive::of(|| telar::t!("settings.save.desktop_clock"))) on_press:save

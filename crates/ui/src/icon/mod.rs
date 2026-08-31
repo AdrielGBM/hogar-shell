@@ -183,10 +183,13 @@ pub fn icon_view(
                     vec![],
                 )?))
             }
-            _ => spinner(SpinnerProps {
-                color: Box::new(tint.clone()),
-                size,
-            }),
+            _ => spinner(
+                SpinnerProps::props()
+                    .color(telar::Reactive::of(tint.clone()))
+                    .size(size)
+                    .build(),
+                telar::Children::default(),
+            ),
         }
     };
     Ok(Box::new(ReactiveList::new(source, key, build, 0.0)?))

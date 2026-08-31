@@ -1,5 +1,6 @@
 [logic]
-use crate::workspaces::{Pill, PillStyle, grid, pills};
+use crate::workspaces::{PillGridProps, pill_grid};
+use crate::workspaces::{Pill, PillStyle, pills};
 use ::config::theme::NordTheme;
 use ::services::hyprland::{self, Snapshot};
 
@@ -40,11 +41,8 @@ let style = PillStyle {
     occupied_background,
     indicator,
 };
-// Built in Rust: the indicator has to read the active pill's laid-out rect and paint itself from it, and the view DSL reaches neither layout nodes nor a canvas.
-let row = grid(items, style, focus)?;
-
 [view]
-widget "row"
+pill_grid items:items style:style on_press:focus
 
 [preview "Workspaces" fixture:crate::preview::workspaces]
 workspaces

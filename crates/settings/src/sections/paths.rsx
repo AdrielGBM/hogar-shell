@@ -1,4 +1,7 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source};
 use ::config::PathsConfig;
 
@@ -17,7 +20,7 @@ let lyrics_hint = show(config.lyrics_dir());
 let recordings_hint = show(config.recordings_dir());
 let screenshots_hint = show(config.screenshot_dir());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (wallpapers, lyrics, recordings) =
         (wallpapers.clone(), lyrics.clone(), recordings.clone());
     let (screenshots, assets) = (screenshots.clone(), assets.clone());
@@ -34,10 +37,10 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.paths"))
-    text_row label(|| telar::t!("settings.field.wallpapers")) value:$wallpapers placeholder:wallpapers_hint
-    text_row label(|| telar::t!("settings.field.lyrics")) value:$lyrics placeholder:lyrics_hint
-    text_row label(|| telar::t!("settings.field.recordings")) value:$recordings placeholder:recordings_hint
-    text_row label(|| telar::t!("settings.field.screenshots")) value:$screenshots placeholder:screenshots_hint
-    text_row label(|| telar::t!("settings.field.assets")) value:$assets
-    save_row label(|| telar::t!("settings.save.paths")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.paths")))
+    text_row label:(Reactive::of(|| telar::t!("settings.field.wallpapers"))) value:$wallpapers placeholder:wallpapers_hint
+    text_row label:(Reactive::of(|| telar::t!("settings.field.lyrics"))) value:$lyrics placeholder:lyrics_hint
+    text_row label:(Reactive::of(|| telar::t!("settings.field.recordings"))) value:$recordings placeholder:recordings_hint
+    text_row label:(Reactive::of(|| telar::t!("settings.field.screenshots"))) value:$screenshots placeholder:screenshots_hint
+    text_row label:(Reactive::of(|| telar::t!("settings.field.assets"))) value:$assets
+    save_row label:(Reactive::of(|| telar::t!("settings.save.paths"))) on_press:save

@@ -26,15 +26,19 @@ pub(crate) fn dependencies_section() -> Result<Box<dyn LayoutItem>, LayoutError>
         0.0,
     )?;
 
-    crate::form_section(
-        crate::FormSectionProps {
-            title: Box::new(|| telar::t!("settings.section.dependencies")),
-        },
-        {
-            let mut slots = telar::Slots::new();
-            slots.push(None, box_item(rows));
-            slots
-        },
+    crate::form_section::form_section(
+        crate::form_section::FormSectionProps::props().title(telar::Reactive::of(|| telar::t!("settings.section.dependencies"))).build(),
+        telar::Children::new({
+            let rows = std::cell::RefCell::new(Some(rows));
+            move || {
+                let mut slots = telar::Slots::new();
+                let built = rows.borrow_mut().take().ok_or_else(|| {
+                    telar::LayoutError::Engine("dependency rows built twice".into())
+                })?;
+                slots.push(None, box_item(built));
+                Ok(slots)
+            }
+        }),
     )
 }
 
@@ -48,10 +52,7 @@ fn row(status: Status) -> Result<Box<dyn LayoutItem>, LayoutError> {
         Presence::Unknown => telar::t!("settings.deps.unknown"),
     };
     let mark = mark_for(status).to_string();
-    crate::reading_row(crate::ReadingRowProps {
-        label: Box::new(move || format!("{mark}  {id}")),
-        value: Box::new(move || detail.clone()),
-    })
+    crate::reading_row::reading_row(crate::reading_row::ReadingRowProps::props().label(telar::Reactive::of(move || format!("{mark}  {id}"))).value(telar::Reactive::of(move || detail.clone())).build(), telar::Children::default())
 }
 
 /// The glyphless mark in front of the name. Deliberately words rather than colour alone: this page is read by someone trying to find out why something does not work, and a colour is not an answer.

@@ -1,4 +1,9 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::language_row::{language_row, LanguageRowProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source};
 use ::config::{AppsConfig, GeneralConfig};
 
@@ -20,7 +25,7 @@ let media_player = signal(apps.media_player.clone());
 let browser = signal(apps.browser.clone());
 let editor = signal(apps.editor.clone());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (lang, over_fullscreen, logo) = (lang.clone(), over_fullscreen.clone(), logo.clone());
     let (terminal, file_manager, audio_mixer) =
         (terminal.clone(), file_manager.clone(), audio_mixer.clone());
@@ -46,14 +51,14 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.general"))
-    language_row label(|| telar::t!("settings.field.language")) value:$lang
-    toggle_row label(|| telar::t!("settings.field.show_over_fullscreen")) value:$over_fullscreen
-    text_row label(|| telar::t!("settings.field.logo")) value:$logo placeholder:"auto"
-    text_row label(|| telar::t!("settings.field.terminal")) value:$terminal placeholder:"xterm"
-    text_row label(|| telar::t!("settings.field.file_manager")) value:$file_manager placeholder:"xdg-open"
-    text_row label(|| telar::t!("settings.field.audio_mixer")) value:$audio_mixer placeholder:"pavucontrol"
-    text_row label(|| telar::t!("settings.field.media_player")) value:$media_player placeholder:"xdg-open"
-    text_row label(|| telar::t!("settings.field.browser")) value:$browser placeholder:"xdg-open"
-    text_row label(|| telar::t!("settings.field.editor")) value:$editor placeholder:"xdg-open"
-    save_row label(|| telar::t!("settings.save.general")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.general")))
+    language_row label:(Reactive::of(|| telar::t!("settings.field.language"))) value:$lang
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_over_fullscreen"))) value:$over_fullscreen
+    text_row label:(Reactive::of(|| telar::t!("settings.field.logo"))) value:$logo placeholder:"auto"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.terminal"))) value:$terminal placeholder:"xterm"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.file_manager"))) value:$file_manager placeholder:"xdg-open"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.audio_mixer"))) value:$audio_mixer placeholder:"pavucontrol"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.media_player"))) value:$media_player placeholder:"xdg-open"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.browser"))) value:$browser placeholder:"xdg-open"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.editor"))) value:$editor placeholder:"xdg-open"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.general"))) on_press:save

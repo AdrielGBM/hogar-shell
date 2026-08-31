@@ -1,4 +1,5 @@
 [logic]
+use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
 use ::services::volume;
 use ::ui::glyph;
 
@@ -12,7 +13,7 @@ let fg = ui::module::module_fg();
 platform_wayland::watch(volume::subscribe, move |v: volume::Volume| state.set(v));
 
 [view]
-icon_glyph name(move || glyph::volume(read.get()).to_string()) tint(move || fg.get()) size:(ui::module::icon_px())
+icon_glyph name:(Reactive::of(move || glyph::volume(read.get()).to_string())) tint:(Reactive::of(move || fg.get())) size:(ui::module::icon_px())
 
 [preview "Volume" fixture:ui::preview::bar_chip]
 volume

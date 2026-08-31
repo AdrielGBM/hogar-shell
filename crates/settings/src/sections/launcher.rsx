@@ -1,4 +1,8 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{parse_u32, persist_with, source};
 use ::config::LauncherConfig;
 
@@ -13,7 +17,7 @@ let calculator = signal(l.calculator);
 let qalc = signal(l.qalc);
 let dangerous = signal(l.enable_dangerous_actions);
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (width, height, max_results) = (width.clone(), height.clone(), max_results.clone());
     let (fuzzy, calculator, qalc, dangerous) = (
         fuzzy.clone(),
@@ -40,12 +44,12 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.launcher"))
-    text_row label(|| telar::t!("settings.field.width")) value:$width placeholder:"640"
-    text_row label(|| telar::t!("settings.field.height")) value:$height placeholder:"420"
-    text_row label(|| telar::t!("settings.field.max_results")) value:$max_results placeholder:"12"
-    toggle_row label(|| telar::t!("settings.field.fuzzy")) value:$fuzzy
-    toggle_row label(|| telar::t!("settings.field.calculator")) value:$calculator
-    toggle_row label(|| telar::t!("settings.field.qalc")) value:$qalc
-    toggle_row label(|| telar::t!("settings.field.enable_dangerous_actions")) value:$dangerous
-    save_row label(|| telar::t!("settings.save.launcher")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.launcher")))
+    text_row label:(Reactive::of(|| telar::t!("settings.field.width"))) value:$width placeholder:"640"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.height"))) value:$height placeholder:"420"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.max_results"))) value:$max_results placeholder:"12"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.fuzzy"))) value:$fuzzy
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.calculator"))) value:$calculator
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.qalc"))) value:$qalc
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.enable_dangerous_actions"))) value:$dangerous
+    save_row label:(Reactive::of(|| telar::t!("settings.save.launcher"))) on_press:save

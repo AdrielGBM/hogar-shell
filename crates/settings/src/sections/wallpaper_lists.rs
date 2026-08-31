@@ -92,9 +92,12 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
     )?;
 
     let clear = save_button(
-        || telar::t!("settings.wallpaper.clear"),
-        || services::wallpaper::clear(None),
-    )?;
+            SaveButtonProps::props()
+                .label(telar::Reactive::of(|| telar::t!("settings.wallpaper.clear")))
+                .on_press(std::rc::Rc::new(|| services::wallpaper::clear(None)))
+                .build(),
+            telar::Children::default(),
+        )?;
 
     Ok(Box::new(Container::new(
         LayoutStyle::new()
@@ -327,8 +330,9 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let base = b.clone();
     let path = path.to_path_buf();
     let save = save_button(
-        || telar::t!("settings.save.background"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.background")))
+            .on_press(std::rc::Rc::new(move || {
             let monitors = monitors
                 .iter()
                 .filter_map(|(name, value)| {
@@ -343,7 +347,9 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
                 transition_ms: parse_u64(&transition_ms.peek(), base.transition_ms),
             };
             persist(&path, "background", &value);
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
     section(
         || telar::t!("settings.section.background"),

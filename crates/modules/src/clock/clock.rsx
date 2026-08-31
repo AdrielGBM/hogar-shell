@@ -1,4 +1,5 @@
 [logic]
+use ::ui::chip_label::{chip_label, ChipLabelProps};
 // No-op under a headless test (the clock shows its initial value there).
 use ::config::ClockConfig;
 use ::config::theme::{FontRole, NordTheme};

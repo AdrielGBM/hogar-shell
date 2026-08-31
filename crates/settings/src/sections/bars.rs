@@ -375,8 +375,9 @@ pub(crate) fn bars_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let base = bars.clone();
     let path = path.to_path_buf();
     let save = save_button(
-        || telar::t!("settings.save.bars"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.bars")))
+            .on_press(std::rc::Rc::new(move || {
             let value = BarsConfig {
                 // Carried through unchanged: the panel edits the four zones, and rewriting the section must not drop a screen exclusion it has no field for.
                 excluded_screens: base.excluded_screens.clone(),
@@ -386,7 +387,9 @@ pub(crate) fn bars_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
                 right: bar_from(&right, &base.right),
             };
             persist(&path, "bars", &value);
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
     section(|| telar::t!("settings.section.bars"), rows, save, theme)
 }
@@ -462,8 +465,9 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
 
     let path = path.to_path_buf();
     let save = save_button(
-        || telar::t!("settings.save.modules"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.modules")))
+            .on_press(std::rc::Rc::new(move || {
             let overrides: std::collections::HashMap<String, ModuleOverride> = fields
                 .iter()
                 .filter_map(|entry| {
@@ -483,7 +487,9 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 })
                 .collect();
             persist(&path, "modules", &overrides);
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
     section(|| telar::t!("settings.section.modules"), rows, save, theme)
 }
@@ -565,21 +571,27 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
     let add = {
         let list = Rc::clone(&list);
         save_button(
-            || telar::t!("settings.list.add"),
-            move || list.add(BatteryWarning::default()),
+            SaveButtonProps::props()
+                .label(telar::Reactive::of(|| telar::t!("settings.list.add")))
+                .on_press(std::rc::Rc::new(move || list.add(BatteryWarning::default())))
+                .build(),
+            telar::Children::default(),
         )?
     };
 
     let path = path.to_path_buf();
     let saved = Rc::clone(&list);
     let save = save_button(
-        || telar::t!("settings.save.battery_warnings"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.battery_warnings")))
+            .on_press(std::rc::Rc::new(move || {
             persist_with(&path, "battery", |current| BatteryConfig {
                 warn_levels: saved.collect(),
                 ..current.battery.clone()
             });
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
 
     section(

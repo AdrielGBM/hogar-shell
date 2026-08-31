@@ -23,6 +23,6 @@ platform_wayland::watch(clock::subscribe, move |t: clock::Now| {
 });
 
 [view]
-col align:center gap(::ui::scale::space::md()) text_align:center
+col align:center gap:(::ui::scale::space::md()) text_align:center
     text "{$time_view}" font_size:display color:theme.text
     text "{$date_view}" font_size:body color:theme.subtle

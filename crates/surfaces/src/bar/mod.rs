@@ -4,8 +4,10 @@ mod autohide;
 pub use app::BarApp;
 pub use autohide::{AutoHide, RevealMargins};
 
+use std::rc::Rc;
+
 use telar::{
-    AlignItems, ClipAxis, ClippedItem, Color, Container, JustifyContent, LayoutError, LayoutItem,
+    AlignItems, Clip, ClippedItem, Color, Container, JustifyContent, LayoutError, LayoutItem,
     LayoutStyle, RectStyle, SizeDimension, Slots, StyledContainer, track_layout,
 };
 
@@ -14,7 +16,7 @@ use config::{Config, Edge, ModuleEntry, ResolvedShape, Shape, Zone};
 use ui::module::{
     DragOpen, ModuleClick, ModuleCtx, ModuleDef, ModuleRegistry, module_foreground, set_module_fg,
 };
-use ui::{ModuleShellProps, module_shell};
+use ui::module_shell::{ModuleShellProps, module_shell};
 
 /// The bar the running config draws, for [`crate::preview`] — every chip the user put on it, in the zones and the shape they configured, against the registry the app installed.
 pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -246,7 +248,7 @@ fn zone(
         } else {
             style.margin_inline_start(spacing)
         };
-        (style, ClipAxis::Horizontal)
+        (style, Clip::x())
     } else {
         let style = style.min_height(0.0);
         let style = if leading {
@@ -254,10 +256,10 @@ fn zone(
         } else {
             style.margin_block_start(spacing)
         };
-        (style, ClipAxis::Vertical)
+        (style, Clip::y())
     };
     let zone = Container::new(axis(style, edge), items)?;
-    Ok(Box::new(ClippedItem::along(Box::new(zone), clip)))
+    Ok(Box::new(ClippedItem::new(Box::new(zone), clip)))
 }
 
 /// An invisible box wrapped around a module's own content to carry what its chip cannot: a wheel handler for a self-managed module (which has no [`module_shell`] to put one on), and the pointer tracking behind a hover popout. Both live here rather than on the chip so a self-managed module gets them on the same terms as any other; the wrapper shrink-wraps its child, so the rect it tracks is the chip's own.
@@ -369,31 +371,35 @@ fn build_items(
             continue;
         }
         // Handed over bare: the chip shell dispatches every press with its own rect in scope, `Panel` and `Action` alike, so whatever this opens can hang off the chip without being told where it is.
-        let on_press: Option<Box<dyn Fn()>> = match def.and_then(|d| d.click) {
+        let on_press: Option<Rc<dyn Fn()>> = match def.and_then(|d| d.click) {
             Some(ModuleClick::Panel) => {
                 let id = id.clone();
-                Some(Box::new(move || crate::panel::toggle_panel(&id)))
+                Some(Rc::new(move || crate::panel::toggle_panel(&id)))
             }
-            Some(ModuleClick::Action(action)) => Some(Box::new(action)),
+            Some(ModuleClick::Action(action)) => Some(Rc::new(action)),
             None => None,
         };
         let mut inner = Slots::new();
         inner.push(None, content);
         let chip = module_shell(
-            ModuleShellProps {
-                variant,
-                rest,
-                accent,
-                radius,
-                square: def.is_some_and(|d| d.icon),
-                elastic: def.is_some_and(|d| d.elastic),
-                on_press,
-                on_scroll: def
-                    .and_then(|d| d.scroll)
-                    .map(|wheel| Box::new(wheel) as Box<dyn Fn(f32, f32)>),
-                drag_open: drag_open_for(id, def, ctx.edge),
-            },
-            inner,
+            ModuleShellProps::props()
+                .variant(variant)
+                .rest(rest)
+                .accent(accent)
+                .radius(radius)
+                .square(def.is_some_and(|d| d.icon))
+                .elastic(def.is_some_and(|d| d.elastic))
+                .on_press(on_press)
+                .on_scroll(
+                    def.and_then(|d| d.scroll)
+                        .map(|wheel| Rc::new(wheel) as Rc<dyn Fn(f32, f32)>),
+                )
+                .drag_open(drag_open_for(id, def, ctx.edge))
+                .build(),
+            telar::Children::new({
+                let inner = std::cell::RefCell::new(Some(inner));
+                move || inner.borrow_mut().take().ok_or_else(|| LayoutError::Engine("children built twice".into()))
+            }),
         )?;
         // Outside the chip rather than on it: the chip's own hover already swaps its paint, and stacking a second meaning onto that callback would tie the two together.
         items.push(if popout {
@@ -554,16 +560,11 @@ mod tests {
             .unwrap(),
         );
         let chip = module_shell(
-            ModuleShellProps {
-                variant: config::Variant::Default,
-                rest: Color::TRANSPARENT,
-                accent: NordTheme::new().accent,
-                radius: 8.0,
-                square: true,
-                on_press: Some(Box::new(move || sink.set(true))),
-                ..Default::default()
-            },
-            inner,
+            ModuleShellProps::props().variant(config::Variant::Default).rest(Color::TRANSPARENT).accent(NordTheme::new().accent).radius(8.0).square(true).on_press(Some(Rc::new(move || sink.set(true)) as Rc<dyn Fn()>)).build(),
+            telar::Children::new({
+                let inner = std::cell::RefCell::new(Some(inner));
+                move || inner.borrow_mut().take().ok_or_else(|| LayoutError::Engine("chip children built twice".into()))
+            }),
         )
         .unwrap();
         let mut wrapped = chip_wrapper(

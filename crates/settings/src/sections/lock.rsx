@@ -1,4 +1,8 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{parse_i32, persist, source};
 use ::config::LockConfig;
 
@@ -17,7 +21,7 @@ let show_media = signal(l.show_media);
 let show_notifications = signal(l.show_notifications);
 let hide_notifs = signal(l.hide_notifs);
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (pam_service, max_tries, lockout_seconds) = (
         pam_service.clone(),
         max_tries.clone(),
@@ -54,15 +58,15 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.lock"))
-    text_row label(|| telar::t!("settings.field.pam_service")) value:$pam_service placeholder:"login"
-    text_row label(|| telar::t!("settings.field.max_tries")) value:$max_tries placeholder:"5"
-    text_row label(|| telar::t!("settings.field.lockout_seconds")) value:$lockout_seconds placeholder:"30"
-    toggle_row label(|| telar::t!("settings.field.lock_before_sleep")) value:$lock_before_sleep
-    toggle_row label(|| telar::t!("settings.field.fingerprint")) value:$fingerprint
-    text_row label(|| telar::t!("settings.field.howdy_command")) value:$howdy_command placeholder:"howdy compare"
-    toggle_row label(|| telar::t!("settings.field.show_avatar")) value:$show_avatar
-    toggle_row label(|| telar::t!("settings.field.show_media")) value:$show_media
-    toggle_row label(|| telar::t!("settings.field.show_notifications")) value:$show_notifications
-    toggle_row label(|| telar::t!("settings.field.hide_notifs")) value:$hide_notifs
-    save_row label(|| telar::t!("settings.save.lock")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.lock")))
+    text_row label:(Reactive::of(|| telar::t!("settings.field.pam_service"))) value:$pam_service placeholder:"login"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.max_tries"))) value:$max_tries placeholder:"5"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.lockout_seconds"))) value:$lockout_seconds placeholder:"30"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.lock_before_sleep"))) value:$lock_before_sleep
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.fingerprint"))) value:$fingerprint
+    text_row label:(Reactive::of(|| telar::t!("settings.field.howdy_command"))) value:$howdy_command placeholder:"howdy compare"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_avatar"))) value:$show_avatar
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_media"))) value:$show_media
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_notifications"))) value:$show_notifications
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.hide_notifs"))) value:$hide_notifs
+    save_row label:(Reactive::of(|| telar::t!("settings.save.lock"))) on_press:save

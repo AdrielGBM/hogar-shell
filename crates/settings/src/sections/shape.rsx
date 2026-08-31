@@ -1,4 +1,9 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::enum_row::{enum_row, EnumRowProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     SHAPES, opt_num, opt_u32, parse_shape, parse_u32, persist, shape_str, source,
 };
@@ -14,7 +19,7 @@ let spacing = signal(opt_num(s.spacing));
 let radius = signal(opt_num(s.radius));
 let inactive = signal(s.inactive_size.to_string());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (mode, frame, gap) = (mode.clone(), frame.clone(), gap.clone());
     let (spacing, radius, inactive) = (spacing.clone(), radius.clone(), inactive.clone());
     move || {
@@ -31,11 +36,11 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.shape"))
-    enum_row label(|| telar::t!("settings.field.mode")) value:$mode options:SHAPES
-    toggle_row label(|| telar::t!("settings.field.frame_ring")) value:$frame
-    text_row label(|| telar::t!("settings.field.gap")) value:$gap placeholder:"0"
-    text_row label(|| telar::t!("settings.field.spacing")) value:$spacing placeholder:"(theme)"
-    text_row label(|| telar::t!("settings.field.radius")) value:$radius placeholder:"(theme)"
-    text_row label(|| telar::t!("settings.field.inactive_size")) value:$inactive placeholder:"6"
-    save_row label(|| telar::t!("settings.save.shape")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.shape")))
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.mode"))) value:$mode options:SHAPES
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.frame_ring"))) value:$frame
+    text_row label:(Reactive::of(|| telar::t!("settings.field.gap"))) value:$gap placeholder:"0"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.spacing"))) value:$spacing placeholder:"(theme)"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.radius"))) value:$radius placeholder:"(theme)"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.inactive_size"))) value:$inactive placeholder:"6"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.shape"))) on_press:save

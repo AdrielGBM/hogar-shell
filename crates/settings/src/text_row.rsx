@@ -1,4 +1,5 @@
 [logic]
+use crate::field_row::{field_row, FieldRowProps};
 use crate::form::record_field;
 use ::config::theme::FontRole;
 
@@ -6,9 +7,11 @@ use ::config::theme::FontRole;
 ///
 /// `record_field` runs here, before the row is built, which is the half of the form contract this component carries: a form's fields must be registered before its Save button drains them.
 pub struct Props {
-    pub label: Box<dyn Fn() -> String> = Box::new(String::new),
+    #[props(into)]
+    pub label: Reactive<String> = Reactive::of(String::new),
     pub value: RwSignal<String> = signal(String::new()),
-    pub placeholder: Box<dyn Fn() -> String> = Box::new(String::new),
+    #[props(into)]
+    pub placeholder: Reactive<String> = Reactive::of(String::new),
 }
 
 let value = props.value;
@@ -18,6 +21,6 @@ let label = props.label;
 let rad = ::ui::scale::corner::md();
 
 [view]
-field_row label(move || label())
-    box grow:1 pad_x(::ui::scale::space::md()) pad_y(::ui::scale::space::sm()) fill:theme.base radius:rad
-        input value:$value placeholder:placeholder() color:theme.text font_size:theme.font(FontRole::Body)
+field_row label:(Reactive::of(move || label.get()))
+    box grow:1 pad_x:(::ui::scale::space::md()) pad_y:(::ui::scale::space::sm()) fill:$theme.base radius:rad
+        input value:$value placeholder:placeholder.get() color:$theme.text font_size:$theme.font(FontRole::Body)

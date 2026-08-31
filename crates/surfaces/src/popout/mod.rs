@@ -6,6 +6,8 @@
 //!
 //! Placement is [`shared::anchor`](ui::anchor), the same helper the tray's context menus use.
 
+use std::rc::Rc;
+
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -17,7 +19,7 @@ use telar::{
 
 use config::theme::NordTheme;
 use config::{Config, Edge};
-use ui::CardFrameProps;
+use ui::card_frame::{CardFrameProps, card_frame};
 use ui::module::SurfaceEnv;
 use ui::panel::PanelSurface;
 use ui::placement::{OffChip, Placement};
@@ -202,14 +204,17 @@ pub fn popout_content(
     };
     let mut content = Slots::new();
     content.push(None, inner);
-    let framed = ui::card_frame(
-        CardFrameProps {
-            fill: config.panel_fill(),
-            width: config.popouts.card_width(),
-            radius: config.panel_radius(edge),
-            on_hover: Box::new(keep_open),
-        },
-        content,
+    let framed = card_frame(
+        CardFrameProps::props()
+            .fill(config.panel_fill())
+            .width(config.popouts.card_width())
+            .radius(config.panel_radius(edge))
+            .on_hover(Rc::new(keep_open))
+            .build(),
+        telar::Children::new({
+                let content = std::cell::RefCell::new(Some(content));
+                move || content.borrow_mut().take().ok_or_else(|| LayoutError::Engine("children built twice".into()))
+            }),
     )?;
     Ok(Box::new(Container::new(corner_style(edge), vec![framed])?))
 }

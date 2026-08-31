@@ -1,4 +1,5 @@
 [logic]
+use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
 use ::config::theme::{FontRole, NordTheme};
 use ::services::battery::{self, BatteryDetails, ChargeState};
 
@@ -95,8 +96,8 @@ let body = theme.font(FontRole::Body);
 let caption = theme.font(FontRole::Caption);
 
 [view]
-col align:center gap(::ui::scale::space::md())
-    icon_glyph name(move || glyph.get()) tint(move || level_color(level_tint.get(), charging_tint.get(), fg)) size:44
+col align:center gap:(::ui::scale::space::md())
+    icon_glyph name:(Reactive::of(move || glyph.get())) tint:(Reactive::of(move || level_color(level_tint.get(), charging_tint.get(), fg))) size:44
     text "{$pct}" font_size:display color:theme.text text_align:center
     text "{$status_view}" font_size:body color:theme.subtle text_align:center
     text "{$rate_view}" font_size:caption color:theme.muted text_align:center

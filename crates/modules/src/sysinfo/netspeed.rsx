@@ -1,4 +1,5 @@
 [logic]
+use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
 use ::config::theme::{FontRole, NordTheme};
 use ::services::netspeed::{self, NetSpeed, format_rate};
 
@@ -20,13 +21,13 @@ let fg_up = fg.clone();
 let arrow_size = (ui::module::icon_px() * 0.55).round();
 
 [view]
-col justify:center gap(::ui::scale::space::xs())
-    row align:center gap(::ui::scale::space::sm())
-        icon_glyph name(|| "arrow-down".to_string()) tint(move || fg_down.get()) size:(arrow_size)
-        text "{$down_view}" font_size:theme.font(FontRole::Caption) color:$fg
-    row align:center gap(::ui::scale::space::sm())
-        icon_glyph name(|| "arrow-up".to_string()) tint(move || fg_up.get()) size:(arrow_size)
-        text "{$up_view}" font_size:theme.font(FontRole::Caption) color:$fg
+col justify:center gap:(::ui::scale::space::xs())
+    row align:center gap:(::ui::scale::space::sm())
+        icon_glyph name:(Reactive::of(|| "arrow-down".to_string())) tint:(Reactive::of(move || fg_down.get())) size:(arrow_size)
+        text "{$down_view}" font_size:$theme.font(FontRole::Caption) color:$fg
+    row align:center gap:(::ui::scale::space::sm())
+        icon_glyph name:(Reactive::of(|| "arrow-up".to_string())) tint:(Reactive::of(move || fg_up.get())) size:(arrow_size)
+        text "{$up_view}" font_size:$theme.font(FontRole::Caption) color:$fg
 
 [preview "Netspeed" fixture:ui::preview::bar_chip]
 netspeed

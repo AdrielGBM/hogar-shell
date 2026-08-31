@@ -1,4 +1,6 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::reading_row::{reading_row, ReadingRowProps};
 use ::config::Config;
 
 // Readings, not fields — so it has no Save. The compositor and session lines are what a bug report needs first and what a user otherwise has to leave the shell to find.
@@ -18,8 +20,8 @@ let session = env_or_unknown("XDG_SESSION_TYPE").unwrap_or_else(|| telar::t!("co
 let config_file = Config::default_path().display().to_string();
 
 [view]
-form_section title(|| telar::t!("settings.section.about"))
-    reading_row label(|| telar::t!("settings.field.version")) value(move || version.clone())
-    reading_row label(|| telar::t!("settings.field.compositor")) value(move || compositor.clone())
-    reading_row label(|| telar::t!("settings.field.session")) value(move || session.clone())
-    reading_row label(|| telar::t!("settings.field.config_file")) value(move || config_file.clone())
+form_section title:(Reactive::of(|| telar::t!("settings.section.about")))
+    reading_row label:(Reactive::of(|| telar::t!("settings.field.version"))) value:(Reactive::of(move || version.clone()))
+    reading_row label:(Reactive::of(|| telar::t!("settings.field.compositor"))) value:(Reactive::of(move || compositor.clone()))
+    reading_row label:(Reactive::of(|| telar::t!("settings.field.session"))) value:(Reactive::of(move || session.clone()))
+    reading_row label:(Reactive::of(|| telar::t!("settings.field.config_file"))) value:(Reactive::of(move || config_file.clone()))

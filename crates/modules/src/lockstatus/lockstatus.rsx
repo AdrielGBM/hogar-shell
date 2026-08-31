@@ -1,5 +1,6 @@
 [logic]
-use crate::lockstatus::{indicator, shown};
+use crate::lockstatus::shown;
+use crate::lockstatus::{IndicatorProps, indicator};
 use ::config::theme::NordTheme;
 use ::services::lockkeys::{self, LockKeys};
 
@@ -24,7 +25,7 @@ let gap = (size * 0.25).round();
 [view]
 row align:center gap:gap
     for lock in $indicators key *lock
-        build "indicator(lock, tint.clone(), fg.clone(), idle, size)?"
+        indicator lock:lock keys:tint.clone() fg:fg.clone() idle:idle size:size
 
 [preview "Lockstatus" fixture:ui::preview::bar_chip]
 lockstatus

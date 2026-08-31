@@ -1,4 +1,9 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::enum_row::{enum_row, EnumRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     CAPITALIZATIONS, capitalize_str, parse_capitalize, parse_f32, parse_u32, persist, source,
 };
@@ -21,7 +26,7 @@ let occupied_label = signal(w.occupied_label.clone());
 let active_label = signal(w.active_label.clone());
 let capitalize = signal(capitalize_str(w.capitalize).to_string());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (shown, per_monitor, show_special) =
         (shown.clone(), per_monitor.clone(), show_special.clone());
     let (window_icons, max_icons, occupied) =
@@ -63,18 +68,18 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.workspaces"))
-    text_row label(|| telar::t!("settings.field.shown")) value:$shown placeholder:"0"
-    toggle_row label(|| telar::t!("settings.field.per_monitor")) value:$per_monitor
-    toggle_row label(|| telar::t!("settings.field.show_special")) value:$show_special
-    toggle_row label(|| telar::t!("settings.field.window_icons")) value:$window_icons
-    text_row label(|| telar::t!("settings.field.max_window_icons")) value:$max_icons placeholder:"4"
-    toggle_row label(|| telar::t!("settings.field.occupied_background")) value:$occupied
-    toggle_row label(|| telar::t!("settings.field.indicator")) value:$indicator
-    text_row label(|| telar::t!("settings.field.indicator_trail")) value:$indicator_trail placeholder:"0.35"
-    toggle_row label(|| telar::t!("settings.field.scroll")) value:$scroll
-    text_row label(|| telar::t!("settings.field.label")) value:$label placeholder:"{id}"
-    text_row label(|| telar::t!("settings.field.occupied_label")) value:$occupied_label placeholder:"(label)"
-    text_row label(|| telar::t!("settings.field.active_label")) value:$active_label placeholder:"(label)"
-    enum_row label(|| telar::t!("settings.field.capitalize")) value:$capitalize options:CAPITALIZATIONS
-    save_row label(|| telar::t!("settings.save.workspaces")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.workspaces")))
+    text_row label:(Reactive::of(|| telar::t!("settings.field.shown"))) value:$shown placeholder:"0"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.per_monitor"))) value:$per_monitor
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_special"))) value:$show_special
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.window_icons"))) value:$window_icons
+    text_row label:(Reactive::of(|| telar::t!("settings.field.max_window_icons"))) value:$max_icons placeholder:"4"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.occupied_background"))) value:$occupied
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.indicator"))) value:$indicator
+    text_row label:(Reactive::of(|| telar::t!("settings.field.indicator_trail"))) value:$indicator_trail placeholder:"0.35"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.scroll"))) value:$scroll
+    text_row label:(Reactive::of(|| telar::t!("settings.field.label"))) value:$label placeholder:"{id}"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.occupied_label"))) value:$occupied_label placeholder:"(label)"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.active_label"))) value:$active_label placeholder:"(label)"
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.capitalize"))) value:$capitalize options:CAPITALIZATIONS
+    save_row label:(Reactive::of(|| telar::t!("settings.save.workspaces"))) on_press:save

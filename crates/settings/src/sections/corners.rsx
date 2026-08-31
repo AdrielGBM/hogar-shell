@@ -1,4 +1,7 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{opt_string, persist, source};
 use ::config::CornersConfig;
 
@@ -9,7 +12,7 @@ let tr = signal(c.top_right.clone().unwrap_or_default());
 let bl = signal(c.bottom_left.clone().unwrap_or_default());
 let br = signal(c.bottom_right.clone().unwrap_or_default());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (tl, tr, bl, br) = (tl.clone(), tr.clone(), bl.clone(), br.clone());
     move || {
         let value = CornersConfig {
@@ -23,9 +26,9 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.corners"))
-    text_row label(|| telar::t!("settings.field.top_left")) value:$tl placeholder:"module id"
-    text_row label(|| telar::t!("settings.field.top_right")) value:$tr placeholder:"module id"
-    text_row label(|| telar::t!("settings.field.bottom_left")) value:$bl placeholder:"module id"
-    text_row label(|| telar::t!("settings.field.bottom_right")) value:$br placeholder:"module id"
-    save_row label(|| telar::t!("settings.save.corners")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.corners")))
+    text_row label:(Reactive::of(|| telar::t!("settings.field.top_left"))) value:$tl placeholder:"module id"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.top_right"))) value:$tr placeholder:"module id"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.bottom_left"))) value:$bl placeholder:"module id"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.bottom_right"))) value:$br placeholder:"module id"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.corners"))) on_press:save

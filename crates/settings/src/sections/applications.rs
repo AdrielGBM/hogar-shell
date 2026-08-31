@@ -106,15 +106,18 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let path = path.to_path_buf();
     let save = save_button(
-        || telar::t!("settings.save.apps"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.apps")))
+            .on_press(std::rc::Rc::new(move || {
             persist_with(&path, "launcher", |current| LauncherConfig {
                 favourites: favourites.peek(),
                 hidden: hidden.peek(),
                 icons: icons.peek(),
                 ..current.launcher.clone()
             });
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
 
     section(

@@ -1,4 +1,9 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::enum_row::{enum_row, EnumRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     FULLSCREEN_POPUPS, fullscreen_popups_str, parse_f32, parse_fullscreen_popups, parse_u32,
     persist, source,
@@ -18,7 +23,7 @@ let body_lines = signal(n.body_lines.to_string());
 let open_expanded = signal(n.open_expanded);
 let sound = signal(n.sound.clone());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let fullscreen = fullscreen.clone();
     let (critical, group_by_app, action_on_click, open_expanded) = (
         critical.clone(),
@@ -48,14 +53,14 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.notifications"))
-    toggle_row label(|| telar::t!("settings.field.critical_sticky")) value:$critical
-    text_row label(|| telar::t!("settings.field.critical_max_secs")) value:$critical_max placeholder:"120"
-    enum_row label(|| telar::t!("settings.field.fullscreen_popups")) value:$fullscreen options:FULLSCREEN_POPUPS
-    toggle_row label(|| telar::t!("settings.field.group_by_app")) value:$group_by_app
-    text_row label(|| telar::t!("settings.field.group_preview_num")) value:$group_preview placeholder:"3"
-    toggle_row label(|| telar::t!("settings.field.action_on_click")) value:$action_on_click
-    text_row label(|| telar::t!("settings.field.body_lines")) value:$body_lines placeholder:"4"
-    toggle_row label(|| telar::t!("settings.field.open_expanded")) value:$open_expanded
-    text_row label(|| telar::t!("settings.field.sound")) value:$sound placeholder:"canberra-gtk-play -i message"
-    save_row label(|| telar::t!("settings.save.notifications")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.notifications")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.critical_sticky"))) value:$critical
+    text_row label:(Reactive::of(|| telar::t!("settings.field.critical_max_secs"))) value:$critical_max placeholder:"120"
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.fullscreen_popups"))) value:$fullscreen options:FULLSCREEN_POPUPS
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.group_by_app"))) value:$group_by_app
+    text_row label:(Reactive::of(|| telar::t!("settings.field.group_preview_num"))) value:$group_preview placeholder:"3"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.action_on_click"))) value:$action_on_click
+    text_row label:(Reactive::of(|| telar::t!("settings.field.body_lines"))) value:$body_lines placeholder:"4"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.open_expanded"))) value:$open_expanded
+    text_row label:(Reactive::of(|| telar::t!("settings.field.sound"))) value:$sound placeholder:"canberra-gtk-play -i message"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.notifications"))) on_press:save

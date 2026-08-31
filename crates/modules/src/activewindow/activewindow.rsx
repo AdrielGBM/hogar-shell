@@ -1,4 +1,5 @@
 [logic]
+use crate::activewindow::{IconSlotProps, icon_slot};
 use crate::activewindow::{compact_label, label};
 use ::config::theme::{FontRole, NordTheme};
 use ::services::hyprland::{self, ActiveWindow};
@@ -49,12 +50,12 @@ row align:center
     if leading
         match $icon_view as class key class.clone()
             class
-                build "crate::activewindow::icon_slot(&class, size, inverted)?"
-    text "{$title_view}" font_size:theme.font(FontRole::Body) color:$fg lines:1 ellipsis
+                icon_slot class:class.clone() size:size inverted:inverted
+    text "{$title_view}" font_size:$theme.font(FontRole::Body) color:$fg lines:1 ellipsis
     if trailing
         match $icon_view as class key class.clone()
             class
-                build "crate::activewindow::icon_slot(&class, size, inverted)?"
+                icon_slot class:class.clone() size:size inverted:inverted
 
 [preview "Activewindow" fixture:ui::preview::bar_chip]
 activewindow

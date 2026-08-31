@@ -344,11 +344,7 @@ pub(crate) fn toggle_field(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     record_field(&value);
-    let control = telar::toggle(telar::ToggleProps {
-        checked: Some(value),
-        color: Box::new(move || theme.accent),
-        ..Default::default()
-    })?;
+    let control = telar::toggle(telar::ToggleProps::props().checked(value).color(telar::Reactive::of(move || theme.accent)).build(), telar::Children::default())?;
     labelled(label, control, theme)
 }
 
@@ -361,22 +357,14 @@ pub(crate) fn enum_field(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let picked = option_index(value, options);
     let control = telar::select(
-        telar::SelectProps {
-            selected: Some(picked),
-            color: Box::new(move || theme.accent),
-            stretch: true,
-            on_select: Some(Box::new(move |at| pick_option(&value, options, at))),
-        },
+        telar::SelectProps::props().selected(picked).color(telar::Reactive::of(move || theme.accent)).stretch(true).on_select(std::rc::Rc::new(move |at| pick_option(&value, options, at))).build(),
         // The choices are rows now, not strings: one `item` per option, rebuilt whenever the list reopens.
         telar::Children::new(move || {
             let mut slots = telar::Slots::new();
             for opt in options {
                 let row = telar::item(
-                    telar::ItemProps {
-                        label: Box::new(move || opt.to_string()),
-                        ..Default::default()
-                    },
-                    telar::Slots::new(),
+                    telar::ItemProps::props().label(telar::Reactive::of(move || opt.to_string())).build(),
+                    telar::Children::default(),
                 )?;
                 slots.push(None, row);
             }
@@ -389,19 +377,21 @@ pub(crate) fn enum_field(
 /// A form's action button — and, with live preview on, where that form's fields get wired to it.
 ///
 /// The wiring lives here because every `*_section` builds its fields and then calls this exactly once, so this is the one point in the file that has both the form's fields (through [`RECORDING`]) and the action they feed. The alternative was a fortieth argument on forty functions.
+#[derive(telar::Props)]
+pub struct SaveButtonProps {
+    pub label: telar::Reactive<String>,
+    pub on_press: std::rc::Rc<dyn Fn()>,
+}
+
 pub(crate) fn save_button(
-    label: impl Fn() -> String + 'static,
-    on_press: impl Fn() + 'static,
+    props: SaveButtonProps,
+    _children: telar::Children,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let on_press: Rc<dyn Fn()> = Rc::new(on_press);
+    let SaveButtonProps { label, on_press } = props;
     live_apply(Rc::clone(&on_press));
 
     // The catalogue's button with no `fill` of its own: unset means "the theme's `primary`", which is this theme's accent, darkened on hover — the three states this form used to spell out by hand.
-    let button = telar::button(telar::ButtonProps {
-        label: Box::new(label),
-        on_press: Box::new(move || on_press()),
-        ..Default::default()
-    })?;
+    let button = telar::button(telar::ButtonProps::props().label(label).on_press(on_press).build(), telar::Children::default())?;
     Ok(button)
 }
 

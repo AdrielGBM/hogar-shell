@@ -144,7 +144,7 @@ pub enum ModuleClick {
 
 pub struct ModuleDef {
     pub builder: ModuleBuilder,
-    /// If true, the bar places the module bare instead of wrapping it in [`crate::module_shell`] (e.g. the workspaces grid).
+    /// If true, the bar places the module bare instead of wrapping it in [`crate::module_shell::module_shell`] (e.g. the workspaces grid).
     pub self_managed: bool,
     /// If true, the container is a square chip that scales with the bar instead of a content-width text pill.
     pub icon: bool,
@@ -295,7 +295,7 @@ mod tests {
     /// This is what makes an eliding label mean anything: a title only ends in `…` when something narrowed the box it is drawn in, and a chip that holds its content width is never narrowed. The other half — that a clamped label ends in an ellipsis rather than being cut mid-glyph — is telar's, and tested there.
     #[test]
     fn an_elastic_chip_yields_width_and_a_plain_one_holds_it() {
-        use crate::{ModuleShellProps, module_shell};
+        use crate::module_shell::{ModuleShellProps, module_shell};
         use telar::{
             AvailableSpace, Container, LayoutStyle, Slots, compute_layout, reset_layout_runtime,
             set_theme, track_layout,
@@ -312,11 +312,11 @@ mod tests {
             let mut inner = Slots::new();
             inner.push(None, Box::new(label) as Box<dyn LayoutItem>);
             let chip = module_shell(
-                ModuleShellProps {
-                    elastic,
-                    ..Default::default()
-                },
-                inner,
+                ModuleShellProps::props().elastic(elastic).build(),
+                telar::Children::new({
+                let inner = std::cell::RefCell::new(Some(inner));
+                move || inner.borrow_mut().take().ok_or_else(|| telar::LayoutError::Engine("chip children built twice".into()))
+            }),
             )
             .expect("the chip builds");
             let rect = track_layout(chip.layout_node()).expect("the chip registers its rect");

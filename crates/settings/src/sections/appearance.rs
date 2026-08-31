@@ -339,8 +339,9 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let base = t.clone();
     let path = path.to_path_buf();
     let save = save_button(
-        || telar::t!("settings.save.theme"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.theme")))
+            .on_press(std::rc::Rc::new(move || {
             let value = ThemeConfig {
                 opacity: parse_f32(&opacity.peek(), base.opacity),
                 name: name.peek(),
@@ -366,7 +367,9 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
                 colors: base.colors.clone(),
             };
             persist(&path, "theme", &value);
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
     section(|| telar::t!("settings.section.theme"), rows, save, theme)
 }
@@ -406,8 +409,9 @@ pub(crate) fn theme_colors_section() -> Result<Box<dyn LayoutItem>, LayoutError>
 
     let path = path.to_path_buf();
     let save = save_button(
-        || telar::t!("settings.save.theme_colors"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.theme_colors")))
+            .on_press(std::rc::Rc::new(move || {
             let colors: std::collections::HashMap<String, String> = fields
                 .iter()
                 .filter_map(|(token, value)| {
@@ -419,7 +423,9 @@ pub(crate) fn theme_colors_section() -> Result<Box<dyn LayoutItem>, LayoutError>
                 colors,
                 ..current.theme.clone()
             });
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
     section(
         || telar::t!("settings.section.theme_colors"),

@@ -1,4 +1,7 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source};
 use ::config::ActiveWindowConfig;
 
@@ -8,7 +11,7 @@ let compact = signal(w.compact);
 let show_icon = signal(w.show_icon);
 let inverted = signal(w.inverted);
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (compact, show_icon) = (compact.clone(), show_icon.clone());
     let inverted = inverted.clone();
     move || {
@@ -22,8 +25,8 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.active_window"))
-    toggle_row label(|| telar::t!("settings.field.compact")) value:$compact
-    toggle_row label(|| telar::t!("settings.field.show_icon")) value:$show_icon
-    toggle_row label(|| telar::t!("settings.field.inverted")) value:$inverted
-    save_row label(|| telar::t!("settings.save.active_window")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.active_window")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.compact"))) value:$compact
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_icon"))) value:$show_icon
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.inverted"))) value:$inverted
+    save_row label:(Reactive::of(|| telar::t!("settings.save.active_window"))) on_press:save

@@ -37,7 +37,7 @@ platform_wayland::watch(
 let fg = ui::module::module_fg();
 
 [view]
-text "{$code_view}" font_size:theme.font(FontRole::Body) color:$fg
+text "{$code_view}" font_size:$theme.font(FontRole::Body) color:$fg
 
 [preview "Kblayout" fixture:ui::preview::bar_chip]
 kblayout

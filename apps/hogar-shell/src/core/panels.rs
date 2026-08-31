@@ -9,12 +9,12 @@ use ui::panels::PanelRegistry;
 
 pub fn default_panels() -> PanelRegistry {
     // The clock is the fallback because it is the one panel that needs nothing to be configured to draw.
-    let mut panels = PanelRegistry::new(modules::clock_panel);
+    let mut panels = PanelRegistry::new(|| ::modules::clock::clock_panel::clock_panel(::modules::clock::clock_panel::ClockPanelProps::props().build(), telar::Children::default()));
     let display = KeyboardMode::None;
     let typing = KeyboardMode::OnDemand;
-    panels.register("clock", modules::clock_panel, display);
+    panels.register("clock", || ::modules::clock::clock_panel::clock_panel(::modules::clock::clock_panel::ClockPanelProps::props().build(), telar::Children::default()), display);
     panels.register("dashboard", modules::dashboard::dashboard_panel, display);
-    panels.register("battery", modules::battery_panel, display);
+    panels.register("battery", || ::modules::battery::battery_panel::battery_panel(::modules::battery::battery_panel::BatteryPanelProps::props().build(), telar::Children::default()), display);
     panels.register("bluetooth", modules::bluetooth::bluetooth_panel, display);
     panels.register("network", modules::network::network_panel, display);
     panels.register("mixer", modules::mixer::mixer_panel, display);
@@ -66,3 +66,5 @@ mod tests {
         }
     }
 }
+
+

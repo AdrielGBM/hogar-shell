@@ -1,3 +1,5 @@
+telar::rsx_modules!(::config::theme::NordTheme);
+
 use telar::{Rect, SurfaceToken};
 
 use config::SurfaceEnv;
@@ -82,7 +84,10 @@ pub(crate) fn open_drawer(env: &SurfaceEnv, module_id: &str, chip: Option<Rect>)
     // What is captured is what the drawer *is* — which module it shows. Everything the config decides is resolved per build by the panel surface, so a rebuilt drawer is a drawer that followed the edit rather than one still drawing the config it opened under.
     PanelSurface::new(placement, move |env| {
         set_drawer_ctx(module.clone(), env.config.panels.drawer);
-        crate::drawer_panel().expect("drawer panel build failed")
+        drawer_panel::drawer_panel(
+            drawer_panel::DrawerPanelProps::props().build(),
+            telar::Children::default(),
+        ).expect("drawer panel build failed")
     })
     .animated()
     .open()

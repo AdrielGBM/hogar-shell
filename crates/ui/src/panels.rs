@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use platform_wayland::KeyboardMode;
-use telar::{LayoutError, LayoutItem};
+use telar::{Children, LayoutError, LayoutItem};
 
 pub type PanelBuilder = fn() -> Result<Box<dyn LayoutItem>, LayoutError>;
 
@@ -114,4 +114,17 @@ pub fn wants_keyboard(module: &str) -> KeyboardMode {
             .map(|def| def.keyboard)
             .unwrap_or(KeyboardMode::None)
     })
+}
+
+/// The registered panel of a module, as an element.
+///
+/// [`build`] is the Rust dispatcher and stays one — a float builds its body in Rust, a drawer places it in
+/// markup, and both want the same panel.
+#[derive(telar::Props)]
+pub struct PanelProps {
+    pub module: String,
+}
+
+pub fn panel(props: PanelProps, _children: Children) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    build(&props.module)
 }

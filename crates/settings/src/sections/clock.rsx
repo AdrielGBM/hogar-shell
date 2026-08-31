@@ -1,4 +1,8 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source};
 use ::config::ClockConfig;
 
@@ -11,7 +15,7 @@ let format = signal(c.format.clone().unwrap_or_default());
 let show_date = signal(c.show_date);
 let date_format = signal(c.date_format.clone());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (twelve_hour, format) = (twelve_hour.clone(), format.clone());
     let (show_date, date_format) = (show_date.clone(), date_format.clone());
     move || {
@@ -34,9 +38,9 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.clock"))
-    toggle_row label(|| telar::t!("settings.field.twelve_hour")) value:$twelve_hour
-    text_row label(|| telar::t!("settings.field.time_format")) value:$format placeholder:"%H:%M:%S"
-    toggle_row label(|| telar::t!("settings.field.show_date")) value:$show_date
-    text_row label(|| telar::t!("settings.field.date_format")) value:$date_format placeholder:"%a %d %b"
-    save_row label(|| telar::t!("settings.save.clock")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.clock")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.twelve_hour"))) value:$twelve_hour
+    text_row label:(Reactive::of(|| telar::t!("settings.field.time_format"))) value:$format placeholder:"%H:%M:%S"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_date"))) value:$show_date
+    text_row label:(Reactive::of(|| telar::t!("settings.field.date_format"))) value:$date_format placeholder:"%a %d %b"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.clock"))) on_press:save

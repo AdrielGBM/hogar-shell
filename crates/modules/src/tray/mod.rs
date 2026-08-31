@@ -1,5 +1,7 @@
 //! The system tray's bar module: one icon per running tray application.
 
+telar::rsx_modules!(::config::theme::NordTheme);
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -13,7 +15,7 @@ mod menu;
 use config::SurfaceEnv;
 use config::TrayConfig;
 use config::theme::NordTheme;
-use services::tray::{self, Pixmap, TrayItem};
+use services::tray::{self as tray_service, Pixmap, TrayItem};
 use ui::icon::{app_icon_view_tinted, icon_view};
 
 /// Drawn for an application that names an icon nobody can resolve and ships no pixels either — rare, but a blank gap that still takes clicks is worse than an obvious placeholder.
@@ -26,7 +28,7 @@ pub fn visible(items: &[TrayItem], config: &TrayConfig) -> Vec<TrayItem> {
     }
     items
         .iter()
-        .filter(|item| item.status != tray::Status::Passive)
+        .filter(|item| item.status != tray_service::Status::Passive)
         .filter(|item| !config.is_hidden(&item.id))
         .cloned()
         .collect()
@@ -98,13 +100,13 @@ fn primary(item: &TrayItem, rect: ReadSignal<Rect>) {
         open_menu(item, rect);
         return;
     }
-    tray::activate(item, 0, 0);
+    tray_service::activate(item, 0, 0);
 }
 
 /// A right click always means "show me the menu". Only when the item exposes none does this fall back to asking the application to pop its own.
 fn open_menu(item: &TrayItem, rect: ReadSignal<Rect>) {
     if item.menu.trim().is_empty() {
-        tray::context_menu(item, 0, 0);
+        tray_service::context_menu(item, 0, 0);
         return;
     }
     let Some((chip, env)) = anchor_for(rect) else {
@@ -114,7 +116,7 @@ fn open_menu(item: &TrayItem, rect: ReadSignal<Rect>) {
 }
 
 fn secondary(item: &TrayItem) {
-    tray::secondary_activate(item, 0, 0);
+    tray_service::secondary_activate(item, 0, 0);
 }
 
 /// One tray icon, wrapped in its own pressable box.
@@ -122,14 +124,21 @@ fn secondary(item: &TrayItem) {
 /// Built here rather than in the view because the view's `for` is reactive: it constructs each item afresh whenever that application comes back, so its content has to be an expression (`build`) rather than a widget bound once in `[logic]`.
 ///
 /// Right-click opens the item's menu and middle-click is `SecondaryActivate`; what a primary click does depends on the item, since `Activate` is far from universal — see [`primary`].
+#[derive(telar::Props)]
+pub struct TrayIconProps {
+    pub item: TrayItem,
+    pub config: TrayConfig,
+    pub fg: ReadSignal<Color>,
+    pub theme: NordTheme,
+    pub size: f32,
+    pub radius: f32,
+}
+
 pub fn tray_icon(
-    item: TrayItem,
-    config: TrayConfig,
-    fg: ReadSignal<Color>,
-    theme: NordTheme,
-    size: f32,
-    radius: f32,
+    props: TrayIconProps,
+    _children: telar::Children,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let TrayIconProps { item, config, fg, theme, size, radius } = props;
     let icon = icon_widget(&item, &config, fg.get(), size)?;
     let pad = if config.compact {
         (size * 0.08).round().max(1.0)
@@ -176,7 +185,7 @@ pub fn tray_icon(
                 (dy, false)
             };
             if delta != 0.0 {
-                tray::scroll(
+                tray_service::scroll(
                     &scroll_item,
                     (delta / 60.0).round().clamp(-3.0, 3.0) as i32,
                     horizontal,

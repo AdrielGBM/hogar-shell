@@ -1,4 +1,5 @@
 [logic]
+use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
 use ::services::volume::{self, Volume};
 use ::ui::glyph;
 
@@ -11,7 +12,7 @@ let icon = ui::module::icon_px();
 platform_wayland::watch(volume::subscribe_mic, move |mic: Volume| state.set(Some(mic)));
 
 [view]
-icon_glyph name(move || read.get().map_or("mic", glyph::microphone).to_string()) tint(move || fg.get()) size:(icon)
+icon_glyph name:(Reactive::of(move || read.get().map_or("mic", glyph::microphone).to_string())) tint:(Reactive::of(move || fg.get())) size:(icon)
 
 [preview "Mic" fixture:ui::preview::bar_chip]
 mic

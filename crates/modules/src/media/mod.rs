@@ -1,5 +1,7 @@
 //! What is playing, on the bar.
 
+telar::rsx_modules!(::config::theme::NordTheme);
+
 use config::{MediaConfig, MediaScroll};
 use services::mpris::{self, Playback, Player};
 

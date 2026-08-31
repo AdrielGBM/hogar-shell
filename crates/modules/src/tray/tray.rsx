@@ -1,5 +1,6 @@
 [logic]
-use crate::tray::{tray_icon, visible};
+use crate::tray::visible;
+use crate::tray::{TrayIconProps, tray_icon};
 use ::config::theme::NordTheme;
 use ::services::tray::{self, TrayItem};
 
@@ -31,7 +32,7 @@ let gap = if config.compact {
 [view]
 row align:center gap:gap
     for item in $listed key item.key.clone()
-        build "tray_icon(item, config.clone(), fg.clone(), theme, size, radius)?"
+        tray_icon item:item config:config.clone() fg:fg.clone() theme:theme size:size radius:radius
 
 [preview "Tray" fixture:crate::preview::tray]
 tray

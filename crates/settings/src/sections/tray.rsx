@@ -1,4 +1,8 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source, split_csv};
 use ::config::TrayConfig;
 
@@ -11,7 +15,7 @@ let recolour = signal(t.recolour);
 let background = signal(t.background);
 let hidden = signal(t.hidden.join(", "));
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (enabled, compact, recolour) = (enabled.clone(), compact.clone(), recolour.clone());
     let (background, hidden) = (background.clone(), hidden.clone());
     move || {
@@ -29,10 +33,10 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.tray"))
-    toggle_row label(|| telar::t!("settings.field.enabled")) value:$enabled
-    toggle_row label(|| telar::t!("settings.field.compact")) value:$compact
-    toggle_row label(|| telar::t!("settings.field.recolour")) value:$recolour
-    toggle_row label(|| telar::t!("settings.field.background")) value:$background
-    text_row label(|| telar::t!("settings.field.hidden")) value:$hidden placeholder:"steam_app_*"
-    save_row label(|| telar::t!("settings.save.tray")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.tray")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.enabled"))) value:$enabled
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.compact"))) value:$compact
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.recolour"))) value:$recolour
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.background"))) value:$background
+    text_row label:(Reactive::of(|| telar::t!("settings.field.hidden"))) value:$hidden placeholder:"steam_app_*"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.tray"))) on_press:save

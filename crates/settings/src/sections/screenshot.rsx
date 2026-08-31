@@ -1,4 +1,9 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::enum_row::{enum_row, EnumRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{SHOT_BACKENDS, persist, source};
 use ::config::ScreenshotConfig;
 
@@ -13,7 +18,7 @@ let backend = signal(s.backend.clone());
 let file_name = signal(s.file_name.clone());
 let annotator = signal(s.annotator.clone());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (copy, save_to_disk, cursor) = (copy.clone(), save_to_disk.clone(), cursor.clone());
     let (freeze, notify, backend) = (freeze.clone(), notify.clone(), backend.clone());
     let (file_name, annotator) = (file_name.clone(), annotator.clone());
@@ -33,13 +38,13 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.screenshot"))
-    toggle_row label(|| telar::t!("settings.field.copy")) value:$copy
-    toggle_row label(|| telar::t!("settings.field.save")) value:$save_to_disk
-    toggle_row label(|| telar::t!("settings.field.include_cursor")) value:$cursor
-    toggle_row label(|| telar::t!("settings.field.freeze")) value:$freeze
-    toggle_row label(|| telar::t!("settings.field.notify")) value:$notify
-    enum_row label(|| telar::t!("settings.field.backend")) value:$backend options:SHOT_BACKENDS
-    text_row label(|| telar::t!("settings.field.file_name")) value:$file_name placeholder:"screenshot_%Y-%m-%d_%H-%M-%S"
-    text_row label(|| telar::t!("settings.field.annotator")) value:$annotator placeholder:"satty --filename {file}"
-    save_row label(|| telar::t!("settings.save.screenshot")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.screenshot")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.copy"))) value:$copy
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.save"))) value:$save_to_disk
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.include_cursor"))) value:$cursor
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.freeze"))) value:$freeze
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.notify"))) value:$notify
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.backend"))) value:$backend options:SHOT_BACKENDS
+    text_row label:(Reactive::of(|| telar::t!("settings.field.file_name"))) value:$file_name placeholder:"screenshot_%Y-%m-%d_%H-%M-%S"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.annotator"))) value:$annotator placeholder:"satty --filename {file}"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.screenshot"))) on_press:save

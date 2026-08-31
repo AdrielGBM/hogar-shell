@@ -1,4 +1,7 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source};
 use ::config::IdleConfig;
 
@@ -11,7 +14,7 @@ let inhibit_when_audio = signal(i.inhibit_when_audio);
 let inhibit_when_charging = signal(i.inhibit_when_charging);
 let respect_inhibitors = signal(i.respect_inhibitors);
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (enabled, inhibit_when_audio) = (enabled.clone(), inhibit_when_audio.clone());
     let (inhibit_when_charging, respect_inhibitors) =
         (inhibit_when_charging.clone(), respect_inhibitors.clone());
@@ -28,9 +31,9 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.idle"))
-    toggle_row label(|| telar::t!("settings.field.enabled")) value:$enabled
-    toggle_row label(|| telar::t!("settings.field.inhibit_when_audio")) value:$inhibit_when_audio
-    toggle_row label(|| telar::t!("settings.field.inhibit_when_charging")) value:$inhibit_when_charging
-    toggle_row label(|| telar::t!("settings.field.respect_inhibitors")) value:$respect_inhibitors
-    save_row label(|| telar::t!("settings.save.idle")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.idle")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.enabled"))) value:$enabled
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.inhibit_when_audio"))) value:$inhibit_when_audio
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.inhibit_when_charging"))) value:$inhibit_when_charging
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.respect_inhibitors"))) value:$respect_inhibitors
+    save_row label:(Reactive::of(|| telar::t!("settings.save.idle"))) on_press:save

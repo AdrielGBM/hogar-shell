@@ -1,5 +1,7 @@
 //! What the focused window is called, and how much of that fits on a bar.
 
+telar::rsx_modules!(::config::theme::NordTheme);
+
 use services::hyprland::{self, ActiveWindow};
 
 /// The text the chip shows: the window's title, or its class when it has no title.
@@ -23,12 +25,20 @@ pub fn compact_label(window: &ActiveWindow) -> String {
 /// A function rather than a bound widget because the view places it on one of two sides depending on `inverted`, and a `widget` binding is a *value* — placeable once. Each `build` site calls this and gets its own node, which is the rule the view DSL documents.
 ///
 /// The air between icon and title is this slot's own margin rather than the row's gap: the slot is rebuilt for every focused class, and a class that resolves to nothing has to cost nothing — a row gap would still be spent on the empty box, indenting the title of every app with no installed icon.
+#[derive(telar::Props)]
+pub struct IconSlotProps {
+    #[props(into)]
+    pub class: String,
+    pub size: f32,
+    pub inverted: bool,
+}
+
 pub fn icon_slot(
-    class: &str,
-    size: f32,
-    inverted: bool,
+    props: IconSlotProps,
+    _children: telar::Children,
 ) -> Result<Box<dyn telar::LayoutItem>, telar::LayoutError> {
-    let Some(icon) = ui::icon::app_icon_view(class, size)? else {
+    let IconSlotProps { class, size, inverted } = props;
+    let Some(icon) = ui::icon::app_icon_view(&class, size)? else {
         return Ok(telar::box_item(telar::Container::new(
             telar::LayoutStyle::new(),
             vec![],
@@ -61,7 +71,10 @@ mod tests {
         reset_layout_runtime();
         let row = Container::new(
             LayoutStyle::new().flex_row(),
-            vec![icon_slot(class, 16.0, inverted).expect("the slot builds")],
+            vec![icon_slot(
+                IconSlotProps::props().class(class).size(16.0).inverted(inverted).build(),
+                telar::Children::default(),
+            ).expect("the slot builds")],
         )
         .expect("the row builds");
         let rect = track_layout(row.layout_node()).expect("a container registers its rect");

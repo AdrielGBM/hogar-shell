@@ -1,4 +1,7 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     persist, source,
 };
@@ -24,7 +27,7 @@ let now_playing = signal(events.now_playing);
 let screenshot = signal(events.screenshot);
 let recording = signal(events.recording);
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let enabled = enabled.clone();
     let (config_loaded, charging, game_mode, dnd) = (
         config_loaded.clone(),
@@ -68,19 +71,19 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.toasts"))
-    toggle_row label(|| telar::t!("settings.field.enabled")) value:$enabled
-    text "{telar::t!(\"settings.subheader.events\")}" color:theme.muted font_size:theme.font(FontRole::Caption) font_weight:700
-    toggle_row label(|| telar::t!("settings.field.event_config_loaded")) value:$config_loaded
-    toggle_row label(|| telar::t!("settings.field.event_charging")) value:$charging
-    toggle_row label(|| telar::t!("settings.field.event_game_mode")) value:$game_mode
-    toggle_row label(|| telar::t!("settings.field.event_dnd")) value:$dnd
-    toggle_row label(|| telar::t!("settings.field.event_audio_output")) value:$audio_output
-    toggle_row label(|| telar::t!("settings.field.event_audio_input")) value:$audio_input
-    toggle_row label(|| telar::t!("settings.field.event_lock_keys")) value:$lock_keys
-    toggle_row label(|| telar::t!("settings.field.event_kb_layout")) value:$kb_layout
-    toggle_row label(|| telar::t!("settings.field.event_vpn")) value:$vpn
-    toggle_row label(|| telar::t!("settings.field.event_now_playing")) value:$now_playing
-    toggle_row label(|| telar::t!("settings.field.event_screenshot")) value:$screenshot
-    toggle_row label(|| telar::t!("settings.field.event_recording")) value:$recording
-    save_row label(|| telar::t!("settings.save.toasts")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.toasts")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.enabled"))) value:$enabled
+    text "{telar::t!(\"settings.subheader.events\")}" color:$theme.muted font_size:$theme.font(FontRole::Caption) font_weight:700
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_config_loaded"))) value:$config_loaded
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_charging"))) value:$charging
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_game_mode"))) value:$game_mode
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_dnd"))) value:$dnd
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_audio_output"))) value:$audio_output
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_audio_input"))) value:$audio_input
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_lock_keys"))) value:$lock_keys
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_kb_layout"))) value:$kb_layout
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_vpn"))) value:$vpn
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_now_playing"))) value:$now_playing
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_screenshot"))) value:$screenshot
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_recording"))) value:$recording
+    save_row label:(Reactive::of(|| telar::t!("settings.save.toasts"))) on_press:save

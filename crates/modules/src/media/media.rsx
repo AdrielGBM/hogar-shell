@@ -1,4 +1,5 @@
 [logic]
+use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
 use crate::media::{glyph, label, marquee, marquee_ticks, overflows};
 use ::config::theme::{FontRole, NordTheme};
 use ::services::mpris::{self, Player};
@@ -44,10 +45,10 @@ let fg_icon = fg.clone();
 let show_text = memo(move || !vertical && !text_empty.get().is_empty());
 
 [view]
-row align:center gap(::ui::scale::space::md())
-    icon_glyph name(move || icon_view.get()) tint(move || fg_icon.get()) size:(ui::module::icon_px())
+row align:center gap:(::ui::scale::space::md())
+    icon_glyph name:(Reactive::of(move || icon_view.get())) tint:(Reactive::of(move || fg_icon.get())) size:(ui::module::icon_px())
     if $show_text
-        text "{$text_view}" font_size:theme.font(FontRole::Body) color:$fg lines:1 ellipsis
+        text "{$text_view}" font_size:$theme.font(FontRole::Body) color:$fg lines:1 ellipsis
 
 [preview "Media" fixture:ui::preview::bar_chip]
 media

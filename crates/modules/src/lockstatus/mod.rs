@@ -1,5 +1,7 @@
 //! The Caps- and Num-Lock indicators.
 
+telar::rsx_modules!(::config::theme::NordTheme);
+
 use telar::{Color, LayoutError, LayoutItem, ReadSignal};
 
 use config::LockStatusConfig;
@@ -41,13 +43,20 @@ pub fn shown(keys: LockKeys, config: LockStatusConfig) -> Vec<Lock> {
 /// One indicator glyph, tinted live from the lock state.
 ///
 /// Built here rather than in the view because the view's `for` is reactive: it constructs each item afresh whenever that lock comes back, so its content has to be an expression (`build`) rather than a widget bound once in `[logic]`. Engaged takes the chip's own foreground, so it reads at full strength under every container variant; idle recedes to `idle` rather than vanishing, which keeps the module visible — and the bar's width stable — as soon as it is added.
+#[derive(telar::Props)]
+pub struct IndicatorProps {
+    pub lock: Lock,
+    pub keys: ReadSignal<LockKeys>,
+    pub fg: ReadSignal<Color>,
+    pub idle: Color,
+    pub size: f32,
+}
+
 pub fn indicator(
-    lock: Lock,
-    keys: ReadSignal<LockKeys>,
-    fg: ReadSignal<Color>,
-    idle: Color,
-    size: f32,
+    props: IndicatorProps,
+    _children: telar::Children,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let IndicatorProps { lock, keys, fg, idle, size } = props;
     ui::icon::icon_view(
         move || lock.glyph().to_string(),
         move || {

@@ -1,21 +1,18 @@
 //! The builder every popout fills in.
 //!
-//! The shape itself is [`crate::popout_card`]; this is the name its callers know it by, and the one-field-at-a-time way they say what goes in it. A module describes its card and hands it over — the surface decides the frame.
+//! The shape itself is [`crate::popout_card::popout_card`]; this is the name its callers know it by, and the one-field-at-a-time way they say what goes in it. A module describes its card and hands it over — the surface decides the frame.
 
 use telar::{Color, LayoutError, LayoutItem};
 
 use util::reactive::{Live, fixed_text};
 
-use crate::{PopoutCardProps, popout_card};
+use crate::popout_card::{PopoutCardProps, popout_card};
 
 pub type Card = PopoutCardProps;
 
 impl Card {
     pub fn new(title: Live<String>) -> Self {
-        Self {
-            title,
-            ..Self::default()
-        }
+        Self::props().title(title).build()
     }
 
     pub fn titled(title: impl Into<String>) -> Self {
@@ -48,6 +45,6 @@ impl Card {
     }
 
     pub fn build(self) -> Result<Box<dyn LayoutItem>, LayoutError> {
-        popout_card(self)
+        popout_card(self, telar::Children::default())
     }
 }

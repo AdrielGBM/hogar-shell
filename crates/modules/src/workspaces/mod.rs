@@ -1,5 +1,7 @@
 //! Which workspaces the bar shows, and what each pill says.
 
+telar::rsx_modules!(::config::theme::NordTheme);
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -187,11 +189,18 @@ fn tracked_pill_view(
 /// The pills, with the active-workspace indicator sliding behind them.
 ///
 /// The indicator is one box that moves, not a fill each pill paints: it is a canvas laid over the whole row, painting its rect wherever the active pill landed. That distinction is the whole feature — the canvas sits outside the flow, so the row does not reflow sixty times a second while the indicator travels, and the pills underneath never move.
-pub fn grid(
-    items: ReadSignal<Vec<Pill>>,
-    style: PillStyle,
-    on_press: fn(i32),
+#[derive(telar::Props)]
+pub struct PillGridProps {
+    pub items: ReadSignal<Vec<Pill>>,
+    pub style: PillStyle,
+    pub on_press: fn(i32),
+}
+
+pub fn pill_grid(
+    props: PillGridProps,
+    _children: telar::Children,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let PillGridProps { items, style, on_press } = props;
     let slot = signal(ZERO_RECT);
     let for_rows = slot;
     // `with_style` rather than `with_gap`: the gap constructors hardcode a column, so a bottom bar would stack its pills downwards inside a strip one pill high and show nothing at all.
@@ -769,7 +778,10 @@ mod tests {
                 occupied_background: true,
                 indicator: true,
             };
-            let grid = grid(items, style, |_| {}).expect("the grid builds");
+            let grid = pill_grid(
+                PillGridProps::props().items(items).style(style).on_press(|_| {}).build(),
+                telar::Children::default(),
+            ).expect("the grid builds");
             let rect = track_layout(grid.layout_node()).expect("the grid registers its rect");
             // Centred rather than the default stretch, so the grid reports the size of its own content instead of the harness's.
             let root = new_container(
@@ -840,7 +852,10 @@ mod tests {
                     indicator,
                 };
                 assert!(
-                    grid(items, style, |_| {}).is_ok(),
+                    pill_grid(
+                PillGridProps::props().items(items).style(style).on_press(|_| {}).build(),
+                telar::Children::default(),
+            ).is_ok(),
                     "vertical={vertical} indicator={indicator}"
                 );
             }
@@ -1010,7 +1025,10 @@ mod tests {
             occupied_background: true,
             indicator: true,
         };
-        let built = grid(items, style, |_| {}).expect("the grid builds");
+        let built = pill_grid(
+                PillGridProps::props().items(items).style(style).on_press(|_| {}).build(),
+                telar::Children::default(),
+            ).expect("the grid builds");
         let root_node = new_container(
             LayoutStyle::new()
                 .flex_row()

@@ -2,6 +2,8 @@
 //!
 //! The bar chip stays what it was — a sysfs link verdict that needs no NetworkManager — and this panel is the NetworkManager view layered on top. So a machine without NM keeps a working chip and gets a panel that says why it is empty, rather than the chip going blank because the panel's dependency is missing.
 
+telar::rsx_modules!(::config::theme::NordTheme);
+
 use telar::{
     AlignItems, Container, Input, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
     ReactiveList, RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal,
@@ -12,7 +14,7 @@ use ui::scale::space;
 use config::NetworkConfig;
 use config::surface_env;
 use config::theme::{FontRole, NordTheme};
-use services::network::{self, AccessPoint, Security, Wifi};
+use services::network::{self as net, AccessPoint, Security, Wifi};
 use ui::glyph;
 use ui::icon::icon_view;
 
@@ -50,13 +52,13 @@ pub fn network_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
 pub fn network_view(config: NetworkConfig) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
 
-    let state = signal(network::current_wifi().unwrap_or_default());
+    let state = signal(net::current_wifi().unwrap_or_default());
     let sink = state;
-    platform_wayland::watch(network::subscribe_wifi, move |wifi| sink.set(wifi));
+    platform_wayland::watch(net::subscribe_wifi, move |wifi| sink.set(wifi));
 
     // Opening the panel is the gesture that means "show me what is around", so it is also what looks.
     if state.peek().enabled {
-        network::request_scan();
+        net::request_scan();
     }
 
     let asking = signal(String::new());
@@ -116,7 +118,7 @@ fn header(state: RwSignal<Wifi>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
             }
         },
         move || radio_active.get().enabled,
-        network::toggle_wifi,
+        net::toggle_wifi,
         theme,
     )?;
     let scan = pill(
@@ -128,7 +130,7 @@ fn header(state: RwSignal<Wifi>, theme: NordTheme) -> Result<Box<dyn LayoutItem>
             }
         },
         move || scan_active.get().scanning,
-        network::request_scan,
+        net::request_scan,
         theme,
     )?;
 
@@ -363,7 +365,7 @@ fn network_row(
                 return;
             }
             if point.active {
-                network::disconnect();
+                net::disconnect();
                 return;
             }
             if needs_prompt(&point) {
@@ -381,7 +383,7 @@ fn network_row(
                 return;
             }
             if armed.peek() == ssid {
-                network::forget(&ssid);
+                net::forget(&ssid);
                 armed.set(String::new());
                 return;
             }
@@ -465,11 +467,11 @@ fn prompt(
 /// Joins by name rather than by object path: the strongest radio for an SSID changes as you move, and the row was built from a snapshot. Resolving at press time joins the one that is actually best right now.
 fn join(ssid: &str, password: Option<String>) {
     let Some(point) =
-        network::current_wifi().and_then(|w| w.networks().into_iter().find(|p| p.ssid == ssid))
+        net::current_wifi().and_then(|w| w.networks().into_iter().find(|p| p.ssid == ssid))
     else {
         return;
     };
-    network::connect(&point.path, password);
+    net::connect(&point.path, password);
 }
 
 /// What a row says about itself: its state where it has one, else how it is secured and on which band.

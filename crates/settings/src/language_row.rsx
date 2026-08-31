@@ -1,10 +1,12 @@
 [logic]
+use crate::field_row::{field_row, FieldRowProps};
 use crate::form::{LANGUAGES, record_field};
 use ::config::theme::FontRole;
 
 /// The UI language, as a cycle rather than a picker: there are two of them, and each press both stores the code and broadcasts it, so every surface on screen switches with the form.
 pub struct Props {
-    pub label: Box<dyn Fn() -> String> = Box::new(String::new),
+    #[props(into)]
+    pub label: Reactive<String> = Reactive::of(String::new),
     pub value: RwSignal<String> = signal(String::new()),
 }
 
@@ -33,6 +35,6 @@ let cycle = {
 let rad = ::ui::scale::corner::md();
 
 [view]
-field_row label(move || label())
-    box grow:1 pad_x(::ui::scale::space::md()) pad_y(::ui::scale::space::sm()) fill:theme.base radius:rad hover_style(fill:theme.overlay) on_press(|| cycle())
-        text "{language_name(&$value)}" color:theme.text font_size:theme.font(FontRole::Body)
+field_row label:(Reactive::of(move || label.get()))
+    box grow:1 pad_x:(::ui::scale::space::md()) pad_y:(::ui::scale::space::sm()) fill:$theme.base radius:rad hover_style(fill:$theme.overlay) on_press:(|| cycle())
+        text "{language_name(&$value)}" color:$theme.text font_size:$theme.font(FontRole::Body)

@@ -1,4 +1,8 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{parse_u32, persist, source};
 use ::config::WeatherConfig;
 
@@ -12,7 +16,7 @@ let longitude = signal(w.longitude.map(|v| v.to_string()).unwrap_or_default());
 let refresh = signal(w.refresh_minutes.to_string());
 let days = signal(w.forecast_days.to_string());
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (enabled, location) = (enabled.clone(), location.clone());
     let (latitude, longitude) = (latitude.clone(), longitude.clone());
     let (refresh, days) = (refresh.clone(), days.clone());
@@ -32,11 +36,11 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.weather"))
-    toggle_row label(|| telar::t!("settings.field.enabled")) value:$enabled
-    text_row label(|| telar::t!("settings.field.location")) value:$location placeholder:"Madrid"
-    text_row label(|| telar::t!("settings.field.latitude")) value:$latitude placeholder:"40.4168"
-    text_row label(|| telar::t!("settings.field.longitude")) value:$longitude placeholder:"-3.7038"
-    text_row label(|| telar::t!("settings.field.refresh_minutes")) value:$refresh placeholder:"15"
-    text_row label(|| telar::t!("settings.field.forecast_days")) value:$days placeholder:"7"
-    save_row label(|| telar::t!("settings.save.weather")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.weather")))
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.enabled"))) value:$enabled
+    text_row label:(Reactive::of(|| telar::t!("settings.field.location"))) value:$location placeholder:"Madrid"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.latitude"))) value:$latitude placeholder:"40.4168"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.longitude"))) value:$longitude placeholder:"-3.7038"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.refresh_minutes"))) value:$refresh placeholder:"15"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.forecast_days"))) value:$days placeholder:"7"
+    save_row label:(Reactive::of(|| telar::t!("settings.save.weather"))) on_press:save

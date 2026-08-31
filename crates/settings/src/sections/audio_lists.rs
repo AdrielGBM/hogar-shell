@@ -50,8 +50,9 @@ pub(crate) fn media_aliases_section() -> Result<Box<dyn LayoutItem>, LayoutError
 
     let path = path.to_path_buf();
     let save = save_button(
-        || telar::t!("settings.save.media_aliases"),
-        move || {
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| telar::t!("settings.save.media_aliases")))
+            .on_press(std::rc::Rc::new(move || {
             let aliases: std::collections::HashMap<String, String> = fields
                 .iter()
                 .filter_map(|(key, value)| {
@@ -62,7 +63,9 @@ pub(crate) fn media_aliases_section() -> Result<Box<dyn LayoutItem>, LayoutError
                 aliases,
                 ..current.media.clone()
             });
-        },
+        }))
+            .build(),
+        telar::Children::default(),
     )?;
     section(
         || telar::t!("settings.section.media_aliases"),

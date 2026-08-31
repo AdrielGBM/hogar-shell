@@ -1,4 +1,9 @@
 [logic]
+use crate::form_section::{form_section, FormSectionProps};
+use crate::text_row::{text_row, TextRowProps};
+use crate::enum_row::{enum_row, EnumRowProps};
+use crate::toggle_row::{toggle_row, ToggleRowProps};
+use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     MEDIA_SCROLLS, media_scroll_str, parse_media_scroll, parse_u32, persist, source,
 };
@@ -16,7 +21,7 @@ let marquee_speed = signal(m.marquee_speed_ms.to_string());
 let seek_seconds = signal(m.seek_seconds.to_string());
 let visualiser = signal(m.visualiser);
 
-let save: Box<dyn Fn()> = Box::new({
+let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (preferred, max_chars, scroll) = (preferred.clone(), max_chars.clone(), scroll.clone());
     let (marquee, marquee_speed) = (marquee.clone(), marquee_speed.clone());
     let (seek_seconds, visualiser) = (seek_seconds.clone(), visualiser.clone());
@@ -36,12 +41,12 @@ let save: Box<dyn Fn()> = Box::new({
 });
 
 [view]
-form_section title(|| telar::t!("settings.section.media"))
-    text_row label(|| telar::t!("settings.field.preferred_player")) value:$preferred placeholder:"auto"
-    text_row label(|| telar::t!("settings.field.max_chars")) value:$max_chars placeholder:"40"
-    enum_row label(|| telar::t!("settings.field.scroll")) value:$scroll options:MEDIA_SCROLLS
-    text_row label(|| telar::t!("settings.field.seek_seconds")) value:$seek_seconds placeholder:"5"
-    toggle_row label(|| telar::t!("settings.field.marquee")) value:$marquee
-    text_row label(|| telar::t!("settings.field.marquee_speed_ms")) value:$marquee_speed placeholder:"220"
-    toggle_row label(|| telar::t!("settings.field.cover_visualiser")) value:$visualiser
-    save_row label(|| telar::t!("settings.save.media")) on_press(save)
+form_section title:(Reactive::of(|| telar::t!("settings.section.media")))
+    text_row label:(Reactive::of(|| telar::t!("settings.field.preferred_player"))) value:$preferred placeholder:"auto"
+    text_row label:(Reactive::of(|| telar::t!("settings.field.max_chars"))) value:$max_chars placeholder:"40"
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.scroll"))) value:$scroll options:MEDIA_SCROLLS
+    text_row label:(Reactive::of(|| telar::t!("settings.field.seek_seconds"))) value:$seek_seconds placeholder:"5"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.marquee"))) value:$marquee
+    text_row label:(Reactive::of(|| telar::t!("settings.field.marquee_speed_ms"))) value:$marquee_speed placeholder:"220"
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.cover_visualiser"))) value:$visualiser
+    save_row label:(Reactive::of(|| telar::t!("settings.save.media"))) on_press:save
