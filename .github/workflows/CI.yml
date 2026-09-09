@@ -30,6 +30,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      # rustc no longer expands a `.rsx` — the CLI transpiles each package into `.telar/` first, baking assets and translation catalogs on the way through. Every job that compiles runs this; the version has to match the `telar` the workspace declares, or the CLI refuses the build.
+      - run: cargo install cargo-telar --version 0.2.0 --locked
+      - run: cargo telar transpile
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
@@ -39,6 +42,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: cargo install cargo-telar --version 0.2.0 --locked
+      - run: cargo telar transpile
       # There is no compositor on this runner: everything that needs one is behind HOGAR_SHELL_WAYLAND_LIVE or TELAR_LIVE_*.
       - run: cargo test --workspace
 
@@ -50,4 +55,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: cargo install cargo-telar --version 0.2.0 --locked
+      - run: cargo telar transpile
       - run: cargo check --workspace
