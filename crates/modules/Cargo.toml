@@ -14,7 +14,7 @@ platform-wayland = { workspace = true }
 serde = { workspace = true }
 services = { workspace = true }
 surfaces = { workspace = true }
-telar = { workspace = true, features = ["dynamic-svg", "async-assets"] }
+telar = { workspace = true, features = ["async-assets"] }
 tracing = { workspace = true }
 ui = { workspace = true }
 util = { workspace = true }

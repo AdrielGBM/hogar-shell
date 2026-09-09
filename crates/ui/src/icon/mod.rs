@@ -9,9 +9,8 @@ use std::time::Duration;
 use platform_wayland::{EventSender, timeout, watch};
 use serde::Deserialize;
 use telar::{
-    AssetSource, AssetState, Color, LayoutError, LayoutItem, LayoutStyle, ObjectFit, ReactiveList,
-    ReadSignal, RectStyle, RwSignal, SpinnerProps, StyledContainer, Svg, SvgData, signal, spinner,
-    use_theme,
+    AssetState, Color, LayoutError, LayoutItem, LayoutStyle, ObjectFit, ReactiveList, ReadSignal,
+    RectStyle, RwSignal, SpinnerProps, StyledContainer, Svg, SvgData, signal, spinner, use_theme,
 };
 
 use config::surface_env;
@@ -110,7 +109,7 @@ struct FetchConfig {
 
 type IconResult = (IconId, Option<Arc<SvgData>>);
 
-/// The per-surface-thread reactive icon registry. Implements [`AssetSource`]: reading an icon returns a signal that starts `Loading` and advances to `Ready`/`Failed` as the download lands, re-rendering whoever read it. Transport lives in [`run_worker`]; this side only holds signals, tracks retries, and enqueues requests.
+/// The per-surface-thread reactive icon registry: reading an icon returns a signal that starts `Loading` and advances to `Ready`/`Failed` as the download lands, re-rendering whoever read it. Transport lives in [`run_worker`]; this side only holds signals, tracks retries, and enqueues requests.
 struct IconStore {
     signals: RefCell<HashMap<IconId, RwSignal<AssetState<Arc<SvgData>>>>>,
     attempts: RefCell<HashMap<IconId, u32>>,
@@ -122,7 +121,7 @@ struct IconStore {
     config: config::IconsConfig,
 }
 
-impl AssetSource for IconStore {
+impl IconStore {
     fn svg(&self, id: &str) -> ReadSignal<AssetState<Arc<SvgData>>> {
         let icon_id = IconId::parse(id, &self.default_set);
         let mut signals = self.signals.borrow_mut();

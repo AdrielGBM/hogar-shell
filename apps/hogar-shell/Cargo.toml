@@ -16,7 +16,6 @@ path = "src/main.rs"
 
 [dependencies]
 telar = { workspace = true, features = [
-    "dynamic-svg",
     "async-assets",
     "preview-headless",
 ] }

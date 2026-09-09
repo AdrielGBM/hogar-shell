@@ -12,7 +12,8 @@ config = { workspace = true }
 platform-wayland = { workspace = true }
 services = { workspace = true }
 image = { workspace = true }
-telar = { workspace = true, features = ["dynamic-svg", "async-assets"] }
+telar = { workspace = true, features = ["async-assets", "svg"] }
+telar-dynamic = { workspace = true }
 util = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

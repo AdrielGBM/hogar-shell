@@ -21,7 +21,7 @@ use smithay_client_toolkit::reexports::protocols::ext::session_lock::v1::client:
     ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
     ext_session_lock_v1::{self, ExtSessionLockV1},
 };
-use telar::{App, build_surface_handler};
+use telar::{App, LocalApp, build_surface_handler};
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_output;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
@@ -103,8 +103,8 @@ where
         unlock: AtomicBool::new(false),
     });
     let boxed: LockFactory = Box::new(move |output| {
-        build_surface_handler::<LayerWindow, A>(
-            factory(output),
+        build_surface_handler::<LayerWindow, _>(
+            LocalApp(factory(output)),
             std::sync::Arc::new(telar::NoPaths),
             "hogar-shell",
             crate::platform::surface_fonts_for_lock(),

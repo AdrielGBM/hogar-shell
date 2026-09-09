@@ -11,7 +11,7 @@ use crate::placement::{
     KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
 };
 use telar::{
-    AlignItems, App, Color, Component, Edge, Event, EventHandler, Key, ModifiersState,
+    AlignItems, App, Color, Component, Edge, Event, EventHandler, Key, LocalApp, ModifiersState,
     MultiSurfacePlatform, NamedKey, PlatformError, PointerButton, PointerSource, ScrollDelta,
     SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, WindowRoot, SurfaceScaffold,
     SurfaceToken, SurfaceTransition, Window, WindowConfig,
@@ -1258,8 +1258,8 @@ impl SurfaceControl for SurfaceHandle {
 /// Opens a new layer-shell surface at runtime. Builds the handler on the UI thread and enqueues it for the driver to mount on its next loop turn — no new thread, so it shares the one reactive runtime (M3).
 pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandle {
     let link = Arc::new(SurfaceLink::default());
-    let handler = build_surface_handler::<LayerWindow, A>(
-        app,
+    let handler = build_surface_handler::<LayerWindow, _>(
+        LocalApp(app),
         std::sync::Arc::new(telar::NoPaths),
         "hogar-shell",
         surface_fonts(),
@@ -1485,7 +1485,7 @@ impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
             dismiss_armed: std::cell::Cell::new(false),
         };
         let handler = build_surface_handler::<LayerWindow, _>(
-            app,
+            LocalApp(app),
             std::sync::Arc::new(telar::NoPaths),
             "hogar-shell",
             surface_fonts(),
