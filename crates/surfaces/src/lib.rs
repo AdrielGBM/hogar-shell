@@ -1,1 +1,1 @@
-telar::rsx_modules!(::config::theme::NordTheme);
+telar::rsx_modules!();

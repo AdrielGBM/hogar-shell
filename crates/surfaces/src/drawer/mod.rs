@@ -1,5 +1,3 @@
-telar::rsx_modules!(::config::theme::NordTheme);
-
 use telar::{Rect, SurfaceToken};
 
 use config::SurfaceEnv;

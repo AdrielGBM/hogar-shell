@@ -1,7 +1,3 @@
-//! The system tray's bar module: one icon per running tray application.
-
-telar::rsx_modules!(::config::theme::NordTheme);
-
 use std::path::Path;
 use std::sync::Arc;
 

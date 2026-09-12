@@ -1,6 +1,6 @@
 [telar]
 backend = "software"
-auto_modules = true
+theme = "::config::theme::NordTheme"
 
 [telar.i18n]
 scan = "i18n"

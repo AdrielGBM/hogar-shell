@@ -1,4 +1,4 @@
-telar::rsx_modules!(::config::theme::NordTheme);
+telar::rsx_modules!();
 
 // What the `hogar-shell` binary reaches for; everything else now belongs to the crate that owns it.
 pub use crate::core::commands::describe as ipc_describe;

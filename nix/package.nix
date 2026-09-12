@@ -24,10 +24,10 @@ let
 
     src = fetchCrate {
       inherit (final) pname version;
-      hash = "sha256-whzxB3UQwElNvGLA7cd7mb2D63qt/Oew+J+ZJdnMY3Q=";
+      hash = "sha256-K37wNyYDe9Om2PITO3WuSmFErYK/RjLk5pH+1DrWps8=";
     };
 
-    cargoHash = "sha256-SeLEakNC+CxXqNphVuR1KiuISSSJaIbmizBUFpC4nw8=";
+    cargoHash = "sha256-XxV2jUq8tavu2GP2B8B6O7pzUjE3spD6zyGoKzL/G04=";
   });
 in
 rustPlatform.buildRustPackage {

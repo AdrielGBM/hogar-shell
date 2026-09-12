@@ -1,7 +1,0 @@
-[telar]
-backend = "software"
-auto_modules = true
-
-[telar.i18n]
-scan = "i18n"
-default = "en"

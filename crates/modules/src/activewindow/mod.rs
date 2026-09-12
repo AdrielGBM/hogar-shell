@@ -1,7 +1,3 @@
-//! What the focused window is called, and how much of that fits on a bar.
-
-telar::rsx_modules!(::config::theme::NordTheme);
-
 use services::hyprland::{self, ActiveWindow};
 
 /// The text the chip shows: the window's title, or its class when it has no title.

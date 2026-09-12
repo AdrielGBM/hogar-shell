@@ -1,5 +1,3 @@
-telar::rsx_modules!(::config::theme::NordTheme);
-
 use telar::{Color, LayoutItem, LayoutStyle, RectStyle, SizeDimension, StyledContainer, set_theme};
 
 use config::theme::NordTheme;

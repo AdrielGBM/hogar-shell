@@ -1,7 +1,3 @@
-//! Which workspaces the bar shows, and what each pill says.
-
-telar::rsx_modules!(::config::theme::NordTheme);
-
 use std::cell::RefCell;
 use std::rc::Rc;
 

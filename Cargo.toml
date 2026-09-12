@@ -35,7 +35,7 @@ telar-dynamic = { version = "0.2.0", default-features = false, features = [
     "svg",
 ] }
 # `software` only: every telar.toml here pins `backend = "software"`, so wgpu would be compiled and never called.
-telar = { version = "0.2.0", default-features = false, features = [
+telar = { version = "0.2.1", default-features = false, features = [
     "runtime",
     "components",
     "software",
