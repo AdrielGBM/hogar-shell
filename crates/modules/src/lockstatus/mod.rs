@@ -1,4 +1,6 @@
-use telar::{Color, LayoutError, LayoutItem, ReadSignal};
+use telar::{
+    AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReadSignal,
+};
 
 use config::LockStatusConfig;
 use services::lockkeys::LockKeys;
@@ -39,6 +41,8 @@ pub fn shown(keys: LockKeys, config: LockStatusConfig) -> Vec<Lock> {
 /// One indicator glyph, tinted live from the lock state.
 ///
 /// Built here rather than in the view because the view's `for` is reactive: it constructs each item afresh whenever that lock comes back, so its content has to be an expression (`build`) rather than a widget bound once in `[logic]`. Engaged takes the chip's own foreground, so it reads at full strength under every container variant; idle recedes to `idle` rather than vanishing, which keeps the module visible — and the bar's width stable — as soon as it is added.
+///
+/// Each glyph is padded to an icon chip's square, so a chip bar's surface behind the row leaves it the air its neighbours have.
 #[derive(telar::Props)]
 pub struct IndicatorProps {
     pub lock: Lock,
@@ -46,14 +50,22 @@ pub struct IndicatorProps {
     pub fg: ReadSignal<Color>,
     pub idle: Color,
     pub size: f32,
+    pub pad: f32,
 }
 
 pub fn indicator(
     props: IndicatorProps,
     _children: telar::Children,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let IndicatorProps { lock, keys, fg, idle, size } = props;
-    ui::icon::icon_view(
+    let IndicatorProps {
+        lock,
+        keys,
+        fg,
+        idle,
+        size,
+        pad,
+    } = props;
+    let glyph = ui::icon::icon_view(
         move || lock.glyph().to_string(),
         move || {
             if lock.engaged(keys.get()) {
@@ -63,7 +75,13 @@ pub fn indicator(
             }
         },
         size,
-    )
+    )?;
+    let square = LayoutStyle::new()
+        .align_items(AlignItems::CENTER)
+        .justify_content(JustifyContent::CENTER)
+        .padding_all(pad)
+        .flex_shrink(0.0);
+    Ok(Box::new(Container::new(square, vec![glyph])?))
 }
 
 #[cfg(test)]

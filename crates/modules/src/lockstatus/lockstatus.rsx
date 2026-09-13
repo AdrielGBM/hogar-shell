@@ -20,12 +20,12 @@ let indicators = memo(move || shown(listed.get(), config));
 let fg = ui::module::module_fg();
 let idle = use_theme::<NordTheme>().muted;
 let size = ui::module::icon_px();
-let gap = (size * 0.25).round();
+let pad = ui::module::chip_pad();
 
 [view]
-row align:center gap:gap
+row align:center
     for lock in $indicators key *lock
-        indicator lock:lock keys:tint.clone() fg:fg.clone() idle:idle size:size
+        indicator lock:lock keys:tint.clone() fg:fg.clone() idle:idle size:size pad:pad
 
 [preview "Lockstatus" fixture:ui::preview::bar_chip]
 lockstatus

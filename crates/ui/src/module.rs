@@ -99,7 +99,7 @@ pub fn chip_radius() -> f32 {
 }
 
 /// Chosen so the chip's width (icon ≈ 0.75·thickness + two of these ≈ 0.25·thickness) equals the bar thickness, so a chip stretched to the bar's height comes out square.
-pub(crate) fn chip_pad() -> f32 {
+pub fn chip_pad() -> f32 {
     (bar_thickness() * 0.125).round().max(1.0)
 }
 
