@@ -426,7 +426,12 @@ fn build_items(
                 .build(),
             telar::Children::new({
                 let inner = std::cell::RefCell::new(Some(inner));
-                move || inner.borrow_mut().take().ok_or_else(|| LayoutError::Engine("children built twice".into()))
+                move || {
+                    inner
+                        .borrow_mut()
+                        .take()
+                        .ok_or_else(|| LayoutError::Engine("children built twice".into()))
+                }
             }),
         )?;
         // Outside the chip rather than on it: the chip's own hover already swaps its paint, and stacking a second meaning onto that callback would tie the two together.
@@ -588,10 +593,22 @@ mod tests {
             .unwrap(),
         );
         let chip = module_shell(
-            ModuleShellProps::props().variant(config::Variant::Default).rest(Color::TRANSPARENT).accent(NordTheme::new().accent).radius(8.0).square(true).on_press(Some(Rc::new(move || sink.set(true)) as Rc<dyn Fn()>)).build(),
+            ModuleShellProps::props()
+                .variant(config::Variant::Default)
+                .rest(Color::TRANSPARENT)
+                .accent(NordTheme::new().accent)
+                .radius(8.0)
+                .square(true)
+                .on_press(Some(Rc::new(move || sink.set(true)) as Rc<dyn Fn()>))
+                .build(),
             telar::Children::new({
                 let inner = std::cell::RefCell::new(Some(inner));
-                move || inner.borrow_mut().take().ok_or_else(|| LayoutError::Engine("chip children built twice".into()))
+                move || {
+                    inner
+                        .borrow_mut()
+                        .take()
+                        .ok_or_else(|| LayoutError::Engine("chip children built twice".into()))
+                }
             }),
         )
         .unwrap();

@@ -331,9 +331,13 @@ mod tests {
             let chip = module_shell(
                 ModuleShellProps::props().elastic(elastic).build(),
                 telar::Children::new({
-                let inner = std::cell::RefCell::new(Some(inner));
-                move || inner.borrow_mut().take().ok_or_else(|| telar::LayoutError::Engine("chip children built twice".into()))
-            }),
+                    let inner = std::cell::RefCell::new(Some(inner));
+                    move || {
+                        inner.borrow_mut().take().ok_or_else(|| {
+                            telar::LayoutError::Engine("chip children built twice".into())
+                        })
+                    }
+                }),
             )
             .expect("the chip builds");
             let rect = track_layout(chip.layout_node()).expect("the chip registers its rect");

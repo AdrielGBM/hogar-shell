@@ -7,7 +7,16 @@ use ui::popouts::PopoutRegistry;
 
 pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
     let mut registry = ModuleRegistry::new();
-    registry.register("clock", ModuleDef::new(|_ctx| ::modules::clock::clock::clock(::modules::clock::clock::ClockProps::props().build(), telar::Children::default())).opens());
+    registry.register(
+        "clock",
+        ModuleDef::new(|_ctx| {
+            ::modules::clock::clock::clock(
+                ::modules::clock::clock::ClockProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .opens(),
+    );
     registry.register(
         "dashboard",
         ModuleDef::new(|_ctx| modules::dashboard::dashboard_chip())
@@ -16,15 +25,25 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
     );
     registry.register(
         "workspaces",
-        ModuleDef::new(|_ctx| ::modules::workspaces::workspaces::workspaces(::modules::workspaces::workspaces::WorkspacesProps::props().build(), telar::Children::default()))
-            .self_managed()
-            .on_scroll(modules::workspaces::scroll),
+        ModuleDef::new(|_ctx| {
+            ::modules::workspaces::workspaces::workspaces(
+                ::modules::workspaces::workspaces::WorkspacesProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .self_managed()
+        .on_scroll(modules::workspaces::scroll),
     );
     registry.register(
         "activewindow",
-        ModuleDef::new(|_ctx| ::modules::activewindow::activewindow::activewindow(::modules::activewindow::activewindow::ActivewindowProps::props().build(), telar::Children::default()))
-            .on_click(modules::activewindow::focus_active)
-            .elastic(),
+        ModuleDef::new(|_ctx| {
+            ::modules::activewindow::activewindow::activewindow(
+                ::modules::activewindow::activewindow::ActivewindowProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .on_click(modules::activewindow::focus_active)
+        .elastic(),
     );
     registry.register(
         "logo",
@@ -53,25 +72,47 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
     );
     registry.register(
         "mic",
-        ModuleDef::new(|_ctx| ::modules::mic::mic::mic(::modules::mic::mic::MicProps::props().build(), telar::Children::default()))
-            .icon()
-            .on_click(modules::osd::mic_action)
-            .on_scroll(modules::osd::mic_scroll),
+        ModuleDef::new(|_ctx| {
+            ::modules::mic::mic::mic(
+                ::modules::mic::mic::MicProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .icon()
+        .on_click(modules::osd::mic_action)
+        .on_scroll(modules::osd::mic_scroll),
     );
     registry.register(
         "kblayout",
-        ModuleDef::new(|_ctx| ::modules::kblayout::kblayout::kblayout(::modules::kblayout::kblayout::KblayoutProps::props().build(), telar::Children::default()))
-            .on_click(services::hyprland::cycle_main_keyboard_layout),
+        ModuleDef::new(|_ctx| {
+            ::modules::kblayout::kblayout::kblayout(
+                ::modules::kblayout::kblayout::KblayoutProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .on_click(services::hyprland::cycle_main_keyboard_layout),
     );
     // Self-managed: it draws its own indicator row, and with `hide_inactive` that row can be empty — a chip shell would leave a padded gap in the bar where nothing is shown.
     registry.register(
         "lockstatus",
-        ModuleDef::new(|_ctx| ::modules::lockstatus::lockstatus::lockstatus(::modules::lockstatus::lockstatus::LockstatusProps::props().build(), telar::Children::default())).self_managed(),
+        ModuleDef::new(|_ctx| {
+            ::modules::lockstatus::lockstatus::lockstatus(
+                ::modules::lockstatus::lockstatus::LockstatusProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .self_managed(),
     );
     // Self-managed: it draws one pressable box per application, each with its own click, middle-click, right-click and scroll — a single chip shell around the row could carry none of that.
     registry.register(
         "tray",
-        ModuleDef::new(|_ctx| ::modules::tray::tray::tray(::modules::tray::tray::TrayProps::props().build(), telar::Children::default())).self_managed(),
+        ModuleDef::new(|_ctx| {
+            ::modules::tray::tray::tray(
+                ::modules::tray::tray::TrayProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .self_managed(),
     );
     // The chip shell but no click: which of several readings would a press act on? Each keeps its standalone module.
     registry.register(
@@ -80,23 +121,82 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
     );
     registry.register(
         "media",
-        ModuleDef::new(|_ctx| ::modules::media::media::media(::modules::media::media::MediaProps::props().build(), telar::Children::default()))
-            .on_click(modules::media::toggle)
-            .on_scroll(modules::media::scroll)
-            .elastic(),
+        ModuleDef::new(|_ctx| {
+            ::modules::media::media::media(
+                ::modules::media::media::MediaProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .on_click(modules::media::toggle)
+        .on_scroll(modules::media::scroll)
+        .elastic(),
     );
-    registry.register("cpu", ModuleDef::new(|_ctx| ::modules::sysinfo::cpu::cpu(::modules::sysinfo::cpu::CpuProps::props().build(), telar::Children::default())));
-    registry.register("gpu", ModuleDef::new(|_ctx| ::modules::sysinfo::gpu::gpu(::modules::sysinfo::gpu::GpuProps::props().build(), telar::Children::default())));
-    registry.register("memory", ModuleDef::new(|_ctx| ::modules::sysinfo::memory::memory(::modules::sysinfo::memory::MemoryProps::props().build(), telar::Children::default())));
-    registry.register("temperature", ModuleDef::new(|_ctx| ::modules::sysinfo::temperature::temperature(::modules::sysinfo::temperature::TemperatureProps::props().build(), telar::Children::default())));
-    registry.register("netspeed", ModuleDef::new(|_ctx| ::modules::sysinfo::netspeed::netspeed(::modules::sysinfo::netspeed::NetspeedProps::props().build(), telar::Children::default())));
+    registry.register(
+        "cpu",
+        ModuleDef::new(|_ctx| {
+            ::modules::sysinfo::cpu::cpu(
+                ::modules::sysinfo::cpu::CpuProps::props().build(),
+                telar::Children::default(),
+            )
+        }),
+    );
+    registry.register(
+        "gpu",
+        ModuleDef::new(|_ctx| {
+            ::modules::sysinfo::gpu::gpu(
+                ::modules::sysinfo::gpu::GpuProps::props().build(),
+                telar::Children::default(),
+            )
+        }),
+    );
+    registry.register(
+        "memory",
+        ModuleDef::new(|_ctx| {
+            ::modules::sysinfo::memory::memory(
+                ::modules::sysinfo::memory::MemoryProps::props().build(),
+                telar::Children::default(),
+            )
+        }),
+    );
+    registry.register(
+        "temperature",
+        ModuleDef::new(|_ctx| {
+            ::modules::sysinfo::temperature::temperature(
+                ::modules::sysinfo::temperature::TemperatureProps::props().build(),
+                telar::Children::default(),
+            )
+        }),
+    );
+    registry.register(
+        "netspeed",
+        ModuleDef::new(|_ctx| {
+            ::modules::sysinfo::netspeed::netspeed(
+                ::modules::sysinfo::netspeed::NetspeedProps::props().build(),
+                telar::Children::default(),
+            )
+        }),
+    );
     registry.register(
         "battery",
-        ModuleDef::new(|_ctx| ::modules::battery::battery::battery(::modules::battery::battery::BatteryProps::props().build(), telar::Children::default())).icon().opens(),
+        ModuleDef::new(|_ctx| {
+            ::modules::battery::battery::battery(
+                ::modules::battery::battery::BatteryProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .icon()
+        .opens(),
     );
     registry.register(
         "network",
-        ModuleDef::new(|_ctx| ::modules::network::network::network(::modules::network::network::NetworkProps::props().build(), telar::Children::default())).icon().opens(),
+        ModuleDef::new(|_ctx| {
+            ::modules::network::network::network(
+                ::modules::network::network::NetworkProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .icon()
+        .opens(),
     );
     registry.register(
         "bluetooth",
@@ -106,10 +206,15 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
     );
     registry.register(
         "volume",
-        ModuleDef::new(|_ctx| ::modules::volume::volume::volume(::modules::volume::volume::VolumeProps::props().build(), telar::Children::default()))
-            .icon()
-            .on_click(modules::osd::volume_action)
-            .on_scroll(modules::osd::volume_scroll),
+        ModuleDef::new(|_ctx| {
+            ::modules::volume::volume::volume(
+                ::modules::volume::volume::VolumeProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .icon()
+        .on_click(modules::osd::volume_action)
+        .on_scroll(modules::osd::volume_scroll),
     );
     // The pointer path to a non-default device. The volume chip stays what it is — a level, a mute and a wheel — because a chip that opened a panel could no longer toggle mute with the same press.
     registry.register(
@@ -127,10 +232,15 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
     );
     registry.register(
         "brightness",
-        ModuleDef::new(|_ctx| ::modules::brightness::brightness::brightness(::modules::brightness::brightness::BrightnessProps::props().build(), telar::Children::default()))
-            .icon()
-            .on_click(modules::osd::brightness_action)
-            .on_scroll(modules::osd::brightness_scroll),
+        ModuleDef::new(|_ctx| {
+            ::modules::brightness::brightness::brightness(
+                ::modules::brightness::brightness::BrightnessProps::props().build(),
+                telar::Children::default(),
+            )
+        })
+        .icon()
+        .on_click(modules::osd::brightness_action)
+        .on_scroll(modules::osd::brightness_scroll),
     );
     registry.register(
         "notifications",
