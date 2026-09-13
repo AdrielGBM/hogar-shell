@@ -74,7 +74,7 @@ let settle = drag.map(|drag| {
 
 [view]
 // Both halves of the drag sit on the pressable box itself, not on a wrapper: a child hit-tests first, so a drag armed outside it would never see the press.
-row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shrink:shrink min_width:floor fill:theme.base radius:radius hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_drag:arm on_drag_end:settle
+row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shrink:shrink min_width:floor fill:base radius:radius hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_drag:arm on_drag_end:settle
     children
 
 [preview "Module chip" fixture:crate::preview::bar_chip]

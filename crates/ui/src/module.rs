@@ -347,6 +347,81 @@ mod tests {
         );
     }
 
+    /// The resting fill once read the theme's `base` token instead of the chip's own, which painted a block behind every chip on a whole bar.
+    #[test]
+    fn a_resting_chip_paints_its_rest_or_its_accent_and_nothing_else() {
+        use crate::module_shell::{ModuleShellProps, module_shell};
+        use telar::{
+            AvailableSpace, ComponentList, Container, DrawCommand, LayoutStyle, Paint, Slots,
+            compute_layout, reset_layout_runtime, set_theme,
+        };
+
+        let fills = |variant: Variant, rest: Color, accent: Color| {
+            reset_layout_runtime();
+            set_theme(NordTheme::new());
+            let label = Container::new(LayoutStyle::new().width(20.0).height(20.0), vec![])
+                .expect("the label builds");
+            let mut inner = Slots::new();
+            inner.push(None, Box::new(label) as Box<dyn LayoutItem>);
+            let chip = module_shell(
+                ModuleShellProps::props()
+                    .variant(variant)
+                    .rest(rest)
+                    .accent(accent)
+                    .build(),
+                telar::Children::new({
+                    let inner = RefCell::new(Some(inner));
+                    move || {
+                        inner
+                            .borrow_mut()
+                            .take()
+                            .ok_or_else(|| LayoutError::Engine("chip children built twice".into()))
+                    }
+                }),
+            )
+            .expect("the chip builds");
+            let page = Container::new(
+                LayoutStyle::new().flex_row().width(64.0).height(32.0),
+                vec![chip],
+            )
+            .expect("the row builds");
+            let root = page.layout_node();
+            let tree = ComponentList::new(page);
+            compute_layout(
+                root,
+                AvailableSpace::Definite(64.0),
+                AvailableSpace::Definite(32.0),
+            )
+            .expect("the row lays out");
+            tree.commands()
+                .iter()
+                .filter_map(|command| match command {
+                    DrawCommand::Rect { style, .. } => style.fill,
+                    _ => None,
+                })
+                .collect::<Vec<Paint>>()
+        };
+
+        let theme = NordTheme::new();
+        let blending = fills(Variant::Default, Color::TRANSPARENT, theme.accent);
+        assert!(
+            blending
+                .iter()
+                .all(|fill| *fill == Paint::Solid(Color::TRANSPARENT)),
+            "a chip blending into its bar painted a background of its own: {blending:?}"
+        );
+        assert_eq!(
+            fills(Variant::Default, theme.surface, theme.accent),
+            vec![Paint::Solid(theme.surface)],
+            "a free-standing chip rests on the surface its bar hands it"
+        );
+        assert_eq!(
+            fills(Variant::Filled, Color::TRANSPARENT, theme.orange),
+            vec![Paint::Solid(theme.orange)],
+            "a filled chip rests on its accent"
+        );
+    }
+
     #[test]
     fn module_foreground_default_is_text_filled_is_contrast() {
         let theme = NordTheme::new();
