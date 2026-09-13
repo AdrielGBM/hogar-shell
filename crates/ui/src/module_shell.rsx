@@ -27,9 +27,10 @@ pub struct Props {
 let theme = use_theme::<NordTheme>();
 let radius = props.radius;
 let accent = props.accent;
-let (base, hover, active) = match props.variant {
-    Variant::Default => (props.rest, theme.overlay, theme.overlay.darken(0.14)),
-    Variant::Filled => (accent, accent.darken(0.08), accent.darken(0.16)),
+let base = crate::module::resting_fill(props.variant, props.rest, accent);
+let (hover, active) = match props.variant {
+    Variant::Default => (theme.overlay, theme.overlay.darken(0.14)),
+    Variant::Filled => (accent.darken(0.08), accent.darken(0.16)),
 };
 
 // A square chip stretches to the bar's thickness, and symmetric padding around a bar-proportional icon (see `icon_px`) makes the other side match.

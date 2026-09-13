@@ -4,7 +4,7 @@
 
 use telar::{Container, LayoutError, LayoutItem, LayoutStyle};
 
-/// Self-managed, so the bar places it bare: a chip shell would give it padding, a hover highlight and a press state, none of which make sense for a gap.
+/// A filler, so the bar places it bare and gives it no surface: a chip shell would give it padding, a hover highlight and a press state, and a chip bar a pill behind it, none of which make sense for a gap.
 pub fn spacer() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let style = LayoutStyle::new().flex_grow(1.0).flex_shrink(1.0);
     Ok(Box::new(Container::new(style, vec![])?))

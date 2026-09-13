@@ -32,10 +32,9 @@ pub fn default_registry(popouts: &PopoutRegistry) -> ModuleRegistry {
             .icon()
             .on_click(|| surfaces::panel::toggle_panel("session")),
     );
-    // A gap has no chip: self-managed so the bar places it bare, without padding, hover or a press state.
     registry.register(
         "spacer",
-        ModuleDef::new(|_ctx| modules::spacer::spacer()).self_managed(),
+        ModuleDef::new(|_ctx| modules::spacer::spacer()).filler(),
     );
     registry.register(
         "launcher",
@@ -201,10 +200,12 @@ mod tests {
     #[test]
     fn the_new_bar_modules_are_registered_with_the_right_roles() {
         let r = default_registry();
+        let spacer = r.def("spacer").unwrap();
         assert!(
-            r.def("spacer").unwrap().self_managed,
+            spacer.self_managed,
             "a gap gets no chip shell, padding or hover state"
         );
+        assert!(spacer.filler, "nor a surface on a chip bar");
         assert!(
             r.def("activewindow").unwrap().click.is_some(),
             "clicking the title focuses the window it names"

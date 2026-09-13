@@ -14,7 +14,8 @@ use telar::{
 use config::theme::NordTheme;
 use config::{Config, Edge, ModuleEntry, ResolvedShape, Shape, Zone};
 use ui::module::{
-    DragOpen, ModuleClick, ModuleCtx, ModuleDef, ModuleRegistry, module_foreground, set_module_fg,
+    DragOpen, ModuleClick, ModuleCtx, ModuleDef, ModuleRegistry, module_foreground, resting_fill,
+    set_module_fg,
 };
 use ui::module_shell::{ModuleShellProps, module_shell};
 
@@ -288,19 +289,19 @@ fn end_air(config: &Config, edge: Edge, air: f32) -> (f32, f32) {
     (owed(leading), owed(trailing))
 }
 
-/// An invisible box wrapped around a module's own content to carry what its chip cannot: a wheel handler for a self-managed module (which has no [`module_shell`] to put one on), and the pointer tracking behind a hover popout. Both live here rather than on the chip so a self-managed module gets them on the same terms as any other; the wrapper shrink-wraps its child, so the rect it tracks is the chip's own.
+/// A box wrapped around a module's own content to carry what its chip cannot: a wheel handler and the surface a chip rests on for a self-managed module (which has no [`module_shell`] to put either on), and the pointer tracking behind a hover popout. They live here rather than on the chip so a self-managed module gets them on the same terms as any other; the wrapper shrink-wraps its child, so the rect it tracks and the surface it paints are the chip's own.
 ///
 /// `cross` is what the wrapper would otherwise silently change. A chip is a direct zone child under `AlignItems::STRETCH`, so it fills the bar's thickness; a wrapper that centred it instead would shrink every popout-bearing chip to its content. A self-managed module lays itself out and is centred, as it was before any wrapper existed.
 ///
 /// It runs along the bar for the same reason [`zone`] does. A wrapper fixed to a row applies `cross` across the *screen's* vertical, so on a left or right bar it stretched each chip's height — which is already its content — and left its width free: every wrapped chip then sat at its own content width, ragged against the bar's inner edge, with the wide ones running off the screen. Thirteen chips carry a popout, so on a vertical bar that was most of them. `elastic` is the chip's own, forwarded. The wrapper is what the zone actually sizes, so a rigid one around an elastic chip is a chip that never gets the chance to give anything up — and both modules whose label elides carry a popout, which is to say both of them are wrapped.
 fn chip_wrapper(
     content: Box<dyn LayoutItem>,
-    module_id: &str,
     on_scroll: Option<fn(f32, f32)>,
-    popout: bool,
+    popout: Option<&str>,
     cross: AlignItems,
     edge: Edge,
     elastic: bool,
+    paint: RectStyle,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let style = LayoutStyle::new().align_items(cross);
     let style = if elastic {
@@ -309,20 +310,16 @@ fn chip_wrapper(
         style.flex_shrink(0.0)
     };
     let style = axis(style, edge);
-    let mut wrapper = StyledContainer::new(
-        style,
-        |_r| RectStyle::filled(Color::TRANSPARENT, 0.0),
-        vec![content],
-    )?;
+    let mut wrapper = StyledContainer::new(style, move |_r| paint, vec![content])?;
     if let Some(on_scroll) = on_scroll {
         wrapper = wrapper.on_scroll(on_scroll);
     }
-    if popout {
+    if let Some(module) = popout {
         // Tracked before the handler that reads it is attached, so the popout has a rect the first time the pointer arrives.
         let rect = track_layout(wrapper.layout_node())
             .expect("a container registers its rect")
             .read_only();
-        let module = module_id.to_string();
+        let module = module.to_string();
         wrapper =
             wrapper.on_hover(move |entered| crate::popout::hover(&module, rect.get(), entered));
     }
@@ -379,19 +376,24 @@ fn build_items(
         let def = registry.def(id);
         let popout = def.is_some_and(|d| d.popout) && config.popouts.enabled;
         if def.is_some_and(|d| d.self_managed) {
-            // A self-managed module skips `module_shell` — it paints its own layout — so its wheel handler and popout tracking go on a bare wrapper with no padding, fill or hover state.
+            // A self-managed module skips `module_shell` — it lays itself out and takes its own presses — so its wheel handler, popout tracking and the surface it rests on go on a wrapper with no padding or hover state.
             let scroll = def.and_then(|d| d.scroll);
-            if scroll.is_none() && !popout {
+            let fill = if def.is_some_and(|d| d.filler) {
+                Color::TRANSPARENT
+            } else {
+                resting_fill(variant, rest, accent)
+            };
+            if scroll.is_none() && !popout && fill == Color::TRANSPARENT {
                 items.push(content);
             } else {
                 items.push(chip_wrapper(
                     content,
-                    id,
                     scroll,
-                    popout,
+                    popout.then_some(id.as_str()),
                     AlignItems::CENTER,
                     ctx.edge,
                     false,
+                    RectStyle::filled(fill, radius),
                 )?);
             }
             continue;
@@ -431,12 +433,12 @@ fn build_items(
         items.push(if popout {
             chip_wrapper(
                 chip,
-                id,
                 None,
-                true,
+                Some(id.as_str()),
                 AlignItems::STRETCH,
                 ctx.edge,
                 def.is_some_and(|d| d.elastic),
+                RectStyle::filled(Color::TRANSPARENT, 0.0),
             )?
         } else {
             chip
@@ -595,12 +597,12 @@ mod tests {
         .unwrap();
         let mut wrapped = chip_wrapper(
             chip,
-            "volume",
             None,
-            true,
+            Some("volume"),
             AlignItems::STRETCH,
             Edge::Top,
             false,
+            RectStyle::filled(Color::TRANSPARENT, 0.0),
         )
         .unwrap();
 
@@ -626,6 +628,70 @@ mod tests {
             source: PointerSource::Mouse,
         });
         assert!(clicked.get(), "the chip's own press handler never fired");
+    }
+
+    #[test]
+    fn a_self_managed_module_rests_on_a_chip_like_its_neighbours() {
+        let surfaces = |mode: &str, def: ModuleDef| {
+            reset_layout_runtime();
+            set_theme(NordTheme::new());
+            let mut registry = ModuleRegistry::new();
+            registry.register("probe", def);
+            let cfg: Config = toml::from_str(&format!(
+                "[shape]\nmode=\"{mode}\"\n[bars.top]\nsize=32\ncenter=[\"probe\"]\n"
+            ))
+            .unwrap();
+            let surface = telar::Paint::Solid(bar_fill(&cfg, NordTheme::new().surface));
+            let bar = build_bar(
+                &cfg,
+                Edge::Top,
+                NordTheme::new().accent,
+                &registry,
+                NordTheme::new(),
+            )
+            .expect("the bar builds");
+            let page = Container::new(
+                LayoutStyle::new().flex_row().width(400.0).height(32.0),
+                vec![bar],
+            )
+            .unwrap();
+            let root = page.layout_node();
+            let tree = telar::ComponentList::new(page);
+            compute_layout(
+                root,
+                AvailableSpace::Definite(400.0),
+                AvailableSpace::Definite(32.0),
+            )
+            .unwrap();
+            tree.commands()
+                .iter()
+                .filter(|command| {
+                    matches!(command, telar::DrawCommand::Rect { style, .. } if style.fill == Some(surface))
+                })
+                .count()
+        };
+
+        assert_eq!(
+            surfaces("chips", ModuleDef::new(dummy)),
+            1,
+            "a plain chip rests on the chip bar's surface"
+        );
+        assert_eq!(
+            surfaces("chips", ModuleDef::new(dummy).self_managed()),
+            1,
+            "a self-managed module on a chip bar sat on nothing — workspaces, tray and lockstatus floated bare between \
+             their neighbours' pills"
+        );
+        assert_eq!(
+            surfaces("chips", ModuleDef::new(dummy).filler()),
+            0,
+            "a filler is a gap, and a gap with a pill behind it is a chip with nothing in it"
+        );
+        assert_eq!(
+            surfaces("bar", ModuleDef::new(dummy).self_managed()),
+            0,
+            "a whole bar is the surface, so nothing on it rests on one of its own"
+        );
     }
 
     #[test]
@@ -1212,12 +1278,12 @@ mod tests {
 
             let wrapped = chip_wrapper(
                 Box::new(chip),
-                "clock",
                 None,
-                true,
+                Some("clock"),
                 AlignItems::STRETCH,
                 edge,
                 false,
+                RectStyle::filled(Color::TRANSPARENT, 0.0),
             )
             .unwrap();
             // The zone the bar puts a chip in: along the bar, stretching its children across it.

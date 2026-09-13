@@ -111,6 +111,14 @@ pub fn module_foreground(variant: Variant, accent: Color, theme: NordTheme) -> C
     }
 }
 
+/// Shared by the chip shell and the bar's wrapper around a self-managed module, so the two never paint a variant differently.
+pub fn resting_fill(variant: Variant, rest: Color, accent: Color) -> Color {
+    match variant {
+        Variant::Default => rest,
+        Variant::Filled => accent,
+    }
+}
+
 /// A chip's drag-to-open gesture: pulling it away from the bar opens the panel it would otherwise toggle.
 #[derive(Clone)]
 pub struct DragOpen {
@@ -156,6 +164,7 @@ pub struct ModuleDef {
     pub popout: bool,
     /// Whether this chip gives up width when its zone runs short, instead of holding its content width like every other one. For the chips whose text has no natural length — a window title, a track name — which are the reason a zone runs short in the first place. Their label elides, so what they lose is the tail of a string rather than anything a reader needs; a chip that gave up width without eliding would just hide its own end.
     pub elastic: bool,
+    pub filler: bool,
 }
 
 impl ModuleDef {
@@ -163,6 +172,7 @@ impl ModuleDef {
         Self {
             builder,
             self_managed: false,
+            filler: false,
             icon: false,
             click: None,
             scroll: None,
@@ -194,6 +204,13 @@ impl ModuleDef {
 
     pub fn self_managed(mut self) -> Self {
         self.self_managed = true;
+        self
+    }
+
+    /// Also self-managed: a filler is room rather than a chip, so it is placed bare and rests on no surface even on a chip bar.
+    pub fn filler(mut self) -> Self {
+        self.self_managed = true;
+        self.filler = true;
         self
     }
 
