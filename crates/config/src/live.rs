@@ -161,6 +161,15 @@ pub fn bar_margin_for(config: &Config, edge: Edge) -> (i32, i32, i32, i32) {
     }
 }
 
+/// Only a vertical bar's ends can run into another strip: a horizontal bar spans its whole edge and ends at the screen.
+pub fn bar_ends_abut(config: &Config, edge: Edge) -> (bool, bool) {
+    if edge.is_horizontal() {
+        return (false, false);
+    }
+    let abuts = |perp| config.edge_reserved(perp) > 0;
+    (abuts(Edge::Top), abuts(Edge::Bottom))
+}
+
 /// A vertical bar stops short of a horizontal one: by that bar's reserved strip when it has one, and by its own gap when it does not, so the two never overlap at the corner.
 fn perpendicular_inset(config: &Config, perp: Edge, own_gap: i32) -> i32 {
     match config.edge_reserved(perp) {

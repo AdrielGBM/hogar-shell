@@ -113,6 +113,8 @@ fn build_whole_bar(
     // With a frame up, the ring it draws already fills the strip this bar sits in. Painting again on top is what made two translucent fills stack and darken along the edges the two share.
     let base = bar_fill(config, theme.base);
     let spacing = shape.spacing;
+    // The whole bar already pads every side by `padding`, so an end that meets another bar is only owed the rest of a chip's worth of air.
+    let ends = end_air(config, edge, (spacing - shape.padding()).max(0.0));
     let mut slots = Vec::with_capacity(3);
     for (entries, in_zone) in zones {
         // Modules blend into the shared surface (transparent rest); STRETCH makes every chip the bar's height so text pills and icon chips line up. The hover/press (and Filled) highlight rounds at the theme's chip radius, matching chip mode.
@@ -124,7 +126,14 @@ fn build_whole_bar(
             Color::TRANSPARENT,
             shape.chip_radius(),
         )?;
-        slots.push(zone(edge, *in_zone, spacing, AlignItems::STRETCH, items)?);
+        slots.push(zone(
+            edge,
+            *in_zone,
+            spacing,
+            ends,
+            AlignItems::STRETCH,
+            items,
+        )?);
     }
     let radius = shape.radius;
     let style = axis(
@@ -173,7 +182,14 @@ fn build_units(
             }
         };
         // STRETCH ensures height is parent-driven by bar size, not content-driven.
-        slots.push(zone(edge, *in_zone, spacing, AlignItems::STRETCH, content)?);
+        slots.push(zone(
+            edge,
+            *in_zone,
+            spacing,
+            end_air(config, edge, spacing),
+            AlignItems::STRETCH,
+            content,
+        )?);
     }
     // No gap between the zones here: there are only ever three of them, so the only two joins it could space are the two the sides already hold open with a margin of their own (see [`zone`]). Both applying left twice the air at exactly the place a side is cut — a hole where the rest of the bar has one chip's worth.
     let style = axis(
@@ -225,10 +241,13 @@ fn unit(
 /// The clip runs along the bar only. Across it a chip is routinely a shade wider than the strip its zone was given — the padded box is narrower than the bar, and a square chip is sized from the bar itself — so cutting on that axis too shaved the edge off every one of them, which is a rounded pill with its corners sanded flat and an icon missing its outermost pixels.
 ///
 /// A side stops `spacing` short of the centre, so the cut edge never lands flush against the centre's first chip: a sliced chip touching a whole one reads as one wide chip with a seam, where the same slice with air after it reads as what it is. The margin comes out of the free space both sides divide, so it costs the centre nothing and leaves it exactly where it was.
+///
+/// Both sides give up the same length in total whichever end owes air off another bar, or the centre would slide off the middle by half the difference.
 fn zone(
     edge: Edge,
     in_zone: Zone,
     spacing: f32,
+    ends: (f32, f32),
     cross: AlignItems,
     items: Vec<Box<dyn LayoutItem>>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -240,26 +259,33 @@ fn zone(
         return Ok(Box::new(Container::new(axis(style, edge), items)?));
     }
     let style = style.flex_grow(1.0).flex_basis(0.0);
-    let leading = matches!(in_zone, Zone::Start);
+    let (lead, trail) = ends;
+    let reach = spacing + lead.max(trail);
+    let (start, end) = match in_zone {
+        Zone::Start => (lead, reach - lead),
+        _ => (reach - trail, trail),
+    };
     let (style, clip) = if edge.is_horizontal() {
-        let style = style.min_width(0.0);
-        let style = if leading {
-            style.margin_inline_end(spacing)
-        } else {
-            style.margin_inline_start(spacing)
-        };
+        let style = style
+            .min_width(0.0)
+            .margin_inline_start(start)
+            .margin_inline_end(end);
         (style, Clip::x())
     } else {
-        let style = style.min_height(0.0);
-        let style = if leading {
-            style.margin_block_end(spacing)
-        } else {
-            style.margin_block_start(spacing)
-        };
+        let style = style
+            .min_height(0.0)
+            .margin_block_start(start)
+            .margin_block_end(end);
         (style, Clip::y())
     };
     let zone = Container::new(axis(style, edge), items)?;
     Ok(Box::new(ClippedItem::new(Box::new(zone), clip)))
+}
+
+fn end_air(config: &Config, edge: Edge, air: f32) -> (f32, f32) {
+    let (leading, trailing) = config::bar_ends_abut(config, edge);
+    let owed = |abuts: bool| if abuts { air } else { 0.0 };
+    (owed(leading), owed(trailing))
 }
 
 /// An invisible box wrapped around a module's own content to carry what its chip cannot: a wheel handler for a self-managed module (which has no [`module_shell`] to put one on), and the pointer tracking behind a hover popout. Both live here rather than on the chip so a self-managed module gets them on the same terms as any other; the wrapper shrink-wraps its child, so the rect it tracks is the chip's own.
@@ -704,8 +730,15 @@ mod tests {
                 (0..4).map(|_| wide(&ctx).expect("a chip builds")).collect()
             };
 
-            let start_zone =
-                zone(edge, Zone::Start, SPACING, AlignItems::STRETCH, overrun()).unwrap();
+            let start_zone = zone(
+                edge,
+                Zone::Start,
+                SPACING,
+                (0.0, 0.0),
+                AlignItems::STRETCH,
+                overrun(),
+            )
+            .unwrap();
             let start_rect = track_layout(start_zone.layout_node()).expect("the zone registers");
             let centre_chip = dummy(&ctx).expect("a chip builds");
             let centre_rect = track_layout(centre_chip.layout_node()).expect("the chip registers");
@@ -713,11 +746,20 @@ mod tests {
                 edge,
                 Zone::Center,
                 SPACING,
+                (0.0, 0.0),
                 AlignItems::STRETCH,
                 vec![centre_chip],
             )
             .unwrap();
-            let end_zone = zone(edge, Zone::End, SPACING, AlignItems::STRETCH, overrun()).unwrap();
+            let end_zone = zone(
+                edge,
+                Zone::End,
+                SPACING,
+                (0.0, 0.0),
+                AlignItems::STRETCH,
+                overrun(),
+            )
+            .unwrap();
             let end_rect = track_layout(end_zone.layout_node()).expect("the zone registers");
             let (w, h) = if edge.is_horizontal() {
                 (BAR, 32.0)
@@ -757,6 +799,75 @@ mod tests {
                 end_at - (centre_at + centre_len) >= SPACING,
                 "{edge:?}: and the end side starts {}px after it",
                 end_at - (centre_at + centre_len)
+            );
+        }
+    }
+
+    #[test]
+    fn a_vertical_bar_keeps_its_end_chips_off_the_bars_it_runs_into() {
+        const LENGTH: f32 = 1000.0;
+        const SPACING: f32 = 8.0;
+        const ABOVE: &str = "[bars.top]\nsize=30\ncenter=[\"dummy\"]\n";
+        const BELOW: &str = "[bars.bottom]\nsize=30\ncenter=[\"dummy\"]\n";
+
+        let probe = |mode: &str, neighbours: &str, zones: &str| {
+            reset_layout_runtime();
+            set_theme(NordTheme::new());
+            let cfg: Config = toml::from_str(&format!(
+                "[shape]\nmode=\"{mode}\"\nspacing=8\n{neighbours}[bars.left]\nsize=32\n{zones}"
+            ))
+            .unwrap();
+            let bar = build_bar(
+                &cfg,
+                Edge::Left,
+                NordTheme::new().accent,
+                &registry(),
+                NordTheme::new(),
+            )
+            .expect("the bar builds");
+            compute_layout(
+                bar.layout_node(),
+                AvailableSpace::Definite(32.0),
+                AvailableSpace::Definite(LENGTH),
+            )
+            .expect("the bar lays out");
+            CENTRED
+                .with(|c| *c.borrow())
+                .expect("the probe published its rect")
+                .get()
+        };
+        let air = |mode: &str, neighbours: &str| {
+            let first = probe(mode, neighbours, "start=[\"centred\"]\n");
+            let last = probe(mode, neighbours, "end=[\"centred\"]\n");
+            (first.y, LENGTH - (last.y + last.height))
+        };
+
+        let boxed_in = format!("{ABOVE}{BELOW}");
+        let in_bar_mode = air("bar", &boxed_in);
+        for mode in ["bar", "sections", "chips"] {
+            let (lead, trail) = air(mode, &boxed_in);
+            assert!(
+                lead >= SPACING && trail >= SPACING,
+                "{mode}: the end chips sit {lead}px and {trail}px off the bars above and below — flush against \
+                 them rather than a chip's worth away"
+            );
+            assert_eq!(
+                (lead, trail),
+                in_bar_mode,
+                "{mode}: the air at the ends cannot depend on the mode"
+            );
+            let (bare_lead, bare_trail) = air(mode, "");
+            assert!(
+                bare_lead < lead && bare_trail < trail,
+                "{mode}: with no bar above or below, the end chips still hold {bare_lead}px and {bare_trail}px \
+                 off the screen's edges"
+            );
+
+            let centre = probe(mode, ABOVE, "start=[\"dummy\"]\ncenter=[\"centred\"]\n");
+            assert_eq!(
+                centre.y + centre.height / 2.0,
+                LENGTH / 2.0,
+                "{mode}: air owed at the top end only moved the centre off the middle of the bar"
             );
         }
     }
@@ -1110,7 +1221,15 @@ mod tests {
             )
             .unwrap();
             // The zone the bar puts a chip in: along the bar, stretching its children across it.
-            let zone = zone(edge, Zone::Start, 0.0, AlignItems::STRETCH, vec![wrapped]).unwrap();
+            let zone = zone(
+                edge,
+                Zone::Start,
+                0.0,
+                (0.0, 0.0),
+                AlignItems::STRETCH,
+                vec![wrapped],
+            )
+            .unwrap();
             let (w, h) = if edge.is_vertical() {
                 (side, 600.0)
             } else {
