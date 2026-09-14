@@ -1,6 +1,6 @@
 //! The lock screen: one surface per monitor, and the only thing on it that matters is the password field.
 //!
-//! Two things shape every decision here. The surface is a `ext-session-lock-v1` surface, so it covers the whole output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but authenticating. And it is drawn on *every* monitor, so the parts that would be silly in duplicate (the field, the avatar, the clock) are drawn only on the one the pointer or the compositor focused, while the rest stay a plain background.
+//! Two things shape every decision here. The surface is a `ext-session-lock-v1` surface, so it covers the whole output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but authenticating. And that way out has to survive everything else on the screen failing: a screen that cannot be built mounts the minimal lock, the password field alone, instead of taking the process down while the compositor keeps the session locked.
 //!
 //! Everything it shows is a subscription to [`lock::LockState`], which is written from a worker thread. The screen never authenticates; it collects a password and hands it over.
 
@@ -45,8 +45,7 @@ impl App for LockApp {
             output: self.output.clone(),
             config: Arc::clone(&config),
         });
-        let content = screen(&config).expect("lock screen build failed");
-        Box::new(WindowRoot::wrapping(content).expect("lock screen layout failed"))
+        mount(|| screen(&config))
     }
 
     fn clear_color(&self) -> Option<Color> {
@@ -69,12 +68,25 @@ pub(crate) fn screen_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     screen(&Arc::new(Config::starter()))
 }
 
+fn mount(screen: impl FnOnce() -> Result<Box<dyn LayoutItem>, LayoutError>) -> Box<dyn Component> {
+    match screen().and_then(WindowRoot::wrapping) {
+        Ok(root) => Box::new(root),
+        Err(err) => {
+            tracing::error!("lock screen failed to build, mounting the minimal lock: {err}");
+            reset_layout_runtime();
+            // Fixed code a test builds: if even this fails no field can exist in this process, and dying leaves the compositor holding the lock for whatever takes it next.
+            Box::new(
+                minimal_screen()
+                    .and_then(WindowRoot::wrapping)
+                    .expect("minimal lock failed to build"),
+            )
+        }
+    }
+}
+
 /// The whole surface: a centred card over the background.
 fn screen(config: &Arc<Config>) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let state = signal(lock::current());
-    platform_wayland::watch(lock::subscribe, move |next: LockState| state.set(next));
-
     let mut column: Vec<Box<dyn LayoutItem>> = Vec::new();
     column.push(clock(config, theme)?);
     if config.lock.show_avatar
@@ -83,10 +95,29 @@ fn screen(config: &Arc<Config>) -> Result<Box<dyn LayoutItem>, LayoutError> {
         column.push(avatar);
     }
     column.push(user_name(theme)?);
-    column.push(field(state.read_only(), theme)?);
-    column.push(status_line(state.read_only(), theme)?);
+    column.extend(prompt(theme)?);
     column.extend(crate::lock::content::extras(config, theme)?);
+    card(column, theme)
+}
 
+pub(crate) fn minimal_screen() -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let theme = use_theme::<NordTheme>();
+    card(prompt(theme)?, theme)
+}
+
+fn prompt(theme: NordTheme) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
+    let state = signal(lock::current());
+    platform_wayland::watch(lock::subscribe, move |next: LockState| state.set(next));
+    Ok(vec![
+        field(state.read_only(), theme)?,
+        status_line(state.read_only(), theme)?,
+    ])
+}
+
+fn card(
+    column: Vec<Box<dyn LayoutItem>>,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let card = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
@@ -332,6 +363,20 @@ mod tests {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
         assert!(screen(&Arc::new(Config::default())).is_ok());
+    }
+
+    #[test]
+    fn the_minimal_lock_builds_with_no_config_and_no_surface() {
+        telar::reset_layout_runtime();
+        telar::set_theme(NordTheme::new());
+        assert!(minimal_screen().is_ok());
+    }
+
+    #[test]
+    fn a_screen_that_fails_to_build_mounts_the_minimal_lock_instead_of_panicking() {
+        telar::reset_layout_runtime();
+        telar::set_theme(NordTheme::new());
+        mount(|| Err(LayoutError::Engine("injected".into())));
     }
 
     #[test]
