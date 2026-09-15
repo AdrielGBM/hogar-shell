@@ -60,8 +60,7 @@ pub fn icon_picker_overlay(
         paint::xl(theme.surface),
         vec![picker_body(theme, pick)?],
     )?
-    // Swallow presses on the panel so they don't fall through to the backdrop and dismiss it.
-    .on_press(|| {});
+    .input_opaque();
 
     let backdrop_close = Rc::clone(&on_close);
     let backdrop = StyledContainer::new(
@@ -582,7 +581,7 @@ mod tests {
                     paint::xl(theme.surface),
                     vec![Box::new(scroll)],
                 )?
-                .on_press(|| {});
+                .input_opaque();
                 let overlay =
                     Overlay::new(LayoutStyle::new().flex_column(), vec![box_item(panel)])?;
                 Ok(box_item(overlay))
