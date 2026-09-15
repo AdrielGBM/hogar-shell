@@ -1188,8 +1188,18 @@ mod tests {
         )
         .unwrap();
 
-        // The panel is the zone's only child, so it is the first thing drawn inside the zone's clip.
-        let commands = tree.commands().to_vec();
+        // The panel is the zone's only child, so it is the first thing drawn inside the zone's clip; element markers draw nothing and are skipped.
+        let commands: Vec<_> = tree
+            .commands()
+            .iter()
+            .filter(|command| {
+                !matches!(
+                    command,
+                    telar::DrawCommand::PushElement { .. } | telar::DrawCommand::PopElement
+                )
+            })
+            .cloned()
+            .collect();
         let (clip, panel) = commands
             .iter()
             .zip(commands.iter().skip(1))
