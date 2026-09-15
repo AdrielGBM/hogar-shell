@@ -93,4 +93,7 @@ impl Window for LayerWindow {
     fn is_offscreen(&self) -> bool {
         false
     }
+    fn retains_presented_contents(&self) -> bool {
+        true
+    }
 }
