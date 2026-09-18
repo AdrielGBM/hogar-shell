@@ -157,7 +157,7 @@ fn pixmap_from_argb(width: i32, height: i32, argb: &[u8]) -> Option<Pixmap> {
         return None;
     }
     let mut rgba = Vec::with_capacity(pixels * 4);
-    for chunk in argb.chunks_exact(4).take(pixels) {
+    for chunk in argb.as_chunks::<4>().0.iter().take(pixels) {
         rgba.extend_from_slice(&[chunk[1], chunk[2], chunk[3], chunk[0]]);
     }
     Some(Pixmap {

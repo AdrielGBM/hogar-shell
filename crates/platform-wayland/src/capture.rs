@@ -152,7 +152,11 @@ mod toplevel_tests {
             "tightly packed RGBA8, like every other capture"
         );
         assert!(
-            shot.pixels.chunks_exact(4).any(|px| px[..3] != [0, 0, 0]),
+            shot.pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|px| px[..3] != [0, 0, 0]),
             "an all-black window means the capture went through but read nothing"
         );
 

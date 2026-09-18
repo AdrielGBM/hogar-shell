@@ -304,7 +304,9 @@ impl CardStyle {
 fn default_action_key(notification: &Notification) -> Option<String> {
     notification
         .actions
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .find(|pair| pair[0] == "default")
         .map(|pair| pair[0].clone())
 }
@@ -471,7 +473,9 @@ fn action_buttons(
 ) -> Result<Option<Box<dyn LayoutItem>>, LayoutError> {
     let buttons: Vec<Box<dyn LayoutItem>> = notification
         .actions
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .filter(|pair| pair[0] != "default")
         .map(|pair| action_pill(notification.id, pair[0].clone(), pair[1].clone(), theme))
         .collect::<Result<_, _>>()?;

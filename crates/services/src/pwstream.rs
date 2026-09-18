@@ -253,9 +253,8 @@ impl Capture<'_> {
         let Some(data) = (unsafe { first_data(buffer) }) else {
             return;
         };
-        for sample in data.chunks_exact(size_of::<f32>()) {
-            self.pending
-                .push(f32::from_le_bytes(sample.try_into().unwrap_or_default()));
+        for sample in data.as_chunks::<{ size_of::<f32>() }>().0 {
+            self.pending.push(f32::from_le_bytes(*sample));
             if self.pending.len() < self.hop {
                 continue;
             }

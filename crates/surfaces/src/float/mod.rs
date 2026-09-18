@@ -131,7 +131,12 @@ mod tests {
         .expect("headless run");
 
         let pixels = sink.lock().unwrap().take().expect("a frame was captured");
-        let opaque = pixels.chunks_exact(4).filter(|px| px[3] > 250).count();
+        let opaque = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|px| px[3] > 250)
+            .count();
         assert!(
             opaque > (SIDE * SIDE / 10) as usize,
             "the settled frame is {opaque} solid pixels of {}: the enter transition never finished",
