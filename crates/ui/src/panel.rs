@@ -464,6 +464,8 @@ mod tests {
             "crates/surfaces/src/reconcile.rs",
             "crates/ui/src/panel.rs",
             "crates/platform-wayland/src",
+            // The benchmark measures raw layer surfaces, deliberately outside the shell's config environment.
+            "apps/spike/",
         ];
         let mut offenders = Vec::new();
         let mut stack = vec![root.join("crates"), root.join("apps")];

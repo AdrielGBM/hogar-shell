@@ -45,8 +45,11 @@
             ];
             RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-            # A cargo build gets no rpath and wayland-sys dlopens libwayland-client; the installed binary gets this from postFixup instead.
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.wayland ];
+            # A cargo build gets no rpath and wayland-sys dlopens libwayland-client; the installed binary gets this from postFixup instead. The Vulkan loader is for the hardware build of `apps/spike`, whose wgpu dlopens it — the shell itself is software-only and never loads it.
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+              pkgs.wayland
+              pkgs.vulkan-loader
+            ];
           };
         }
       );

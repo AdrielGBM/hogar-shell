@@ -10,6 +10,19 @@ members = [
     "crates/modules",
     "crates/settings",
     "apps/hogar-shell",
+    "apps/spike",
+]
+# Every member except the benchmark, a second binary, so a bare `cargo run` (and `cargo telar test`, which runs one) still means the shell; `--workspace` includes it. A new crate goes in both lists.
+default-members = [
+    "crates/platform-wayland",
+    "crates/util",
+    "crates/config",
+    "crates/services",
+    "crates/ui",
+    "crates/surfaces",
+    "crates/modules",
+    "crates/settings",
+    "apps/hogar-shell",
 ]
 
 [workspace.package]

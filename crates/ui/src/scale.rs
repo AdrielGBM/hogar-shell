@@ -133,7 +133,9 @@ mod tests {
                     .extension()
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| e == "rs" || e == "rsx");
-                if !is_source || relative == "crates/ui/src/scale.rs" {
+                // The benchmark draws a fixed fixture scene outside the shell's config environment, where the scale's surface-derived steps do not exist.
+                let benchmark = relative.starts_with("apps/spike/");
+                if !is_source || relative == "crates/ui/src/scale.rs" || benchmark {
                     continue;
                 }
                 let Ok(text) = std::fs::read_to_string(&path) else {

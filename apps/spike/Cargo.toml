@@ -1,0 +1,19 @@
+[package]
+name = "hogar-shell-spike"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+libc.workspace = true
+platform-wayland.workspace = true
+telar.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
+
+[features]
+# The shell pins `software` and the workspace `telar` compiles nothing else, so the wgpu renderer is opt-in here and never reaches the shell's own build.
+hardware = ["telar/hardware"]
