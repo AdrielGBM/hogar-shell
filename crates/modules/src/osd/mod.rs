@@ -43,7 +43,8 @@ pub fn current_osd_radius() -> f32 {
 pub(crate) fn osd_content(kind: OsdKind, theme: NordTheme) -> Box<dyn LayoutItem> {
     set_theme(theme);
     util::state::set_context(OsdCtx { kind });
-    let content = osd::osd(osd::OsdProps::props().build(), telar::Children::default()).expect("osd content build failed");
+    let content = osd::osd(osd::OsdProps::props().build(), telar::Children::default())
+        .expect("osd content build failed");
     let Some(threshold) = crate::stack::swipe::column_threshold() else {
         return content;
     };
@@ -53,7 +54,8 @@ pub(crate) fn osd_content(kind: OsdKind, theme: NordTheme) -> Box<dyn LayoutItem
         |_| RectStyle::filled(Color::TRANSPARENT, 0.0),
         vec![content],
     ) else {
-        return osd::osd(osd::OsdProps::props().build(), telar::Children::default()).expect("osd content build failed");
+        return osd::osd(osd::OsdProps::props().build(), telar::Children::default())
+            .expect("osd content build failed");
     };
     Box::new(crate::stack::swipe::swipe_aside(
         draggable,

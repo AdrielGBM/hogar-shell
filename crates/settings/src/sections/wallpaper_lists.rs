@@ -92,12 +92,14 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
     )?;
 
     let clear = save_button(
-            SaveButtonProps::props()
-                .label(telar::Reactive::of(|| telar::t!("settings.wallpaper.clear")))
-                .on_press(std::rc::Rc::new(|| services::wallpaper::clear(None)))
-                .build(),
-            telar::Children::default(),
-        )?;
+        SaveButtonProps::props()
+            .label(telar::Reactive::of(|| {
+                telar::t!("settings.wallpaper.clear")
+            }))
+            .on_press(std::rc::Rc::new(|| services::wallpaper::clear(None)))
+            .build(),
+        telar::Children::default(),
+    )?;
 
     Ok(Box::new(Container::new(
         LayoutStyle::new()
@@ -331,23 +333,26 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let path = path.to_path_buf();
     let save = save_button(
         SaveButtonProps::props()
-            .label(telar::Reactive::of(|| telar::t!("settings.save.background")))
+            .label(telar::Reactive::of(|| {
+                telar::t!("settings.save.background")
+            }))
             .on_press(std::rc::Rc::new(move || {
-            let monitors = monitors
-                .iter()
-                .filter_map(|(name, value)| {
-                    opt_string(&value.peek()).map(|path| (name.clone(), PathBuf::from(path)))
-                })
-                .collect();
-            let value = BackgroundConfig {
-                enabled: enabled.peek(),
-                image: opt_string(&image.peek()).map(PathBuf::from),
-                monitors,
-                transition: WallpaperTransition::from_id(&transition.peek()).unwrap_or_default(),
-                transition_ms: parse_u64(&transition_ms.peek(), base.transition_ms),
-            };
-            persist(&path, "background", &value);
-        }))
+                let monitors = monitors
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        opt_string(&value.peek()).map(|path| (name.clone(), PathBuf::from(path)))
+                    })
+                    .collect();
+                let value = BackgroundConfig {
+                    enabled: enabled.peek(),
+                    image: opt_string(&image.peek()).map(PathBuf::from),
+                    monitors,
+                    transition: WallpaperTransition::from_id(&transition.peek())
+                        .unwrap_or_default(),
+                    transition_ms: parse_u64(&transition_ms.peek(), base.transition_ms),
+                };
+                persist(&path, "background", &value);
+            }))
             .build(),
         telar::Children::default(),
     )?;

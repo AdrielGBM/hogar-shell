@@ -212,9 +212,14 @@ pub fn popout_content(
             .on_hover(Rc::new(keep_open))
             .build(),
         telar::Children::new({
-                let content = std::cell::RefCell::new(Some(content));
-                move || content.borrow_mut().take().ok_or_else(|| LayoutError::Engine("children built twice".into()))
-            }),
+            let content = std::cell::RefCell::new(Some(content));
+            move || {
+                content
+                    .borrow_mut()
+                    .take()
+                    .ok_or_else(|| LayoutError::Engine("children built twice".into()))
+            }
+        }),
     )?;
     Ok(Box::new(Container::new(corner_style(edge), vec![framed])?))
 }

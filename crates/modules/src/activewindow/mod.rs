@@ -33,7 +33,11 @@ pub fn icon_slot(
     props: IconSlotProps,
     _children: telar::Children,
 ) -> Result<Box<dyn telar::LayoutItem>, telar::LayoutError> {
-    let IconSlotProps { class, size, inverted } = props;
+    let IconSlotProps {
+        class,
+        size,
+        inverted,
+    } = props;
     let Some(icon) = ui::icon::app_icon_view(&class, size)? else {
         return Ok(telar::box_item(telar::Container::new(
             telar::LayoutStyle::new(),
@@ -67,10 +71,17 @@ mod tests {
         reset_layout_runtime();
         let row = Container::new(
             LayoutStyle::new().flex_row(),
-            vec![icon_slot(
-                IconSlotProps::props().class(class).size(16.0).inverted(inverted).build(),
-                telar::Children::default(),
-            ).expect("the slot builds")],
+            vec![
+                icon_slot(
+                    IconSlotProps::props()
+                        .class(class)
+                        .size(16.0)
+                        .inverted(inverted)
+                        .build(),
+                    telar::Children::default(),
+                )
+                .expect("the slot builds"),
+            ],
         )
         .expect("the row builds");
         let rect = track_layout(row.layout_node()).expect("a container registers its rect");

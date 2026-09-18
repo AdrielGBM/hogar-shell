@@ -196,7 +196,11 @@ pub fn pill_grid(
     props: PillGridProps,
     _children: telar::Children,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let PillGridProps { items, style, on_press } = props;
+    let PillGridProps {
+        items,
+        style,
+        on_press,
+    } = props;
     let slot = signal(ZERO_RECT);
     let for_rows = slot;
     // `with_style` rather than `with_gap`: the gap constructors hardcode a column, so a bottom bar would stack its pills downwards inside a strip one pill high and show nothing at all.
@@ -775,9 +779,14 @@ mod tests {
                 indicator: true,
             };
             let grid = pill_grid(
-                PillGridProps::props().items(items).style(style).on_press(|_| {}).build(),
+                PillGridProps::props()
+                    .items(items)
+                    .style(style)
+                    .on_press(|_| {})
+                    .build(),
                 telar::Children::default(),
-            ).expect("the grid builds");
+            )
+            .expect("the grid builds");
             let rect = track_layout(grid.layout_node()).expect("the grid registers its rect");
             // Centred rather than the default stretch, so the grid reports the size of its own content instead of the harness's.
             let root = new_container(
@@ -849,9 +858,14 @@ mod tests {
                 };
                 assert!(
                     pill_grid(
-                PillGridProps::props().items(items).style(style).on_press(|_| {}).build(),
-                telar::Children::default(),
-            ).is_ok(),
+                        PillGridProps::props()
+                            .items(items)
+                            .style(style)
+                            .on_press(|_| {})
+                            .build(),
+                        telar::Children::default(),
+                    )
+                    .is_ok(),
                     "vertical={vertical} indicator={indicator}"
                 );
             }
@@ -1022,9 +1036,14 @@ mod tests {
             indicator: true,
         };
         let built = pill_grid(
-                PillGridProps::props().items(items).style(style).on_press(|_| {}).build(),
-                telar::Children::default(),
-            ).expect("the grid builds");
+            PillGridProps::props()
+                .items(items)
+                .style(style)
+                .on_press(|_| {})
+                .build(),
+            telar::Children::default(),
+        )
+        .expect("the grid builds");
         let root_node = new_container(
             LayoutStyle::new()
                 .flex_row()

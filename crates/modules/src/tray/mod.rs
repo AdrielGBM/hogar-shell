@@ -134,7 +134,14 @@ pub fn tray_icon(
     props: TrayIconProps,
     _children: telar::Children,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let TrayIconProps { item, config, fg, theme, size, radius } = props;
+    let TrayIconProps {
+        item,
+        config,
+        fg,
+        theme,
+        size,
+        radius,
+    } = props;
     let icon = icon_widget(&item, &config, fg.get(), size)?;
     let pad = if config.compact {
         (size * 0.08).round().max(1.0)

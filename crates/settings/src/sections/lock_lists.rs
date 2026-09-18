@@ -70,13 +70,15 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
     let saved = Rc::clone(&list);
     let save = save_button(
         SaveButtonProps::props()
-            .label(telar::Reactive::of(|| telar::t!("settings.save.idle_stages")))
+            .label(telar::Reactive::of(|| {
+                telar::t!("settings.save.idle_stages")
+            }))
             .on_press(std::rc::Rc::new(move || {
-            persist_with(&path, "idle", |current| IdleConfig {
-                stages: saved.collect(),
-                ..current.idle.clone()
-            });
-        }))
+                persist_with(&path, "idle", |current| IdleConfig {
+                    stages: saved.collect(),
+                    ..current.idle.clone()
+                });
+            }))
             .build(),
         telar::Children::default(),
     )?;

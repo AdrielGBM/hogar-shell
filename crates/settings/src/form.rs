@@ -344,7 +344,13 @@ pub(crate) fn toggle_field(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     record_field(&value);
-    let control = telar::toggle(telar::ToggleProps::props().checked(value).color(telar::Reactive::of(move || theme.accent)).build(), telar::Children::default())?;
+    let control = telar::toggle(
+        telar::ToggleProps::props()
+            .checked(value)
+            .color(telar::Reactive::of(move || theme.accent))
+            .build(),
+        telar::Children::default(),
+    )?;
     labelled(label, control, theme)
 }
 
@@ -357,13 +363,20 @@ pub(crate) fn enum_field(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let picked = option_index(value, options);
     let control = telar::select(
-        telar::SelectProps::props().selected(picked).color(telar::Reactive::of(move || theme.accent)).stretch(true).on_select(std::rc::Rc::new(move |at| pick_option(&value, options, at))).build(),
+        telar::SelectProps::props()
+            .selected(picked)
+            .color(telar::Reactive::of(move || theme.accent))
+            .stretch(true)
+            .on_select(std::rc::Rc::new(move |at| pick_option(&value, options, at)))
+            .build(),
         // The choices are rows now, not strings: one `item` per option, rebuilt whenever the list reopens.
         telar::Children::new(move || {
             let mut slots = telar::Slots::new();
             for opt in options {
                 let row = telar::item(
-                    telar::ItemProps::props().label(telar::Reactive::of(move || opt.to_string())).build(),
+                    telar::ItemProps::props()
+                        .label(telar::Reactive::of(move || opt.to_string()))
+                        .build(),
                     telar::Children::default(),
                 )?;
                 slots.push(None, row);
@@ -391,7 +404,13 @@ pub(crate) fn save_button(
     live_apply(Rc::clone(&on_press));
 
     // The catalogue's button with no `fill` of its own: unset means "the theme's `primary`", which is this theme's accent, darkened on hover — the three states this form used to spell out by hand.
-    let button = telar::button(telar::ButtonProps::props().label(label).on_press(on_press).build(), telar::Children::default())?;
+    let button = telar::button(
+        telar::ButtonProps::props()
+            .label(label)
+            .on_press(on_press)
+            .build(),
+        telar::Children::default(),
+    )?;
     Ok(button)
 }
 

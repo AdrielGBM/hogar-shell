@@ -342,32 +342,32 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
         SaveButtonProps::props()
             .label(telar::Reactive::of(|| telar::t!("settings.save.theme")))
             .on_press(std::rc::Rc::new(move || {
-            let value = ThemeConfig {
-                opacity: parse_f32(&opacity.peek(), base.opacity),
-                name: name.peek(),
-                mode: mode.peek(),
-                variant: variant.peek(),
-                fallback: fallback.peek(),
-                accent: accent.peek(),
-                font_family: opt_string(&font_family.peek()),
-                radius: opt_u32(&radius.peek()),
-                spacing: opt_u32(&spacing.peek()),
-                font_size: opt_f32(&font_size.peek()),
-                icon_size: opt_f32(&icon_size.peek()),
-                icon_stroke: opt_f32(&icon_stroke.peek()),
-                scale: ScaleConfig {
-                    rounding: parse_f32(&scale_rounding.peek(), base.scale.rounding),
-                    spacing: parse_f32(&scale_spacing.peek(), base.scale.spacing),
-                    font: parse_f32(&scale_font.peek(), base.scale.font),
-                    icon: parse_f32(&scale_icon.peek(), base.scale.icon),
-                },
-                // Carried through unchanged, like `colors`: per-role overrides and the export switches are nested tables the flat panel has no rows for, and rewriting the section must not drop them.
-                fonts: base.fonts,
-                export: base.export.clone(),
-                colors: base.colors.clone(),
-            };
-            persist(&path, "theme", &value);
-        }))
+                let value = ThemeConfig {
+                    opacity: parse_f32(&opacity.peek(), base.opacity),
+                    name: name.peek(),
+                    mode: mode.peek(),
+                    variant: variant.peek(),
+                    fallback: fallback.peek(),
+                    accent: accent.peek(),
+                    font_family: opt_string(&font_family.peek()),
+                    radius: opt_u32(&radius.peek()),
+                    spacing: opt_u32(&spacing.peek()),
+                    font_size: opt_f32(&font_size.peek()),
+                    icon_size: opt_f32(&icon_size.peek()),
+                    icon_stroke: opt_f32(&icon_stroke.peek()),
+                    scale: ScaleConfig {
+                        rounding: parse_f32(&scale_rounding.peek(), base.scale.rounding),
+                        spacing: parse_f32(&scale_spacing.peek(), base.scale.spacing),
+                        font: parse_f32(&scale_font.peek(), base.scale.font),
+                        icon: parse_f32(&scale_icon.peek(), base.scale.icon),
+                    },
+                    // Carried through unchanged, like `colors`: per-role overrides and the export switches are nested tables the flat panel has no rows for, and rewriting the section must not drop them.
+                    fonts: base.fonts,
+                    export: base.export.clone(),
+                    colors: base.colors.clone(),
+                };
+                persist(&path, "theme", &value);
+            }))
             .build(),
         telar::Children::default(),
     )?;
@@ -410,20 +410,22 @@ pub(crate) fn theme_colors_section() -> Result<Box<dyn LayoutItem>, LayoutError>
     let path = path.to_path_buf();
     let save = save_button(
         SaveButtonProps::props()
-            .label(telar::Reactive::of(|| telar::t!("settings.save.theme_colors")))
+            .label(telar::Reactive::of(|| {
+                telar::t!("settings.save.theme_colors")
+            }))
             .on_press(std::rc::Rc::new(move || {
-            let colors: std::collections::HashMap<String, String> = fields
-                .iter()
-                .filter_map(|(token, value)| {
-                    opt_string(&value.peek()).map(|hex| (token.to_string(), hex))
-                })
-                .collect();
-            // Only this form's key: `theme_section` above owns every other one in `[theme]`.
-            persist_with(&path, "theme", |current| ThemeConfig {
-                colors,
-                ..current.theme.clone()
-            });
-        }))
+                let colors: std::collections::HashMap<String, String> = fields
+                    .iter()
+                    .filter_map(|(token, value)| {
+                        opt_string(&value.peek()).map(|hex| (token.to_string(), hex))
+                    })
+                    .collect();
+                // Only this form's key: `theme_section` above owns every other one in `[theme]`.
+                persist_with(&path, "theme", |current| ThemeConfig {
+                    colors,
+                    ..current.theme.clone()
+                });
+            }))
             .build(),
         telar::Children::default(),
     )?;

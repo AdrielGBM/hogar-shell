@@ -85,7 +85,8 @@ pub(crate) fn open_drawer(env: &SurfaceEnv, module_id: &str, chip: Option<Rect>)
         drawer_panel::drawer_panel(
             drawer_panel::DrawerPanelProps::props().build(),
             telar::Children::default(),
-        ).expect("drawer panel build failed")
+        )
+        .expect("drawer panel build failed")
     })
     .animated()
     .open()

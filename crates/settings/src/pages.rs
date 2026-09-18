@@ -112,18 +112,24 @@ pub const PAGES: &[Page] = &[
                 crate::sections::shape::ShapeProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("corners", ["corners"], || crate::sections::corners::corners(
-                crate::sections::corners::CornersProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!(
+                "corners",
+                ["corners"],
+                || crate::sections::corners::corners(
+                    crate::sections::corners::CornersProps::props().build(),
+                    telar::Children::default(),
+                )
+            ),
             section!("icons", ["icons"], || crate::sections::icons::icons(
                 crate::sections::icons::IconsProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("animation", ["animation"], || crate::sections::animation::animation(
-                crate::sections::animation::AnimationProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("animation", ["animation"], || {
+                crate::sections::animation::animation(
+                    crate::sections::animation::AnimationProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
         ],
     },
     Page {
@@ -140,10 +146,14 @@ pub const PAGES: &[Page] = &[
                 crate::sections::panels::PanelsProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("popouts", ["popouts"], || crate::sections::popouts::popouts(
-                crate::sections::popouts::PopoutsProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!(
+                "popouts",
+                ["popouts"],
+                || crate::sections::popouts::popouts(
+                    crate::sections::popouts::PopoutsProps::props().build(),
+                    telar::Children::default(),
+                )
+            ),
             section!("stack", ["stack"], || crate::sections::stack::stack(
                 crate::sections::stack::StackProps::props().build(),
                 telar::Children::default(),
@@ -152,39 +162,53 @@ pub const PAGES: &[Page] = &[
                 crate::sections::clock::ClockProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("active_window", ["active_window"], || crate::sections::active_window::active_window(
-                crate::sections::active_window::ActiveWindowProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("workspaces", ["workspaces"], || crate::sections::workspaces::workspaces(
-                crate::sections::workspaces::WorkspacesProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("status_icons", ["status_icons"], || crate::sections::status_icons::status_icons(
-                crate::sections::status_icons::StatusIconsProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("active_window", ["active_window"], || {
+                crate::sections::active_window::active_window(
+                    crate::sections::active_window::ActiveWindowProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("workspaces", ["workspaces"], || {
+                crate::sections::workspaces::workspaces(
+                    crate::sections::workspaces::WorkspacesProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("status_icons", ["status_icons"], || {
+                crate::sections::status_icons::status_icons(
+                    crate::sections::status_icons::StatusIconsProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
             section!("tray", ["tray"], || crate::sections::tray::tray(
                 crate::sections::tray::TrayProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("battery", ["battery"], || crate::sections::battery::battery(
-                crate::sections::battery::BatteryProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!(
+                "battery",
+                ["battery"],
+                || crate::sections::battery::battery(
+                    crate::sections::battery::BatteryProps::props().build(),
+                    telar::Children::default(),
+                )
+            ),
             section!(
                 "battery_warnings",
                 ["battery"],
                 crate::sections::bars::battery_warnings_section
             ),
-            section!("lock_status", ["lock_status"], || crate::sections::lock_status::lock_status(
-                crate::sections::lock_status::LockStatusProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("temperature", ["temperature"], || crate::sections::temperature::temperature(
-                crate::sections::temperature::TemperatureProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("lock_status", ["lock_status"], || {
+                crate::sections::lock_status::lock_status(
+                    crate::sections::lock_status::LockStatusProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("temperature", ["temperature"], || {
+                crate::sections::temperature::temperature(
+                    crate::sections::temperature::TemperatureProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
         ],
     },
     Page {
@@ -195,10 +219,12 @@ pub const PAGES: &[Page] = &[
                 crate::sections::audio::AudioProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("visualiser", ["visualiser"], || crate::sections::visualiser::visualiser(
-                crate::sections::visualiser::VisualiserProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("visualiser", ["visualiser"], || {
+                crate::sections::visualiser::visualiser(
+                    crate::sections::visualiser::VisualiserProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
             section!("media", ["media"], || crate::sections::media::media(
                 crate::sections::media::MediaProps::props().build(),
                 telar::Children::default(),
@@ -217,18 +243,22 @@ pub const PAGES: &[Page] = &[
     Page {
         label: "network",
         icon: "wifi",
-        sections: &[section!("network", ["network"], || crate::sections::network::network(
+        sections: &[section!("network", ["network"], || {
+            crate::sections::network::network(
                 crate::sections::network::NetworkProps::props().build(),
                 telar::Children::default(),
-            ))],
+            )
+        })],
     },
     Page {
         label: "bluetooth",
         icon: "bluetooth",
-        sections: &[section!("bluetooth", ["bluetooth"], || crate::sections::bluetooth::bluetooth(
+        sections: &[section!("bluetooth", ["bluetooth"], || {
+            crate::sections::bluetooth::bluetooth(
                 crate::sections::bluetooth::BluetoothProps::props().build(),
                 telar::Children::default(),
-            ))],
+            )
+        })],
     },
     Page {
         label: "applications",
@@ -239,28 +269,36 @@ pub const PAGES: &[Page] = &[
                 ["launcher"],
                 crate::sections::applications::apps_section
             ),
-            section!("launcher", ["launcher"], || crate::sections::launcher::launcher(
-                crate::sections::launcher::LauncherProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("launcher", ["launcher"], || {
+                crate::sections::launcher::launcher(
+                    crate::sections::launcher::LauncherProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
         ],
     },
     Page {
         label: "notifications",
         icon: "bell",
         sections: &[
-            section!("notifications", ["notifications"], || crate::sections::notifications::notifications(
-                crate::sections::notifications::NotificationsProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("notifications", ["notifications"], || {
+                crate::sections::notifications::notifications(
+                    crate::sections::notifications::NotificationsProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
             section!("toasts", ["toasts"], || crate::sections::toasts::toasts(
                 crate::sections::toasts::ToastsProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("sidebar", ["sidebar"], || crate::sections::sidebar::sidebar(
-                crate::sections::sidebar::SidebarProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!(
+                "sidebar",
+                ["sidebar"],
+                || crate::sections::sidebar::sidebar(
+                    crate::sections::sidebar::SidebarProps::props().build(),
+                    telar::Children::default(),
+                )
+            ),
         ],
     },
     Page {
@@ -296,66 +334,90 @@ pub const PAGES: &[Page] = &[
                 ["background"],
                 crate::sections::wallpaper_lists::background_section
             ),
-            section!("wallpaper", ["wallpaper"], || crate::sections::wallpaper::wallpaper(
-                crate::sections::wallpaper::WallpaperProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("desktop_clock", ["widgets"], || crate::sections::desktop_clock::desktop_clock(
-                crate::sections::desktop_clock::DesktopClockProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("desktop_visualiser", ["widgets"], || crate::sections::desktop_visualiser::desktop_visualiser(
-                crate::sections::desktop_visualiser::DesktopVisualiserProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("wallpaper", ["wallpaper"], || {
+                crate::sections::wallpaper::wallpaper(
+                    crate::sections::wallpaper::WallpaperProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("desktop_clock", ["widgets"], || {
+                crate::sections::desktop_clock::desktop_clock(
+                    crate::sections::desktop_clock::DesktopClockProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("desktop_visualiser", ["widgets"], || {
+                crate::sections::desktop_visualiser::desktop_visualiser(
+                    crate::sections::desktop_visualiser::DesktopVisualiserProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
         ],
     },
     Page {
         label: "language",
         icon: "languages",
         sections: &[
-            section!("general", ["general"], || crate::sections::general::general(
-                crate::sections::general::GeneralProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("dashboard", ["dashboard"], || crate::sections::dashboard::dashboard(
-                crate::sections::dashboard::DashboardProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!(
+                "general",
+                ["general"],
+                || crate::sections::general::general(
+                    crate::sections::general::GeneralProps::props().build(),
+                    telar::Children::default(),
+                )
+            ),
+            section!("dashboard", ["dashboard"], || {
+                crate::sections::dashboard::dashboard(
+                    crate::sections::dashboard::DashboardProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
         ],
     },
     Page {
         label: "services",
         icon: "server",
         sections: &[
-            section!("weather", ["weather"], || crate::sections::weather::weather(
-                crate::sections::weather::WeatherProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!(
+                "weather",
+                ["weather"],
+                || crate::sections::weather::weather(
+                    crate::sections::weather::WeatherProps::props().build(),
+                    telar::Children::default(),
+                )
+            ),
             section!("gpu", ["gpu"], || crate::sections::gpu::gpu(
                 crate::sections::gpu::GpuProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("brightness", ["brightness"], || crate::sections::brightness::brightness(
-                crate::sections::brightness::BrightnessProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("brightness", ["brightness"], || {
+                crate::sections::brightness::brightness(
+                    crate::sections::brightness::BrightnessProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
             section!("paths", ["paths"], || crate::sections::paths::paths(
                 crate::sections::paths::PathsProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("screenshot", ["screenshot"], || crate::sections::screenshot::screenshot(
-                crate::sections::screenshot::ScreenshotProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("recorder", ["recorder"], || crate::sections::recorder::recorder(
-                crate::sections::recorder::RecorderProps::props().build(),
-                telar::Children::default(),
-            )),
-            section!("utilities", ["utilities"], || crate::sections::utilities::utilities(
-                crate::sections::utilities::UtilitiesProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!("screenshot", ["screenshot"], || {
+                crate::sections::screenshot::screenshot(
+                    crate::sections::screenshot::ScreenshotProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("recorder", ["recorder"], || {
+                crate::sections::recorder::recorder(
+                    crate::sections::recorder::RecorderProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("utilities", ["utilities"], || {
+                crate::sections::utilities::utilities(
+                    crate::sections::utilities::UtilitiesProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
             section!("keynav", ["keynav"], || crate::sections::keynav::keynav(
                 crate::sections::keynav::KeynavProps::props().build(),
                 telar::Children::default(),
