@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use util::broadcast::Store;
+use util::writer;
 
 /// One persisted note: an optional icon (`set:name`, e.g. `mdi:home`), a title, and a body. Stored in a TOML array of tables (`[[notes]]`) under the data dir; the panel is the single editor, loading on open and saving on edit.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -20,10 +22,17 @@ struct NotesFile {
     notes: Vec<Note>,
 }
 
-/// The notes on disk, or an empty list when the file is missing or unparseable.
+static NOTES: Store<Vec<Note>> = Store::new(|| load_from(&notes_path()));
+
+/// The notes as last saved, or an empty list when the file is missing or unparseable.
+///
+/// Answered from memory: the file is read once, the first time anything asks, and every [`save`] replaces the value before it queues the write. The panel asks every time it opens, so an edit made just before closing it comes back as itself rather than as the note it replaced, and the panel's thread never waits for the disk to catch up.
 pub fn load() -> Vec<Note> {
-    let path = notes_path();
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    NOTES.get()
+}
+
+fn load_from(path: &Path) -> Vec<Note> {
+    let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
     match toml::from_str::<NotesFile>(&text) {
@@ -35,21 +44,19 @@ pub fn load() -> Vec<Note> {
     }
 }
 
-/// Persists `notes`, creating the data dir if needed. Best-effort: a write failure is logged, not surfaced.
+/// Makes `notes` what [`load`] answers from now on, and persists them. Best-effort: a write failure is logged, not surfaced.
+///
+/// Handed to [`util::writer`]'s queue, because nothing can regenerate a note the way a cache or an export is rebuilt. The writer replaces the file whole, so a crash mid-save leaves the previous copy rather than half of each, and keeps saves in the order they were made, so two edits a moment apart still leave the later one on disk. The panel's thread never waits for any of it.
 pub fn save(notes: &[Note]) {
-    let path = notes_path();
+    save_to(&NOTES, notes_path(), notes);
+}
+
+fn save_to(saved: &'static Store<Vec<Note>>, path: PathBuf, notes: &[Note]) {
     let file = NotesFile {
-        notes: notes.to_vec(),
+        notes: saved.update(|current| *current = notes.to_vec()),
     };
     match toml::to_string_pretty(&file) {
-        Ok(text) => {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Err(e) = std::fs::write(&path, text) {
-                tracing::warn!("notes save failed: {e}");
-            }
-        }
+        Ok(text) => writer::queue(path, text.into_bytes()),
         Err(e) => tracing::warn!("notes serialize failed: {e}"),
     }
 }
@@ -112,5 +119,43 @@ mod tests {
             },
         ];
         assert_eq!(next_id(&notes), 8);
+    }
+
+    fn scratch() -> PathBuf {
+        std::env::temp_dir().join(format!("hogar-shell-notes-{}", std::process::id()))
+    }
+
+    static SAVED: Store<Vec<Note>> = Store::new(|| load_from(&scratch().join("notes.toml")));
+
+    /// The panel saves on a timer and loads every time it opens, so an edit and a reopen can be milliseconds apart. Both halves are pinned here, into a data dir that does not exist yet: a load straight after two saves answers with the later one without waiting for either write, and once the writer has caught up, the later one is also what is on disk.
+    #[test]
+    fn a_note_saved_twice_reads_back_as_the_later_edit() {
+        let dir = scratch();
+        std::fs::remove_dir_all(&dir).ok();
+        let path = dir.join("notes.toml");
+        let note = |body: &str| Note {
+            id: 1,
+            icon: None,
+            title: "Groceries".to_string(),
+            body: body.to_string(),
+        };
+
+        assert_eq!(SAVED.get(), Vec::new(), "the first open finds no notes");
+        save_to(&SAVED, path.clone(), &[note("Milk")]);
+        save_to(&SAVED, path.clone(), &[note("Milk, eggs")]);
+        assert_eq!(
+            SAVED.get(),
+            vec![note("Milk, eggs")],
+            "the reopened panel shows the last edit, not the one before it"
+        );
+
+        writer::flush();
+        assert_eq!(
+            load_from(&path),
+            vec![note("Milk, eggs")],
+            "and the later edit is the one the next start reads"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

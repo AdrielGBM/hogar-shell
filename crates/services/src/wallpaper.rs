@@ -4,10 +4,12 @@
 //!
 //! Resolution order for one screen, most specific first: the runtime per-output choice, the runtime global one, `[background.monitors]`, `[background] image`. A user who pinned an image in their config still sees it until something sets one at runtime, and `hogar-shell wallpaper clear` puts them back.
 
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
+use ::image::{DynamicImage, ImageFormat, ImageResult};
 use platform_wayland::EventSender;
 
 use crate::state;
@@ -369,17 +371,24 @@ pub fn thumbnail(source: &Path, size: u32) -> Option<PathBuf> {
         return Some(cached);
     }
     let image = ::image::open(source).ok()?;
-    let thumb = image.thumbnail(size, size);
-    if let Some(parent) = cached.parent() {
-        paths::ensure_dir(parent.to_path_buf());
-    }
-    match thumb.save(&cached) {
+    match store(&image.thumbnail(size, size), &cached) {
         Ok(()) => Some(cached),
         Err(e) => {
             tracing::warn!("thumbnail for {}: {e}", source.display());
             None
         }
     }
+}
+
+/// Encodes `thumb` in the format `path`'s extension names and puts it there whole.
+///
+/// Written with [`util::fs::write_atomic`] rather than `DynamicImage::save`, which truncates the target before it encodes into it: [`thumbnail`] and [`cached_thumbnail`] answer from `exists()`, so a half-written thumbnail would reach the decoder as a finished one, and one a crash cut short would be served that way until its source changed. Directly rather than through the writer's queue, because the name is the source's hash, mtime and size, so there is no order between writes to protect.
+fn store(thumb: &DynamicImage, path: &Path) -> ImageResult<()> {
+    let format = ImageFormat::from_path(path)?;
+    let mut encoded = Cursor::new(Vec::new());
+    thumb.write_to(&mut encoded, format)?;
+    util::fs::write_atomic(path, encoded.get_ref())?;
+    Ok(())
 }
 
 /// The thumbnail for `source` only if it has already been generated. What a grid asks before queueing work: a cache hit is one `exists` and can be drawn on the frame it is asked for, where a miss is a full-size decode.
@@ -579,5 +588,35 @@ mod tests {
             choose(&[], None, 0).is_none(),
             "an empty library has no answer"
         );
+    }
+
+    /// A cache hit is only an `exists()`, and the cache directory is shared by every shell the user runs, so one can be decoding a thumbnail at the moment another, which missed the cache too, stores the same one again. The store has to replace the file rather than rewrite it: a reader that already opened it keeps the whole image it opened, instead of one truncated and refilled underneath it.
+    #[test]
+    fn storing_a_thumbnail_again_leaves_a_reader_of_the_first_one_a_whole_image() {
+        use std::io::Read;
+
+        let root = temp("thumbnail");
+        let cached = root.join("wallpapers").join("0123456789abcdef-320.png");
+        store(&DynamicImage::new_rgb8(4, 4), &cached)
+            .expect("the first store creates the cache directory");
+        let mut reader = std::fs::File::open(&cached).unwrap();
+
+        store(&DynamicImage::new_rgb8(8, 8), &cached).expect("stored again");
+        let mut opened = Vec::new();
+        reader.read_to_end(&mut opened).unwrap();
+        assert_eq!(
+            ::image::load_from_memory(&opened)
+                .expect("the reader still holds a whole image")
+                .width(),
+            4,
+            "and it is the one it opened"
+        );
+        assert_eq!(
+            ::image::open(&cached).unwrap().width(),
+            8,
+            "a reader arriving now gets the new one"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

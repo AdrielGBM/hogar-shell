@@ -340,6 +340,9 @@ fn cached_icon(id: &IconId, cache_dir: &Path) -> Option<Arc<SvgData>> {
     SvgData::from_str(&text).ok().map(Arc::new)
 }
 
+/// The glyph from the disk cache, else downloaded and cached. A cache write that fails goes unreported: the glyph is already parsed and in hand, and all it costs is a download next time.
+///
+/// Written with [`util::fs::write_atomic`] directly rather than through the writer's queue: the name is the icon's id, so there is no order between writes to protect, only a file that [`cached_icon`] must never read half-written.
 fn load_icon(id: &IconId, fetch: &FetchConfig, agent: &ureq::Agent) -> Option<Arc<SvgData>> {
     if let Some(svg) = cached_icon(id, &fetch.cache_dir) {
         return Some(svg);
@@ -357,10 +360,7 @@ fn load_icon(id: &IconId, fetch: &FetchConfig, agent: &ureq::Agent) -> Option<Ar
         return None;
     }
     let svg = SvgData::from_str(&body).ok()?;
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(&path, &body);
+    let _ = util::fs::write_atomic(&path, body.as_bytes());
     Some(Arc::new(svg))
 }
 

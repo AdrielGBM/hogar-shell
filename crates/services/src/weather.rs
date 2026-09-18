@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use config::WeatherConfig;
 use util::broadcast::{Broadcast, Service};
 use util::paths;
+use util::writer;
 
 const FORECAST_URL: &str = "https://api.open-meteo.com/v1/forecast";
 const GEOCODE_URL: &str = "https://geocoding-api.open-meteo.com/v1/search";
@@ -322,14 +323,12 @@ fn load_cache() -> Option<Weather> {
     serde_json::from_str(&std::fs::read_to_string(cache_path()).ok()?).ok()
 }
 
+/// Queues the reading for the next start's first frame. Through [`writer`] because this one path is rewritten on every refresh, and two refreshes must land in the order they were fetched.
 fn save_cache(weather: &Weather) {
     let Ok(text) = serde_json::to_string(weather) else {
         return;
     };
-    let path = paths::ensure_dir(paths::cache_dir()).join("weather.json");
-    if let Err(e) = std::fs::write(&path, text) {
-        tracing::warn!("weather: cannot write {}: {e}", path.display());
-    }
+    writer::queue(cache_path(), text.into_bytes());
 }
 
 static WEATHER: Service<Weather> = Service::new("hogar-shell-weather", run);

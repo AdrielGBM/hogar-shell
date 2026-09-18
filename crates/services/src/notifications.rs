@@ -479,7 +479,7 @@ struct HistoryFile {
     notifications: Vec<Notification>,
 }
 
-/// Owns the disk writes on its own thread: takes each new history snapshot, debounces a burst (keeping only the last), and writes it. Ends when the daemon — and thus the sender — is dropped (i.e. process exit).
+/// Debounces history snapshots on its own thread: takes each new one, waits out a burst (keeping only the last), and hands it to [`save_history`]. Ends when the daemon — and thus the sender — is dropped (i.e. process exit).
 fn run_saver(rx: Receiver<Vec<Notification>>) {
     let path = history_path();
     while let Ok(mut latest) = rx.recv() {
@@ -505,21 +505,16 @@ fn load_history() -> Vec<Notification> {
     }
 }
 
-/// Writes the most recent [`MAX_HISTORY`] notifications. Best-effort: a failure is logged, not surfaced.
+/// Queues the most recent [`MAX_HISTORY`] notifications for [`util::writer`]. Best-effort: a failure is logged, not surfaced.
+///
+/// The queue rather than a write of its own because this one file is rewritten after every notification: the writer keeps successive histories in the order they were taken, and replaces the file whole, so a crash mid-save cannot cost the user the history they already had.
 fn save_history(path: &Path, active: &[Notification]) {
     let start = active.len().saturating_sub(MAX_HISTORY);
     let file = HistoryFile {
         notifications: active[start..].to_vec(),
     };
     match toml::to_string_pretty(&file) {
-        Ok(text) => {
-            if let Some(parent) = path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            if let Err(e) = fs::write(path, text) {
-                tracing::warn!("notification history save failed: {e}");
-            }
-        }
+        Ok(text) => util::writer::queue(path, text.into_bytes()),
         Err(e) => tracing::warn!("notification history serialize failed: {e}"),
     }
 }

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use util::broadcast::Store;
 use util::paths;
+use util::writer;
 
 /// Every persisted field is `#[serde(default)]` so a state file written by an older build — or a hand-deleted key — still loads instead of resetting the user's whole session.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -52,21 +53,14 @@ fn load() -> ShellState {
 
 static STATE: Store<ShellState> = Store::new(load);
 
-/// Writes `state` to disk off the UI thread — a synchronous write in a click handler would stall the frame. Written to a sibling temp file and renamed, so a crash mid-write can't leave a truncated file behind.
+/// Hands `state` to [`util::writer`], which writes it off the UI thread — a synchronous write in a click handler would stall the frame — to a sibling temp file it then renames, so a crash mid-write can't leave a truncated file behind.
+///
+/// A queue rather than a thread per call, which is what this used to be. Both writes were atomic and the race was in which one finished last: two toggles a few milliseconds apart could rename in either order, so the *older* state won and the user's last flick of the switch came back undone after a restart. The writer hands out a generation per path and drops anything a newer write has overtaken, so the last state the shell was in is the state on disk.
 fn persist(state: ShellState) {
-    let _ = std::thread::Builder::new()
-        .name("hogar-shell-state-write".to_string())
-        .spawn(move || {
-            let Ok(text) = serde_json::to_string_pretty(&state) else {
-                return;
-            };
-            let path = path();
-            paths::ensure_dir(paths::state_dir());
-            let temp = path.with_extension("json.tmp");
-            if std::fs::write(&temp, text).is_ok() {
-                let _ = std::fs::rename(&temp, &path);
-            }
-        });
+    let Ok(text) = serde_json::to_string_pretty(&state) else {
+        return;
+    };
+    writer::queue(path(), text.into_bytes());
 }
 
 /// The current state.

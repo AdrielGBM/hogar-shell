@@ -19,6 +19,7 @@ use crate::theme::{NordTheme, THEME_TOKENS as TOKENS, hex};
 use crate::{Config, SchemeExportConfig};
 use util::broadcast::Store;
 use util::paths;
+use util::writer;
 
 /// The config name that selects a wallpaper-derived scheme.
 pub const DYNAMIC: &str = "dynamic";
@@ -499,17 +500,15 @@ fn load_cached(source: &Path, mode: Mode, variant: Variant) -> Option<Scheme> {
     serde_json::from_str(&text).ok()
 }
 
+/// Queues the palette for [`load_cached`] to find on the next start. Through [`writer`] like every file the shell rewrites; an entry that has not landed yet when something looks for it only costs a re-derivation.
 fn store_cached(scheme: &Scheme) {
-    let path = cache_path(&scheme.source, scheme.mode, scheme.variant);
-    if let Some(parent) = path.parent() {
-        paths::ensure_dir(parent.to_path_buf());
-    }
     let Ok(text) = serde_json::to_string(scheme) else {
         return;
     };
-    if let Err(e) = std::fs::write(&path, text) {
-        tracing::warn!("scheme: cannot cache {}: {e}", path.display());
-    }
+    writer::queue(
+        cache_path(&scheme.source, scheme.mode, scheme.variant),
+        text.into_bytes(),
+    );
 }
 
 /// Resolves the scheme for `source` and publishes it, returning whether the palette changed.
@@ -662,26 +661,13 @@ pub fn choices() -> Vec<(Choice, String)> {
 ///
 /// The point of a dynamic scheme is a desktop that agrees with itself, and nothing else on it reads `config.toml`. Each format is a flat list of the same tokens, so adding a consumer is a template here rather than a second place the palette is decided.
 ///
-/// Written on a thread of its own: the cached-startup path calls this from the driver thread, and a hook that reloads a slow application must not be the reason a bar takes a second to appear.
+/// Each file is handed to [`writer`] from the calling thread. They used to be written from a thread spawned per call, which is the race `state.json` had: two scheme changes a moment apart made two threads, and the older palette could rename last and stay in every file other programs read. Queuing in call order keeps the newer one on disk. Rendering the bodies is a few dozen `format!`s over the token list — cheap enough for the driver thread, which the cached-startup path calls this from — and the fsyncs happen on the writer's thread.
 pub fn export_scheme(scheme: &Scheme, config: &SchemeExportConfig) {
     if !config.enabled {
         return;
     }
-    let scheme = scheme.clone();
-    let config = config.clone();
-    let _ = std::thread::Builder::new()
-        .name("hogar-shell-scheme-export".to_string())
-        .spawn(move || write_exports(&scheme, &config));
-}
-
-fn write_exports(scheme: &Scheme, config: &SchemeExportConfig) {
-    let dir = paths::ensure_dir(config.resolved_dir());
-    let write = |name: &str, body: String| {
-        let path = dir.join(name);
-        if let Err(e) = std::fs::write(&path, body) {
-            tracing::warn!("scheme export: cannot write {}: {e}", path.display());
-        }
-    };
+    let dir = config.resolved_dir();
+    let write = |name: &str, body: String| writer::queue(dir.join(name), body.into_bytes());
     if config.json {
         write("scheme.json", as_json(scheme));
     }
@@ -695,12 +681,30 @@ fn write_exports(scheme: &Scheme, config: &SchemeExportConfig) {
         write("scheme.sh", as_shell(scheme));
         write("sequences", as_sequences(scheme));
     }
-    for hook in &config.hooks {
-        let hook = hook.trim();
-        if !hook.is_empty() {
-            util::process::run_detached(hook.to_string());
-        }
+    run_hooks_once_written(&config.hooks);
+}
+
+/// Runs the export hooks after the files they exist to announce are on disk.
+///
+/// A hook is how another program learns to re-read those files, so firing it the moment the writes are queued would reload the old palette. The wait is on a thread of its own because the queue can be busy with the shell's other saves, and the driver thread must not hold a frame for it. Whichever call's hooks run last run after every export queued before them has landed, so however two calls interleave, the last reload sees the newest palette.
+fn run_hooks_once_written(hooks: &[String]) {
+    let hooks: Vec<String> = hooks
+        .iter()
+        .map(|hook| hook.trim())
+        .filter(|hook| !hook.is_empty())
+        .map(str::to_string)
+        .collect();
+    if hooks.is_empty() {
+        return;
     }
+    let _ = std::thread::Builder::new()
+        .name("hogar-shell-scheme-hooks".to_string())
+        .spawn(move || {
+            writer::flush();
+            for hook in hooks {
+                util::process::run_detached(hook);
+            }
+        });
 }
 
 fn as_json(scheme: &Scheme) -> String {
@@ -1017,5 +1021,47 @@ mod tests {
         );
         let parsed: Scheme = serde_json::from_str(&as_json(&scheme)).expect("json round-trips");
         assert_eq!(parsed, scheme);
+    }
+
+    /// **The race the per-call export thread had.** Two scheme changes a moment apart made two threads, and whichever renamed last decided what every other program on the desktop was coloured — as often as not the older palette. Queued in call order, the newer one is what stays, in every file.
+    #[test]
+    fn two_exports_a_moment_apart_leave_the_later_palette_behind() {
+        let dir =
+            std::env::temp_dir().join(format!("hogar-shell-scheme-export-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let config = SchemeExportConfig {
+            enabled: true,
+            dir: dir.display().to_string(),
+            terminal: true,
+            ..SchemeExportConfig::default()
+        };
+        let scheme = |seed: Color| Scheme {
+            source: PathBuf::from("/tmp/wall.png"),
+            seed: hex(seed),
+            mode: Mode::Dark,
+            variant: Variant::Vibrant,
+            colors: palette(seed, Mode::Dark, Variant::Vibrant),
+        };
+        let older = scheme(Color::from_rgb_u8(200, 60, 40));
+        let newer = scheme(Color::from_rgb_u8(40, 90, 200));
+        assert_ne!(as_json(&older), as_json(&newer));
+
+        export_scheme(&older, &config);
+        export_scheme(&newer, &config);
+        writer::flush();
+        for (name, body) in [
+            ("scheme.json", as_json(&newer)),
+            ("scheme.css", as_gtk(&newer)),
+            ("scheme.sh", as_shell(&newer)),
+            ("sequences", as_sequences(&newer)),
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(dir.join(name)).unwrap(),
+                body,
+                "{name} holds the palette asked for last"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -376,11 +376,13 @@ pub fn crop(image: &Image, area: Area) -> Result<Image, String> {
     })
 }
 
+/// Saves the capture under a name of its own in `dir` and returns where.
+///
+/// Written with [`util::fs::write_atomic`] directly rather than through the writer's queue: [`unique`] picks a name nothing else is writing, so there is no order to protect, and a 4K capture's fsync queued alongside the shell's config saves would stall the next save from the settings panel behind a file it has nothing to do with.
 fn write_file(bytes: &[u8], dir: &Path, name_format: &str) -> Result<PathBuf, String> {
-    util::paths::ensure_dir(dir.to_path_buf());
     let stem = chrono::Local::now().format(name_format).to_string();
     let path = unique(dir, &stem);
-    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    util::fs::write_atomic(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
 }
 

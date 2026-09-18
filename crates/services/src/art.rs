@@ -104,6 +104,8 @@ pub fn ready(url: &str) -> Option<PathBuf> {
 }
 
 /// Downloads `url` into the cache and returns the file. Blocking — only ever called on the worker thread.
+///
+/// Written with [`util::fs::write_atomic`] directly rather than through the writer's queue: the name is the URL's hash, so there is no order between writes to protect, only a file that must never be seen half-written — [`ready`] answers from `exists()`, and would hand a partial download to the decoder as a finished image.
 fn fetch(url: &str, agent: &ureq::Agent) -> Option<PathBuf> {
     if let Some(local) = ready(url) {
         return Some(local);
@@ -119,8 +121,8 @@ fn fetch(url: &str, agent: &ureq::Agent) -> Option<PathBuf> {
         tracing::warn!("cover art at {url} was not an image");
         return None;
     }
-    let path = paths::ensure_dir(cache_dir()).join(cache_name(url));
-    match std::fs::write(&path, &bytes) {
+    let path = cache_path(url);
+    match util::fs::write_atomic(&path, &bytes) {
         Ok(()) => Some(path),
         Err(e) => {
             tracing::warn!("cannot cache cover art at {}: {e}", path.display());

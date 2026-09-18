@@ -12,6 +12,7 @@ image = { workspace = true }
 libc.workspace = true
 libloading.workspace = true
 platform-wayland = { workspace = true }
+rustix.workspace = true
 telar = { workspace = true }
 tracing = { workspace = true }
 zbus.workspace = true

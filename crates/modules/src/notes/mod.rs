@@ -33,7 +33,7 @@ pub fn notes_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
     icon_view(|| "sticky-note".to_string(), move || fg.get(), icon_px())
 }
 
-/// The notes panel: a header (title + add) over the editable note list, each note an icon, title, body, and delete, with an inline icon picker per note. Loads from disk on open; every edit persists (debounced).
+/// The notes panel: a header (title + add) over the editable note list, each note an icon, title, body, and delete, with an inline icon picker per note. Loads the notes on open, from memory after the first; every edit persists (debounced).
 pub fn notes_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     if let Some(env) = surface_env() {
         services::locale::attach(env.config.language());

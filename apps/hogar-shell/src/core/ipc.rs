@@ -36,10 +36,11 @@ pub(crate) fn request_quit() {
     shell::close_all();
     let _ = std::fs::remove_file(socket_path());
     tracing::info!("shutting down on request");
-    // A detached exit lets the in-flight IPC reply reach the client before the process goes away.
+    // A detached exit lets queued file writes land and the in-flight IPC reply reach the client before the process goes away.
     let _ = std::thread::Builder::new()
         .name("hogar-shell-quit".to_string())
         .spawn(|| {
+            util::writer::flush();
             std::thread::sleep(std::time::Duration::from_millis(100));
             std::process::exit(0);
         });
