@@ -66,6 +66,7 @@ use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use crate::config::{Anchor, KeyboardInteractivity, Layer, LayerConfig, OutputDescriptor};
 use crate::link::{ExitPlan, SurfaceLink, SurfaceUpdate};
 use crate::lock::LockSession;
+use crate::lock_notify::CompositorLock;
 use crate::window::LayerWindow;
 
 /// The type driven every surface handler is boxed to, so one loop holds statically-declared bars and runtime-opened drawers/OSDs in one `Vec` (the blanket `EventHandler for Box<dyn EventHandler>` makes the box callable). All surfaces share this UI thread; isolation is the handler's own `ui_core::Surface`.
@@ -746,12 +747,14 @@ pub(crate) struct Scaling {
     viewporter: WpViewporter,
 }
 
-/// What the shell can ask about this compositor before it commits to a feature. Read from any thread that has gone through the driver, so a UI handler can grey out "lock" rather than fail on the attempt.
+/// What the shell can ask about this compositor before it commits to a feature, and what the compositor says about the session. Read from any thread that has gone through the driver, so a UI handler can grey out "lock" rather than fail on the attempt.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct DriverFacts {
     pub(crate) lock_supported: bool,
     /// Unlike the one above, this is not settled at bind time: the blur capability arrives as an event and can be withdrawn, so this is rewritten every time the manager says so.
     pub(crate) background_effect_supported: bool,
+    /// The compositor's word on whether the session is locked, whoever locked it — live like the blur capability: settled at driver init by the notifier's first read, then rewritten by every `locked` and `unlocked` the live notification receives. [`CompositorLock::CannotTell`] until then, and for good where the compositor has no `hyprland-lock-notify-v1`.
+    pub(crate) compositor_lock: CompositorLock,
 }
 
 thread_local! {
@@ -759,12 +762,17 @@ thread_local! {
         RefCell::new(DriverFacts {
             lock_supported: false,
             background_effect_supported: false,
+            compositor_lock: CompositorLock::CannotTell,
         })
     };
 }
 
 pub(crate) fn with_driver_facts<R>(read: impl FnOnce(&DriverFacts) -> R) -> R {
     FACTS.with(|facts| read(&facts.borrow()))
+}
+
+pub(crate) fn update_driver_facts(write: impl FnOnce(&mut DriverFacts)) {
+    FACTS.with(|facts| write(&mut facts.borrow_mut()));
 }
 
 /// Whether this compositor will actually blur behind a surface right now: `ext-background-effect-v1` is bound *and* its `blur` capability is currently set.
@@ -951,6 +959,8 @@ where
         .bind::<ExtSessionLockManagerV1, Driver, ()>(&qh, 1..=1, ())
         .inspect_err(|e| tracing::info!("ext-session-lock-v1 unavailable: {e}"))
         .ok();
+    // Optional too, and read here rather than on first use: its answer has to be settled before the startup tasks run, and settling it takes a roundtrip, which cannot be made from inside the loop's own dispatch.
+    crate::lock_notify::bind(&globals, &conn, &qh);
     let idle_notifier = globals
         .bind::<ExtIdleNotifierV1, Driver, ()>(&qh, 1..=2, ())
         .inspect_err(|e| tracing::info!("ext-idle-notify-v1 unavailable: {e}"))

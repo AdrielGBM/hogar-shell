@@ -20,6 +20,7 @@ table *for this machine*, and `hogar-shell deps missing` narrows it to what is a
 | --- | --- | --- | --- |
 | `libpam` | library `libpam.so.0`, loaded at runtime | checking the password on the lock screen | `lock status` reports that the session cannot be locked, before the screen is ever covered |
 | `ext-session-lock` | Wayland protocol — `ext_session_lock_manager_v1` | covering every output with a lock surface the compositor keeps up | the session cannot be locked |
+| `hyprland-lock-notify` | Wayland protocol — `hyprland_lock_notifier_v1` | asking whether the session is still locked when the shell restarts after dying with it locked, so it can take the lock back behind a password prompt — Hyprland only | the shell never takes a lock back after a crash; the compositor's own recovery is the way back in |
 | `ext-idle-notify` | Wayland protocol — `ext_idle_notifier_v1` | knowing the seat has gone idle, for the `[idle]` stages | idle timers never arm, so nothing locks or blanks on its own |
 | `ext-workspace` | Wayland protocol — `ext_workspace_manager_v1` | listing the compositor's workspaces and activating one, for the `workspaces` module | the workspace pills are empty on any compositor that is not Hyprland |
 | `wlr-foreign-toplevel-management` | Wayland protocol — `zwlr_foreign_toplevel_manager_v1` | which window has focus, and switching to one — the `activewindow` chip and the launcher's `/` mode | the active-window chip reads as no window and the launcher lists none to switch to |

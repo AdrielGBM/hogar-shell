@@ -2,7 +2,7 @@
 //!
 //! A lock surface is not a layer surface with a higher layer. The compositor stops rendering normal clients entirely, refuses input to them, and will keep the session locked even if this process dies — which is what makes it a lock rather than a very insistent overlay. The protocol's rules follow from that:
 //!
-//! - Lock surfaces must be created for **every** output the moment the lock object exists, and for any output plugged in afterwards, or the compositor blanks that screen to a solid colour instead.
+//! - Lock surfaces must be created for **every** output as soon as the compositor has not refused the lock — one roundtrip after asking, see [`start`] — and for any output plugged in afterwards, or the compositor blanks that screen to a solid colour instead.
 //! - A second lock surface on one output is a protocol error, so [`LockSession::covered`] tracks which outputs already have one rather than trusting the surface list to stay in step.
 //! - The first commit must follow an `ack_configure`, and the buffer must match the size it acked.
 //! - Once the `locked` event has arrived, `destroy` is a protocol error — it must be `unlock_and_destroy`.
@@ -23,6 +23,7 @@ use smithay_client_toolkit::reexports::protocols::ext::session_lock::v1::client:
 };
 use telar::{App, LocalApp, build_surface_handler};
 use wayland_client::backend::ObjectId;
+use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_output;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 
@@ -32,12 +33,14 @@ use crate::window::LayerWindow;
 /// Builds the lock surface for one output, named as the compositor names it (`None` for an output with no name). One handler per output, so the lock screen can differ per monitor exactly as the bars do.
 type LockFactory = Box<dyn Fn(Option<String>) -> BoxedHandler>;
 
-/// Whether the compositor has the session locked, readable from **any** thread.
+/// Whether this process holds a session lock the compositor has granted, readable from **any** thread.
 ///
-/// The per-session [`LockShared`] below is reached through a driver-thread handle, and the shell's own mirror of it is refreshed by a timer on the driver's loop — so a busy driver could not tell anyone the screen was already covered. That is not a cosmetic delay: it is what a suspend waits on before letting the machine sleep, and a wait that cannot observe success gives up and sleeps anyway. Written where the compositor's own `Locked`/`Finished` events are handled, so it is true exactly when the screen is.
+/// The per-session [`LockShared`] below is reached through a driver-thread handle, and the shell's own mirror of it is refreshed by a timer on the driver's loop — so a busy driver could not tell anyone the screen was already covered. That is not a cosmetic delay: it is what a suspend waits on before letting the machine sleep, and a wait that cannot observe success gives up and sleeps anyway. Set where the compositor's `locked` event on this process's lock is handled and cleared when that lock is torn down, so it is true exactly while this process's lock covers the screen.
 static SESSION_LOCKED: AtomicBool = AtomicBool::new(false);
 
-/// Whether the compositor currently has the session locked. Safe to call from any thread, and deliberately not routed through the shell's polled copy — see [`SESSION_LOCKED`].
+/// Whether a lock *this process* took is confirmed: true from the compositor's `locked` event on it until it is released or the compositor ends it. Safe to call from any thread, and deliberately not routed through the shell's polled copy — see [`SESSION_LOCKED`].
+///
+/// A session another client locked reads false here. The compositor's own word, for any locker, is [`compositor_lock`](crate::compositor_lock) — answered only on the driver thread, and only where the compositor implements `hyprland-lock-notify-v1`. Ask this one when the question is whether the shell's own lock screen is up.
 pub fn session_is_locked() -> bool {
     SESSION_LOCKED.load(Ordering::Relaxed)
 }
@@ -133,6 +136,8 @@ pub(crate) struct LockSession {
     shared: Arc<LockShared>,
     /// Outputs that already carry a lock surface. A second surface on one output is a protocol error, so this is tracked rather than derived from the surface list — an entry torn down for an unrelated reason must not read as "this output is free again".
     covered: Vec<ObjectId>,
+    /// Whether the compositor has answered the `wl_display.sync` sent right behind `lock()` — no surface is created before, so a lock it refused never gets one (see [`start`]).
+    settled: bool,
 }
 
 /// One turn of the lock's lifecycle, run at the top of the driver loop: start a requested lock, cover any output that has no surface yet, and tear the whole thing down on unlock or on the compositor finishing it.
@@ -144,7 +149,7 @@ pub(crate) fn poll(
     loop_handle: &LoopHandle<'static, Driver>,
 ) {
     if let Some(pending) = LOCK_QUEUE.with(|queue| queue.borrow_mut().take()) {
-        start(driver, pending, qh);
+        start(driver, pending, qh, conn);
     }
     let Some(session) = driver.lock.as_ref() else {
         return;
@@ -155,11 +160,15 @@ pub(crate) fn poll(
         end(driver, unlock, conn, loop_handle);
         return;
     }
-    cover_outputs(driver, compositor, qh);
+    if session.settled {
+        cover_outputs(driver, compositor, qh);
+    }
 }
 
-/// Takes the lock and covers every output before the compositor's first frame, which is what the protocol asks for: surfaces created up front let it send `locked` without ever showing a blank screen.
-fn start(driver: &mut Driver, pending: PendingLock, qh: &QueueHandle<Driver>) {
+/// Asks for the lock with a `wl_display.sync` right behind it, and leaves covering the outputs to [`poll`] once the sync is answered.
+///
+/// The protocol has a compositor that refuses a lock send `finished` immediately on creation, so the sync's answer always arrives after a refusal and a refused lock never gets a surface. That is not caution: Hyprland 0.56 disconnects a client whose `get_lock_surface` reaches a lock it has already refused ("Lock is trying to send getLockSurface after it's inert"), though the protocol names no such error and the client could not have known. Waiting one roundtrip costs a granted lock about a millisecond, and the surfaces still exist long before the compositor can send `locked`.
+fn start(driver: &mut Driver, pending: PendingLock, qh: &QueueHandle<Driver>, conn: &Connection) {
     if driver.lock.is_some() {
         tracing::warn!("a session lock is already up; ignoring the second request");
         pending.shared.finished.store(true, Ordering::Relaxed);
@@ -172,11 +181,13 @@ fn start(driver: &mut Driver, pending: PendingLock, qh: &QueueHandle<Driver>) {
         return;
     };
     let lock = manager.lock(qh, ());
+    conn.display().sync(qh, LockVerdict(lock.id()));
     driver.lock = Some(LockSession {
         lock,
         factory: pending.factory,
         shared: pending.shared,
         covered: Vec::new(),
+        settled: false,
     });
     tracing::info!("session lock requested");
 }
@@ -329,6 +340,27 @@ impl Dispatch<ExtSessionLockV1, ()> for Driver {
                 session.shared.finished.store(true, Ordering::Relaxed);
             }
             _ => {}
+        }
+    }
+}
+
+/// Names the lock a `wl_display.sync` was sent behind, so an answer that outlives its lock cannot settle the next one.
+struct LockVerdict(ObjectId);
+
+impl Dispatch<WlCallback, LockVerdict> for Driver {
+    fn event(
+        state: &mut Self,
+        _proxy: &WlCallback,
+        event: wl_callback::Event,
+        verdict: &LockVerdict,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event
+            && let Some(session) = state.lock.as_mut()
+            && session.lock.id() == verdict.0
+        {
+            session.settled = true;
         }
     }
 }

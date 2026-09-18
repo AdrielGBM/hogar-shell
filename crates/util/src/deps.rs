@@ -50,6 +50,7 @@ pub enum Dep {
     // Wayland protocols.
     LayerShell,
     SessionLock,
+    LockNotify,
     IdleNotify,
     ImageCopyCapture,
     Screencopy,
@@ -149,6 +150,16 @@ pub const ALL: &[Entry] = &[
         need: Need::Optional,
         what: "covering every output with a lock surface the compositor keeps up",
         without: "the session cannot be locked",
+    },
+    Entry {
+        dep: Dep::LockNotify,
+        id: "hyprland-lock-notify",
+        kind: Kind::Protocol {
+            interfaces: &[platform_wayland::LOCK_NOTIFIER_INTERFACE],
+        },
+        need: Need::Optional,
+        what: "asking whether the session is still locked when the shell restarts after dying with it locked, so it can take the lock back behind a password prompt — Hyprland only",
+        without: "the shell never takes a lock back after a crash; the compositor's own recovery is the way back in",
     },
     Entry {
         dep: Dep::IdleNotify,

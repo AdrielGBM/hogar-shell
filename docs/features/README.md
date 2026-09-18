@@ -64,7 +64,7 @@ not repeated here.
 | [Global shortcuts](system/global-shortcuts.md) | Registering the shell's actions with the desktop portal so the compositor can bind them by name. | `xdg-desktop-portal` |
 | [Idle](system/idle.md) | Timers that fire a command when the seat goes quiet, and what holds them off. | `ext-idle-notify`, `wlr-output-power-management` |
 | [IPC](system/ipc.md) | Every action the shell has is a command on a socket. | — |
-| [Lock screen](system/lock.md) | One surface per monitor, and the only thing on it that matters is the password field. | `ext-session-lock`, `libpam`, `fprintd` |
+| [Lock screen](system/lock.md) | One surface per monitor, and the only thing on it that matters is the password field. | `ext-session-lock`, `libpam`, `fprintd`, `hyprland-lock-notify` |
 | [Night light](system/nightlight.md) | Warm the screen by setting each output's gamma ramp, with no helper process running alongside. | `wlr-gamma-control` |
 | [Notification daemon](system/notifications-daemon.md) | hogar-shell is the freedesktop notification daemon — nothing else to install. | — |
 | [Screen recording](system/recording.md) | Driving a recorder that already exists, and stopping it properly. | `wf-recorder`, `gpu-screen-recorder` |

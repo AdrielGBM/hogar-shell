@@ -7,6 +7,7 @@ mod idle;
 mod interest;
 mod link;
 mod lock;
+mod lock_notify;
 mod placement;
 mod platform;
 mod power;
@@ -31,6 +32,7 @@ pub use idle::{IdleHandle, idle_notification, idle_supported};
 pub use interest::Interest;
 pub use link::SurfaceUpdate;
 pub use lock::{LockHandle, lock_session, lock_supported, session_is_locked};
+pub use lock_notify::{CompositorLock, LOCK_NOTIFIER_INTERFACE, compositor_lock};
 pub use placement::{
     KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
 };

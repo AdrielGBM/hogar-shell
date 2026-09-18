@@ -1,6 +1,6 @@
 //! The lock screen: one surface per monitor, and the only thing on it that matters is the password field.
 //!
-//! Two things shape every decision here. The surface is a `ext-session-lock-v1` surface, so it covers the whole output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but authenticating. And that way out has to survive everything else on the screen failing: a screen that cannot be built mounts the minimal lock, the password field alone, instead of taking the process down while the compositor keeps the session locked.
+//! Two things shape every decision here. The surface is a `ext-session-lock-v1` surface, so it covers the whole output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but authenticating. And that way out has to survive everything else on the screen failing: a screen that cannot be built mounts the minimal lock, the password field alone, instead of taking the process down while the compositor keeps the session locked. A lock taken back after the shell died mounts the minimal lock from the start, since whatever killed it may be in the configured screen.
 //!
 //! Everything it shows is a subscription to [`lock::LockState`], which is written from a worker thread. The screen never authenticates; it collects a password and hands it over.
 
@@ -15,7 +15,7 @@ use telar::{
 
 use config::theme::{FontRole, NordTheme};
 use config::{Config, SurfaceEnv, set_surface_env};
-use services::lock::{self, LockState, Method};
+use services::lock::{self, LockState, Method, Screen};
 use telar::WindowRoot;
 
 const AVATAR: f32 = 96.0;
@@ -26,6 +26,8 @@ pub struct LockApp {
     /// `None` before the shell has a config — which cannot happen for a lock the shell itself took, but the type says so rather than the code assuming it.
     pub config: Option<Arc<Config>>,
     pub output: Option<String>,
+    /// Which screen the lock service asked for. [`Screen::Minimal`] never builds the configured screen at all, rather than falling back from it: none of that screen's code runs, so none of it can fail a second time.
+    pub screen: Screen,
 }
 
 impl App for LockApp {
@@ -37,6 +39,9 @@ impl App for LockApp {
             .unwrap_or_else(|| Arc::new(Config::default()));
         set_theme(config.resolve_theme());
         services::locale::attach(config.language());
+        if self.screen == Screen::Minimal {
+            return mount(minimal_screen);
+        }
         // Not a `PanelSurface` — the compositor's lock session mounts this, and it is the one surface that must never be translucent — but its content reads settings the same way every panel does, so it installs the same environment by hand.
         let edge = ui::panel::drawn_edge(&config);
         set_surface_env(SurfaceEnv {

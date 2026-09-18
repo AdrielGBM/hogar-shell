@@ -136,6 +136,8 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
         eprintln!("hogar-shell: no Wayland outputs found (is a compositor running?)");
         std::process::exit(1);
     }
+    // As early as a lock can be taken — driver globals bound, opener installed, config published — because until then a session this shell died holding shows the compositor's fallback screen instead of a prompt.
+    services::lock::restore();
 
     // The one column of cards — notification popups, toasts, the OSD. Long-lived: set up once, it persists across reloads, and it holds no surface at all until one of the three has something to say. The toast watchers are installed by `apply_config`, which has already run, so an event switched on later gets its watcher on the next reload.
     modules::stack::host();
@@ -412,11 +414,12 @@ fn install_hooks() {
         crate::core::commands::dispatch,
         crate::core::commands::resolves,
     );
-    services::lock::set_session_opener(|| {
+    services::lock::set_session_opener(|screen| {
         let config = config::config();
         platform_wayland::lock_session(move |output| modules::lock::LockApp {
             config: config.clone(),
             output,
+            screen,
         })
     });
     ui::module::set_panel_opener(surfaces::panel::open_panel);
