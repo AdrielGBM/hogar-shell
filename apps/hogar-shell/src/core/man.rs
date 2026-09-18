@@ -22,6 +22,10 @@ pub const FORMS: &[(&str, &str)] = &[
     ("--list", "list every command the shell answers"),
     ("config schema [name]", "print the annotated default config"),
     (
+        "config check",
+        "report what the config asks for that the shell cannot do",
+    ),
+    (
         "man commands|config",
         "print this manual, or the config one, as roff",
     ),
@@ -146,11 +150,13 @@ pub(crate) fn commands_page() -> String {
     out.push_str(
         ".PP\n\
          .BR \"config schema\" ,\n\
+         .BR \"config check\" ,\n\
          .B deps\n\
          and\n\
          .B man\n\
-         are answered by the binary rather than sent to the shell: each is a function of this build and this\n\
-         machine, and the case a dependency report is for is the one where nothing started.\n",
+         are answered by the binary rather than sent to the shell: each is a function of this build, this\n\
+         machine and the files on it, and the case a dependency report or a config check is for is the one\n\
+         where nothing started.\n",
     );
 
     out.push_str(

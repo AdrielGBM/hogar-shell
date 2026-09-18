@@ -13,7 +13,7 @@ use crate::load::{
 use crate::scheme;
 use crate::sections::*;
 use crate::theme::NordTheme;
-use util::paths;
+use util::{paths, writer};
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]
@@ -607,34 +607,40 @@ impl Config {
         s.mode == Shape::Bar && s.gap == 0 && s.radius == 0.0
     }
 
-    /// Reads and parses `config.toml`, writing the starter config on a fresh install (the `Missing` arm's job is the caller's, so the distinction survives). Parse failures are returned rather than swallowed — a typo must not silently replace a user's whole setup with the starter bar, which is what discarding the error would do; the caller keeps the last config that worked and reports the error instead.
+    /// Reads and parses `config.toml`, writing the starter config on a fresh install. Parse failures are returned rather than swallowed — a typo must not silently replace a user's whole setup with the starter bar, which is what discarding the error would do — and the caller decides what runs instead: a reload keeps the last config that loaded, and startup, which has none, falls back to the starter config; both say why.
     pub fn load(path: &Path) -> Result<Self, LoadError> {
+        Self::load_or_seed(path).map(|(config, _)| config)
+    }
+
+    /// [`load`](Self::load), also handing back the starter config's text when `config.toml` was missing and the load wrote it there — `None` when the file was read, or when the starter could not be written.
+    ///
+    /// For the caller that stamps what it applied (see [`crate::fingerprint::Stamp::record`]). A fingerprint taken before the load names a missing file, and the starter the load leaves behind is a change against it, so a fresh install's first look at its own starter config would reload everything and say "config reloaded". These are the bytes that file holds, fingerprinted without a second read for another writer to land in.
+    pub fn load_or_seed(path: &Path) -> Result<(Self, Option<String>), LoadError> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let cfg = Config::starter();
-                cfg.write_to(path);
-                return Ok(cfg);
+                let written = cfg.write_to(path);
+                return Ok((cfg, written));
             }
             Err(e) => return Err(LoadError::Io(e)),
         };
         let document: toml::Value = toml::from_str(&text).map_err(LoadError::Parse)?;
         let mut config: Config = document.try_into().map_err(LoadError::Parse)?;
         config.tokens = TokenOverrides::load(path);
-        Ok(config)
+        Ok((config, None))
     }
 
     /// The config as `output` sees it: `config.toml` with `monitors/<output>/config.toml` deep-merged over it.
     ///
     /// A merge rather than a replacement, so a per-monitor file says only what differs — a vertical bar on the second screen is four lines, not a copy of the whole config that then drifts. Tables merge key by key; anything else (a scalar, an array, a module list) replaces outright, because a half-overridden array is not something a user can predict.
     ///
-    /// Sections in [`GLOBAL_ONLY_SECTIONS`] are dropped from the override with a warning: one process owns them, so honouring them per monitor would be a setting that silently did nothing on every screen but one.
+    /// Sections in [`GLOBAL_ONLY_SECTIONS`] are dropped from the override without a word here: one process owns them, so honouring them per monitor would be a setting that silently did nothing on every screen but one. Saying so is the config report's job — it names the section at the line the override sets it, once, where a log line here would repeat it at every merge.
     pub fn for_output(path: &Path, output: Option<&str>) -> Result<Self, LoadError> {
         let Some(output) = output else {
             return Config::load(path);
         };
-        let override_path = monitor_config_path(path, output);
-        let Ok(override_text) = std::fs::read_to_string(&override_path) else {
+        let Ok(override_text) = std::fs::read_to_string(monitor_config_path(path, output)) else {
             return Config::load(path);
         };
         let base_text = std::fs::read_to_string(path).map_err(LoadError::Io)?;
@@ -642,12 +648,7 @@ impl Config {
         let mut over: toml::Value = toml::from_str(&override_text).map_err(LoadError::Parse)?;
         if let Some(table) = over.as_table_mut() {
             for section in GLOBAL_ONLY_SECTIONS {
-                if table.remove(*section).is_some() {
-                    tracing::warn!(
-                        "{}: [{section}] is global-only and was ignored",
-                        override_path.display()
-                    );
-                }
+                table.remove(*section);
             }
         }
         merge_into(&mut merged, over);
@@ -661,18 +662,39 @@ impl Config {
         path.parent().unwrap_or(Path::new(".")).join("monitors")
     }
 
-    /// Serializes the whole config to `path`, creating its directory. Used only to seed a fresh install; edits to an existing file go through [`save_section`](Self::save_section), which preserves formatting.
-    fn write_to(&self, path: &Path) {
-        let Ok(text) = toml::to_string_pretty(self) else {
-            return;
+    /// Every monitor override's path beside the config at `path`, one per directory under [`monitor_dir`](Self::monitor_dir), in name order so whoever lists them lists them the same way every time.
+    ///
+    /// Whether one is there to read is the caller's question, because each asks it differently: the fingerprint keeps a file with bytes in it, and the report keeps one it can open.
+    pub fn monitor_overrides(path: &Path) -> Vec<PathBuf> {
+        let Ok(outputs) = std::fs::read_dir(Self::monitor_dir(path)) else {
+            return Vec::new();
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(path, text);
+        let mut files: Vec<PathBuf> = outputs
+            .flatten()
+            .map(|output| monitor_config_path(path, output.file_name()))
+            .collect();
+        files.sort();
+        files
     }
 
-    /// [`load`](Self::load) with the starter config as the fallback. For call sites with nothing better to fall back to (a panel building itself, a test); the running shell uses `load` so it can keep its last good config instead.
+    /// Serializes the whole config to `path`, creating its directory, and hands back the text it wrote — `None` when nothing was written. Used only to seed a fresh install; edits to an existing file go through [`save_section`](Self::save_section), which preserves formatting.
+    ///
+    /// Through [`util::writer`] like every other write the shell makes, even though the file it is seeding cannot yet be half of anything: the writer is the single owner of the path, and a write that went around it could be renamed over by a save the settings panel had already queued.
+    fn write_to(&self, path: &Path) -> Option<String> {
+        let text = toml::to_string_pretty(self).ok()?;
+        match writer::write(path, text.clone().into_bytes()) {
+            Ok(()) => Some(text),
+            Err(e) => {
+                tracing::warn!(
+                    "could not write the starter config to {}: {e}",
+                    path.display()
+                );
+                None
+            }
+        }
+    }
+
+    /// [`load`](Self::load) with the starter config as the fallback. For call sites with nothing better to fall back to (a panel building itself, a test); the running shell uses `load` so that a reload can keep the last config that loaded, and so that whether startup parsed decides what it counts as applied.
     pub fn load_or_default(path: &Path) -> Self {
         Config::load(path).unwrap_or_else(|e| {
             tracing::warn!("{e}; using the starter config");
@@ -690,8 +712,18 @@ impl Config {
     }
 
     /// Persists a single `[name]` section back to `config.toml`, replacing just that table while preserving every other section, key order, and comment in the file (format-preserving via `toml_edit`). `value` is a section struct such as [`ThemeConfig`]. Creates the file and its parent directory if missing. The running shell's config watcher then hot-reloads the change, so a save applies live.
-    pub fn save_section<T: Serialize>(path: &Path, name: &str, value: &T) -> Result<(), SaveError> {
-        let mut doc = std::fs::read_to_string(path)
+    ///
+    /// The file itself is replaced by [`util::writer`], which stages a whole copy and renames it into place: the user's hand-written config is the one file in the shell that cannot be regenerated, and a truncating write that died half way through would take their comments and every section this function promises to preserve with it. The wait for the writer is what keeps the `Result` meaningful — a caller that reports a failed save has to be told about one, and the settings panel's forms do.
+    ///
+    /// Hands back the file as it found it and as it left it (see [`Saved`]).
+    pub fn save_section<T: Serialize>(
+        path: &Path,
+        name: &str,
+        value: &T,
+    ) -> Result<Saved, SaveError> {
+        let read = std::fs::read_to_string(path).ok();
+        let mut doc = read
+            .as_deref()
             .unwrap_or_default()
             .parse::<DocumentMut>()
             .map_err(SaveError::Parse)?;
@@ -704,9 +736,19 @@ impl Config {
         }
         doc.insert(name, Item::Table(table));
         keep_subtables_with_their_parent(&mut doc);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(SaveError::Io)?;
-        }
-        std::fs::write(path, doc.to_string()).map_err(SaveError::Io)
+        let written = doc.to_string();
+        writer::write(path, written.clone().into_bytes()).map_err(SaveError::Io)?;
+        Ok(Saved { read, written })
     }
+}
+
+/// What a [`Config::save_section`] found in the file and what it left there: its one read and its one write.
+///
+/// For a caller that has to know what its save carried. The save rewrites one table around the file *as it stands*, so an edit made elsewhere a moment earlier goes back to disk inside it — and a caller reading the file again to find out, before the save or after it, is reading at a different moment from the save's own, with room for another writer to land in between. These are the save's own bytes, so there is none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Saved {
+    /// The file as the save read it, or `None` when it could not be read — missing, most often — which the save treats as empty and replaces.
+    pub read: Option<String>,
+    /// The file as the save wrote it: the bytes it put on disk, which are there by the time it returns.
+    pub written: String,
 }

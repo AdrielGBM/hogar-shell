@@ -47,7 +47,8 @@ A grid of toggles, and optionally the recent captures and recordings.
 `[utilities]` — `toggles` (the ids, in your order), `columns`, `show_capture`, `show_recordings`,
 `window_preview_ms`.
 
-An id this build does not know is dropped with a warning rather than failing the panel.
+An id this build does not know holds its place in the grid as a placeholder tile naming it, rather than failing
+the panel; pressing it opens the settings window, and `hogar-shell config check` names it with its line.
 
 ## What it needs
 

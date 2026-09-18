@@ -21,6 +21,9 @@ launcher
 config schema [name]
 .br
 .B hogar-shell
+config check
+.br
+.B hogar-shell
 man commands|config
 .br
 .B hogar-shell
@@ -48,11 +51,13 @@ print the version and exit
 print every target, command and argument the shell answers
 .PP
 .BR "config schema" ,
+.BR "config check" ,
 .B deps
 and
 .B man
-are answered by the binary rather than sent to the shell: each is a function of this build and this
-machine, and the case a dependency report is for is the one where nothing started.
+are answered by the binary rather than sent to the shell: each is a function of this build, this
+machine and the files on it, and the case a dependency report or a config check is for is the one
+where nothing started.
 .SH COMMANDS
 A request is a target, a command and its arguments.
 .BR hogar-shell (5)
@@ -468,6 +473,9 @@ where config.toml is read from
 .TP
 \fBschema\fR \fI[section]\fR
 the annotated default config, or one section of it
+.TP
+\fBcheck\fR
+what the config and its monitor overrides name that the shell does not have, by file and line; fails on an error
 .SS deps
 .TP
 \fBlist\fR

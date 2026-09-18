@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -80,6 +80,12 @@ struct State {
     unread: u32,
     dnd: bool,
     muted_apps: Vec<String>,
+    /// The notices that describe a state rather than an event — see [`notify_status`]. Never written to the history file: the state is read again on every start, and a copy restored from the last session would be a notice about a config that may have been fixed since, with nothing left that knows to withdraw it.
+    statuses: HashSet<u32>,
+    /// Counts every send, so each one carries a stamp no earlier send has.
+    sends: u64,
+    /// The stamp of each live notification's latest send. A popup's clock carries the stamp it was started for, which is what stops the clock an earlier version started from retiring the version that replaced it.
+    latest: HashMap<u32, u64>,
 }
 
 impl State {
@@ -91,6 +97,28 @@ impl State {
             muted_apps: self.muted_apps.clone(),
         })
     }
+
+    /// What the history file keeps: everything but the status notices.
+    fn history(&self) -> Vec<Notification> {
+        self.active
+            .iter()
+            .filter(|n| !self.statuses.contains(&n.id))
+            .cloned()
+            .collect()
+    }
+
+    /// Forgets everything kept about `id` beside the notification itself, for one that has left the history.
+    fn forget(&mut self, id: u32) {
+        self.statuses.remove(&id);
+        self.latest.remove(&id);
+    }
+}
+
+/// Whether a notice is an event, kept in the history once it has popped, or a state, kept only for as long as it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kept {
+    History,
+    WhileCurrent,
 }
 
 /// The daemon's `[notifications]`-derived behaviour: the auto-dismiss defaults and the sound a pop makes.
@@ -122,23 +150,39 @@ struct Inner {
 impl Inner {
     /// Applies `mutate`, persists the new history (debounced, off-thread), then pushes a fresh snapshot to every live subscriber, dropping any whose surface has gone.
     fn commit(&self, mutate: impl FnOnce(&mut State)) {
-        let snapshot = {
+        let (snapshot, history) = {
             let mut state = self.state.lock().unwrap();
             mutate(&mut state);
-            state.snapshot()
+            (state.snapshot(), state.history())
         };
-        let _ = self.saver.send(snapshot.active.clone());
+        let _ = self.saver.send(history);
         self.subscribers
             .lock()
             .unwrap()
             .retain(|tx| tx.send(SharedSnapshot::clone(&snapshot)));
     }
 
+    /// Registers `tx` for every change, after sending it the state as it stands — so a surface that subscribes late still pops whatever arrived before it existed, which is how a notice raised during startup reaches a column that opens after it.
+    ///
+    /// The subscriber list is held across the read on purpose. A change committed between reading the state and registering would otherwise reach neither: the snapshot was taken too early to include it, and the broadcast went out before `tx` was on the list. Holding the list makes that broadcast wait until `tx` is.
+    fn subscribe(&self, tx: EventSender<SharedSnapshot>) {
+        let mut subscribers = self.subscribers.lock().unwrap();
+        let snapshot = self.state.lock().unwrap().snapshot();
+        if tx.send(snapshot) {
+            subscribers.push(tx);
+        }
+    }
+
     fn policy(&self) -> Policy {
         self.policy.lock().unwrap().clone()
     }
 
-    fn push(&self, mut notification: Notification, replaces_id: u32) -> u32 {
+    fn push(&self, notification: Notification, replaces_id: u32) -> u32 {
+        self.push_as(notification, replaces_id, Kept::History)
+    }
+
+    /// [`push`](Self::push), saying whether the notice is kept in the history.
+    fn push_as(&self, mut notification: Notification, replaces_id: u32, kept: Kept) -> u32 {
         let (mut assigned, mut popped) = (0, false);
         self.commit(|state| {
             let id = if replaces_id != 0 {
@@ -149,6 +193,12 @@ impl Inner {
             };
             notification.id = id;
             assigned = id;
+            state.sends = state.sends.wrapping_add(1);
+            state.latest.insert(id, state.sends);
+            match kept {
+                Kept::History => state.statuses.remove(&id),
+                Kept::WhileCurrent => state.statuses.insert(id),
+            };
             // Decided at the daemon's single entry point, so a mute holds for the shell's own advisories as much as for anything arriving over D-Bus.
             //
             // Do-Not-Disturb is decided here too, and not where the card is drawn: a notification that arrives under it must be *recorded as not popping*, so that switching DND off later leaves it in the history rather than putting it on screen. Suppressed is not deferred.
@@ -182,7 +232,10 @@ impl Inner {
     /// Removes `id` from the history entirely — a manual dismiss (a history-card tap or clear-all).
     fn close(&self, id: u32) {
         self.disarm_expiry(id);
-        self.commit(|state| state.active.retain(|n| n.id != id));
+        self.commit(|state| {
+            state.active.retain(|n| n.id != id);
+            state.forget(id);
+        });
     }
 
     /// Drops every notification `app_name` sent, answering with the ids that went so the caller can close them on the bus.
@@ -196,8 +249,21 @@ impl Inner {
                 }
                 keep
             });
+            for id in &closed {
+                state.forget(*id);
+            }
         });
         closed
+    }
+
+    /// Sends a notice the shell raises about itself, and arms its expiry as a sender asking for the configured timeout would.
+    ///
+    /// The arming is the part that was missing. Only the D-Bus path armed one, so the column's [`shown`] found no clock to start for a notice of the shell's own, and every one of them — a low battery, a saved screenshot, a config that did not load — stayed popped until it was swiped, whatever its urgency said.
+    fn post_shell(&self, notification: Notification, replaces_id: u32, kept: Kept) -> u32 {
+        let urgency = notification.urgency;
+        let id = self.push_as(notification, replaces_id, kept);
+        self.arm_expiry(id, -1, urgency);
+        id
     }
 
     /// Retires `id`'s popup while keeping it in the history: the popup stack stops showing it (it filters on `popup`), but the panel — which lists all of `active` — keeps it until dismissed. This is what a popup timeout does, so an auto-dismissed notification is still there to read later.
@@ -237,16 +303,33 @@ impl Inner {
     }
 
     /// Schedules a popup expiry for `id` per the spec's `expire_timeout` (`>0` ms, `0` = never, `<0` = the configured default) and the urgency/critical-sticky policy. A detached timer keeps this independent of any surface, so popups expire correctly across focus changes and reloads. The notification stays in the history.
+    ///
+    /// The timer carries the stamp of the send it was started for, and a timer cannot be cancelled: a notification replaced while it runs is a new send with its own clock, and the old timer finds a newer stamp and retires nothing.
     fn schedule_expiry(&self, id: u32, expire_timeout: i32, urgency: Urgency) {
         let Some(after) = expiry_delay(expire_timeout, urgency, &self.policy()) else {
+            return;
+        };
+        let Some(sent) = self.state.lock().unwrap().latest.get(&id).copied() else {
             return;
         };
         let _ = std::thread::Builder::new()
             .name("hogar-shell-notif-expiry".to_string())
             .spawn(move || {
                 std::thread::sleep(after);
-                expire(id);
+                expire_on_clock(id, sent);
             });
+    }
+
+    /// Retires `id`'s popup if `sent` is still its latest send, answering whether it did.
+    fn expire_sent(&self, id: u32, sent: u64) -> bool {
+        let mut current = false;
+        self.commit(|state| {
+            current = state.latest.get(&id) == Some(&sent);
+            if current && let Some(n) = state.active.iter_mut().find(|n| n.id == id) {
+                n.popup = false;
+            }
+        });
+        current
     }
 }
 
@@ -292,6 +375,9 @@ pub fn init(policy: Policy) {
                 unread: 0,
                 dnd: remembered.dnd,
                 muted_apps: remembered.muted_apps,
+                statuses: HashSet::new(),
+                sends: 0,
+                latest: HashMap::new(),
             }),
             subscribers: Mutex::new(Vec::new()),
             policy: Mutex::new(policy),
@@ -313,25 +399,72 @@ pub fn set_policy(policy: Policy) {
 /// Registers `tx` (bound to a surface's event loop) to receive every state change, and immediately sends the current snapshot so the surface starts in sync. Called from a surface's `watch` producer; a no-op before [`init`].
 pub fn subscribe(tx: EventSender<SharedSnapshot>) {
     if let Some(service) = SERVICE.get() {
-        let snapshot = service.inner.state.lock().unwrap().snapshot();
-        if tx.send(snapshot) {
-            service.inner.subscribers.lock().unwrap().push(tx);
-        }
+        service.inner.subscribe(tx);
     }
 }
 
-/// Raises a notification from inside the shell itself, without a D-Bus round-trip — how hogar-shell reports its own problems (a config that won't parse, a service that won't start) through the same surface every other app's notifications land on. `Critical` urgency, so with the default `critical_sticky` it waits to be read rather than timing out. Falls back to stderr before the daemon is up.
+/// Raises a notification from inside the shell itself, without a D-Bus round-trip — how hogar-shell reports its own problems (a recording that failed, a service that won't start) through the same surface every other app's notifications land on. `Critical` urgency, so with the default `critical_sticky` it waits to be read — up to `critical_max_secs` — rather than timing out. Falls back to stderr before the daemon is up.
 pub fn notify_local(app_name: &str, summary: &str, body: &str) {
     notify_shell(app_name, summary, body, "", Urgency::Critical);
 }
 
 /// [`notify_local`] with an icon and an urgency of its own — for the shell's own *advisories* (a battery running low) rather than its errors, which should not all shout at `Critical`.
 pub fn notify_shell(app_name: &str, summary: &str, body: &str, app_icon: &str, urgency: Urgency) {
+    shell_notice(
+        None,
+        Kept::History,
+        app_name,
+        summary,
+        body,
+        app_icon,
+        urgency,
+    );
+}
+
+/// A notice about a *state* rather than an event, in the shape of the freedesktop `Notify`: `replaces` names a notice an earlier call returned, which is updated where it stands — and popped again — instead of joined by a second one, and the answer is the id to replace next time. `None` before the daemon is up, when the notice goes to stderr.
+///
+/// What lets the shell keep **one live notice** about something that keeps changing, like the problems in a config rewritten on every save, rather than a stack of cards each describing a moment that has passed. [`withdraw_status`] takes it down once the state it describes is gone, and it is never written to the history file, since the next start reads the state again.
+pub fn notify_status(
+    replaces: Option<u32>,
+    app_name: &str,
+    summary: &str,
+    body: &str,
+    app_icon: &str,
+    urgency: Urgency,
+) -> Option<u32> {
+    shell_notice(
+        replaces,
+        Kept::WhileCurrent,
+        app_name,
+        summary,
+        body,
+        app_icon,
+        urgency,
+    )
+}
+
+/// Takes down a notice [`notify_status`] raised — from the column and the history alike, because what it described is no longer true. Emits `NotificationClosed` with the reason the spec gives a sender closing its own.
+pub fn withdraw_status(id: u32) {
+    if let Some(service) = SERVICE.get() {
+        service.inner.close(id);
+    }
+    emit_closed(id, 3);
+}
+
+fn shell_notice(
+    replaces: Option<u32>,
+    kept: Kept,
+    app_name: &str,
+    summary: &str,
+    body: &str,
+    app_icon: &str,
+    urgency: Urgency,
+) -> Option<u32> {
     let Some(service) = SERVICE.get() else {
         eprintln!("{app_name}: {summary} — {body}");
-        return;
+        return None;
     };
-    service.inner.push(
+    Some(service.inner.post_shell(
         Notification {
             id: 0,
             app_name: app_name.to_string(),
@@ -343,8 +476,9 @@ pub fn notify_shell(app_name: &str, summary: &str, body: &str, app_icon: &str, u
             popup: true,
             image: None,
         },
-        0,
-    );
+        replaces.unwrap_or(0),
+        kept,
+    ))
 }
 
 /// The current state without subscribing — for an initial read or tests; surfaces should [`subscribe`] to stay live.
@@ -377,6 +511,15 @@ pub fn expire(id: u32) {
         service.inner.expire(id);
     }
     emit_closed(id, 1);
+}
+
+/// What a popup's clock calls when it runs out: retires `id` unless a newer send has replaced it since the clock started, and only then says so on the bus.
+fn expire_on_clock(id: u32, sent: u64) {
+    if let Some(service) = SERVICE.get()
+        && service.inner.expire_sent(id, sent)
+    {
+        emit_closed(id, 1);
+    }
 }
 
 /// Invokes a notification's action `key`: emits `ActionInvoked`, then closes it (the sender closes on invocation, per the spec). Wired to the history panel's action buttons.
@@ -412,6 +555,8 @@ pub fn clear_all() {
         service.inner.commit(|state| {
             state.active.clear();
             state.unread = 0;
+            state.statuses.clear();
+            state.latest.clear();
         });
     }
 }
@@ -688,7 +833,13 @@ mod tests {
 
     /// A daemon core with no D-Bus name, no saver thread and no subscribers — everything `Inner` decides is decided here, so the tests drive it directly rather than through the process-wide service.
     fn test_inner(muted_apps: Vec<String>) -> Inner {
-        Inner {
+        test_inner_saving(muted_apps).0
+    }
+
+    /// [`test_inner`], keeping the other end of the saver channel so a test can read what would have been written to the history file.
+    fn test_inner_saving(muted_apps: Vec<String>) -> (Inner, Receiver<Vec<Notification>>) {
+        let (saver, saved) = channel();
+        let inner = Inner {
             pending: Mutex::new(HashMap::new()),
             state: Mutex::new(State {
                 active: Vec::new(),
@@ -696,6 +847,9 @@ mod tests {
                 unread: 0,
                 dnd: false,
                 muted_apps,
+                statuses: HashSet::new(),
+                sends: 0,
+                latest: HashMap::new(),
             }),
             subscribers: Mutex::new(Vec::new()),
             policy: Mutex::new(Policy {
@@ -704,8 +858,139 @@ mod tests {
                 critical_max: Some(Duration::from_secs(120)),
                 sound: String::new(),
             }),
-            saver: channel().0,
+            saver,
+        };
+        (inner, saved)
+    }
+
+    /// The config-problems notice, one draft of it.
+    fn status(body: &str) -> Notification {
+        Notification {
+            body: body.into(),
+            ..sample_from("hogar-shell", "Problems in the configuration")
         }
+    }
+
+    /// One notice about a state that keeps changing, not a card per change: each draft replaces the last where it stands, so typing through three partial ids leaves one card showing the third — and it is still one unread, since a user who has not looked has one thing to look at.
+    #[test]
+    fn a_status_replaced_in_place_is_one_card_showing_the_last_draft() {
+        let inner = test_inner(Vec::new());
+        let id = inner.post_shell(status("'p'"), 0, Kept::WhileCurrent);
+        assert_eq!(
+            inner.post_shell(status("'pe'"), id, Kept::WhileCurrent),
+            id,
+            "a replacement answers with the id it replaced, so the caller can go on replacing it"
+        );
+        inner.expire(id);
+        inner.post_shell(status("'per'"), id, Kept::WhileCurrent);
+
+        let state = inner.state.lock().unwrap();
+        assert_eq!(
+            state
+                .active
+                .iter()
+                .map(|n| n.body.as_str())
+                .collect::<Vec<_>>(),
+            ["'per'"],
+            "three drafts are one card, and it shows the last"
+        );
+        assert!(
+            state.active[0].popup,
+            "a draft that replaces a card the user had already let retire is news, so it pops again"
+        );
+        assert_eq!(state.unread, 1);
+    }
+
+    /// A timer cannot be cancelled, so a replaced notice was retired by the clock its *first* send started — and a card updated a second before that clock ran out vanished almost as it appeared. The clock carries the send it was started for, and a newer send makes it a no-op.
+    #[test]
+    fn a_replaced_notice_is_not_retired_by_the_clock_an_earlier_send_started() {
+        let inner = test_inner(Vec::new());
+        let id = inner.post_shell(status("first"), 0, Kept::WhileCurrent);
+        let first = inner.state.lock().unwrap().latest[&id];
+        inner.post_shell(status("second"), id, Kept::WhileCurrent);
+
+        assert!(
+            !inner.expire_sent(id, first),
+            "the first send's clock ran out, and must retire nothing"
+        );
+        assert!(
+            inner.state.lock().unwrap().active[0].popup,
+            "the second send is still on screen"
+        );
+        let second = inner.state.lock().unwrap().latest[&id];
+        assert!(
+            inner.expire_sent(id, second),
+            "its own clock still retires it"
+        );
+        assert!(!inner.state.lock().unwrap().active[0].popup);
+    }
+
+    /// The history file is what the next start restores, and a status restored from it describes a config the next start reads again anyway — one that may have been fixed while the shell was down, leaving a notice nothing would ever withdraw. Events are kept as they always were.
+    #[test]
+    fn a_status_is_never_written_to_the_history_and_withdrawing_it_removes_it() {
+        let (inner, saved) = test_inner_saving(Vec::new());
+        let event = inner.post_shell(sample_from("hogar-shell", "Battery low"), 0, Kept::History);
+        let notice = inner.post_shell(status("'clokc'"), 0, Kept::WhileCurrent);
+
+        let written = saved
+            .try_iter()
+            .last()
+            .expect("each change is handed to the saver");
+        assert_eq!(
+            written.iter().map(|n| n.id).collect::<Vec<_>>(),
+            [event],
+            "the history file keeps the event and not the status"
+        );
+
+        inner.close(notice);
+        assert_eq!(
+            inner
+                .state
+                .lock()
+                .unwrap()
+                .active
+                .iter()
+                .map(|n| n.id)
+                .collect::<Vec<_>>(),
+            [event],
+            "withdrawn, the status is gone from the history panel too"
+        );
+    }
+
+    /// Only a sender on the bus used to get a clock, so a notice of the shell's own — a low battery, a saved screenshot, a config that did not load — was handed to the column with nothing for `shown` to start, and stayed popped until it was swiped whatever its urgency said.
+    #[test]
+    fn a_shell_notice_is_armed_to_expire_like_any_other() {
+        let inner = test_inner(Vec::new());
+        let id = inner.post_shell(sample_from("hogar-shell", "Battery low"), 0, Kept::History);
+
+        assert_eq!(
+            inner.pending.lock().unwrap().get(&id),
+            Some(&(-1, Urgency::Normal)),
+            "armed for the configured timeout, as a sender asking for the default would be"
+        );
+    }
+
+    /// The startup path depends on this: a notice raised while the config is first applied exists before the column does, and reaches the screen only because a surface that subscribes late is sent what is already there.
+    #[test]
+    fn a_subscriber_that_arrives_late_is_sent_what_is_already_popping() {
+        let inner = test_inner(Vec::new());
+        let id = inner.post_shell(status("'clokc'"), 0, Kept::WhileCurrent);
+
+        let (tx, subscription) = platform_wayland::detached::<SharedSnapshot>();
+        inner.subscribe(tx);
+        let first = subscription
+            .try_recv()
+            .expect("the state as it stands is sent at once");
+        assert!(
+            first.active.iter().any(|n| n.id == id && n.popup),
+            "the notice raised before the subscriber existed is in what it is sent, still popping"
+        );
+
+        inner.post_shell(status("'clokcc'"), id, Kept::WhileCurrent);
+        assert!(
+            subscription.try_recv().is_some(),
+            "and it is registered for what changes after"
+        );
     }
 
     fn policy_with(critical_sticky: bool, critical_max: Option<Duration>) -> Policy {

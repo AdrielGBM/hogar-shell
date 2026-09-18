@@ -27,7 +27,8 @@ hogar-shell scheme colors           # every token now on screen, as name and hex
 `catppuccin-frappe` `catppuccin-latte` `gruvbox` `gruvbox-light` `tokyo-night` `everforest`
 
 A name is reduced to what identifies it before it is matched, so `rose-pine`, `rose_pine` and `rosepine` are
-one theme — a separator preference never becomes an "unknown theme" warning.
+one theme — a separator preference never makes a name unknown. A name that is unknown falls back to `nord`,
+and `hogar-shell config check` says so.
 
 ## Light and dark
 

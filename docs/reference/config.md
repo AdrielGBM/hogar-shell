@@ -285,7 +285,7 @@ The two intervals are here rather than on the services they read because the cos
 
 - **`tabs`** · default `["dash", "media", "performance", "weather"]`
 
-  Which pages the dashboard offers, in order; an id it doesn't know is dropped with a warning rather than failing the whole config parse, which would cost the user every other section over one typo.
+  Which pages the dashboard offers, in order: `dash`, `media`, `performance` and `weather`. An id it doesn't have is left out rather than failing the whole config parse, which would cost the user every other section over one typo — and is reported, by `hogar-shell config check` and in the notice the running shell keeps up while a problem lasts. A list with no page it has left in it shows every page.
 
 ## `[general]`
 
@@ -870,7 +870,7 @@ The system tray (`[tray]`).
 
 The utilities panel (`[utilities]`): the quick toggles it lists, and in which order.
 
-`toggles` is a list of ids rather than a switch per toggle, because the order is the point — the toggles a user reaches for live at the front. Unknown ids are dropped with a warning rather than failing the config, so a name from a newer build costs a line in the log instead of the whole panel.
+`toggles` is a list of ids rather than a switch per toggle, because the order is the point — the toggles a user reaches for live at the front. An id this build does not have holds its place in the grid as a tile saying so, rather than failing the config — a name from a newer build costs one tile instead of the whole panel — and is reported by `hogar-shell config check` and in the notice the running shell keeps up while a problem lasts.
 
 - **`columns`** · default `4`
 

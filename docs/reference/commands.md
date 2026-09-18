@@ -270,6 +270,7 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | --- | --- | --- |
 | `path` |  | where config.toml is read from |
 | `schema` | `[section]` | the annotated default config, or one section of it |
+| `check` |  | what the config and its monitor overrides name that the shell does not have, by file and line; fails on an error |
 
 ## `deps`
 

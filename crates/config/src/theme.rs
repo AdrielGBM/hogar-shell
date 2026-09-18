@@ -121,7 +121,7 @@ pub const BUILT_IN_THEMES: &[&str] = &[
     "everforest",
 ];
 
-/// A theme name reduced to what identifies it, so `rose-pine`, `rose_pine` and `rosepine` are one theme and a user's separator preference never becomes a "unknown theme" warning.
+/// A theme name reduced to what identifies it, so `rose-pine`, `rose_pine` and `rosepine` are one theme and a user's separator preference never makes a name unknown.
 fn normalize(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_alphanumeric())
@@ -130,9 +130,18 @@ fn normalize(name: &str) -> String {
 }
 
 impl NordTheme {
-    /// The built-in palette for `name` (see [`BUILT_IN_THEMES`]); `custom` starts from nord for config to override, `dynamic` likewise until [`Config::resolve_theme`](crate::Config::resolve_theme) substitutes the wallpaper's own palette, and an unknown name falls back to nord with a warning.
+    /// The built-in palette for `name` (see [`BUILT_IN_THEMES`]); `custom` starts from nord for config to override, `dynamic` likewise until [`Config::resolve_theme`](crate::Config::resolve_theme) substitutes the wallpaper's own palette, and a name no palette has falls back to nord — which [`ThemeConfig::check`](crate::ThemeConfig::check) reports.
     pub fn named(name: &str) -> Self {
-        match normalize(name).as_str() {
+        Self::built_in(name).unwrap_or_else(Self::nord)
+    }
+
+    /// Whether `name` selects a palette of its own rather than falling back to nord.
+    pub fn has_palette(name: &str) -> bool {
+        Self::built_in(name).is_some()
+    }
+
+    fn built_in(name: &str) -> Option<Self> {
+        Some(match normalize(name).as_str() {
             "nord" | "custom" | "dynamic" => Self::nord(),
             "rosepine" => Self::rose_pine(),
             "rosepinemoon" => Self::rose_pine_moon(),
@@ -145,11 +154,8 @@ impl NordTheme {
             "gruvboxlight" => Self::gruvbox_light(),
             "tokyonight" => Self::tokyo_night(),
             "everforest" | "everforestdark" => Self::everforest(),
-            other => {
-                tracing::warn!("unknown theme '{other}', falling back to nord");
-                Self::nord()
-            }
-        }
+            _ => return None,
+        })
     }
 
     /// The sibling of `name` in `mode`, or `name` itself when the family has no palette at that end.
@@ -717,67 +723,66 @@ impl NordTheme {
         style
     }
 
-    /// Overrides one palette token by name (as used in `[theme.colors]`), for config-defined custom colors; an unknown name is ignored with a warning.
+    /// Overrides one palette token by name (as used in `[theme.colors]`), for config-defined custom colors; a name that is no token changes nothing, and [`ThemeConfig::check`](crate::ThemeConfig::check) reports it.
     pub fn with_color(mut self, name: &str, color: Color) -> Self {
-        match name {
-            "base" => self.base = color,
-            "surface" => self.surface = color,
-            "overlay" => self.overlay = color,
-            "muted" => self.muted = color,
-            "subtle" => self.subtle = color,
-            "text" => self.text = color,
-            "accent" => self.accent = color,
-            "blue" => self.blue = color,
-            "cyan" => self.cyan = color,
-            "teal" => self.teal = color,
-            "red" => self.red = color,
-            "orange" => self.orange = color,
-            "yellow" => self.yellow = color,
-            "green" => self.green = color,
-            "purple" => self.purple = color,
-            "success" => self.success = color,
-            "warning" => self.warning = color,
-            "error" => self.error = color,
-            "info" => self.info = color,
-            "highlight_low" => self.highlight_low = color,
-            "highlight_med" => self.highlight_med = color,
-            "highlight_high" => self.highlight_high = color,
-            other => tracing::warn!("unknown theme color token '{other}'"),
+        if let Some(token) = self.slot(name) {
+            *token = color;
         }
         self
     }
 
     /// One token by name — the read half of [`with_color`](Self::with_color), and what lets a palette be drawn as swatches, exported, or edited from [`THEME_TOKENS`] rather than as twenty-two hardcoded fields.
     pub fn token(&self, name: &str) -> Color {
-        match name {
-            "base" => self.base,
-            "surface" => self.surface,
-            "overlay" => self.overlay,
-            "muted" => self.muted,
-            "subtle" => self.subtle,
-            "text" => self.text,
-            "accent" => self.accent,
-            "blue" => self.blue,
-            "cyan" => self.cyan,
-            "teal" => self.teal,
-            "red" => self.red,
-            "orange" => self.orange,
-            "yellow" => self.yellow,
-            "green" => self.green,
-            "purple" => self.purple,
-            "success" => self.success,
-            "warning" => self.warning,
-            "error" => self.error,
-            "info" => self.info,
-            "highlight_low" => self.highlight_low,
-            "highlight_med" => self.highlight_med,
-            "highlight_high" => self.highlight_high,
-            _ => self.accent,
-        }
+        let mut palette = *self;
+        palette.slot(name).map_or(self.accent, |token| *token)
     }
 
+    /// Whether `name` is a token `[theme.colors]` can set.
+    pub fn is_token(name: &str) -> bool {
+        Self::new().slot(name).is_some()
+    }
+
+    /// The one table of token names, which [`with_color`](Self::with_color), [`token`](Self::token) and [`is_token`](Self::is_token) all read, so what can be written, what can be read and what the report accepts cannot drift apart.
+    fn slot(&mut self, name: &str) -> Option<&mut Color> {
+        Some(match name {
+            "base" => &mut self.base,
+            "surface" => &mut self.surface,
+            "overlay" => &mut self.overlay,
+            "muted" => &mut self.muted,
+            "subtle" => &mut self.subtle,
+            "text" => &mut self.text,
+            "accent" => &mut self.accent,
+            "blue" => &mut self.blue,
+            "cyan" => &mut self.cyan,
+            "teal" => &mut self.teal,
+            "red" => &mut self.red,
+            "orange" => &mut self.orange,
+            "yellow" => &mut self.yellow,
+            "green" => &mut self.green,
+            "purple" => &mut self.purple,
+            "success" => &mut self.success,
+            "warning" => &mut self.warning,
+            "error" => &mut self.error,
+            "info" => &mut self.info,
+            "highlight_low" => &mut self.highlight_low,
+            "highlight_med" => &mut self.highlight_med,
+            "highlight_high" => &mut self.highlight_high,
+            _ => return None,
+        })
+    }
+
+    /// The accent `name` picks, or the palette's own for a name that picks none — `""`, what a config that never set one carries, and anything [`has_accent`](Self::has_accent) turns down.
     pub fn accent_by_name(&self, name: &str) -> Color {
-        match name {
+        self.named_accent(name).unwrap_or(self.accent)
+    }
+
+    /// Whether `name` is an accent `[theme] accent` understands: one of the eight hues, or empty for the palette's own.
+    pub fn has_accent(name: &str) -> bool {
+        name.is_empty() || Self::new().named_accent(name).is_some()
+    }
+
+    fn named_accent(&self, name: &str) -> Option<Color> {
+        Some(match name {
             "blue" => self.blue,
             "cyan" => self.cyan,
             "teal" => self.teal,
@@ -786,8 +791,8 @@ impl NordTheme {
             "yellow" => self.yellow,
             "green" => self.green,
             "purple" => self.purple,
-            _ => self.accent,
-        }
+            _ => return None,
+        })
     }
 }
 
@@ -800,6 +805,128 @@ impl Default for NordTheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::path::Path;
+
+    use util::report::Finding;
+
+    fn theme_section(edit: impl FnOnce(&mut crate::ThemeConfig)) -> crate::ThemeConfig {
+        let mut theme = crate::ThemeConfig::default();
+        edit(&mut theme);
+        theme
+    }
+
+    fn keyed(findings: &[Finding]) -> Vec<(&str, &str)> {
+        findings
+            .iter()
+            .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+            .collect()
+    }
+
+    /// Each of these used to fall back without a word — a misspelt theme to nord, a misspelt accent to the palette's own, a misspelt `[theme.colors]` token to nothing — which looks exactly like the setting having no effect. The fallbacks stay; what changes is that each is reported, at the key that caused it.
+    ///
+    /// **A substitution is a warning, and a drop is an error** — the report's own rule, that a warning is something the shell did instead of what was asked. Nord in place of a theme and the palette's accent in place of an accent are the shell doing something instead; a token nothing answers to is not applied at all, so `config check` fails on it and not on the other two.
+    #[test]
+    fn a_substituted_theme_or_accent_is_a_warning_and_a_dropped_token_an_error() {
+        telar::set_locale("en");
+        let theme = theme_section(|theme| {
+            theme.name = "gruvbx".to_string();
+            theme.accent = "cyna".to_string();
+            theme
+                .colors
+                .insert("bse".to_string(), "#000000".to_string());
+            theme
+                .colors
+                .insert("base".to_string(), "#111111".to_string());
+        });
+
+        let report = theme.check(Path::new("config.toml"));
+
+        assert_eq!(
+            keyed(&report.warnings),
+            [
+                (
+                    "theme.name",
+                    "there is no theme called 'gruvbx', so the shell uses nord"
+                ),
+                (
+                    "theme.accent",
+                    "there is no accent called 'cyna', so the palette's own accent is used"
+                ),
+            ],
+            "the two names the shell puts something of its own in place of"
+        );
+        assert_eq!(
+            keyed(&report.errors),
+            [(
+                "theme.colors.bse",
+                "there is no colour token called 'bse', so this colour is not applied"
+            )],
+            "and the one it drops, with nothing for the token that exists"
+        );
+        assert_eq!(
+            NordTheme::named("gruvbx").base,
+            NordTheme::nord().base,
+            "the fallback itself is unchanged"
+        );
+    }
+
+    /// `fallback` is only read for a `dynamic` theme, so a misspelt one would first show on a start with no wallpaper — long after the edit, and nowhere near it. Nord stands in for it, which makes it a warning like a misspelt `name`.
+    #[test]
+    fn a_misspelt_fallback_is_reported_whatever_the_theme_is() {
+        let theme = theme_section(|theme| theme.fallback = "nrod".to_string());
+        let report = theme.check(Path::new("config.toml"));
+
+        assert!(report.errors.is_empty(), "{}", report.render());
+        assert_eq!(
+            report
+                .warnings
+                .iter()
+                .map(|finding| finding.key.as_str())
+                .collect::<Vec<_>>(),
+            ["theme.fallback"]
+        );
+    }
+
+    /// The names the shell itself offers must never be reported: every built-in palette in any spelling the lookup accepts, every token, and the eight hues plus the palette's own that the settings window's accent picker offers.
+    #[test]
+    fn every_name_the_shell_offers_checks_clean() {
+        assert!(
+            crate::ThemeConfig::default()
+                .check(Path::new("config.toml"))
+                .is_clean(),
+            "the default `[theme]`"
+        );
+        for name in BUILT_IN_THEMES
+            .iter()
+            .chain(&["custom", "dynamic", "Rose Pine"])
+        {
+            assert!(NordTheme::has_palette(name), "'{name}' is a palette");
+        }
+        for token in THEME_TOKENS {
+            assert!(NordTheme::is_token(token), "'{token}' is a token");
+        }
+        for accent in [
+            "", "blue", "cyan", "teal", "red", "orange", "yellow", "green", "purple",
+        ] {
+            assert!(NordTheme::has_accent(accent), "'{accent}' is an accent");
+        }
+    }
+
+    #[test]
+    fn the_theme_report_speaks_the_users_language() {
+        telar::set_locale("es");
+        let theme = theme_section(|theme| theme.name = "gruvbx".to_string());
+        let message = theme.check(Path::new("config.toml")).warnings[0]
+            .message
+            .clone();
+        telar::set_locale("en");
+
+        assert_eq!(
+            message,
+            "no hay ningún tema llamado 'gruvbx', así que se usa nord"
+        );
+    }
 
     /// A catalogue component asks the theme its questions through `ThemeTokens`, not through `NordTheme`, so a metric this shell configures has to be answerable there — otherwise a `text_field` dropped into the settings float rounds and spaces itself to telar's defaults while every bar on screen follows the theme.
     #[test]

@@ -18,7 +18,8 @@ see_also: [dependencies, configuration]
 hogar-shell deps missing     # what is absent, and what each absence costs
 hogar-shell shell ping       # is the shell even up
 hogar-shell config path      # which config is being read
-RUST_LOG=debug hogar-shell   # the warnings, including dropped ids
+hogar-shell config check     # what it names that the shell does not have, by file and line
+RUST_LOG=debug hogar-shell   # the warnings
 ```
 
 `deps missing` answers most of this page in one line each, and it is answered by the binary — so it works when
@@ -29,8 +30,10 @@ nothing started.
 Three causes, in order of likelihood:
 
 1. **It is not in a zone.** `[bars.<edge>] start|center|end` — an id not listed is not shown.
-2. **Its id was dropped.** An unknown module id is dropped with a log warning rather than failing the bar. Check
-   the spelling against [features/modules](../features/modules/); `RUST_LOG=info` prints it.
+2. **Its id is misspelt.** Then something else is there instead: an id no module answers to is drawn where it
+   was declared as a placeholder in the error colour — the id written on it along a horizontal bar, a warning
+   glyph alone down a vertical one — and pressing it opens the settings window. `hogar-shell config check` names
+   it with its file and line; check the spelling against [features/modules](../features/modules/).
 3. **Its dependency is absent, and its rule is "hide".** Bluetooth with no BlueZ, battery with no battery,
    media with no player, and the four Hyprland-bound modules on another compositor are all hidden by design.
 
@@ -74,15 +77,21 @@ problem, not the shell. If you bound it through the portal, remember the name is
 
 ## The config changed and nothing happened
 
-Saving `config.toml` reloads it. If it did not:
+A save that changes `config.toml`, `tokens.toml` or a monitor override reloads it; a save that leaves the files
+holding what they held reloads nothing. If a change did not show:
 
+- **Check the problems notice** — a file that does not parse is not applied, and the notice says so until it
+  loads again. `hogar-shell config check` gives the line.
 - **Check the file being read** — `hogar-shell config path`. A per-monitor file at
   `monitors/<output>/config.toml` overrides the global one for that screen.
 - **Check the key exists** — `hogar-shell config schema <section>` prints every real key. An unknown key is
   ignored silently.
-- **Force it** — `hogar-shell shell reload`.
+- **Force it** — `hogar-shell shell reload` rebuilds everything whatever the files hold, which is also how a
+  font or an icon theme installed since reaches the shell.
 
-There is no validation report yet, so a wrong key is a log line rather than an error on screen.
+`hogar-shell config check` reports the *ids* and names the shell does not have — modules, dashboard pages,
+utilities toggles, status icons, themes, accents and colour tokens — a corner module no bar is there to draw, and
+a section a monitor override may not set, but not an unknown *key* yet: a misspelt key is still ignored silently.
 
 ## An external monitor's brightness is out of step
 

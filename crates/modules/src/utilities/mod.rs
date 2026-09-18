@@ -1,10 +1,12 @@
 //! The utilities panel: the switches a user reaches for without opening anything.
 //!
-//! Every toggle here already exists as a service and, for most of them, as its own bar chip. What this panel adds is *one place* — a user who wants to turn the microphone off and the VPN on should not have to put two chips on a bar and remember which is which. The toggles are declared by id in `[utilities] toggles`, so the order is the user's; an id this build does not know is dropped with a warning rather than failing the panel.
+//! Every toggle here already exists as a service and, for most of them, as its own bar chip. What this panel adds is *one place* — a user who wants to turn the microphone off and the VPN on should not have to put two chips on a bar and remember which is which. The toggles are declared by id in `[utilities] toggles`, so the order is the user's; an id this build does not know holds its place as a tile saying so rather than failing the panel.
 //!
 //! Each tile subscribes to its own service, exactly as the equivalent chip does. That is deliberate: a panel that held one aggregate state would need a producer of its own, and the whole point of the service layer is that N views of one reading cost one subscription each and one producer in total.
 
 mod capture;
+
+use std::path::Path;
 
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, RectStyle,
@@ -17,6 +19,8 @@ use config::theme::{FontRole, NordTheme};
 use ui::glyph;
 use ui::icon::icon_view;
 use ui::module::{icon_px, module_fg, surface_env};
+use ui::placeholder;
+use util::report::{Finding, Report};
 
 pub const ID: &str = "utilities";
 
@@ -175,19 +179,38 @@ pub fn utilities_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )
 }
 
-/// Which toggles this config asks for, in its order. An unknown id is reported once and dropped: a config written against a newer build should cost a log line, not the whole panel.
-fn requested(config: &UtilitiesConfig) -> Vec<Quick> {
+/// One entry of `[utilities] toggles`: a toggle this build has, or the id it was given for one it does not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Requested {
+    Toggle(Quick),
+    Unknown(String),
+}
+
+/// Which toggles this config asks for, in its order. An id this build does not have keeps its place as [`Requested::Unknown`], which the grid draws as a placeholder tile: a config written against a newer build should cost one tile, not the whole panel — and dropped, it would be a gap nobody could see in a grid of tiles.
+fn requested(config: &UtilitiesConfig) -> Vec<Requested> {
     config
         .toggles
         .iter()
-        .filter_map(|id| match Quick::from_id(id) {
-            Some(quick) => Some(quick),
-            None => {
-                tracing::warn!("[utilities] unknown toggle '{id}'");
-                None
-            }
+        .map(|id| match Quick::from_id(id) {
+            Some(quick) => Requested::Toggle(quick),
+            None => Requested::Unknown(id.clone()),
         })
         .collect()
+}
+
+/// Every toggle id `config` lists that this build does not have, attributed to `file`, for `hogar-shell config check` and the notice the running shell keeps up while a problem lasts. Read off [`requested`], the same list the grid draws, so the report and the placeholder tiles cannot disagree about which ids count.
+pub fn check(config: &UtilitiesConfig, file: &Path) -> Report {
+    let mut report = Report::default();
+    for (index, entry) in requested(config).into_iter().enumerate() {
+        if let Requested::Unknown(id) = entry {
+            report.error(Finding::new(
+                file,
+                format!("utilities.toggles[{index}]"),
+                telar::t!("utilities.unknown_toggle", id = id),
+            ));
+        }
+    }
+    report
 }
 
 /// The panel: the toggles, then the capture controls, then what has been recorded.
@@ -257,8 +280,11 @@ fn grid(config: &UtilitiesConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem
     let mut rows: Vec<Box<dyn LayoutItem>> = Vec::new();
     for chunk in toggles.chunks(columns) {
         let mut cells: Vec<Box<dyn LayoutItem>> = Vec::new();
-        for quick in chunk {
-            cells.push(tile(*quick, theme)?);
+        for entry in chunk {
+            cells.push(match entry {
+                Requested::Toggle(quick) => tile(*quick, theme)?,
+                Requested::Unknown(id) => unknown_tile(id, theme)?,
+            });
         }
         // The last row is padded with empty cells so its tiles keep the width the full rows have, rather than stretching to fill the gap the missing ones left.
         for _ in chunk.len()..columns {
@@ -339,23 +365,10 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
         },
     )?;
 
-    let column = Container::new(
-        LayoutStyle::new()
-            .flex_column()
-            .align_items(AlignItems::CENTER)
-            .gap(space::sm()),
-        vec![icon, box_item(label), box_item(detail)],
-    )?;
+    let column = Container::new(tile_column(), vec![icon, box_item(label), box_item(detail)])?;
 
     let tile = StyledContainer::new(
-        LayoutStyle::new()
-            .flex_column()
-            .align_items(AlignItems::CENTER)
-            .justify_content(JustifyContent::CENTER)
-            .flex_grow(1.0)
-            .flex_basis(0.0)
-            .padding_vertical(space::lg())
-            .padding_horizontal(space::md()),
+        tile_box(),
         move |_| {
             let state = fill_state.get();
             let fill = if state.active && !quick.is_action() {
@@ -384,6 +397,50 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
             quick.press();
         }
     });
+    Ok(Box::new(tile))
+}
+
+/// A tile's own box: an equal share of its row, whatever it holds.
+fn tile_box() -> LayoutStyle {
+    LayoutStyle::new()
+        .flex_column()
+        .align_items(AlignItems::CENTER)
+        .justify_content(JustifyContent::CENTER)
+        .flex_grow(1.0)
+        .flex_basis(0.0)
+        .padding_vertical(space::lg())
+        .padding_horizontal(space::md())
+}
+
+/// The glyph, name and detail line stacked inside a tile.
+fn tile_column() -> LayoutStyle {
+    LayoutStyle::new()
+        .flex_column()
+        .align_items(AlignItems::CENTER)
+        .gap(space::sm())
+}
+
+/// The tile for a toggle id this build does not have: a real tile's box and place in the grid, in the error colour, naming the id as it was written. It subscribes to nothing — there is no service behind an id nothing answers to — and a press opens the settings window, where the list is edited.
+fn unknown_tile(id: &str, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let ink = placeholder::ink(theme);
+    let fill = placeholder::fill(theme);
+    let caption = move || theme.text_style(FontRole::Caption, ink).with_clamp(1, true);
+    let icon = icon_view(|| placeholder::GLYPH.to_string(), move || ink, TILE_ICON)?;
+    let name = id.to_string();
+    let label = Text::new(move || name.clone(), LayoutStyle::new(), caption)?;
+    let detail = Text::new(
+        || telar::t!("utilities.unknown"),
+        LayoutStyle::new(),
+        caption,
+    )?;
+    let column = Container::new(tile_column(), vec![icon, box_item(label), box_item(detail)])?;
+    let tile = StyledContainer::new(
+        tile_box(),
+        move |_| RectStyle::filled(fill, TILE_RADIUS),
+        vec![Box::new(column)],
+    )?
+    .hover_style(move |_| RectStyle::filled(fill.darken(0.08), TILE_RADIUS))
+    .on_press(placeholder::open_settings);
     Ok(Box::new(tile))
 }
 
@@ -515,17 +572,23 @@ mod tests {
         for quick in Quick::ALL {
             assert_eq!(Quick::from_id(quick.id()), Some(quick), "{}", quick.id());
         }
-        // The shipped default list is the one config nobody wrote by hand, so an id that stopped resolving here would grey out a tile on every fresh install.
+        // The shipped default list is the one config nobody wrote by hand, so an id that stopped resolving here would put a placeholder tile on every fresh install.
         let default = UtilitiesConfig::default();
-        assert_eq!(
-            requested(&default).len(),
-            default.toggles.len(),
+        assert!(
+            requested(&default)
+                .iter()
+                .all(|entry| matches!(entry, Requested::Toggle(_))),
             "every default toggle resolves"
+        );
+        assert!(
+            check(&default, Path::new("config.toml")).is_clean(),
+            "and the report agrees"
         );
     }
 
+    /// Dropped, an unknown id was a gap nobody could see — a grid of tiles one short — with a log line as its only trace. It keeps its place instead, so the tile after it stays where the user put it.
     #[test]
-    fn an_unknown_toggle_is_dropped_rather_than_failing_the_panel() {
+    fn an_unknown_toggle_holds_its_place_rather_than_failing_the_panel() {
         let config = UtilitiesConfig {
             toggles: vec![
                 "wifi".to_string(),
@@ -534,7 +597,126 @@ mod tests {
             ],
             ..UtilitiesConfig::default()
         };
-        assert_eq!(requested(&config), vec![Quick::Wifi, Quick::Dnd]);
+        assert_eq!(
+            requested(&config),
+            vec![
+                Requested::Toggle(Quick::Wifi),
+                Requested::Unknown("teleporter".to_string()),
+                Requested::Toggle(Quick::Dnd),
+            ]
+        );
+
+        telar::set_locale("en");
+        let report = check(&config, Path::new("config.toml"));
+        assert_eq!(
+            report
+                .errors
+                .iter()
+                .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+                .collect::<Vec<_>>(),
+            [(
+                "utilities.toggles[1]",
+                "there is no toggle called 'teleporter'"
+            )],
+            "the report names the entry the grid draws a placeholder for, and only that one"
+        );
+
+        telar::reset_layout_runtime();
+        telar::set_theme(NordTheme::new());
+        assert!(
+            grid(&config, NordTheme::new()).is_ok(),
+            "a grid with a placeholder tile in it builds"
+        );
+    }
+
+    /// A placeholder is a tile, not a gap and not a banner: it takes the same share of its row as the toggle beside it, so the grid keeps the shape the user set and the mistake sits exactly where the id was written.
+    #[test]
+    fn a_placeholder_tile_takes_a_tiles_share_of_its_row() {
+        use telar::{AvailableSpace, ComponentList, DrawCommand, Paint, compute_layout};
+
+        telar::reset_layout_runtime();
+        let theme = NordTheme::new();
+        telar::set_theme(theme);
+        let config = UtilitiesConfig {
+            toggles: vec!["dnd".to_string(), "teleporter".to_string()],
+            columns: 2,
+            ..UtilitiesConfig::default()
+        };
+        let page = Container::new(
+            LayoutStyle::new().flex_column().width(400.0).height(300.0),
+            vec![grid(&config, theme).expect("the grid builds")],
+        )
+        .expect("the page builds");
+        let root = page.layout_node();
+        let tree = ComponentList::new(page);
+        compute_layout(
+            root,
+            AvailableSpace::Definite(400.0),
+            AvailableSpace::Definite(300.0),
+        )
+        .expect("the grid lays out");
+
+        let width_of = |fill: telar::Color| {
+            tree.commands().iter().find_map(|command| match command {
+                DrawCommand::Rect { rect, style, .. } if style.fill == Some(Paint::Solid(fill)) => {
+                    Some(rect.width)
+                }
+                _ => None,
+            })
+        };
+        let toggle = width_of(theme.base).expect("the do-not-disturb tile rests on the base token");
+        let unknown =
+            width_of(placeholder::fill(theme)).expect("the placeholder rests on the error token");
+        assert!(
+            unknown > 0.0 && unknown == toggle,
+            "the placeholder is {unknown}px wide beside a {toggle}px tile — it has to take a tile's share of the row"
+        );
+    }
+
+    /// Pressing the placeholder does something, and the something is where the list is fixed. A tile that took the press without a response would read as a panel that stopped working.
+    #[test]
+    fn a_press_on_a_placeholder_tile_opens_the_settings_window() {
+        use std::cell::RefCell;
+        use telar::{AvailableSpace, Event, PointerButton, PointerSource, compute_layout};
+
+        thread_local! {
+            static OPENED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        }
+        telar::reset_layout_runtime();
+        telar::set_theme(NordTheme::new());
+        ui::module::set_panel_opener(|panel| {
+            OPENED.with(|opened| opened.borrow_mut().push(panel.to_string()))
+        });
+        let mut tile = unknown_tile("teleporter", NordTheme::new()).expect("the tile builds");
+        compute_layout(
+            tile.layout_node(),
+            AvailableSpace::Definite(120.0),
+            AvailableSpace::Definite(90.0),
+        )
+        .expect("the tile lays out");
+
+        for event in [
+            Event::PointerPressed {
+                x: 20.0,
+                y: 20.0,
+                button: PointerButton::Primary,
+                source: PointerSource::Mouse,
+            },
+            Event::PointerReleased {
+                x: 20.0,
+                y: 20.0,
+                button: PointerButton::Primary,
+                source: PointerSource::Mouse,
+            },
+        ] {
+            tile.on_event(&event);
+        }
+
+        assert_eq!(
+            OPENED.with(|opened| opened.borrow().clone()),
+            ["settings"],
+            "the press opens the window the toggle list is edited in"
+        );
     }
 
     #[test]

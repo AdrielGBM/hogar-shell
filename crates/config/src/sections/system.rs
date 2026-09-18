@@ -3,10 +3,12 @@
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 
 use platform_wayland::CaptureBackend;
 use serde::{Deserialize, Serialize};
+use util::report::{Finding, Report};
 
 /// App-wide settings that don't belong to a specific visual section. `language` is a BCP-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `show_over_fullscreen` lifts the bars onto the overlay layer so they stay visible over a fullscreen window — off by default, since a fullscreen game or video is normally meant to cover them. `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os-release`.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -212,7 +214,7 @@ impl DashboardTab {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct DashboardConfig {
-    /// Which pages the dashboard offers, in order; an id it doesn't know is dropped with a warning rather than failing the whole config parse, which would cost the user every other section over one typo.
+    /// Which pages the dashboard offers, in order: `dash`, `media`, `performance` and `weather`. An id it doesn't have is left out rather than failing the whole config parse, which would cost the user every other section over one typo — and is reported, by `hogar-shell config check` and in the notice the running shell keeps up while a problem lasts. A list with no page it has left in it shows every page.
     pub tabs: Vec<String>,
     /// Milliseconds between playhead reads while the media card is up.
     pub media_update_interval: u64,
@@ -240,23 +242,45 @@ impl Default for DashboardConfig {
 }
 
 impl DashboardConfig {
-    /// The configured pages, unknown ids warned about and dropped. An empty list falls back to all of them: a dashboard with no pages is a surface that opens onto nothing.
+    /// The configured pages, without the ids this build has no page for — [`check`](Self::check) is what says so. A list with nothing left falls back to all of them: a dashboard with no pages is a surface that opens onto nothing.
     pub fn tabs(&self) -> Vec<DashboardTab> {
         let resolved: Vec<DashboardTab> = self
             .tabs
             .iter()
-            .filter_map(|id| match DashboardTab::from_id(id) {
-                Some(tab) => Some(tab),
-                None => {
-                    tracing::warn!("unknown dashboard tab '{id}'");
-                    None
-                }
-            })
+            .filter_map(|id| DashboardTab::from_id(id))
             .collect();
         if resolved.is_empty() {
             return DashboardTab::ALL.to_vec();
         }
         resolved
+    }
+
+    /// What `tabs` asks for that the dashboard cannot show, attributed to `file`: an error for each id it has no page for, and a warning when not one id is left and it is showing every page instead of the ones asked for.
+    ///
+    /// Asked of the same lookup [`tabs`](Self::tabs) makes, so the report and the dashboard cannot disagree about which ids count. Dropping an id used to log a line nobody read, once per build of the dashboard, and the fallback said nothing at all.
+    pub fn check(&self, file: &Path) -> Report {
+        let mut report = Report::default();
+        for (index, id) in self.tabs.iter().enumerate() {
+            if DashboardTab::from_id(id).is_none() {
+                report.error(Finding::new(
+                    file,
+                    format!("dashboard.tabs[{index}]"),
+                    telar::t!("report.unknown_tab", id = id),
+                ));
+            }
+        }
+        if !self
+            .tabs
+            .iter()
+            .any(|id| DashboardTab::from_id(id).is_some())
+        {
+            report.warn(Finding::new(
+                file,
+                "dashboard.tabs",
+                telar::t!("report.every_tab"),
+            ));
+        }
+        report
     }
 
     /// Clamped on read: below ~100 ms a playhead poll is a D-Bus round-trip per frame for a number that moves one pixel, and above a few seconds the scrubber visibly lags the audio.
@@ -558,7 +582,7 @@ impl RecorderConfig {
 
 /// The utilities panel (`[utilities]`): the quick toggles it lists, and in which order.
 ///
-/// `toggles` is a list of ids rather than a switch per toggle, because the order is the point — the toggles a user reaches for live at the front. Unknown ids are dropped with a warning rather than failing the config, so a name from a newer build costs a line in the log instead of the whole panel.
+/// `toggles` is a list of ids rather than a switch per toggle, because the order is the point — the toggles a user reaches for live at the front. An id this build does not have holds its place in the grid as a tile saying so, rather than failing the config — a name from a newer build costs one tile instead of the whole panel — and is reported by `hogar-shell config check` and in the notice the running shell keeps up while a problem lasts.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct UtilitiesConfig {
@@ -616,4 +640,90 @@ impl UtilitiesConfig {
 #[serde(default)]
 pub struct KeyNavConfig {
     pub vim: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dashboard(tabs: &[&str]) -> DashboardConfig {
+        DashboardConfig {
+            tabs: tabs.iter().map(|id| id.to_string()).collect(),
+            ..DashboardConfig::default()
+        }
+    }
+
+    fn keys(findings: &[Finding]) -> Vec<&str> {
+        findings
+            .iter()
+            .map(|finding| finding.key.as_str())
+            .collect()
+    }
+
+    /// A misspelt page used to cost a log line and nothing else: the dashboard opened without it and gave no sign that anything had been asked for.
+    #[test]
+    fn an_unknown_tab_is_reported_where_it_is_listed() {
+        telar::set_locale("en");
+        let report = dashboard(&["dash", "wether", "media"]).check(Path::new("config.toml"));
+
+        assert_eq!(
+            keys(&report.errors),
+            ["dashboard.tabs[1]"],
+            "the report points at the entry itself, so a user with a long list can find it"
+        );
+        assert_eq!(
+            report.errors[0].message, "the dashboard has no page called 'wether'",
+            "and names the id as it was written"
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "two pages are left, so nothing fell back"
+        );
+    }
+
+    /// The fallback is kept — a dashboard with no pages opens onto nothing — but it is no longer silent: a user who listed only misspelt pages sees every page and would otherwise have no way to tell why.
+    #[test]
+    fn a_list_with_no_page_left_falls_back_to_every_page_and_says_so() {
+        telar::set_locale("en");
+        let config = dashboard(&["wether"]);
+
+        assert_eq!(
+            config.tabs(),
+            DashboardTab::ALL.to_vec(),
+            "every page, as before"
+        );
+        let report = config.check(Path::new("config.toml"));
+        assert_eq!(keys(&report.errors), ["dashboard.tabs[0]"]);
+        assert_eq!(
+            keys(&report.warnings),
+            ["dashboard.tabs"],
+            "the fallback is a warning on the list as a whole, beside the error on the id that caused it"
+        );
+    }
+
+    #[test]
+    fn the_default_pages_report_nothing() {
+        assert!(
+            DashboardConfig::default()
+                .check(Path::new("config.toml"))
+                .is_clean(),
+            "the pages a fresh install lists are all pages the dashboard has"
+        );
+    }
+
+    #[test]
+    fn the_report_speaks_the_users_language() {
+        telar::set_locale("es");
+        let report = dashboard(&["wether"]).check(Path::new("config.toml"));
+        telar::set_locale("en");
+
+        assert_eq!(
+            report.errors[0].message, "el panel no tiene ninguna página llamada 'wether'",
+            "the message reaches a notification, so it is translated where it is written"
+        );
+        assert_eq!(
+            report.warnings[0].message,
+            "ninguna página de esta lista es del panel, así que las muestra todas"
+        );
+    }
 }

@@ -140,6 +140,42 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// **The trap in handing the write to a queue.** A save reads the file, replaces one table and writes the whole thing back, and the settings panel saves a section per form — so a save that returned before its bytes were on disk would leave the next one reading the file as it stood *before* it, and the first form's change would be gone. That is why `save_section` waits for the writer rather than queueing and returning: by the time it returns, the file is what the next reader sees, and the staging copy it went through is no longer in the directory the user browses.
+    #[test]
+    fn a_save_is_on_disk_by_the_time_it_returns_so_the_next_one_reads_it() {
+        let dir = std::env::temp_dir().join(format!("hogar-shell-save-run-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "# hand-written\n[theme]\naccent = \"cyan\"\n").unwrap();
+
+        let mut theme = Config::load_or_default(&path).theme;
+        theme.accent = "orange".to_string();
+        Config::save_section(&path, "theme", &theme).unwrap();
+        let mut icons = Config::load_or_default(&path).icons;
+        icons.default_set = "lucide".to_string();
+        Config::save_section(&path, "icons", &icons).unwrap();
+
+        let reloaded = Config::load(&path).expect("the saved file parses");
+        assert_eq!(
+            reloaded.theme.accent, "orange",
+            "the second save read the file after the first one, so the first one's change is still there"
+        );
+        assert_eq!(reloaded.icons.default_set, "lucide");
+
+        let left: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        assert_eq!(
+            left,
+            vec![path],
+            "a finished save leaves no staging copy beside the config"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn saving_a_section_keeps_its_sub_tables_under_it_instead_of_scattering_them() {
         // What this catches is not a parse failure — the scattered file still parses, which is why nothing saw it. Saving `[theme]` printed `[theme.export]` between `[panels]` and `[bars.top]`, put `[theme.fonts.title]` inside the bar definitions, and left `[theme]` itself *after* its own children. For a function whose whole promise is "preserving every other section, key order, and comment", that is the failure.

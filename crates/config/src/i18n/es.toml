@@ -1,3 +1,9 @@
 [battery.warning]
 title = "Batería baja"
 body = "Queda {level}% — conecta el cargador."
+[report]
+unknown_tab = "el panel no tiene ninguna página llamada '{id}'"
+every_tab = "ninguna página de esta lista es del panel, así que las muestra todas"
+unknown_theme = "no hay ningún tema llamado '{name}', así que se usa nord"
+unknown_accent = "no hay ningún acento llamado '{name}', así que se usa el acento propio de la paleta"
+unknown_token = "no hay ningún color llamado '{name}', así que este color no se aplica"

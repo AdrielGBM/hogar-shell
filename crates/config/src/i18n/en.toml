@@ -1,3 +1,9 @@
 [battery.warning]
 title = "Battery low"
 body = "{level}% left — plug in the charger."
+[report]
+unknown_tab = "the dashboard has no page called '{id}'"
+every_tab = "no page listed here is one the dashboard has, so it shows every page"
+unknown_theme = "there is no theme called '{name}', so the shell uses nord"
+unknown_accent = "there is no accent called '{name}', so the palette's own accent is used"
+unknown_token = "there is no colour token called '{name}', so this colour is not applied"

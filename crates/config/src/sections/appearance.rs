@@ -14,6 +14,7 @@ use crate::scheme;
 use crate::sections::*;
 use crate::theme::NordTheme;
 use util::paths;
+use util::report::{Finding, Report};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Corner {
@@ -51,6 +52,16 @@ impl Corner {
             Corner::TopRight => "top-right",
             Corner::BottomLeft => "bottom-left",
             Corner::BottomRight => "bottom-right",
+        }
+    }
+
+    /// The key this corner is written under in `[corners]` — [`CornersConfig`]'s field for it.
+    pub fn key(self) -> &'static str {
+        match self {
+            Corner::TopLeft => "top_left",
+            Corner::TopRight => "top_right",
+            Corner::BottomLeft => "bottom_left",
+            Corner::BottomRight => "bottom_right",
         }
     }
 }
@@ -507,5 +518,71 @@ impl ThemeConfig {
 
     pub fn requested_variant(&self) -> scheme::Variant {
         scheme::Variant::from_id(&self.variant).unwrap_or_default()
+    }
+
+    /// What `[theme]` names that no palette, accent or token answers to, attributed to `file`, for `hogar-shell config check` and the notice the running shell keeps up while a problem lasts. Each one used to fall back without a word — an unknown theme to nord and an unknown accent to the palette's own, an unknown `[theme.colors]` token to nothing at all — so a typo looked exactly like the setting having no effect.
+    ///
+    /// A theme or an accent nobody has is a **warning**, because the shell puts one of its own in its place, and that is what a warning is: something done instead of what was asked. A token nobody has is an **error**: nothing takes its place, and the colour is simply not applied.
+    ///
+    /// Asked of the same lookups [`NordTheme::named`], [`NordTheme::accent_by_name`] and [`NordTheme::with_color`] make, so the report and the palette on screen cannot disagree about which names count. `fallback` is checked whatever `name` is: it is only read for `dynamic`, and a misspelt one would otherwise surface on the first start with no wallpaper, far from the edit that caused it.
+    pub fn check(&self, file: &Path) -> Report {
+        let mut report = Report::default();
+        for (key, name) in [
+            ("theme.name", &self.name),
+            ("theme.fallback", &self.fallback),
+        ] {
+            if !NordTheme::has_palette(name) {
+                report.warn(Finding::new(
+                    file,
+                    key,
+                    telar::t!("report.unknown_theme", name = name),
+                ));
+            }
+        }
+        if !NordTheme::has_accent(&self.accent) {
+            report.warn(Finding::new(
+                file,
+                "theme.accent",
+                telar::t!("report.unknown_accent", name = self.accent),
+            ));
+        }
+        let mut tokens: Vec<&String> = self
+            .colors
+            .keys()
+            .filter(|name| !NordTheme::is_token(name))
+            .collect();
+        tokens.sort();
+        for name in tokens {
+            report.error(Finding::new(
+                file,
+                format!("theme.colors.{name}"),
+                telar::t!("report.unknown_token", name = name),
+            ));
+        }
+        report
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A corner's key is only worth having if it is the one the file uses: the report points at `corners.<key>`, and a key that drifted from the field would point at a line that is not there.
+    #[test]
+    fn every_corner_s_key_is_the_field_corners_reads_it_from() {
+        let named = CornersConfig {
+            top_left: Some(Corner::TopLeft.key().to_string()),
+            top_right: Some(Corner::TopRight.key().to_string()),
+            bottom_left: Some(Corner::BottomLeft.key().to_string()),
+            bottom_right: Some(Corner::BottomRight.key().to_string()),
+        };
+        let table = toml::Table::try_from(&named).expect("the corners serialise");
+        for corner in Corner::ALL {
+            assert_eq!(
+                table.get(corner.key()).and_then(toml::Value::as_str),
+                Some(corner.key()),
+                "{corner:?} is written under its own key"
+            );
+        }
     }
 }

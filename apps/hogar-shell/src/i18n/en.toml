@@ -1,2 +1,8 @@
 [config]
 error_title = "Configuration not applied"
+problems_title = "Problems in the configuration"
+problems_more = "…and {count} more"
+problems_hint = "`hogar-shell config check` says where each one is."
+unknown_module = "there is no module called '{id}'"
+global_only = "[{section}] can only be set in config.toml, so a monitor override's copy of it is ignored"
+corner_nowhere = "no bar runs along either edge of this corner, so '{id}' is shown nowhere"

@@ -480,6 +480,12 @@ pub(crate) const CONFIG: Target = Target {
                 config::schema::render(section)
             },
         },
+        Command {
+            name: "check",
+            args: "",
+            help: "what the config and its monitor overrides name that the shell does not have, by file and line; fails on an error",
+            run: |_| crate::core::check::command(&config::Config::default_path()),
+        },
     ],
 };
 

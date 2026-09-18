@@ -32,8 +32,8 @@ center = ["clock"]
 end    = ["statusicons", "tray", "battery", "session"]
 ```
 
-Every id is a page under [features/modules](../features/modules/). Ids the build does not know are dropped with
-a warning rather than failing the bar.
+Every id is a page under [features/modules](../features/modules/). An id the build does not know is drawn as a
+placeholder where you wrote it rather than failing the bar, and `hogar-shell config check` says which one.
 
 **2. Pick a shape.** `[shape] mode` is `bar`, `sections` or `chips` — one solid bar, grouped zones, or a chip
 per module. Every module works in all three; see [Bars](../features/surfaces/bars.md).

@@ -4,6 +4,8 @@
 //!
 //! Ordered by config rather than by a fixed list, because the order icons sit in is the whole point of a cluster: a user who reads left-to-right wants their own priority, not the shell's.
 
+use std::path::Path;
+
 use telar::{
     AlignItems, Color, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReadSignal, signal,
 };
@@ -13,6 +15,7 @@ use config::theme::NordTheme;
 use services::{battery, bluetooth, lockkeys, network, volume};
 use ui::glyph;
 use ui::icon::icon_view;
+use util::report::{Finding, Report};
 
 /// One reading the cluster can show. The names are the ones `[status_icons] icons` accepts, and they match the module ids the same readings have as standalone chips so a user moving between the two is not renaming.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,19 +60,28 @@ impl StatusIcon {
     }
 }
 
-/// The icons to draw, in the order configured. An unknown name is dropped with a warning rather than failing the whole cluster: a typo should cost one icon, not the chip.
+/// The icons to draw, in the order configured. An unknown name is left out rather than failing the whole cluster — a typo should cost one icon, not the chip — and [`check`] is what says so.
 pub fn icons(config: &StatusIconsConfig) -> Vec<StatusIcon> {
     config
         .icons
         .iter()
-        .filter_map(|id| match StatusIcon::from_id(id) {
-            Some(icon) => Some(icon),
-            None => {
-                tracing::warn!("unknown status icon '{id}'");
-                None
-            }
-        })
+        .filter_map(|id| StatusIcon::from_id(id))
         .collect()
+}
+
+/// Every name in `[status_icons] icons` the cluster has no icon for, attributed to `file`, for `hogar-shell config check` and the notice the running shell keeps up while a problem lasts. It used to cost a log line and nothing else: the cluster simply drew one icon fewer.
+pub fn check(config: &StatusIconsConfig, file: &Path) -> Report {
+    let mut report = Report::default();
+    for (index, id) in config.icons.iter().enumerate() {
+        if StatusIcon::from_id(id).is_none() {
+            report.error(Finding::new(
+                file,
+                format!("status_icons.icons[{index}]"),
+                telar::t!("statusicons.unknown_icon", id = id),
+            ));
+        }
+    }
+    report
 }
 
 /// One icon, subscribed to its own service.
@@ -247,6 +259,34 @@ mod tests {
         assert_eq!(
             icons(&config),
             vec![StatusIcon::Volume, StatusIcon::Battery]
+        );
+    }
+
+    /// The icon a typo costs used to go without a word — the cluster just drew one fewer — so it is reported at the entry that caused it, and the ones the cluster does draw are not.
+    #[test]
+    fn a_typo_is_reported_where_it_is_listed() {
+        telar::set_locale("en");
+        let config = StatusIconsConfig {
+            icons: vec!["volume".into(), "nonesuch".into(), "battery".into()],
+            ..StatusIconsConfig::default()
+        };
+
+        let report = check(&config, Path::new("config.toml"));
+
+        assert_eq!(
+            report
+                .errors
+                .iter()
+                .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+                .collect::<Vec<_>>(),
+            [(
+                "status_icons.icons[1]",
+                "there is no status icon called 'nonesuch'"
+            )]
+        );
+        assert!(
+            check(&StatusIconsConfig::default(), Path::new("config.toml")).is_clean(),
+            "the icons a fresh install lists are all icons"
         );
     }
 

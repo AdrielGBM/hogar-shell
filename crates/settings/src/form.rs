@@ -12,9 +12,10 @@ use telar::{
     StyledContainer, Text, box_item, signal,
 };
 
+use config::fingerprint::{Fingerprint, Stamp};
 use config::theme::{FontRole, NordTheme};
 use config::{
-    Align, Capitalize, Config, Edge, FullscreenPopups, MediaScroll, OpenMode, Shape,
+    Align, Capitalize, Config, Edge, FullscreenPopups, MediaScroll, OpenMode, Saved, Shape,
     TemperatureUnit, Variant,
 };
 
@@ -129,7 +130,7 @@ pub(crate) fn pick_option(value: &RwSignal<String>, options: &'static [&'static 
 
 /// Wires the recorded fields to `apply`, debounced — the second half of K14.
 ///
-/// Returns the subscriptions for the caller to hold. The window survives the reload its own write causes (the shell reconciles its surfaces in place rather than reopening them), so what the user is typing into is the same field it was before the change landed.
+/// Returns the subscriptions for the caller to hold. The reload its own write causes passes the window by (see [`persist`]), so what the user is typing into is the same field it was before the change landed.
 pub(crate) fn live_apply(apply: Rc<dyn Fn()>) -> Vec<telar::Effect> {
     let Some(recorder) = RECORDING.with(|recording| recording.borrow_mut().take()) else {
         return Vec::new();
@@ -215,6 +216,22 @@ pub(crate) fn forget_opened() {
     OPENED_WITH.with(|slot| *slot.borrow_mut() = None);
 }
 
+thread_local! {
+    /// The config content this window's forms are showing: read as the window builds, and moved on only by its own writes — which is what lets it vouch for what one of them leaves in the file.
+    static SHOWING: std::cell::RefCell<Stamp> = std::cell::RefCell::new(Stamp::default());
+}
+
+/// Records what the window is about to seed its forms from. Read before any of them reads the file, so it can only lag behind what they show — which costs a rebuild the window could have been spared, never one it needed.
+pub(crate) fn seeding_from(path: &Path) {
+    SHOWING.with(|showing| showing.borrow_mut().record(Fingerprint::read(path)));
+}
+
+/// Tells the shell this window shows `content`, so the reload its own write causes passes it by. Only ever handed the fingerprint of bytes the window has just put on disk itself, so the stamp names the content that reload will read.
+fn shows(content: Fingerprint) {
+    SHOWING.with(|showing| showing.borrow_mut().record(content.clone()));
+    surfaces::shell::stamp(MODULE, content);
+}
+
 /// Puts `config.toml` back to how it was when this settings window opened, and lets the config watcher apply it — the Revert half of K14.
 ///
 /// The whole file rather than a per-section undo stack: with apply-on-change there is no single edit to undo, and "how it was when I opened this" is the state a user actually means. It therefore also discards a change made to the file by hand while the window was open, which is why it is a button and not automatic.
@@ -223,18 +240,32 @@ pub(crate) fn revert_to_opened(path: &Path) {
     let Some(text) = snapshot else {
         return;
     };
-    // This window's own write, like a save — what it does to the forms it decides itself, below.
-    surfaces::shell::authored_change(MODULE);
-    if let Err(e) = std::fs::write(path, text) {
-        tracing::warn!("settings: could not revert {}: {e}", path.display());
+    let restored = Fingerprint::with_config(path, Some(&text));
+    // Through the writer like every save, and for the sharper reason: this replaces the whole file rather than one table, so a truncating write that died half way through would cost the user the config it exists to give them back.
+    match util::writer::write(path, text.into_bytes()) {
+        // Unlike a save, whatever the window showed before: the panel re-seeds every form from the file this has just put back.
+        Ok(()) => shows(restored),
+        Err(e) => tracing::warn!("settings: could not revert {}: {e}", path.display()),
     }
 }
 
+/// Writes one form's `[name]` table and tells the shell what the window now shows — see [`vouch_for`].
 pub(crate) fn persist<T: Serialize>(path: &Path, name: &str, value: &T) {
-    // Written before the write, not after: the config watcher can notice the file inside the same turn.
-    surfaces::shell::authored_change(MODULE);
-    if let Err(e) = Config::save_section(path, name, value) {
-        tracing::warn!("settings: could not save [{name}]: {e}");
+    match Config::save_section(path, name, value) {
+        Ok(saved) => vouch_for(path, &saved),
+        Err(e) => tracing::warn!("settings: could not save [{name}]: {e}"),
+    }
+}
+
+/// Stamps the window with the file `saved` left, when it was showing the file `saved` found.
+///
+/// **Only when it was.** A save replaces its own table in the file as it stands, so an edit made elsewhere since the window was seeded — a hand edit, a scheme picked from the launcher — goes back to disk with it; a window vouching for that file would be passed by the reload that brings the edit, left showing the old values of whatever it touched, and a form showing old values writes them back on its next save. So such a save leaves the stamp alone and the window is rebuilt like any other surface.
+///
+/// **Both sides come from the save's own bytes**, never from reading the file again around it: a read before the save can miss an edit that lands before the save reads, and a read after it can take in an edit that lands behind the write — either way a stamp for content the window never showed. Exact for `config.toml`, the only file the window writes; the rest of the set is read fresh, which is safe because nothing here writes it.
+fn vouch_for(path: &Path, saved: &Saved) {
+    let found = Fingerprint::with_config(path, saved.read.as_deref());
+    if SHOWING.with(|showing| showing.borrow().reflects(&found)) {
+        shows(Fingerprint::with_config(path, Some(&saved.written)));
     }
 }
 
@@ -665,5 +696,150 @@ mod tests {
 
         // And the recording is per form: the next one starts empty, or a section would apply its neighbour's fields as well as its own.
         assert!(RECORDING.with(|recording| recording.borrow().is_none()));
+    }
+
+    fn scratch_config(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "hogar-shell-settings-save-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            "[clock]\nformat = \"%H:%M\"\n\n[theme]\nname = \"nord\"\n",
+        )
+        .unwrap();
+        path
+    }
+
+    /// Registers the settings window with a token that counts its rebuilds, the way opening the panel would.
+    fn open_window() -> Rc<std::cell::Cell<u32>> {
+        struct Counting(Rc<std::cell::Cell<u32>>);
+        impl telar::SurfaceControl for Counting {
+            fn close(&self) {}
+            fn is_closing(&self) -> bool {
+                false
+            }
+            fn rebuild(&self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        let rebuilds = Rc::new(std::cell::Cell::new(0));
+        let token = telar::SurfaceToken::new(Box::new(Counting(Rc::clone(&rebuilds))));
+        surfaces::shell::toggle_window(MODULE, || token);
+        rebuilds
+    }
+
+    fn clock(format: &str) -> toml::Table {
+        toml::Table::from_iter([("format".to_string(), toml::Value::from(format))])
+    }
+
+    /// **A save passes its own window by when its reload arrives.** The stamp has to name the content that reload reads, which is the file *after* the write: stamped before it, the window would be claiming the bytes its save replaced, and the reload of its own change would rebuild the field being typed into after all.
+    #[test]
+    fn a_save_is_not_rebuilt_by_the_reload_it_causes() {
+        let path = scratch_config("own");
+        let rebuilds = open_window();
+        seeding_from(&path);
+
+        persist(&path, "clock", &clock("%H:%M:%S"));
+
+        surfaces::shell::rebuild_all(
+            &Fingerprint::read(&path),
+            config::fingerprint::Reload::IfChanged,
+        );
+        assert_eq!(
+            rebuilds.get(),
+            0,
+            "the window already shows what it saved, and rebuilding it would take the caret out of the field"
+        );
+        surfaces::shell::close(MODULE);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// **An edit made elsewhere before a save is not the window's to vouch for.** The save carries it back to disk inside the file it rewrites, so the reload that follows is the only one that will ever bring it — and a window stamped with that file would be passed by, left showing the old `[theme]` and ready to write it back with its next save.
+    #[test]
+    fn an_edit_made_elsewhere_before_a_save_still_rebuilds_the_window() {
+        let path = scratch_config("elsewhere");
+        let rebuilds = open_window();
+        seeding_from(&path);
+
+        std::fs::write(
+            &path,
+            "[clock]\nformat = \"%H:%M\"\n\n[theme]\nname = \"rose-pine\"\n",
+        )
+        .unwrap();
+        persist(&path, "clock", &clock("%H:%M:%S"));
+
+        surfaces::shell::rebuild_all(
+            &Fingerprint::read(&path),
+            config::fingerprint::Reload::IfChanged,
+        );
+        assert_eq!(
+            rebuilds.get(),
+            1,
+            "the file holds a theme the window never showed, so the reload has to rebuild it"
+        );
+        surfaces::shell::close(MODULE);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// **What the save found decides, not a second look at the file.** A read taken at any other moment — this used to take one just before the save — can find exactly what the window shows while the save itself found an edit that landed in between, and carried it back to disk. Here the file is put back between the save and the stamp, which makes that moment happen on demand: a second look sees the window's own file, and only the save's bytes still say what it carried.
+    #[test]
+    fn a_save_vouches_by_the_file_it_found_not_by_a_second_look() {
+        let path = scratch_config("found");
+        let seeded = std::fs::read_to_string(&path).unwrap();
+        let rebuilds = open_window();
+        seeding_from(&path);
+
+        std::fs::write(
+            &path,
+            "[clock]\nformat = \"%H:%M\"\n\n[theme]\nname = \"rose-pine\"\n",
+        )
+        .unwrap();
+        let saved = Config::save_section(&path, "clock", &clock("%H:%M:%S")).unwrap();
+        std::fs::write(&path, &seeded).unwrap();
+        vouch_for(&path, &saved);
+
+        surfaces::shell::rebuild_all(
+            &Fingerprint::with_config(&path, Some(&saved.written)),
+            config::fingerprint::Reload::IfChanged,
+        );
+        assert_eq!(
+            rebuilds.get(),
+            1,
+            "the save carried a theme the window never showed, so the reload of what it wrote has to rebuild it"
+        );
+        surfaces::shell::close(MODULE);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// **What the save wrote is what the window vouches for, not the file a moment later.** An edit landing right behind the write is nothing the window shows; stamping from a second look at the file would claim it, and the reload that brings it would pass the window by.
+    #[test]
+    fn a_save_vouches_for_what_it_wrote_not_for_an_edit_landing_behind_it() {
+        let path = scratch_config("wrote");
+        let rebuilds = open_window();
+        seeding_from(&path);
+
+        let saved = Config::save_section(&path, "clock", &clock("%H:%M:%S")).unwrap();
+        std::fs::write(
+            &path,
+            "[clock]\nformat = \"%H:%M:%S\"\n\n[theme]\nname = \"rose-pine\"\n",
+        )
+        .unwrap();
+        vouch_for(&path, &saved);
+
+        surfaces::shell::rebuild_all(
+            &Fingerprint::read(&path),
+            config::fingerprint::Reload::IfChanged,
+        );
+        assert_eq!(
+            rebuilds.get(),
+            1,
+            "the edit behind the save is not what the window shows, so its reload rebuilds the window"
+        );
+        surfaces::shell::close(MODULE);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 }

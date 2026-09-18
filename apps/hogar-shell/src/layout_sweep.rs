@@ -13,11 +13,11 @@
 use std::sync::Arc;
 
 use telar::{
-    AvailableSpace, ComponentList, Container, DrawCommand, LayoutError, LayoutStyle, PreviewEntry,
-    Rect, compute_layout, new_container, reset_layout_runtime, set_theme,
+    AvailableSpace, ComponentList, Container, DrawCommand, LayoutError, LayoutStyle, Paint,
+    PreviewEntry, Rect, compute_layout, new_container, reset_layout_runtime, set_theme,
 };
 
-use config::{BarConfig, Config, Edge, Shape};
+use config::{BarConfig, Config, Edge, ModuleEntry, Shape};
 
 /// The page a preview is measured on when it is a tree rather than a surface. Wide enough that a bar-width module is not the thing under test.
 const PAGE: (f32, f32) = (1000.0, 760.0);
@@ -28,8 +28,11 @@ const COLLAPSED: f32 = 0.5;
 const MODES: [Shape; 3] = [Shape::Bar, Shape::Sections, Shape::Chips];
 
 /// The world one combination builds against. Deliberately [`Config::starter`] rather than the user's file: a sweep that read `~/.config/hogar-shell/config.toml` would measure a different shell on every machine.
-fn seed_world(edge: Edge, mode: Shape) {
+///
+/// `edit` changes the starter before its bar is moved to the edge under test, so an entry added to the top bar is measured on whichever edge is being swept.
+fn seed_world(edge: Edge, mode: Shape, edit: &dyn Fn(&mut Config)) {
     let mut config = Config::starter();
+    edit(&mut config);
     // `starter` puts its modules on the top bar and `drawn_edge` reports the first non-empty one, so moving them wholesale is what makes a chip believe it is on the edge under test.
     let bar = std::mem::take(&mut config.bars.top);
     *match edge {
@@ -94,12 +97,20 @@ fn paints(command: &DrawCommand) -> bool {
     }
 }
 
-/// The world a sweep seeds is process-global — the config, the theme, the default font family, the icon store — so two sweeps running at once measure each other's edge and shape. Three `#[test]` functions call this, and cargo runs them in parallel: the reading that came back was `activewindow` drawing nothing on ten combinations, roughly every other run, because it had been laid out against a bar some other test had just moved to a different edge.
+/// The world a sweep seeds is process-global — the config, the theme, the default font family, the icon store — so two sweeps running at once measure each other's edge and shape. Every sweep is a `#[test]` of its own, and cargo runs them in parallel: the reading that came back was `activewindow` drawing nothing on ten combinations, roughly every other run, because it had been laid out against a bar some other test had just moved to a different edge.
 ///
 /// The guard lives here rather than in each test so a sweep added later inherits it. Poisoning is ignored on purpose: a panicking test leaves the world half-set, and the next sweep re-seeds it from scratch before it measures anything.
 static WORLD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn sweep(mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
+fn sweep(each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
+    sweep_with(&|_| {}, each);
+}
+
+/// [`sweep`] over a starter config that `edit` has changed first.
+fn sweep_with(
+    edit: &dyn Fn(&mut Config),
+    mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>),
+) {
     let _world = WORLD
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -107,10 +118,10 @@ fn sweep(mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand
         for mode in MODES {
             // Seeded before the list is drawn up, not only before each entry is measured: an entry reads the world to declare its surface — a bar's is its thickness, on the axis it runs along — so a list enumerated first describes whichever combination happened to run before this one.
             reset_layout_runtime();
-            seed_world(edge, mode);
+            seed_world(edge, mode, edit);
             for entry in crate::preview_entries() {
                 reset_layout_runtime();
-                seed_world(edge, mode);
+                seed_world(edge, mode, edit);
                 // Scoped, and disposed before the next reset. Replacing the layout runtime starts its node ids over, so an unscoped entry keeps its effects running against ids the next entry now owns — and taffy answers a stale one with "invalid SlotMap key used".
                 let scope = telar::owner_scope();
                 let owner = scope.id();
@@ -195,6 +206,83 @@ fn every_preview_draws_something() {
         "{} combination(s) put nothing on screen:\n  {}",
         blank.len(),
         blank.join("\n  ")
+    );
+}
+
+/// The id the unknown-module sweep puts on the starter bar: one letter off a real module, which is how it happens.
+const UNKNOWN: &str = "clokc";
+
+/// An id no module answers to is drawn where it was declared, on every edge and in every shape — laid out on the bar, a chip's size, and never collapsed.
+///
+/// It used to vanish: the bar skipped the entry with a log line, so the only sign a module had been asked for was its absence. The placeholder that replaces it is the one chip on the bar whose whole job is to be seen, which makes "it built" the wrong question twice over — a placeholder squeezed to a sliver, or pushed past the end of its zone, builds as happily as one on screen. So this measures it: the starter bar plus one misspelt id at the end of its last zone, on all four edges in `bar`, `sections` and `chips`.
+#[test]
+fn an_unknown_module_holds_a_chips_place_on_every_edge_and_shape() {
+    let mut wrong = Vec::new();
+    sweep_with(
+        &|config| config.bars.top.end.push(ModuleEntry::bare(UNKNOWN)),
+        |entry, edge, mode, measured| {
+            if entry.component_name != "bar" {
+                return;
+            }
+            let commands = match measured {
+                Ok(commands) => commands,
+                Err(e) => {
+                    wrong.push(format!(
+                        "{edge:?}/{mode:?}: the bar failed to lay out — {e}"
+                    ));
+                    return;
+                }
+            };
+            let surface = entry.surface.expect("the bar preview declares its surface");
+            let fill = ui::placeholder::fill(
+                config::config()
+                    .expect("the sweep published a config")
+                    .resolve_theme(),
+            );
+            let icon = ui::module::icon_px();
+
+            let Some(rect) = commands.iter().find_map(|command| match command {
+                DrawCommand::Rect { rect, style, .. } if style.fill == Some(Paint::Solid(fill)) => {
+                    Some(*rect)
+                }
+                _ => None,
+            }) else {
+                wrong.push(format!(
+                    "{edge:?}/{mode:?}: nothing was drawn for '{UNKNOWN}'"
+                ));
+                return;
+            };
+            // Only the part on the bar counts: a placeholder pushed past the end of its zone is clipped there, and a box that measures well but is cut away is not on screen. Measured on what is left rather than required to fit exactly, because a text chip at the very end of a zone can overhang it by the pixel its fractional width rounds to.
+            let on_bar =
+                |start: f32, length: f32, bar: f32| (start + length).min(bar) - start.max(0.0);
+            let wide = on_bar(rect.x, rect.width, surface.width);
+            let tall = on_bar(rect.y, rect.height, surface.height);
+            if wide < icon || tall < icon {
+                wrong.push(format!(
+                    "{edge:?}/{mode:?}: {wide}x{tall}px of the placeholder at {rect:?} is on the {}x{} bar — less than \
+                     the {icon}px glyph it holds",
+                    surface.width, surface.height
+                ));
+            }
+            let named = commands.iter().any(
+                |command| matches!(command, DrawCommand::Text { text, .. } if &**text == UNKNOWN),
+            );
+            if named != edge.is_horizontal() {
+                wrong.push(format!(
+                    "{edge:?}/{mode:?}: the id is {} — it belongs along a horizontal bar and only there",
+                    if named {
+                        "written down a vertical bar"
+                    } else {
+                        "missing from a horizontal bar"
+                    }
+                ));
+            }
+        },
+    );
+    assert!(
+        wrong.is_empty(),
+        "an unknown module did not hold a chip's place:\n  {}",
+        wrong.join("\n  ")
     );
 }
 

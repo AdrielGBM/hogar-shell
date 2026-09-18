@@ -50,12 +50,12 @@ its write half, and read to end-of-file:
 printf 'shell status\n' | socat - UNIX-CONNECT:$sock
 ```
 
-## Three commands are answered locally
+## Four commands are answered locally
 
-`config schema`, `deps` and `man` are answered by the binary rather than sent to the shell: each is a function
-of this build and this machine rather than of a running shell. `deps` is the case that matters — a dependency
-report is for the machine where something is missing, and "nothing starts" is exactly when there is no shell to
-ask.
+`config schema`, `config check`, `deps` and `man` are answered by the binary rather than sent to the shell: each
+is a function of this build, this machine and the files on it rather than of a running shell. `deps` is the case
+that matters — a dependency report is for the machine where something is missing, and "nothing starts" is
+exactly when there is no shell to ask — and `config check` is the same case for a config.
 
 ## One table
 

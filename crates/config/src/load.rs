@@ -51,7 +51,7 @@ pub const GLOBAL_ONLY_SECTIONS: &[&str] = &[
     "weather",
 ];
 
-pub(crate) fn monitor_config_path(path: &Path, output: &str) -> PathBuf {
+pub(crate) fn monitor_config_path(path: &Path, output: impl AsRef<Path>) -> PathBuf {
     Config::monitor_dir(path).join(output).join("config.toml")
 }
 

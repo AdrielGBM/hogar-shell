@@ -18,6 +18,7 @@ use ui::module::{
     set_module_fg,
 };
 use ui::module_shell::{ModuleShellProps, module_shell};
+use ui::placeholder::placeholder_chip;
 
 /// The bar the running config draws, for [`crate::preview`] — every chip the user put on it, in the zones and the shape they configured, against the registry the app installed.
 pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -350,6 +351,8 @@ fn axis(style: LayoutStyle, edge: Edge) -> LayoutStyle {
 }
 
 /// Builds each entry's content and wraps it in its base container. The variant and accent come from the entry when it names them and from `[modules.<id>]` otherwise, which is what lets the same module sit on a bar twice looking different.
+///
+/// An id no module answers to is drawn as a [placeholder](ui::placeholder) where it was declared. It used to be skipped with a log line, so a misspelt module vanished from the bar with nothing on screen to say it had been asked for; the placeholder keeps the chip's place and says which id is wrong, and `hogar-shell config check` says where.
 fn build_items(
     config: &Config,
     entries: &[ModuleEntry],
@@ -369,7 +372,7 @@ fn build_items(
             Some(Ok(content)) => content,
             Some(Err(e)) => return Err(e),
             None => {
-                tracing::warn!("unknown module id: {id}");
+                items.push(placeholder_chip(id, ctx.edge, ctx.theme, radius)?);
                 continue;
             }
         };
@@ -645,6 +648,138 @@ mod tests {
             source: PointerSource::Mouse,
         });
         assert!(clicked.get(), "the chip's own press handler never fired");
+    }
+
+    thread_local! {
+        static OPENED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// A misspelt module used to vanish, and the bar closed up around the gap as if it had never been asked for. It is drawn where it was declared instead — between the chips it was written between, as thick as they are, naming itself where there is room to — and a press on it lands on it and opens the settings window rather than falling through to whatever is under the bar. Every shape, down a vertical bar as well as across a horizontal one.
+    #[test]
+    fn an_unknown_module_holds_its_place_between_its_neighbours() {
+        use telar::{DrawCommand, Event, Paint, PointerButton, PointerSource, Rect};
+
+        let theme = NordTheme::new();
+        ui::module::set_panel_opener(|panel| {
+            OPENED.with(|opened| opened.borrow_mut().push(panel.to_string()))
+        });
+        for edge in [Edge::Top, Edge::Left] {
+            for mode in ["bar", "sections", "chips"] {
+                reset_layout_runtime();
+                set_theme(theme);
+                OPENED.with(|opened| opened.borrow_mut().clear());
+                let cfg: Config = toml::from_str(&format!(
+                    "[shape]\nmode=\"{mode}\"\n[bars.{}]\nsize=32\n\
+                     start=[{{id=\"dummy\",variant=\"filled\",accent=\"green\"}},\"nope\",\
+                     {{id=\"dummy\",variant=\"filled\",accent=\"purple\"}}]\n",
+                    edge.as_str()
+                ))
+                .unwrap();
+                let bar = build_bar(&cfg, edge, theme.accent, &registry(), theme)
+                    .expect("the bar builds");
+                let (w, h) = if edge.is_horizontal() {
+                    (600.0, 32.0)
+                } else {
+                    (32.0, 600.0)
+                };
+                let page =
+                    Container::new(axis(LayoutStyle::new(), edge).width(w).height(h), vec![bar])
+                        .unwrap();
+                let root = page.layout_node();
+                let mut tree = telar::ComponentList::new(page);
+                compute_layout(
+                    root,
+                    AvailableSpace::Definite(w),
+                    AvailableSpace::Definite(h),
+                )
+                .unwrap();
+
+                let rect_of = |fill: Color| {
+                    tree.commands().iter().find_map(|command| match command {
+                        DrawCommand::Rect { rect, style, .. }
+                            if style.fill == Some(Paint::Solid(fill)) =>
+                        {
+                            Some(*rect)
+                        }
+                        _ => None,
+                    })
+                };
+                let along = |r: Rect| {
+                    if edge.is_horizontal() {
+                        (r.x, r.width)
+                    } else {
+                        (r.y, r.height)
+                    }
+                };
+                let across = |r: Rect| {
+                    if edge.is_horizontal() {
+                        r.height
+                    } else {
+                        r.width
+                    }
+                };
+                let before = rect_of(theme.green).expect("the chip before it draws");
+                let after = rect_of(theme.purple).expect("the chip after it draws");
+                let placeholder = rect_of(ui::placeholder::fill(theme)).unwrap_or_else(|| {
+                    panic!("{edge:?}/{mode}: the unknown id put nothing on the bar")
+                });
+
+                assert!(
+                    along(before).0 < along(placeholder).0 && along(placeholder).0 < along(after).0,
+                    "{edge:?}/{mode}: the placeholder is at {:?}, not between the chips at {:?} and {:?} it was declared \
+                     between",
+                    along(placeholder),
+                    along(before),
+                    along(after)
+                );
+                assert_eq!(
+                    across(placeholder),
+                    across(before),
+                    "{edge:?}/{mode}: the placeholder is not as thick as the chip beside it"
+                );
+                assert!(
+                    along(placeholder).1 >= ui::module::icon_px(),
+                    "{edge:?}/{mode}: the placeholder is {}px long, too short to hold its own glyph",
+                    along(placeholder).1
+                );
+                let named = tree
+                    .commands()
+                    .iter()
+                    .any(|command| matches!(command, DrawCommand::Text { text, .. } if &**text == "nope"));
+                assert_eq!(
+                    named,
+                    edge.is_horizontal(),
+                    "{edge:?}/{mode}: the id is written along a horizontal bar, and only there — down a vertical one \
+                     there is no length to write it along"
+                );
+
+                let (x, y) = (
+                    f64::from(placeholder.x + placeholder.width / 2.0),
+                    f64::from(placeholder.y + placeholder.height / 2.0),
+                );
+                for event in [
+                    Event::PointerPressed {
+                        x,
+                        y,
+                        button: PointerButton::Primary,
+                        source: PointerSource::Mouse,
+                    },
+                    Event::PointerReleased {
+                        x,
+                        y,
+                        button: PointerButton::Primary,
+                        source: PointerSource::Mouse,
+                    },
+                ] {
+                    tree.on_event(&event);
+                }
+                assert_eq!(
+                    OPENED.with(|opened| opened.borrow().clone()),
+                    ["settings"],
+                    "{edge:?}/{mode}: a press on the placeholder has to land on it and open the settings window"
+                );
+            }
+        }
     }
 
     #[test]

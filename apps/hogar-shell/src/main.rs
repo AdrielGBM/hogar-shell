@@ -68,17 +68,24 @@ fn main() -> ExitCode {
             }
         }
         // Same reason as the schema, and one more for `deps`: what a dependency panel is *for* is the machine where something is missing, and "the shell will not start" is exactly the case where there is no shell to ask. Probing is a function of the machine, not of a running process.
-        Some("deps" | "man") => match hogar_shell::dispatch_locally(&args.join(" ")) {
-            Ok(text) => {
-                print!("{text}");
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("hogar-shell: {e}");
-                ExitCode::FAILURE
-            }
-        },
+        Some("deps" | "man") => answer_locally(&args),
+        // A check reads the files on disk, which is what the user is editing — and one that needed a running shell could not look at a config that stops the shell from starting.
+        Some("config") if args.get(1).map(String::as_str) == Some("check") => answer_locally(&args),
         _ => send(&args),
+    }
+}
+
+/// Runs a command in this process rather than sending it to the shell, for the ones that are a function of the binary and the machine.
+fn answer_locally(args: &[String]) -> ExitCode {
+    match hogar_shell::dispatch_locally(&args.join(" ")) {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("hogar-shell: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 
