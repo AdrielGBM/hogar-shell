@@ -35,10 +35,11 @@ pub use placement::{
     KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
 };
 pub use platform::{
-    EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken, detached,
-    enumerate_outputs, interval, live_surfaces, on_close, on_outputs_changed, open_reservation,
-    open_surface, outputs, request_close, request_margin, request_size, run_on_start,
-    set_surface_fonts, timeout, unwatch, watch,
+    EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken,
+    background_effect_supported, detached, enumerate_outputs, interval, live_surfaces, on_close,
+    on_outputs_changed, open_reservation, open_surface, outputs, request_blur_region,
+    request_close, request_margin, request_size, run_on_start, set_surface_fonts, timeout, unwatch,
+    watch,
 };
 pub use power::{
     OUTPUT_POWER_INTERFACE, output_power_on, output_power_supported, set_output_power,

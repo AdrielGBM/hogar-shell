@@ -23,7 +23,7 @@ pub struct LayerConfig {
 impl LayerConfig {
     /// What a live surface has to renegotiate to go from this configuration to `next` — only the fields that actually differ, so a surface asking the compositor for the state it is already in never commits.
     ///
-    /// The fields left out are the ones a surface is *created* with and cannot change: its output, its namespace, whether it is a reservation strip, and how its input region is decided.
+    /// The fields left out are the ones a surface is *created* with and cannot change: its output, its namespace, whether it is a reservation strip, and how its input region is decided. The blur region is left out for the opposite reason — it is not configuration at all, but something a surface's own laid-out content asks for each turn.
     pub fn delta(&self, next: &LayerConfig) -> SurfaceUpdate {
         SurfaceUpdate {
             size: (self.size != next.size).then_some(next.size),
@@ -34,6 +34,7 @@ impl LayerConfig {
             layer: (self.layer != next.layer).then_some(next.layer),
             keyboard_interactivity: (self.keyboard_interactivity != next.keyboard_interactivity)
                 .then_some(next.keyboard_interactivity),
+            blur_region: None,
         }
     }
 }

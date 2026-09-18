@@ -47,12 +47,19 @@ use smithay_client_toolkit::{
 };
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::registry_queue_init;
-use wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, delegate_noop};
+use wayland_client::protocol::{
+    wl_buffer, wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
+};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop};
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::{
+    self, ExtBackgroundEffectManagerV1,
+};
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{
     self, WpFractionalScaleV1,
 };
+use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 
@@ -155,6 +162,15 @@ pub fn request_size(width: u32, height: u32) {
 /// Asks the compositor to move the *current* surface relative to the edges it is anchored to, as `(top, right, bottom, left)` logical pixels. A margin only takes effect on an edge the surface is anchored to, and a negative one pushes it off that edge — which is how an auto-hidden bar leaves only a hover strip on screen.
 pub fn request_margin(margin: (i32, i32, i32, i32)) {
     with_current_link(|link| link.request_update(SurfaceUpdate::margin(margin)));
+}
+
+/// Asks the compositor to blur what is behind `rects` on the *current* surface, in logical surface coordinates — the one effect a client-side renderer cannot produce for itself, since the pixels it would need are the ones it is drawing over.
+///
+/// The set is absolute rather than additive: each call replaces the last, and an empty one gives the blur up. Asking for the same rects again on the next frame costs nothing, which is what lets this be called unconditionally from a layout pass.
+///
+/// Silently does nothing where the compositor has no `ext-background-effect-v1`, or where it has withdrawn the `blur` capability — ask [`background_effect_supported`] first if the content should look different when there will be no blur behind it.
+pub fn request_blur_region(rects: Vec<telar::Rect>) {
+    with_current_link(|link| link.request_update(SurfaceUpdate::blur_region(rects)));
 }
 
 /// Registers what the *current* surface does when it is asked to close, and how long the driver keeps it mapped afterwards so that reaction can be seen — an exit transition, in other words.
@@ -403,6 +419,8 @@ pub(crate) struct SurfaceEntry {
     /// The pair that makes a fractional scale renderable, and `None` together on a compositor without them: the viewport maps a device-pixel buffer back onto its logical size, and the scale object is what says which.
     viewport: Option<WpViewport>,
     fractional: Option<WpFractionalScaleV1>,
+    /// This surface's handle on `ext-background-effect-v1`, `None` on a compositor without the global. Exactly one per `wl_surface` — a second is the `background_effect_exists` error — so it is created with the surface and destroyed with it rather than on demand.
+    background_effect: Option<ExtBackgroundEffectSurfaceV1>,
     logical_size: (u32, u32),
     /// The size or the scale moved and the buffer behind them has not caught up yet. Cleared once per turn by [`Self::apply_geometry`], which is the only thing that resizes what the renderer draws into.
     geometry_dirty: bool,
@@ -412,7 +430,25 @@ pub(crate) struct SurfaceEntry {
     events: Vec<Event>,
     timeout: Option<Duration>,
     input_region: Vec<(i32, i32, i32, i32)>,
-    reservation: Option<(SlotPool, Buffer, (u32, u32))>,
+    /// The blur region last applied, sorted, so a surface asking for the same one every frame commits once.
+    blur_region: Vec<(i32, i32, i32, i32)>,
+    reservation: Option<Reservation>,
+    /// The size the reservation strip's buffer was last committed at — logical for the single-pixel route, whose viewport destination is the thing that moves, and device for the shm one, whose buffer is what has to be reallocated.
+    reservation_size: (u32, u32),
+}
+
+/// The transparent buffer a reservation strip is mapped with.
+///
+/// A strip paints nothing — it exists to hold an exclusive zone — but **an unmapped layer surface reserves nothing and a `wl_surface` with no buffer is never mapped**, which is the only reason it needs a buffer at all.
+enum Reservation {
+    /// One 1×1 transparent pixel from `wp-single-pixel-buffer-v1`, stretched over the strip by the `wp_viewport` the surface already has. It allocates nothing, and it never has to be rebuilt: the buffer stays 1×1 however large the strip grows.
+    SinglePixel(wl_buffer::WlBuffer),
+    /// The fallback where either half of that pair is missing: a strip-sized shm mapping. Neither object is ever read again — they are held to stay alive, because dropping the `Buffer` destroys the `wl_buffer` the compositor is showing and dropping the pool unmaps the memory behind it.
+    #[expect(
+        dead_code,
+        reason = "held to keep the mapping the compositor is reading alive"
+    )]
+    Shm(SlotPool, Buffer),
 }
 
 impl SurfaceEntry {
@@ -441,6 +477,7 @@ impl SurfaceEntry {
             scale_120: scale.max(1) as u32 * 120,
             viewport: None,
             fractional: None,
+            background_effect: None,
             logical_size,
             geometry_dirty: false,
             configured: false,
@@ -449,7 +486,9 @@ impl SurfaceEntry {
             events: Vec::new(),
             timeout: None,
             input_region: Vec::new(),
+            blur_region: Vec::new(),
             reservation: None,
+            reservation_size: (0, 0),
         }
     }
 
@@ -474,8 +513,8 @@ impl SurfaceEntry {
         match &self.viewport {
             Some(viewport) => {
                 surface.set_buffer_scale(1);
-                let (width, height) = self.logical_size;
-                viewport.set_destination(width.max(1) as i32, height.max(1) as i32);
+                let (width, height) = viewport_destination(self.logical_size);
+                viewport.set_destination(width, height);
             }
             None => surface.set_buffer_scale((self.scale_120 / 120).max(1) as i32),
         }
@@ -534,40 +573,79 @@ impl SurfaceEntry {
         }
     }
 
-    /// Pushes whatever the surface asked to renegotiate since the last turn to the compositor. Only a layer surface has state of its own to renegotiate; a lock surface's is the compositor's to decide, which is the whole point of the protocol.
+    /// Pushes whatever the surface asked for since the last turn to the compositor. Only a layer surface has layer-shell state of its own to renegotiate; a lock surface's is the compositor's to decide, which is the whole point of the protocol. Nor is a lock surface given a background-effect object: the compositor stops rendering the session behind it, so there is nothing there to blur, and a blur region asked of one does nothing.
     ///
     /// A size change comes back as a `configure` and from there as a `WindowResized`, so the content is never resized by this call directly — it learns its new size the same way it learns about a monitor's.
-    fn apply_update(&mut self, change: SurfaceUpdate) {
-        let Shell::Layer(layer) = &self.shell else {
-            return;
-        };
-        if let Some((width, height)) = change.size {
-            layer.set_size(width, height);
-        }
-        if let Some((top, right, bottom, left)) = change.margin {
-            layer.set_margin(top, right, bottom, left);
-        }
-        if let Some(zone) = change.exclusive_zone {
-            layer.set_exclusive_zone(zone);
-        }
-        if let Some(anchor) = change.anchor {
-            layer.set_anchor(anchor);
-        }
-        if let Some(shell_layer) = change.layer {
-            // Restacking a mapped surface arrived in version 2 of the protocol, and sending a request an object does not implement is a protocol error — which kills the whole connection, not the one surface. On an older compositor the surface keeps the layer it was created on instead.
-            match layer.kind() {
-                SurfaceKind::Wlr(wlr) if wlr.version() >= 2 => layer.set_layer(shell_layer),
-                _ => tracing::warn!(
-                    "{}: this compositor's layer-shell cannot restack a mapped surface; \
-                     restart for the change to take effect",
-                    self.namespace
-                ),
+    fn apply_update(&mut self, change: SurfaceUpdate, compositor: &CompositorState) {
+        let mut moved = false;
+        if let Shell::Layer(layer) = &self.shell {
+            // Every layer-shell field below is a value the compositor is simply told, so asking at all is a change worth a commit. A blur region is the exception and diffs itself.
+            moved = change.renegotiates();
+            if let Some((width, height)) = change.size {
+                layer.set_size(width, height);
+            }
+            if let Some((top, right, bottom, left)) = change.margin {
+                layer.set_margin(top, right, bottom, left);
+            }
+            if let Some(zone) = change.exclusive_zone {
+                layer.set_exclusive_zone(zone);
+            }
+            if let Some(anchor) = change.anchor {
+                layer.set_anchor(anchor);
+            }
+            if let Some(shell_layer) = change.layer {
+                // Restacking a mapped surface arrived in version 2 of the protocol, and sending a request an object does not implement is a protocol error — which kills the whole connection, not the one surface. On an older compositor the surface keeps the layer it was created on instead.
+                match layer.kind() {
+                    SurfaceKind::Wlr(wlr) if wlr.version() >= 2 => layer.set_layer(shell_layer),
+                    _ => tracing::warn!(
+                        "{}: this compositor's layer-shell cannot restack a mapped surface; \
+                         restart for the change to take effect",
+                        self.namespace
+                    ),
+                }
+            }
+            if let Some(keyboard) = change.keyboard_interactivity {
+                layer.set_keyboard_interactivity(keyboard);
             }
         }
-        if let Some(keyboard) = change.keyboard_interactivity {
-            layer.set_keyboard_interactivity(keyboard);
+        if let Some(rects) = change.blur_region {
+            moved |= self.set_blur_region(compositor, rects);
         }
-        self.commit_pending();
+        if moved {
+            self.commit_pending();
+        }
+    }
+
+    /// Asks the compositor to blur what is behind `rects` — in logical surface coordinates, clipped by the compositor to the surface — and reports whether the region actually moved.
+    ///
+    /// It reports rather than commits because `set_blur_region` is **double-buffered**: it lands on the surface's next `wl_surface.commit`, which belongs to whoever owns the surface's buffer (see [`Self::commit_pending`]). The `wl_region` is destroyed the moment this returns, which the protocol explicitly allows — the region has copy semantics — and an empty set is sent as the NULL region that *removes* the effect rather than as a region of no area.
+    ///
+    /// A surface on a compositor without the global has no effect object and answers `false`: nothing is asked for, nothing is committed, and nothing is logged above debug.
+    fn set_blur_region(&mut self, compositor: &CompositorState, rects: Vec<telar::Rect>) -> bool {
+        let Some(effect) = &self.background_effect else {
+            return false;
+        };
+        let Some(rects) = region_change(rects, &self.blur_region) else {
+            return false;
+        };
+        tracing::debug!(
+            "blur region for {}: {} rect(s) {rects:?}",
+            self.namespace,
+            rects.len()
+        );
+        if rects.is_empty() {
+            effect.set_blur_region(None);
+        } else {
+            let Ok(region) = Region::new(compositor) else {
+                return false;
+            };
+            for (x, y, w, h) in &rects {
+                region.add(*x, *y, *w, *h);
+            }
+            effect.set_blur_region(Some(region.wl_region()));
+        }
+        self.blur_region = rects;
+        true
     }
 
     /// Applies what this thread has queued on the surface — or leaves it for the renderer's next frame to carry.
@@ -631,6 +709,13 @@ fn device_pixels(logical: u32, scale_120: u32) -> u32 {
     (logical.saturating_mul(scale_120).saturating_add(60) / 120).max(1)
 }
 
+/// Where a `wp_viewport` puts a surface's buffer: its logical size, which is the mapping the compositor configured, whatever size the buffer behind it happens to be.
+///
+/// That indifference to the buffer is what lets a reservation strip be a single pixel stretched over its whole edge as easily as it lets a 1.5× surface be a buffer half again as large as its logical size. Each axis is floored at one because a surface is created with a zero on the axis the compositor fills and is driven for a turn before its first `configure` says what that is — and `set_destination` answers a zero with `wp_viewport`'s `bad_value` error, which kills the connection rather than the surface.
+fn viewport_destination(logical_size: (u32, u32)) -> (i32, i32) {
+    (logical_size.0.max(1) as i32, logical_size.1.max(1) as i32)
+}
+
 /// The single-thread driver: one Wayland connection's shared globals (registry/output/seat/shm) plus every live surface. The SCTK delegate handlers route each event to its surface by `wl_surface` id.
 pub(crate) struct Driver {
     registry_state: RegistryState,
@@ -649,6 +734,10 @@ pub(crate) struct Driver {
     pub(crate) lock_manager: Option<ExtSessionLockManagerV1>,
     pub(crate) lock: Option<LockSession>,
     pub(crate) scaling: Option<Scaling>,
+    /// The blur factory, `None` where the compositor does not implement `ext-background-effect-v1`. Whether it will actually blur is a separate question the manager answers with its `capabilities` event and keeps answering; see [`background_effect_supported`].
+    pub(crate) background_effect: Option<ExtBackgroundEffectManagerV1>,
+    /// The 1×1-buffer factory a reservation strip is mapped with instead of a strip-sized shm pool. `None` keeps [`commit_reservation`]'s shm path in service.
+    single_pixel: Option<WpSinglePixelBufferManagerV1>,
 }
 
 /// The two globals a surface needs to render on the device pixel grid, held together because either alone is useless: a preferred scale with no viewport is a number nothing can act on, and a viewport with no scale to put in it is a mapping with nothing to map.
@@ -661,14 +750,30 @@ pub(crate) struct Scaling {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct DriverFacts {
     pub(crate) lock_supported: bool,
+    /// Unlike the one above, this is not settled at bind time: the blur capability arrives as an event and can be withdrawn, so this is rewritten every time the manager says so.
+    pub(crate) background_effect_supported: bool,
 }
 
 thread_local! {
-    static FACTS: RefCell<DriverFacts> = const { RefCell::new(DriverFacts { lock_supported: false }) };
+    static FACTS: RefCell<DriverFacts> = const {
+        RefCell::new(DriverFacts {
+            lock_supported: false,
+            background_effect_supported: false,
+        })
+    };
 }
 
 pub(crate) fn with_driver_facts<R>(read: impl FnOnce(&DriverFacts) -> R) -> R {
     FACTS.with(|facts| read(&facts.borrow()))
+}
+
+/// Whether this compositor will actually blur behind a surface right now: `ext-background-effect-v1` is bound *and* its `blur` capability is currently set.
+///
+/// Both halves matter and the second is live state rather than a one-time answer. The manager sends `capabilities` when the global is bound and again whenever they change, and the protocol is explicit that a capability which goes away **stops being applied even to a surface that already set a region** — so a compositor that turns blur off mid-session turns this false, and a shell that read it once at startup would keep asking for an effect nothing applies.
+///
+/// Like [`lock_supported`](crate::lock_supported) and [`idle_supported`](crate::idle_supported), this reads driver state, so outside a running event loop it answers false because there is no driver rather than because the compositor lacks the protocol. Those are different answers: `advertises("ext_background_effect_manager_v1")` is the one to ask from a bare CLI process, and it reports only the global — no registry read can see a capability, which is the half this function exists to add.
+pub fn background_effect_supported() -> bool {
+    with_driver_facts(|facts| facts.background_effect_supported)
 }
 
 impl Driver {
@@ -690,6 +795,22 @@ impl Driver {
             ));
         }
         entry.map_buffer();
+    }
+
+    /// Gives a freshly created surface its blur handle, where the compositor has the global.
+    ///
+    /// Created with the surface rather than on the first blur request, because the protocol allows exactly one per `wl_surface` and answers a second with `background_effect_exists` — a connection-killing error for what would otherwise be an ordinary race between two things asking the same surface to blur. It costs one inert object per surface: the initial blur region is empty, so a surface that never asks for one is a surface the compositor does nothing to.
+    ///
+    /// Attached whether or not the `blur` capability is currently set, for the same reason [`background_effect_supported`] has to be re-read rather than cached: the capability can come back, and a surface created while it was off must be able to blur when it does.
+    pub(crate) fn attach_background_effect(
+        &self,
+        entry: &mut SurfaceEntry,
+        qh: &QueueHandle<Driver>,
+    ) {
+        if let Some(manager) = &self.background_effect {
+            entry.background_effect =
+                Some(manager.get_background_effect(entry.shell.wl_surface(), qh, ()));
+        }
     }
 
     /// The layer-shell namespace of the surface an event landed on, for diagnostics. `None` means the event named a surface this driver does not own.
@@ -798,6 +919,7 @@ fn create_surface_entry(
     entry.interactive_input_region = config.interactive_input_region;
     // Before the first commit, so the surface is never mapped under a mapping it is about to replace.
     driver.attach_scaling(&mut entry, qh);
+    driver.attach_background_effect(&mut entry, qh);
     entry.shell.commit();
     driver.surfaces.push(entry);
 }
@@ -845,6 +967,16 @@ where
         })
         .inspect_err(|e| tracing::info!("fractional scaling unavailable: {e}"))
         .ok();
+    // Optional, and the one whose absence has a user-visible substitute: without it a translucent surface is only blurred if the user wrote a per-namespace blur rule into their compositor's own config.
+    let background_effect = globals
+        .bind::<ExtBackgroundEffectManagerV1, Driver, ()>(&qh, 1..=1, ())
+        .inspect_err(|e| tracing::info!("ext-background-effect-v1 unavailable: {e}"))
+        .ok();
+    // Optional, and invisible when absent: a reservation strip falls back to the shm pool this replaces, which costs memory and changes nothing about the zone it holds.
+    let single_pixel = globals
+        .bind::<WpSinglePixelBufferManagerV1, Driver, ()>(&qh, 1..=1, ())
+        .inspect_err(|e| tracing::info!("wp-single-pixel-buffer-v1 unavailable: {e}"))
+        .ok();
     FACTS.with(|facts| facts.borrow_mut().lock_supported = lock_manager.is_some());
 
     let mut driver = Driver {
@@ -861,6 +993,8 @@ where
         lock_manager,
         lock: None,
         scaling,
+        background_effect,
+        single_pixel,
     };
 
     let mut event_loop: EventLoop<Driver> =
@@ -955,8 +1089,10 @@ where
             surfaces,
             shm: shm_state,
             pointer_focus,
+            single_pixel,
             ..
         } = &mut driver;
+        let single_pixel = single_pixel.as_ref();
         for (index, entry) in surfaces.iter_mut().enumerate() {
             // The compositor closing the surface leaves nothing to play an exit onto, so that path skips the transition entirely: as far as the compositor is concerned the surface is already gone.
             if entry.closed {
@@ -968,14 +1104,14 @@ where
                 continue;
             }
             if let Some(change) = entry.link.as_ref().and_then(|link| link.take_update()) {
-                entry.apply_update(change);
+                entry.apply_update(change, &compositor);
             }
             if !entry.configured {
                 continue;
             }
             entry.apply_geometry();
             if entry.reserve_only {
-                commit_reservation(shm_state, entry);
+                commit_reservation(shm_state, single_pixel, &qh, entry);
                 continue;
             }
             if entry.window.is_none() {
@@ -1102,6 +1238,14 @@ pub(crate) fn tear_down(mut entry: SurfaceEntry, loop_handle: &LoopHandle<'stati
     if let Some(fractional) = entry.fractional.take() {
         fractional.destroy();
     }
+    // Same rule, same reason: `set_blur_region` on an effect object whose surface is gone is the `surface_destroyed` error, so the object goes first. Its own destruction removes the effect region on the next commit, which there will not be — the surface is going with it.
+    if let Some(effect) = entry.background_effect.take() {
+        effect.destroy();
+    }
+    // A single-pixel buffer is this crate's own protocol object, unlike SCTK's shm `Buffer`, which destroys itself with its pool as the entry drops. It hangs off no surface, so there is no ordering to respect.
+    if let Some(Reservation::SinglePixel(buffer)) = &entry.reservation {
+        buffer.destroy();
+    }
     // A layer surface is destroyed by dropping SCTK's wrapper; a lock surface has no wrapper, so its two protocol objects are released here — the role object first, as the protocol's ordering requires.
     if let Shell::Lock { surface, lock } = &entry.shell {
         lock.destroy();
@@ -1116,14 +1260,50 @@ fn merge_timeout(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
     }
 }
 
-/// (Re)commits a fully-transparent shm buffer sized to the reservation strip so its exclusive_zone takes hold; only rebuilds when the pixel size changed.
-fn commit_reservation(shm: &Shm, entry: &mut SurfaceEntry) {
+/// Maps a reservation strip with a fully transparent buffer so the compositor honours the exclusive zone the strip was created to hold, and re-commits only when the strip's size moved.
+///
+/// A strip paints nothing, and the only reason it needs a buffer is that **an unmapped layer surface reserves nothing and a `wl_surface` with no buffer is never mapped**. `wp-single-pixel-buffer-v1` is the route that says exactly that and no more; the shm route below it is what a compositor missing either half of the pair still maps a strip with, which is a fallback rather than dead code.
+fn commit_reservation(
+    shm: &Shm,
+    single_pixel: Option<&WpSinglePixelBufferManagerV1>,
+    qh: &QueueHandle<Driver>,
+    entry: &mut SurfaceEntry,
+) {
+    // Both halves or neither: a 1×1 buffer with no viewport to stretch it is a 1×1 surface, so a compositor carrying the factory without the `wp_viewporter` that comes with `Scaling` takes the shm path too.
+    match single_pixel.filter(|_| entry.viewport.is_some()) {
+        Some(manager) => commit_single_pixel_reservation(manager, qh, entry),
+        None => commit_shm_reservation(shm, entry),
+    }
+}
+
+/// Attaches one transparent pixel and lets the strip's own `wp_viewport` stretch it over the whole surface, which costs a protocol object and no memory at all.
+///
+/// The buffer is never rebuilt, because it is 1×1 however large the strip is: what follows a resize is the viewport destination [`SurfaceEntry::map_buffer`] has already set, so a strip whose size moved costs a commit rather than an allocation. That the stretch is a stretch changes nothing about what the strip reserves either — an exclusive zone is independent of the surface's size, and a 1 px strip asking for 32 reserves 32 (measured on Hyprland 0.56.2).
+fn commit_single_pixel_reservation(
+    manager: &WpSinglePixelBufferManagerV1,
+    qh: &QueueHandle<Driver>,
+    entry: &mut SurfaceEntry,
+) {
+    let size = entry.logical_size;
+    if entry.reservation.is_some() && entry.reservation_size == size {
+        return;
+    }
+    if entry.reservation.is_none() {
+        // The protocol's values are premultiplied, so every channel of an invisible pixel has to be zero — a colour above zero at zero alpha is not a premultiplied pixel at all.
+        let buffer = manager.create_u32_rgba_buffer(0, 0, 0, 0, qh, ());
+        let surface = entry.shell.wl_surface();
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(0, 0, 1, 1);
+        entry.reservation = Some(Reservation::SinglePixel(buffer));
+    }
+    entry.reservation_size = size;
+    entry.shell.commit();
+}
+
+/// Allocates a strip-sized transparent shm buffer, for a compositor that cannot be handed a single pixel. Only rebuilt when the device size changed, since here the buffer itself is what the size describes.
+fn commit_shm_reservation(shm: &Shm, entry: &mut SurfaceEntry) {
     let (w, h) = entry.device_size();
-    if entry
-        .reservation
-        .as_ref()
-        .is_some_and(|(_, _, size)| *size == (w, h))
-    {
+    if entry.reservation.is_some() && entry.reservation_size == (w, h) {
         return;
     }
     let stride = w as i32 * 4;
@@ -1146,7 +1326,8 @@ fn commit_reservation(shm: &Shm, entry: &mut SurfaceEntry) {
     if buffer.attach_to(surface).is_ok() {
         surface.damage_buffer(0, 0, w as i32, h as i32);
         entry.shell.commit();
-        entry.reservation = Some((pool, buffer, (w, h)));
+        entry.reservation = Some(Reservation::Shm(pool, buffer));
+        entry.reservation_size = (w, h);
     }
 }
 
@@ -1162,20 +1343,9 @@ fn update_input_region(
     rects: Vec<telar::Rect>,
     last: &mut Vec<(i32, i32, i32, i32)>,
 ) -> bool {
-    let mut rects: Vec<(i32, i32, i32, i32)> = rects
-        .into_iter()
-        .map(|r| {
-            let x = r.x.floor() as i32;
-            let y = r.y.floor() as i32;
-            let right = (r.x + r.width).ceil() as i32;
-            let bottom = (r.y + r.height).ceil() as i32;
-            (x, y, right - x, bottom - y)
-        })
-        .collect();
-    rects.sort_unstable();
-    if rects == *last {
+    let Some(rects) = region_change(rects, last) else {
         return false;
-    }
+    };
     // What distinguishes "the compositor is not delivering to us" from "we told it not to": zero rects means no pointer input at all.
     tracing::debug!(
         "input region for {namespace}: {} rect(s) {rects:?}",
@@ -1190,6 +1360,29 @@ fn update_input_region(
     surface.set_input_region(Some(region.wl_region()));
     *last = rects;
     true
+}
+
+/// The integer surface-local rects a `wl_region` would be built from, or `None` when they are the set already applied.
+///
+/// Both region requests in this crate — the input region and the blur region — are double-buffered state that costs a commit to land, so a surface whose content asks for the same region every frame would commit every frame; this is what makes it commit once. The comparison is against the *sorted* set, since the layout the rects come from is free to enumerate the same widgets in another order, and a reordered read is not a change.
+///
+/// Rounded **outward**: a widget laid out on a half pixel has the whole of itself inside the region rather than a row of it outside, which for input means the edge of a button still takes a click and for blur means the edge of a card is still blurred.
+fn region_change(
+    rects: Vec<telar::Rect>,
+    last: &[(i32, i32, i32, i32)],
+) -> Option<Vec<(i32, i32, i32, i32)>> {
+    let mut rects: Vec<(i32, i32, i32, i32)> = rects
+        .into_iter()
+        .map(|r| {
+            let x = r.x.floor() as i32;
+            let y = r.y.floor() as i32;
+            let right = (r.x + r.width).ceil() as i32;
+            let bottom = (r.y + r.height).ceil() as i32;
+            (x, y, right - x, bottom - y)
+        })
+        .collect();
+    rects.sort_unstable();
+    (rects != last).then_some(rects)
 }
 
 /// A live dynamically-opened surface. Dropping it — or calling [`close`](Self::close) — asks the driver to tear it down.
@@ -1234,6 +1427,11 @@ impl SurfaceHandle {
     pub fn set_exclusive_zone(&self, zone: i32) {
         self.link
             .request_update(SurfaceUpdate::exclusive_zone(zone));
+    }
+
+    /// Asks the compositor to blur what is behind `rects`, in logical surface coordinates. See [`request_blur_region`], which is the same request made from inside the surface's own content — where a layout-derived region comes from — rather than by whoever holds the surface.
+    pub fn set_blur_region(&self, rects: Vec<telar::Rect>) {
+        self.link.request_update(SurfaceUpdate::blur_region(rects));
     }
 }
 
@@ -1623,6 +1821,44 @@ delegate_noop!(Driver: ignore WpFractionalScaleManagerV1);
 delegate_noop!(Driver: ignore WpViewporter);
 delegate_noop!(Driver: ignore WpViewport);
 
+/// The blur manager's one event, and it is live state rather than an answer: the protocol sends it when the global is bound *and again whenever the capabilities change*, and says that a capability which goes away stops being applied even to a surface that already set a region. So this is what [`background_effect_supported`] reads, and reading it once at startup would be reading a fact that can expire.
+impl Dispatch<ExtBackgroundEffectManagerV1, ()> for Driver {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ExtBackgroundEffectManagerV1,
+        event: ext_background_effect_manager_v1::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let ext_background_effect_manager_v1::Event::Capabilities { flags } = event else {
+            return;
+        };
+        let blur = grants_blur(flags);
+        tracing::debug!(
+            "ext-background-effect-v1: blur {}",
+            if blur { "granted" } else { "withdrawn" }
+        );
+        FACTS.with(|facts| facts.borrow_mut().background_effect_supported = blur);
+    }
+}
+
+/// Whether a `capabilities` bitfield grants blur.
+///
+/// Read as bits rather than through the generated enum on purpose. `capability` is a bitfield, and a later version that adds a second effect will send both bits at once — which `Capability::from_bits` refuses *whole*, handing back an `Unknown` that carries the blur bit this build does understand. Matching on the enum alone would take a compositor that gained an effect for one that lost blur.
+fn grants_blur(flags: WEnum<ext_background_effect_manager_v1::Capability>) -> bool {
+    let bits = match flags {
+        WEnum::Value(capabilities) => capabilities.bits(),
+        WEnum::Unknown(bits) => bits,
+    };
+    bits & ext_background_effect_manager_v1::Capability::Blur.bits() != 0
+}
+
+// The per-surface effect object is written to and never read; a single-pixel buffer's only event is the `release` of a buffer that is never reused.
+delegate_noop!(Driver: ignore ExtBackgroundEffectSurfaceV1);
+delegate_noop!(Driver: ignore WpSinglePixelBufferManagerV1);
+delegate_noop!(Driver: ignore wl_buffer::WlBuffer);
+
 impl OutputHandler for Driver {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
@@ -1972,6 +2208,7 @@ mod tests {
         request_close();
         request_size(400, 300);
         request_margin((0, 0, 0, 0));
+        request_blur_region(vec![telar::Rect::new(0.0, 0.0, 40.0, 40.0)]);
         on_close(Duration::from_millis(200), || {
             panic!("an exit registered outside a surface has nothing to belong to")
         });
@@ -2026,6 +2263,86 @@ mod tests {
         assert_eq!(device_pixels(0, 180), 1);
     }
 
+    /// A reservation strip's buffer is 1×1 whatever the strip covers, so the destination its `wp_viewport` is given has to be the whole strip: the output's length on the axis it spans, its own thickness on the axis it holds. Which axis is which is the only thing the edge changes.
+    #[test]
+    fn a_strips_viewport_destination_covers_its_whole_edge() {
+        assert_eq!(viewport_destination((2560, 32)), (2560, 32), "top");
+        assert_eq!(viewport_destination((2560, 48)), (2560, 48), "bottom");
+        assert_eq!(viewport_destination((32, 1440)), (32, 1440), "left");
+        assert_eq!(viewport_destination((48, 1440)), (48, 1440), "right");
+        // A strip is created with a zero on the axis the compositor fills, and is driven for a turn before the first configure says what that is. A zero destination is `wp_viewport`'s `bad_value`, which kills the connection rather than the surface, so the floor is the protocol's requirement and not a convenience.
+        assert_eq!(
+            viewport_destination((0, 32)),
+            (1, 32),
+            "a horizontal strip before its first configure"
+        );
+        assert_eq!(
+            viewport_destination((32, 0)),
+            (32, 1),
+            "a vertical strip before its first configure"
+        );
+    }
+
+    /// The whole of "only on change", for both of this crate's region requests: each is double-buffered state that costs a commit to land, so content asking for the same region every frame must commit once.
+    #[test]
+    fn a_region_asked_for_twice_is_one_commit() {
+        let asked = vec![
+            telar::Rect::new(8.0, 4.0, 120.0, 32.0),
+            telar::Rect::new(200.0, 4.0, 64.0, 32.0),
+        ];
+        let applied = region_change(asked.clone(), &[]).expect("nothing has been applied yet");
+        assert_eq!(applied, vec![(8, 4, 120, 32), (200, 4, 64, 32)]);
+        assert!(
+            region_change(asked, &applied).is_none(),
+            "the same rects again must not cost a second commit"
+        );
+
+        // The same region enumerated the other way round. A layout pass is free to walk its widgets in any order, and sorting is what keeps a reordered read from looking like a change.
+        let reordered = vec![
+            telar::Rect::new(200.0, 4.0, 64.0, 32.0),
+            telar::Rect::new(8.0, 4.0, 120.0, 32.0),
+        ];
+        assert!(region_change(reordered, &applied).is_none());
+
+        // One rect a pixel to the right is a change, and so is giving the region up — which for blur is the NULL region that removes the effect rather than a region of no area.
+        let moved = vec![
+            telar::Rect::new(9.0, 4.0, 120.0, 32.0),
+            telar::Rect::new(200.0, 4.0, 64.0, 32.0),
+        ];
+        assert!(region_change(moved, &applied).is_some());
+        assert_eq!(region_change(Vec::new(), &applied), Some(Vec::new()));
+        assert!(
+            region_change(Vec::new(), &[]).is_none(),
+            "and a surface that never had a region does not commit to say so again"
+        );
+    }
+
+    /// Rounded outward, so a card laid out on a half pixel has the whole of itself blurred rather than a row of it left sharp — and the same rule keeps the edge of a button taking clicks.
+    #[test]
+    fn a_region_rect_on_a_half_pixel_rounds_outward() {
+        let applied = region_change(vec![telar::Rect::new(8.5, 4.25, 120.5, 32.5)], &[])
+            .expect("nothing has been applied yet");
+        assert_eq!(applied, vec![(8, 4, 121, 33)]);
+    }
+
+    /// A compositor that *gains* an effect must not read as one that lost blur, which is what taking the bitfield through the generated enum alone would do.
+    #[test]
+    fn a_capability_bitfield_this_build_only_half_knows_still_grants_blur() {
+        use ext_background_effect_manager_v1::Capability;
+
+        assert!(grants_blur(WEnum::Value(Capability::Blur)));
+        assert!(
+            !grants_blur(WEnum::Value(Capability::empty())),
+            "a bound manager that grants nothing is not a manager that blurs"
+        );
+        // Blur alongside an effect added in a later version: `from_bits` refuses the pair whole, so it arrives as the raw bits.
+        assert!(grants_blur(WEnum::Unknown(0b11)));
+        assert!(
+            !grants_blur(WEnum::Unknown(0b10)),
+            "an effect this build does not know is not blur"
+        );
+    }
+
     /// Whether this compositor can be asked for a fractional scale at all — the one half of this a unit test cannot answer, since the fallback is silent by design and looks like success from inside. `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_fractional -- --nocapture`
     #[test]
     fn advertises_fractional_scaling() {
@@ -2041,6 +2358,33 @@ mod tests {
             crate::advertises_all(&interfaces),
             Some(true),
             "this compositor cannot be asked for a fractional scale; surfaces fall back to whole numbers"
+        );
+    }
+
+    /// The other half of both of this file's optional binds, and the half no unit test can reach: whether the globals are there at all. Both fall back silently by design, so from inside the crate a compositor that has neither looks exactly like one that has both. `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_the_optional -- --nocapture`
+    ///
+    /// The `blur` capability is deliberately *not* asserted here: it arrives as an event on a bound manager, and a registry read cannot see it — `background_effect_supported()` inside a running driver is the only thing that can.
+    #[test]
+    fn advertises_the_optional_surface_protocols() {
+        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
+            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to ask the real compositor; skipping");
+            return;
+        }
+        for interface in [
+            "ext_background_effect_manager_v1",
+            "wp_single_pixel_buffer_manager_v1",
+        ] {
+            println!("{interface}: {:?}", crate::advertises(interface));
+        }
+        assert_eq!(
+            crate::advertises("ext_background_effect_manager_v1"),
+            Some(true),
+            "this compositor cannot blur behind a surface; a translucent one needs a rule in its own config"
+        );
+        assert_eq!(
+            crate::advertises("wp_single_pixel_buffer_manager_v1"),
+            Some(true),
+            "this compositor cannot be handed a single pixel; reservation strips allocate shm instead"
         );
     }
 

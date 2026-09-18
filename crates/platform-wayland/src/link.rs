@@ -1,17 +1,19 @@
 //! The control channel between a live surface and whoever holds it.
 //!
-//! A layer surface used to be something the driver decided on its own: configured once when it was created and never renegotiated, and closed by a flag that tore it down on the next loop turn. All of it is here instead. A [`SurfaceLink`] is shared by the driver's surface entry and the `SurfaceHandle` its opener holds — one side asks, the other applies on its next turn — carrying three kinds of request: the [`SurfaceUpdate`] that renegotiates the surface's layer-shell state, a rebuild of its content, and the close. An [`ExitPlan`] is what the surface's own content registered for the moment it is asked to close, together with how long the driver must keep it mapped for that to be seen.
+//! A layer surface used to be something the driver decided on its own: configured once when it was created and never renegotiated, and closed by a flag that tore it down on the next loop turn. All of it is here instead. A [`SurfaceLink`] is shared by the driver's surface entry and the `SurfaceHandle` its opener holds — one side asks, the other applies on its next turn — carrying three kinds of request: the [`SurfaceUpdate`] that renegotiates the surface's own state, a rebuild of its content, and the close. An [`ExitPlan`] is what the surface's own content registered for the moment it is asked to close, together with how long the driver must keep it mapped for that to be seen.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use telar::Rect;
+
 use crate::config::{Anchor, KeyboardInteractivity, Layer};
 
-/// A change to a live surface's layer-shell state — everything the protocol lets a mapped surface renegotiate.
+/// A change to a live surface's state — everything the protocol lets a mapped surface renegotiate, plus the one piece of surface state that is not layer-shell's at all.
 ///
 /// Every field is optional because they are asked for independently: a bar sliding out of view retargets only its margin, a float being dragged wider only its size, and an auto-hiding bar gives up its exclusive zone without touching either. What is *not* here is what a surface is created with and cannot change: its output, its namespace, and whether its input region is carved from its content.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SurfaceUpdate {
     pub size: Option<(u32, u32)>,
     /// `(top, right, bottom, left)`, in logical pixels. Negative values push the surface off its own edge, which is what leaves a hover strip of an auto-hidden bar on screen.
@@ -20,6 +22,10 @@ pub struct SurfaceUpdate {
     pub anchor: Option<Anchor>,
     pub layer: Option<Layer>,
     pub keyboard_interactivity: Option<KeyboardInteractivity>,
+    /// What the compositor should blur *behind*, in logical surface coordinates, through `ext-background-effect-v1`. An empty set asks for no blur at all, which the protocol spells as a NULL region rather than a region of no area — so `Some(vec![])` removes the effect and `None` leaves it exactly as it is.
+    ///
+    /// This is why [`SurfaceUpdate`] is not `Copy`, and it rides here rather than on a channel of its own because a blur region is double-buffered state that lands on the same `wl_surface.commit` as everything above it: a bar that grows and blurs in one turn must do both in one commit or show a frame of one without the other.
+    pub blur_region: Option<Vec<Rect>>,
 }
 
 impl SurfaceUpdate {
@@ -44,8 +50,27 @@ impl SurfaceUpdate {
         }
     }
 
+    pub fn blur_region(rects: Vec<Rect>) -> Self {
+        Self {
+            blur_region: Some(rects),
+            ..Self::default()
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Whether this asks for anything a *layer surface* renegotiates — everything but the blur region, which is not layer-shell state.
+    ///
+    /// The driver needs the two apart because they earn a commit on different terms: every field above is a value the compositor is simply told, so asking at all is a change, while a blur region is diffed against the one already applied and usually is not.
+    pub(crate) fn renegotiates(&self) -> bool {
+        self.size.is_some()
+            || self.margin.is_some()
+            || self.exclusive_zone.is_some()
+            || self.anchor.is_some()
+            || self.layer.is_some()
+            || self.keyboard_interactivity.is_some()
     }
 
     /// Folds a later request over an earlier one still waiting to be applied, field by field. Two requests naming different fields have to *both* survive — a bar that gives up its exclusive zone and then slides out in the same loop turn must do both — and two naming the same field resolve to the newer, which is the whole point of coalescing an animation's frames into the one the driver will actually commit.
@@ -56,10 +81,11 @@ impl SurfaceUpdate {
         self.anchor = next.anchor.or(self.anchor);
         self.layer = next.layer.or(self.layer);
         self.keyboard_interactivity = next.keyboard_interactivity.or(self.keyboard_interactivity);
+        self.blur_region = next.blur_region.or_else(|| self.blur_region.take());
     }
 }
 
-/// The shared state behind a `SurfaceHandle`: whether the surface has been asked to close or to rebuild its content, and any layer-shell state waiting to be pushed to the compositor.
+/// The shared state behind a `SurfaceHandle`: whether the surface has been asked to close or to rebuild its content, and any [`SurfaceUpdate`] waiting to be pushed to the compositor.
 #[derive(Default)]
 pub(crate) struct SurfaceLink {
     closing: AtomicBool,
@@ -156,6 +182,36 @@ mod tests {
         assert!(
             link.take_update().is_none(),
             "taking it is what stops a surface asking for the same size every frame from committing every frame"
+        );
+    }
+
+    /// The blur region folds on the same terms as every other field, which is what it costs to be the one field that is not `Copy`: a surface that asks for a region and then renegotiates its size must commit both, and two regions in one turn must resolve to the newer.
+    #[test]
+    fn a_blur_region_folds_like_every_other_field() {
+        let link = SurfaceLink::default();
+        let stale = vec![Rect::new(0.0, 0.0, 40.0, 40.0)];
+        let fresh = vec![Rect::new(0.0, 0.0, 80.0, 40.0)];
+        link.request_update(SurfaceUpdate::blur_region(stale));
+        link.request_update(SurfaceUpdate::blur_region(fresh.clone()));
+        link.request_update(SurfaceUpdate::size(400, 40));
+
+        let taken = link.take_update().expect("three requests are one commit");
+        assert_eq!(taken.blur_region, Some(fresh));
+        assert_eq!(taken.size, Some((400, 40)));
+        assert!(
+            taken.renegotiates(),
+            "a size is layer-shell state, so this update has a layer-shell half to push"
+        );
+
+        // Giving up the blur is a request like any other, and the one the protocol spells as a NULL region rather than a region of no area.
+        link.request_update(SurfaceUpdate::blur_region(Vec::new()));
+        let taken = link
+            .take_update()
+            .expect("asking for no blur is still asking");
+        assert_eq!(taken.blur_region, Some(Vec::new()));
+        assert!(
+            !taken.renegotiates(),
+            "a blur region alone is not layer-shell state, so it diffs itself instead of counting as a change on being asked"
         );
     }
 
