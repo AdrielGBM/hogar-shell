@@ -64,6 +64,7 @@ use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 
 use crate::config::{Anchor, KeyboardInteractivity, Layer, LayerConfig, OutputDescriptor};
+use crate::layer_window::{LayerWindowHandle, Mapping, Transition};
 use crate::link::{ExitPlan, SurfaceLink, SurfaceUpdate};
 use crate::lock::LockSession;
 use crate::lock_notify::CompositorLock;
@@ -108,7 +109,7 @@ fn track_source(token: RegistrationToken) {
 /// Wayland surfaces the driver is holding, refreshed once a turn. An atomic rather than a thread-local because the point is to be readable as a number without being on the driver thread, which is what makes a surface leak observable from a script instead of from `top`.
 static LIVE_SURFACES: AtomicUsize = AtomicUsize::new(0);
 
-/// How many surfaces are mapped right now — every bar, panel, drawer and popup the driver holds, not just the ones a user opened. Reported by `shell status`.
+/// How many surfaces the driver holds right now, mapped or not — every bar, panel, drawer, popup and layer window, not just the ones a user opened. Reported by `shell status`.
 pub fn live_surfaces() -> usize {
     LIVE_SURFACES.load(Ordering::Relaxed)
 }
@@ -123,6 +124,8 @@ struct PendingSurface {
     // `None` for a reservation-only strip (no rsx handler, just its exclusive zone).
     handler: Option<BoxedHandler>,
     link: Arc<SurfaceLink>,
+    /// The input region is carved from the input-opaque rects the content draws, whatever `config` says — a layer window's only input policy.
+    drawn_input: bool,
 }
 
 /// Runs the handler closure with the current surface's worlds installed: `link` so `request_close` and `request_geometry` reach the right surface, `sources` as the sink `interval`/`watch` file their registration tokens into (so the surface's timers and channels die with it), and `exit` as the one `on_close` files its exit transition into. All three are restored afterwards.
@@ -140,6 +143,32 @@ fn with_current<R>(
     CURRENT_SOURCES.with(|s| *s.borrow_mut() = None);
     CURRENT_EXIT.with(|e| *e.borrow_mut() = None);
     result
+}
+
+/// Starts a surface's renderer, inside one reactive batch and with the surface's worlds installed: the first resume mounts the tree, and a later one presents the tree the suspend kept. `false` means the renderer could not be built.
+fn resume_handler<W: Window>(
+    handler: &mut dyn EventHandler<W>,
+    window: &W,
+    link: &Option<Arc<SurfaceLink>>,
+    sources: &SourceSink,
+    exit: &ExitSink,
+) -> bool {
+    with_current(link, sources, exit, || {
+        handler.new_events();
+        let resumed = handler.on_resume(window);
+        handler.about_to_wait();
+        resumed
+    })
+}
+
+/// Stops a surface's renderer, joining its thread, and keeps the handler with its app and tree.
+fn suspend_handler<W: Window>(
+    handler: &mut dyn EventHandler<W>,
+    link: &Option<Arc<SurfaceLink>>,
+    sources: &SourceSink,
+    exit: &ExitSink,
+) {
+    with_current(link, sources, exit, || handler.on_suspend());
 }
 
 fn with_current_link(read: impl FnOnce(&Arc<SurfaceLink>)) {
@@ -415,6 +444,10 @@ pub(crate) struct SurfaceEntry {
     namespace: String,
     reserve_only: bool,
     interactive_input_region: bool,
+    /// Whether the owner wants the surface on screen, and whether a configure may be presented on.
+    mapping: Mapping,
+    /// The layer-shell state this surface last asked for, which re-arming after an unmap asks for again. `None` for a lock surface, which has none.
+    layer_state: Option<LayerConfig>,
     /// The scale to render at, in 120ths — `wp_fractional_scale_v1`'s own unit, and the only one that can carry the 1.25× and 1.5× a compositor rounds to 1 or 2 when it has to answer in whole numbers.
     scale_120: u32,
     /// The pair that makes a fractional scale renderable, and `None` together on a compositor without them: the viewport maps a device-pixel buffer back onto its logical size, and the scale object is what says which.
@@ -427,6 +460,8 @@ pub(crate) struct SurfaceEntry {
     geometry_dirty: bool,
     configured: bool,
     resumed: bool,
+    /// Whether the handler has built its tree. Set by the first resume and never cleared, since a suspend keeps the tree.
+    mounted: bool,
     closed: bool,
     events: Vec<Event>,
     timeout: Option<Duration>,
@@ -475,6 +510,8 @@ impl SurfaceEntry {
             namespace,
             reserve_only: false,
             interactive_input_region: false,
+            mapping: Mapping::default(),
+            layer_state: None,
             scale_120: scale.max(1) as u32 * 120,
             viewport: None,
             fractional: None,
@@ -483,6 +520,7 @@ impl SurfaceEntry {
             geometry_dirty: false,
             configured: false,
             resumed: false,
+            mounted: false,
             closed: false,
             events: Vec::new(),
             timeout: None,
@@ -521,10 +559,13 @@ impl SurfaceEntry {
         }
     }
 
-    /// Adopts a compositor-decided size, and (once the first configure has been taken) tells the handler to re-lay-out. The buffer behind it is resized by [`Self::apply_geometry`] rather than here.
+    /// Adopts a compositor-decided size and tells the handler to re-lay-out; ignored if the surface isn't mapped yet, since a configure reaching it before it re-armed answers a mapping that no longer exists.
     pub(crate) fn apply_configure(&mut self, width: u32, height: u32) {
         self.logical_size = (width, height);
         self.geometry_dirty = true;
+        if !self.mapping.accepts_configure() {
+            return;
+        }
         if self.configured {
             self.events.push(Event::WindowResized { width, height });
         }
@@ -574,47 +615,64 @@ impl SurfaceEntry {
         }
     }
 
-    /// Pushes whatever the surface asked for since the last turn to the compositor. Only a layer surface has layer-shell state of its own to renegotiate; a lock surface's is the compositor's to decide, which is the whole point of the protocol. Nor is a lock surface given a background-effect object: the compositor stops rendering the session behind it, so there is nothing there to blur, and a blur region asked of one does nothing.
-    ///
-    /// A size change comes back as a `configure` and from there as a `WindowResized`, so the content is never resized by this call directly — it learns its new size the same way it learns about a monitor's.
+    /// Pushes whatever the surface asked for since the last turn to the compositor; mapping is applied last, since both of its transitions commit on the spot and carry whatever the fields before it queued.
     fn apply_update(&mut self, change: SurfaceUpdate, compositor: &CompositorState) {
         let mut moved = false;
         if let Shell::Layer(layer) = &self.shell {
-            // Every layer-shell field below is a value the compositor is simply told, so asking at all is a change worth a commit. A blur region is the exception and diffs itself.
+            // Every layer-shell field is a value the compositor is simply told, so asking at all is a change worth a commit. A blur region is the exception and diffs itself.
             moved = change.renegotiates();
-            if let Some((width, height)) = change.size {
-                layer.set_size(width, height);
+            if !push_layer_state(layer, &change) {
+                tracing::warn!(
+                    "{}: this compositor's layer-shell cannot restack a mapped surface; \
+                     restart for the change to take effect",
+                    self.namespace
+                );
             }
-            if let Some((top, right, bottom, left)) = change.margin {
-                layer.set_margin(top, right, bottom, left);
-            }
-            if let Some(zone) = change.exclusive_zone {
-                layer.set_exclusive_zone(zone);
-            }
-            if let Some(anchor) = change.anchor {
-                layer.set_anchor(anchor);
-            }
-            if let Some(shell_layer) = change.layer {
-                // Restacking a mapped surface arrived in version 2 of the protocol, and sending a request an object does not implement is a protocol error — which kills the whole connection, not the one surface. On an older compositor the surface keeps the layer it was created on instead.
-                match layer.kind() {
-                    SurfaceKind::Wlr(wlr) if wlr.version() >= 2 => layer.set_layer(shell_layer),
-                    _ => tracing::warn!(
-                        "{}: this compositor's layer-shell cannot restack a mapped surface; \
-                         restart for the change to take effect",
-                        self.namespace
-                    ),
-                }
-            }
-            if let Some(keyboard) = change.keyboard_interactivity {
-                layer.set_keyboard_interactivity(keyboard);
+            if let Some(state) = &mut self.layer_state {
+                state.absorb(&change);
             }
         }
         if let Some(rects) = change.blur_region {
             moved |= self.set_blur_region(compositor, rects);
         }
-        if moved {
-            self.commit_pending();
+        let presented = self.resumed || self.reservation.is_some();
+        let transition = change.mapped.map_or(Transition::None, |wanted| {
+            self.mapping.set(wanted, presented)
+        });
+        match transition {
+            Transition::Release => self.release(),
+            Transition::Rearm => self.rearm(),
+            Transition::None if moved => self.commit_pending(),
+            Transition::None => {}
         }
+    }
+
+    /// Takes the surface off screen: the renderer first, joining its thread, so no frame of its own can attach a buffer after the null one — that would be a buffer on an unconfigured surface, which the compositor answers by killing the connection.
+    fn release(&mut self) {
+        if self.resumed
+            && let Some(handler) = self.handler.as_mut()
+        {
+            suspend_handler(handler.as_mut(), &self.link, &self.sources, &self.exit);
+        }
+        self.resumed = false;
+        self.configured = false;
+        self.events.clear();
+        self.timeout = None;
+        self.shell.wl_surface().attach(None, 0, 0);
+        self.shell.commit();
+        if let Some(Reservation::SinglePixel(buffer)) = self.reservation.take() {
+            buffer.destroy();
+        }
+        self.reservation_size = (0, 0);
+    }
+
+    /// Puts a released surface back in line for the screen: its layer-shell state asked for again — the protocol returns an unmapped layer surface to the state it had right after `get_layer_surface` — and a commit without a buffer, which the compositor answers with the configure the surface presents on.
+    fn rearm(&self) {
+        if let (Shell::Layer(layer), Some(state)) = (&self.shell, &self.layer_state) {
+            // An older layer-shell that cannot restack also never moved the surface off the layer it was created on, which is the one right after `get_layer_surface`.
+            push_layer_state(layer, &state.as_update());
+        }
+        self.shell.commit();
     }
 
     /// Asks the compositor to blur what is behind `rects` — in logical surface coordinates, clipped by the compositor to the surface — and reports whether the region actually moved.
@@ -700,6 +758,35 @@ impl SurfaceEntry {
     fn exit_timeout(&self) -> Option<Duration> {
         self.exit_deadline
             .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    }
+}
+
+/// Sends every layer-shell field `change` names. `false` when it asked for a layer this compositor cannot restack to: that arrived in version 2 of the protocol, and a request an object does not implement is a protocol error that kills the whole connection, so on an older compositor the surface keeps the layer it was created on.
+fn push_layer_state(layer: &LayerSurface, change: &SurfaceUpdate) -> bool {
+    if let Some((width, height)) = change.size {
+        layer.set_size(width, height);
+    }
+    if let Some((top, right, bottom, left)) = change.margin {
+        layer.set_margin(top, right, bottom, left);
+    }
+    if let Some(zone) = change.exclusive_zone {
+        layer.set_exclusive_zone(zone);
+    }
+    if let Some(anchor) = change.anchor {
+        layer.set_anchor(anchor);
+    }
+    if let Some(keyboard) = change.keyboard_interactivity {
+        layer.set_keyboard_interactivity(keyboard);
+    }
+    let Some(shell_layer) = change.layer else {
+        return true;
+    };
+    match layer.kind() {
+        SurfaceKind::Wlr(wlr) if wlr.version() >= 2 => {
+            layer.set_layer(shell_layer);
+            true
+        }
+        _ => false,
     }
 }
 
@@ -876,7 +963,9 @@ fn create_surface_entry(
     config: &LayerConfig,
     handler: Option<BoxedHandler>,
     link: Option<Arc<SurfaceLink>>,
+    drawn_input: bool,
 ) {
+    let drawn_input = drawn_input || config.interactive_input_region;
     let output = config.output.as_deref().and_then(|name| {
         driver
             .output_state
@@ -904,8 +993,8 @@ fn create_surface_entry(
     let (mt, mr, mb, ml) = config.margin;
     layer.set_margin(mt, mr, mb, ml);
     layer.set_keyboard_interactivity(config.keyboard_interactivity);
-    // A fully click-through surface, and an interactive-region one before its first frame computes its rects, both start with an empty input region so they never steal clicks from windows beneath.
-    if (config.input_transparent || config.interactive_input_region)
+    // A fully click-through surface, and one carving its region from its content before its first frame computes it, both start with an empty input region so they never steal clicks from windows beneath.
+    if (config.input_transparent || drawn_input)
         && let Ok(region) = Region::new(compositor)
     {
         layer
@@ -924,7 +1013,8 @@ fn create_surface_entry(
         (config.size.0.max(1), config.size.1.max(1)),
     );
     entry.reserve_only = config.reserve_only;
-    entry.interactive_input_region = config.interactive_input_region;
+    entry.interactive_input_region = drawn_input;
+    entry.layer_state = Some(config.clone());
     // Before the first commit, so the surface is never mapped under a mapping it is about to replace.
     driver.attach_scaling(&mut entry, qh);
     driver.attach_background_effect(&mut entry, qh);
@@ -1054,6 +1144,7 @@ where
             &config,
             handler,
             None,
+            false,
         );
     }
 
@@ -1078,6 +1169,7 @@ where
                 &p.config,
                 p.handler,
                 Some(p.link),
+                p.drawn_input,
             );
         }
 
@@ -1116,7 +1208,8 @@ where
             if let Some(change) = entry.link.as_ref().and_then(|link| link.take_update()) {
                 entry.apply_update(change, &compositor);
             }
-            if !entry.configured {
+            // A hidden surface is not driven at all: its renderer is suspended, so nothing would present, and a dirty tree reporting a frame deadline would spin the loop at the frame rate for a window nobody can see.
+            if !entry.configured || !entry.mapping.wanted() {
                 continue;
             }
             entry.apply_geometry();
@@ -1149,30 +1242,28 @@ where
             }
             let window = entry.window.clone().expect("window built above");
 
-            // Taken whether or not it can be acted on: a rebuild asked for before the surface had ever been mounted *is* the mount below, whose first build already reads whatever the request was about.
-            let rebuild = entry.link.as_ref().is_some_and(|link| link.take_rebuild());
+            // Taken whether or not it can be acted on: a rebuild asked for before the surface had ever been mounted *is* the mount below, whose first build already reads whatever the request was about. One asked for while a mounted surface was hidden is not: the resume shows the tree the suspend kept.
+            let rebuild =
+                entry.link.as_ref().is_some_and(|link| link.take_rebuild()) && entry.mounted;
 
             if !entry.resumed {
                 let link = entry.link.clone();
                 let sources = Rc::clone(&entry.sources);
                 let exit = Rc::clone(&entry.exit);
-                let ok = with_current(&link, &sources, &exit, || {
-                    let handler = entry
-                        .handler
-                        .as_mut()
-                        .expect("rendering surface has a handler");
-                    handler.new_events();
-                    let resumed = handler.on_resume(&window);
-                    handler.about_to_wait();
-                    resumed
-                });
+                let handler = entry
+                    .handler
+                    .as_mut()
+                    .expect("rendering surface has a handler");
+                let ok = resume_handler(handler.as_mut(), &window, &link, &sources, &exit);
                 if !ok {
                     tracing::error!("layer surface on_resume failed (renderer init)");
                     remove.push(index);
                     continue;
                 }
                 entry.resumed = true;
-            } else if rebuild {
+                entry.mounted = true;
+            }
+            if rebuild {
                 entry.rebuild(&window, &loop_handle);
                 // The pointer does not enter a surface twice, so a rebuilt surface under it would otherwise never hear that it is hovered — an auto-hidden bar rebuilt while it was out would slide away under the cursor and stay there until the pointer left and came back.
                 if pointer_focus.as_ref() == Some(&entry.wl_id) {
@@ -1477,9 +1568,35 @@ pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandl
             config: spec,
             handler: Some(handler),
             link: Arc::clone(&link),
+            drawn_input: false,
         })
     });
     SurfaceHandle { link }
+}
+
+/// Opens the window of one layer on one output: the whole output, at the compositor's size, ignoring every exclusive zone, drawn by `app`; call [`LayerWindowHandle::set_mapped`] before the driver's next turn to open it hidden, at no cost beyond the layer surface itself.
+pub fn open_layer_window<A: App + 'static>(
+    output: Option<String>,
+    layer: Layer,
+    namespace: impl Into<String>,
+    app: A,
+) -> LayerWindowHandle {
+    let link = Arc::new(SurfaceLink::default());
+    let handler = build_surface_handler::<LayerWindow, _>(
+        LocalApp(app),
+        Arc::new(telar::NoPaths),
+        "hogar-shell",
+        surface_fonts(),
+    );
+    DYN_QUEUE.with(|q| {
+        q.borrow_mut().push(PendingSurface {
+            config: LayerConfig::whole_output(output, layer, namespace.into()),
+            handler: Some(handler),
+            link: Arc::clone(&link),
+            drawn_input: true,
+        })
+    });
+    LayerWindowHandle::new(link)
 }
 
 /// Opens a reservation-only strip (no rsx content — just its exclusive zone, an invisible transparent buffer), closeable like any dynamic surface. Used to reserve bar space so the strip and the visible bar are independent surfaces (see the bar/reservation split), reconcilable on config reload without a full teardown.
@@ -1490,6 +1607,7 @@ pub fn open_reservation(spec: LayerConfig) -> SurfaceHandle {
             config: spec,
             handler: None,
             link: Arc::clone(&link),
+            drawn_input: false,
         })
     });
     SurfaceHandle { link }
@@ -1703,6 +1821,7 @@ impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
                 config,
                 handler: Some(handler),
                 link: Arc::clone(&link),
+                drawn_input: false,
             })
         });
         SurfaceToken::new(Box::new(SurfaceHandle { link }))
@@ -2249,6 +2368,229 @@ mod tests {
         assert_eq!(plan.linger(), Duration::from_millis(320));
         plan.run();
         assert_eq!(*fired.borrow(), vec!["scaffold", "panel"]);
+    }
+
+    /// A headless window that counts the frames asked of it, so a test can tell a hidden surface that stays quiet from one that asks to be drawn.
+    #[derive(Clone)]
+    struct CountingWindow {
+        inner: platform_headless::HeadlessWindow,
+        redraws: Arc<AtomicUsize>,
+    }
+
+    type BoxedCountingHandler = Box<dyn EventHandler<CountingWindow>>;
+
+    impl CountingWindow {
+        fn new(width: u32, height: u32) -> Self {
+            Self {
+                inner: platform_headless::HeadlessWindow::new(width, height),
+                redraws: Arc::default(),
+            }
+        }
+
+        fn redraws(&self) -> usize {
+            self.redraws.load(Ordering::Relaxed)
+        }
+    }
+
+    impl raw_window_handle::HasWindowHandle for CountingWindow {
+        fn window_handle(
+            &self,
+        ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+            self.inner.window_handle()
+        }
+    }
+
+    impl raw_window_handle::HasDisplayHandle for CountingWindow {
+        fn display_handle(
+            &self,
+        ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+            self.inner.display_handle()
+        }
+    }
+
+    impl Window for CountingWindow {
+        fn width(&self) -> u32 {
+            self.inner.width()
+        }
+
+        fn height(&self) -> u32 {
+            self.inner.height()
+        }
+
+        fn request_redraw(&self) {
+            self.redraws.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn scale_factor(&self) -> f64 {
+            self.inner.scale_factor()
+        }
+
+        fn is_offscreen(&self) -> bool {
+            true
+        }
+    }
+
+    /// A layer window's app whose tree owns what the app never sees — a signal made in `root`, a node, a ticker on the loop and an exit reaction — and reports each of them, so a kept tree can be told from a rebuilt one.
+    #[derive(Default)]
+    struct Tracked {
+        roots: Rc<std::cell::Cell<u32>>,
+        local: Rc<std::cell::Cell<Option<telar::RwSignal<u32>>>>,
+        node: Rc<std::cell::Cell<Option<telar::NodeId>>>,
+        tree: Rc<RefCell<std::rc::Weak<()>>>,
+        exits: Rc<std::cell::Cell<u32>>,
+    }
+
+    impl App for Tracked {
+        fn root(&self) -> Box<dyn Component> {
+            use telar::LayoutItem;
+
+            reset_layout_runtime();
+            self.roots.set(self.roots.get() + 1);
+            let local = telar::signal(0u32);
+            self.local.set(Some(local));
+            interval(Duration::from_secs(3600), || {});
+            let exits = Rc::clone(&self.exits);
+            on_close(Duration::from_millis(100), move || {
+                exits.set(exits.get() + 1)
+            });
+            let alive = Rc::new(());
+            *self.tree.borrow_mut() = Rc::downgrade(&alive);
+            let tint = telar::Rectangle::new(
+                telar::LayoutStyle::new().width(40.0).height(40.0),
+                move || {
+                    let _tree = &alive;
+                    telar::RectStyle::filled(
+                        Color::rgba(local.get() as f32 / 10.0, 0.0, 0.0, 1.0),
+                        0.0,
+                    )
+                },
+            )
+            .expect("a rectangle lays out");
+            self.node.set(Some(tint.layout_node()));
+            Box::new(WindowRoot::new(telar::box_item(tint)))
+        }
+
+        fn window_config(&self) -> Option<WindowConfig> {
+            Some(WindowConfig {
+                is_transparent: true,
+                ..WindowConfig::default()
+            })
+        }
+    }
+
+    /// Hiding a layer window and showing it again runs exactly the handler calls the driver makes — suspend to hide, resume to show — on one handler, against a real telar app over a headless window: the handler and the tree survive — no second build, the tree's own signal keeps its value, its node keeps its identity, its ticker and exit reaction stay registered once — while the renderer is gone for as long as the window is hidden and nothing asks the hidden window for a frame.
+    #[test]
+    fn a_hidden_and_shown_layer_window_keeps_its_handler_and_tree() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+
+        let event_loop: EventLoop<'static, Driver> =
+            EventLoop::try_new().expect("an event loop needs no compositor");
+        LOOP_HANDLE.with(|h| *h.borrow_mut() = Some(event_loop.handle()));
+
+        let app = Tracked::default();
+        let (roots, local, node, tree, exits) = (
+            Rc::clone(&app.roots),
+            Rc::clone(&app.local),
+            Rc::clone(&app.node),
+            Rc::clone(&app.tree),
+            Rc::clone(&app.exits),
+        );
+        let window = CountingWindow::new(320, 200);
+        let mut handler = build_surface_handler::<CountingWindow, _>(
+            LocalApp(app),
+            Arc::new(telar::NoPaths),
+            "hogar-shell-test",
+            telar::AppConfig::default(),
+        );
+        let link = Some(Arc::new(SurfaceLink::default()));
+        let sources = SourceSink::default();
+        let exit = ExitSink::default();
+        let draw = |handler: &mut BoxedCountingHandler| {
+            with_current(&link, &sources, &exit, || {
+                handler.new_events();
+                handler.on_redraw(&window);
+                handler.about_to_wait();
+            });
+        };
+
+        assert!(resume_handler(
+            handler.as_mut(),
+            &window,
+            &link,
+            &sources,
+            &exit
+        ));
+        draw(&mut handler);
+        assert!(
+            handler.last_frame_rgba().is_some(),
+            "precondition: a shown window has a renderer"
+        );
+        let first_node = node.get().expect("the tree placed its node");
+        let first_tree = tree.borrow().clone();
+        let first_local = local.get().expect("the tree made its signal");
+        let redraws_when_shown = window.redraws();
+        begin_batch();
+        first_local.set(3);
+        end_batch();
+        assert!(
+            window.redraws() > redraws_when_shown,
+            "precondition: the same change on a shown window asks for a frame"
+        );
+        assert_eq!(roots.get(), 1);
+        assert_eq!(sources.borrow().len(), 1, "the tree's ticker");
+
+        suspend_handler(handler.as_mut(), &link, &sources, &exit);
+        assert!(
+            handler.last_frame_rgba().is_none(),
+            "a hidden window holds no renderer, and with it nothing it drew into"
+        );
+        let redraws_when_hidden = window.redraws();
+        begin_batch();
+        first_local.set(7);
+        end_batch();
+        assert_eq!(
+            window.redraws(),
+            redraws_when_hidden,
+            "the tree changing while hidden asks the hidden window for no frame"
+        );
+
+        assert!(resume_handler(
+            handler.as_mut(),
+            &window,
+            &link,
+            &sources,
+            &exit
+        ));
+        assert_eq!(roots.get(), 1, "showing the window built no second tree");
+        assert_eq!(
+            local.get().map(|signal| signal.peek()),
+            Some(7),
+            "the tree's own signal kept what was written to it while hidden"
+        );
+        assert_eq!(
+            node.get(),
+            Some(first_node),
+            "the tree's node kept its identity"
+        );
+        assert!(
+            first_tree.upgrade().is_some(),
+            "the tree shown is the one built first, not a copy of it"
+        );
+        assert_eq!(
+            sources.borrow().len(),
+            1,
+            "the ticker stayed registered once, neither dropped nor doubled"
+        );
+        std::mem::take(&mut *exit.borrow_mut()).run();
+        assert_eq!(exits.get(), 1, "and the exit reaction is registered once");
+
+        draw(&mut handler);
+        assert!(
+            handler.last_frame_rgba().is_some(),
+            "the renderer came back with the window, on the same handler"
+        );
+
+        LOOP_HANDLE.with(|h| *h.borrow_mut() = None);
     }
 
     /// The whole point of the pair: the scales a whole number cannot say.

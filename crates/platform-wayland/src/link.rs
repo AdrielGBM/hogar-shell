@@ -10,9 +10,7 @@ use telar::Rect;
 
 use crate::config::{Anchor, KeyboardInteractivity, Layer};
 
-/// A change to a live surface's state — everything the protocol lets a mapped surface renegotiate, plus the one piece of surface state that is not layer-shell's at all.
-///
-/// Every field is optional because they are asked for independently: a bar sliding out of view retargets only its margin, a float being dragged wider only its size, and an auto-hiding bar gives up its exclusive zone without touching either. What is *not* here is what a surface is created with and cannot change: its output, its namespace, and whether its input region is carved from its content.
+/// A change to a live surface's state — everything the protocol lets a mapped surface renegotiate, plus the one piece of surface state that is not layer-shell's at all; every field is optional since each is asked for independently.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SurfaceUpdate {
     pub size: Option<(u32, u32)>,
@@ -26,6 +24,8 @@ pub struct SurfaceUpdate {
     ///
     /// This is why [`SurfaceUpdate`] is not `Copy`, and it rides here rather than on a channel of its own because a blur region is double-buffered state that lands on the same `wl_surface.commit` as everything above it: a bar that grows and blurs in one turn must do both in one commit or show a frame of one without the other.
     pub blur_region: Option<Vec<Rect>>,
+    /// Whether the surface should be on screen. `Some(false)` releases its renderer and attaches a null buffer; `Some(true)` re-arms it with a buffer-less commit and presents again once the compositor answers with a configure. The handler and the app behind it survive both.
+    pub mapped: Option<bool>,
 }
 
 impl SurfaceUpdate {
@@ -57,13 +57,32 @@ impl SurfaceUpdate {
         }
     }
 
+    pub fn layer(layer: Layer) -> Self {
+        Self {
+            layer: Some(layer),
+            ..Self::default()
+        }
+    }
+
+    pub fn keyboard_interactivity(keyboard: KeyboardInteractivity) -> Self {
+        Self {
+            keyboard_interactivity: Some(keyboard),
+            ..Self::default()
+        }
+    }
+
+    pub fn mapped(mapped: bool) -> Self {
+        Self {
+            mapped: Some(mapped),
+            ..Self::default()
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }
 
-    /// Whether this asks for anything a *layer surface* renegotiates — everything but the blur region, which is not layer-shell state.
-    ///
-    /// The driver needs the two apart because they earn a commit on different terms: every field above is a value the compositor is simply told, so asking at all is a change, while a blur region is diffed against the one already applied and usually is not.
+    /// Whether this asks for anything a *layer surface* renegotiates — everything but the blur region, which is not layer-shell state, and mapping, which commits on its own terms — since those two earn a commit on different terms than a plain field the compositor is simply told.
     pub(crate) fn renegotiates(&self) -> bool {
         self.size.is_some()
             || self.margin.is_some()
@@ -82,6 +101,7 @@ impl SurfaceUpdate {
         self.layer = next.layer.or(self.layer);
         self.keyboard_interactivity = next.keyboard_interactivity.or(self.keyboard_interactivity);
         self.blur_region = next.blur_region.or_else(|| self.blur_region.take());
+        self.mapped = next.mapped.or(self.mapped);
     }
 }
 
@@ -213,6 +233,34 @@ mod tests {
             !taken.renegotiates(),
             "a blur region alone is not layer-shell state, so it diffs itself instead of counting as a change on being asked"
         );
+    }
+
+    /// A window hidden and shown again before the driver's next turn has nothing to do, and one shown while its layer and keyboard change must carry all three into the same commit.
+    #[test]
+    fn mapping_folds_to_the_newest_request_and_keeps_the_rest() {
+        let link = SurfaceLink::default();
+        link.request_update(SurfaceUpdate::mapped(false));
+        link.request_update(SurfaceUpdate::layer(Layer::Overlay));
+        link.request_update(SurfaceUpdate::keyboard_interactivity(
+            KeyboardInteractivity::OnDemand,
+        ));
+        link.request_update(SurfaceUpdate::mapped(true));
+
+        let taken = link.take_update().expect("four requests are one commit");
+        assert_eq!(taken.mapped, Some(true));
+        assert_eq!(taken.layer, Some(Layer::Overlay));
+        assert_eq!(
+            taken.keyboard_interactivity,
+            Some(KeyboardInteractivity::OnDemand)
+        );
+
+        link.request_update(SurfaceUpdate::mapped(false));
+        let taken = link.take_update().expect("hiding is a request");
+        assert!(
+            !taken.renegotiates(),
+            "mapping is not layer-shell state, so it commits on its own terms rather than counting as a renegotiation"
+        );
+        assert!(!taken.is_empty());
     }
 
     /// A burst of config writes — which is what typing into a settings field is — must cost one rebuild.

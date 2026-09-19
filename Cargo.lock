@@ -1705,6 +1705,7 @@ dependencies = [
  "raw-window-handle",
  "smithay-client-toolkit",
  "telar",
+ "telar-platform-headless",
  "tracing",
  "wayland-client",
  "wayland-protocols",
