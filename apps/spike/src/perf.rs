@@ -1,12 +1,4 @@
-//! Telar's `TELAR_PERF` window summaries, parsed.
-//!
-//! With `TELAR_PERF` set, `renderer_core::perf` accumulates per-phase timings from every thread in the process and, every 60th frame *built* (counted on the UI thread, across every surface), logs one line and resets:
-//!
-//! ```text
-//! perf[60f] build=41/95us(n60) clone=3/9us(n60) interpret=380/1210us(n59) frame=900/2400us(n59) present=410/980us(n59) plan=12/30us(n59) convert=90/200us(n59) mask=60/140us(n59) damage=59 area=0.4%
-//! ```
-//!
-//! Each phase is `average/slowest` in whole microseconds with its sample count; `damage` counts frames that took the damage-tracking path and `area` is the renderer's own damaged-pixel fraction over them. A phase with no samples in the window is omitted. The window is the process's, not a surface's: it is only attributable to one piece of work if nothing else rendered while it filled, which is what the report checks before using one.
+//! Parses `TELAR_PERF` window summaries; phases are matched by name so both the hardware and software renderer's differently-shaped lines parse the same way, and a window is only attributable to one piece of work if nothing else rendered while it filled.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PhaseStat {
@@ -80,6 +72,24 @@ mod tests {
         assert_eq!(window.phase("gpu"), None);
         assert_eq!(window.damage_frames, 59);
         assert_eq!(window.area_pct, Some(0.4));
+    }
+
+    #[test]
+    fn a_software_window_drawn_straight_into_the_buffer_has_acquire_and_no_convert() {
+        let window = parse(
+            "perf[60f] build=40/90us(n60) clone=3/8us(n60) interpret=350/1100us(n59) frame=700/1900us(n59) present=120/300us(n59) plan=11/28us(n59) mask=55/130us(n59) acquire=45/400us(n59) damage=59 area=0.3%",
+        )
+        .unwrap();
+        assert_eq!(
+            window.phase("acquire"),
+            Some(PhaseStat {
+                avg_us: 45.0,
+                max_us: 400.0,
+                n: 59
+            })
+        );
+        assert_eq!(window.phase("convert"), None);
+        assert_eq!(window.phase("interpret").unwrap().max_us, 1100.0);
     }
 
     #[test]

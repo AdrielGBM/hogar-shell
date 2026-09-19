@@ -19,7 +19,7 @@ use std::process::ExitCode;
 use director::{Mode, RunArgs};
 
 const USAGE: &str = "\
-hogar-shell-spike — the T-0.4 window-model benchmark
+hogar-shell-spike — the window-model benchmark (T-0.4, re-run under DEC-11 as T-0.5)
 
 Usage:
   hogar-shell-spike run --mode <per-surface|merged> --out <dir> [--output <name>] [--clicks] [--note <text>]

@@ -412,6 +412,45 @@ mod tests {
         assert_eq!(trace.commits[1].input_region, Some(InputRegion::Everything));
     }
 
+    /// What a layer window sends to go off screen and come back: a null attach, a buffer-less commit that re-arms it with its layer state asked for again, and a first frame on the configure that answers.
+    #[test]
+    fn an_unmapped_window_shows_no_buffer_until_its_next_frame() {
+        let log = format!(
+            "{SOFTWARE}\
+[10:00:02.000000]  -> wl_surface#25.attach(nil, 0, 0)
+[10:00:02.000100]  -> wl_surface#25.commit()
+[10:00:03.000000]  -> zwlr_layer_surface_v1#26.set_size(0, 0)
+[10:00:03.000100]  -> zwlr_layer_surface_v1#26.set_layer(2)
+[10:00:03.000200]  -> wl_surface#25.commit()
+[10:00:03.010000] {{Default Queue}} zwlr_layer_surface_v1#26.configure(4243, 1920, 1080)
+[10:00:03.020000]  -> wl_shm#6.create_pool(new id wl_shm_pool#42, fd 18, 8294400)
+[10:00:03.020100]  -> wl_shm_pool#42.create_buffer(new id wl_buffer#43, 0, 1920, 1080, 7680, 0)
+[10:00:03.020200]  -> wl_surface#25.attach(wl_buffer#43, 0, 0)
+[10:00:03.020300]  -> wl_surface#25.damage_buffer(0, 0, 1920, 1080)
+[10:00:03.020400]  -> wl_surface#25.commit()
+"
+        );
+        let trace = replay(&log);
+        assert_eq!(trace.surfaces.len(), 1, "unmapping keeps the surface");
+        let [unmap, rearm, remap] = &trace.commits[3..] else {
+            panic!(
+                "expected three commits after the frames, got {:?}",
+                trace.commits
+            );
+        };
+        assert!(!unmap.attached, "a null attach is not a frame");
+        assert_eq!(unmap.buffer, None, "and leaves no buffer showing");
+        assert!(!rearm.attached);
+        assert_eq!(rearm.buffer, None);
+        assert!(remap.attached);
+        assert_eq!(remap.buffer, Some((1920, 1080)));
+        assert_eq!(
+            remap.damage,
+            vec![Damage::Buffer(PxRect::new(0, 0, 1920, 1080))],
+            "a fresh renderer's first frame is whole"
+        );
+    }
+
     #[test]
     fn hardware_frames_damage_in_surface_space_and_size_their_dmabufs() {
         let log = "\

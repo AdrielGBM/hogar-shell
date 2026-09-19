@@ -1,8 +1,4 @@
-//! The run: which surfaces each mode opens, and the one script of scenarios both modes play against the same scene.
-//!
-//! Everything happens on the platform's driver thread, sequenced by one-shot timers, so a scenario is a span of wall-clock time in which exactly one kind of change happens: the clock ticks and nothing else, cards arrive and nothing else, and so on. That exclusivity is what lets the report attribute a commit in the protocol log, or a `TELAR_PERF` window, to the change that caused it by time alone. Scenario boundaries, each discrete change and the rects the layout says it should repaint, memory and CPU readings all go to the timeline as they happen.
-//!
-//! Both modes open their lazily-mapped pieces the same way today's shell does and at the same moments: the notification stack only for the notification scenarios and the drawer only for its own, as a surface of its own per-surface, as a subtree mounted into the one fullscreen window. Memory is read before either has ever been opened, while the drawer is open, and at the end; the click catcher is only ever opened after the last reading, so its fullscreen buffer is in none of them.
+//! Runs the same script of scenarios against both modes; each scenario is a span with exactly one kind of change happening, which is what lets the report attribute a protocol commit or perf window to it by time alone (`simultaneous` is the deliberate exception, recorded as one change covering all three).
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -13,7 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use platform_wayland::{
-    Anchor, KeyboardInteractivity, Layer, LayerConfig, LayerShellPlatform, SurfaceHandle,
+    Anchor, KeyboardInteractivity, Layer, LayerConfig, LayerShellPlatform, LayerWindowHandle,
+    SurfaceHandle,
 };
 use telar::{App, AppPathsProvider};
 
@@ -22,7 +19,7 @@ use crate::scene::{
     BAR_HEIGHT, Card, DRAWER_HEIGHT, DRAWER_WIDTH, GAP, LONG_LABEL, Role, SHORT_LABEL,
     STACK_HEIGHT, STACK_WIDTH, Scene, SurfaceApp, Target, TargetClass, Watch,
 };
-use crate::timeline::{LogicalRect, Record, Recorder, now_us};
+use crate::timeline::{Expected, LogicalRect, Record, Recorder, now_us};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -69,6 +66,7 @@ const NOTIFY_COUNT: u32 = 6;
 const CHURN_PERIOD: u64 = 20;
 const CHURN_DEPTH: usize = 5;
 const CLIP_COUNT: u32 = 6;
+const SIMULTANEOUS_COUNT: u32 = 6;
 const EVENT_GAP: u64 = 900;
 /// How long after a change the layout is read back for the rects it should have repainted — several frames, so a slow frame cannot race the read.
 const SETTLE: u64 = 250;
@@ -99,7 +97,7 @@ pub fn run(args: RunArgs) -> Result<(), String> {
         Vec::new(),
         |_| Arc::new(telar::NoPaths) as Arc<dyn AppPathsProvider>,
         |_id| -> Box<dyn App> {
-            unreachable!("the spike opens every surface through platform_wayland::open_surface")
+            unreachable!("the spike opens every surface at runtime, through platform_wayland")
         },
         "hogar-shell-spike",
     );
@@ -214,6 +212,7 @@ struct Director {
     scene: Rc<Scene>,
     // Held because dropping a handle closes its surface.
     base: RefCell<Vec<SurfaceHandle>>,
+    window: RefCell<Option<LayerWindowHandle>>,
     stack: RefCell<Option<SurfaceHandle>>,
     drawer: RefCell<Option<SurfaceHandle>>,
     catcher: RefCell<Option<SurfaceHandle>>,
@@ -240,6 +239,7 @@ impl Director {
             shutdown,
             scene: Scene::new(clock_text(0)),
             base: RefCell::default(),
+            window: RefCell::default(),
             stack: RefCell::default(),
             drawer: RefCell::default(),
             catcher: RefCell::default(),
@@ -281,25 +281,39 @@ impl Director {
                 director.pressed(role, x, y);
             }
         });
-        let roles: &[Role] = match director.mode {
-            Mode::PerSurface => &[Role::BarTop, Role::BarBottom],
-            Mode::Merged => &[Role::Top],
-        };
-        for role in roles {
-            let handle = director.open(*role);
-            director.base.borrow_mut().push(handle);
+        match director.mode {
+            Mode::PerSurface => {
+                for piece in [Piece::BarTop, Piece::BarBottom] {
+                    let handle = director.open(piece);
+                    director.base.borrow_mut().push(handle);
+                }
+            }
+            Mode::Merged => *director.window.borrow_mut() = Some(director.open_window()),
         }
         director.recorder.meta("surfaces-opened", now_us());
         println!("hogar-shell-spike: {} run started", director.mode.name());
         play(Rc::clone(&director), script().steps);
     }
 
-    fn open(&self, role: Role) -> SurfaceHandle {
-        platform_wayland::open_surface(
-            layer_config(role, self.output.clone()),
+    /// The merged model's one window, opened the way the shell's layer windows are.
+    fn open_window(&self) -> LayerWindowHandle {
+        platform_wayland::open_layer_window(
+            self.output.clone(),
+            Layer::Top,
+            Role::Top.namespace(),
             SurfaceApp {
                 scene: Rc::clone(&self.scene),
-                role,
+                role: Role::Top,
+            },
+        )
+    }
+
+    fn open(&self, piece: Piece) -> SurfaceHandle {
+        platform_wayland::open_surface(
+            piece.layer_config(self.output.clone()),
+            SurfaceApp {
+                scene: Rc::clone(&self.scene),
+                role: piece.role(),
             },
         )
     }
@@ -345,34 +359,40 @@ impl Director {
         }
     }
 
-    /// Makes one discrete change and, once the layout has run, records it with the rects it should have repainted: whatever the layout moved or added, before and after, plus — for the clock, whose box never moves — the chip whose digits changed.
+    /// Makes one discrete change to every piece in `watches`, in the same turn so it lands in one frame, and once the layout has run records it with the rects it should have repainted, once per surface they landed on.
     fn change(
         self: &Rc<Self>,
         scenario: &'static str,
         index: u32,
-        watch: Watch,
+        watches: &'static [Watch],
         apply: impl FnOnce(&Scene),
     ) {
         let at = now_us();
-        let before = self.scene.snapshot(watch);
+        let before: Vec<_> = watches.iter().map(|w| self.scene.snapshot(*w)).collect();
         apply(&self.scene);
         let director = Rc::clone(self);
         platform_wayland::timeout(Duration::from_millis(SETTLE), move || {
-            let after = director.scene.snapshot(watch);
-            let expected = if watch == Watch::Clock {
-                after.iter().map(|(_, r)| *r).collect()
-            } else {
-                moved(&before, &after)
-            };
-            director.recorder.record_at(
-                at,
-                Record::Event {
-                    scenario: scenario.to_owned(),
-                    index,
-                    role: director.role_for(watch).name().to_owned(),
-                    expected,
-                },
-            );
+            let mut by_role: Vec<(Role, Expected)> = Vec::new();
+            for (watch, before) in watches.iter().zip(&before) {
+                let after = director.scene.snapshot(*watch);
+                let expected = expected_repaint(*watch, before, &after);
+                let role = director.role_for(*watch);
+                match by_role.iter_mut().find(|(r, _)| *r == role) {
+                    Some((_, all)) => all.extend(expected),
+                    None => by_role.push((role, expected)),
+                }
+            }
+            for (role, expected) in by_role {
+                director.recorder.record_at(
+                    at,
+                    Record::Event {
+                        scenario: scenario.to_owned(),
+                        index,
+                        role: role.name().to_owned(),
+                        expected,
+                    },
+                );
+            }
         });
     }
 
@@ -392,14 +412,17 @@ impl Director {
     }
 
     fn advance_clock(&self) {
+        self.scene.clock.set(self.next_second());
+    }
+
+    fn next_second(&self) -> String {
         self.seconds.set(self.seconds.get() + 1);
-        self.scene.clock.set(clock_text(self.seconds.get()));
+        clock_text(self.seconds.get())
     }
 
     fn tick_clock(self: &Rc<Self>, index: u32) {
-        let text = clock_text(self.seconds.get() + 1);
-        self.seconds.set(self.seconds.get() + 1);
-        self.change("clock", index, Watch::Clock, move |scene| {
+        let text = self.next_second();
+        self.change("clock", index, &[Watch::Clock], move |scene| {
             scene.clock.set(text)
         });
     }
@@ -412,7 +435,7 @@ impl Director {
 
     fn notify(self: &Rc<Self>, index: u32) {
         let card = self.take_card();
-        self.change("notify", index, Watch::Cards, move |scene| {
+        self.change("notify", index, &[Watch::Cards], move |scene| {
             scene.cards.update(|cards| cards.insert(0, card));
         });
     }
@@ -427,7 +450,7 @@ impl Director {
 
     fn open_stack(&self) {
         if self.mode == Mode::PerSurface {
-            *self.stack.borrow_mut() = Some(self.open(Role::Stack));
+            *self.stack.borrow_mut() = Some(self.open(Piece::Stack));
         }
     }
 
@@ -440,14 +463,27 @@ impl Director {
     }
 
     fn toggle_wide(self: &Rc<Self>, index: u32) {
-        let text = if index.is_multiple_of(2) {
-            LONG_LABEL
-        } else {
-            SHORT_LABEL
-        };
-        self.change("clip", index, Watch::Wide, move |scene| {
+        let text = wide_label(index);
+        self.change("clip", index, &[Watch::Wide], move |scene| {
             scene.wide.set(text.to_owned())
         });
+    }
+
+    /// A clock tick, a card arrival and a clip resize in one turn: three changes far apart on the screen, which one window has to damage as three regions rather than one rect spanning them.
+    fn simultaneous(self: &Rc<Self>, index: u32) {
+        let text = self.next_second();
+        let card = self.take_card();
+        let label = wide_label(index);
+        self.change(
+            "simultaneous",
+            index,
+            &[Watch::Clock, Watch::Cards, Watch::Wide],
+            move |scene| {
+                scene.clock.set(text);
+                scene.cards.update(|cards| cards.insert(0, card));
+                scene.wide.set(label.to_owned());
+            },
+        );
     }
 
     fn flip_wide(&self) {
@@ -461,7 +497,7 @@ impl Director {
 
     fn open_drawer(&self) {
         match self.mode {
-            Mode::PerSurface => *self.drawer.borrow_mut() = Some(self.open(Role::Drawer)),
+            Mode::PerSurface => *self.drawer.borrow_mut() = Some(self.open(Piece::Drawer)),
             Mode::Merged => self.scene.drawer_slot.set(vec![0]),
         }
     }
@@ -509,7 +545,7 @@ impl Director {
 
     fn ask_for_clicks(self: &Rc<Self>) {
         self.scenario("clicks", true);
-        *self.catcher.borrow_mut() = Some(self.open(Role::Catcher));
+        *self.catcher.borrow_mut() = Some(self.open(Piece::Catcher));
         self.scene.targets.set(self.targets.borrow().clone());
         self.clicking.set(true);
         self.show_tally();
@@ -603,51 +639,93 @@ fn moved(before: &[(u64, LogicalRect)], after: &[(u64, LogicalRect)]) -> Vec<Log
     rects
 }
 
-fn layer_config(role: Role, output: Option<String>) -> LayerConfig {
-    let edges = Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT;
-    let below_bar = BAR_HEIGHT as i32 + GAP as i32;
-    let (layer, anchor, size, margin) = match role {
-        Role::Top => (Layer::Top, edges, (0, 0), (0, 0, 0, 0)),
-        Role::BarTop => (
-            Layer::Top,
-            Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
-            (0, BAR_HEIGHT as u32),
-            (0, 0, 0, 0),
-        ),
-        Role::BarBottom => (
-            Layer::Top,
-            Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-            (0, BAR_HEIGHT as u32),
-            (0, 0, 0, 0),
-        ),
-        // Overlay, where today's shell puts its popups and drawers.
-        Role::Stack => (
-            Layer::Overlay,
-            Anchor::TOP | Anchor::RIGHT,
-            (STACK_WIDTH as u32, STACK_HEIGHT as u32),
-            (below_bar, GAP as i32, 0, 0),
-        ),
-        Role::Drawer => (
-            Layer::Overlay,
-            Anchor::TOP | Anchor::LEFT,
-            (DRAWER_WIDTH as u32, DRAWER_HEIGHT as u32),
-            (below_bar, 0, 0, GAP as i32),
-        ),
-        Role::Catcher => (Layer::Bottom, edges, (0, 0), (0, 0, 0, 0)),
-    };
-    LayerConfig {
-        output,
-        layer,
-        anchor,
-        // Every surface ignores every exclusive zone, including a running shell's, so each piece lands at the same place in both modes.
-        exclusive_zone: -1,
-        size,
-        margin,
-        keyboard_interactivity: KeyboardInteractivity::None,
-        namespace: role.namespace(),
-        reserve_only: false,
-        input_transparent: false,
-        interactive_input_region: role == Role::Top,
+/// The label the widening chip shows after the `index`th clip change: long on even ones, short on odd ones, so each change resizes its clip.
+fn wide_label(index: u32) -> &'static str {
+    if index.is_multiple_of(2) {
+        LONG_LABEL
+    } else {
+        SHORT_LABEL
+    }
+}
+
+/// What a change to `watch` should repaint: whatever the layout moved or added, before and after, in full — or, for the clock, whose box never moves, somewhere inside the chip whose digits changed.
+fn expected_repaint(
+    watch: Watch,
+    before: &[(u64, LogicalRect)],
+    after: &[(u64, LogicalRect)],
+) -> Expected {
+    match watch {
+        Watch::Clock => Expected::bound(after.iter().map(|(_, r)| *r).collect()),
+        Watch::Wide | Watch::Cards => Expected::cover(moved(before, after)),
+    }
+}
+
+/// A piece of the scene that is a layer surface of its own. The merged window is not one of them: it is a layer window, and opens through `open_layer_window` with a geometry that is not the spike's to choose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Piece {
+    BarTop,
+    BarBottom,
+    Stack,
+    Drawer,
+    Catcher,
+}
+
+impl Piece {
+    fn role(self) -> Role {
+        match self {
+            Piece::BarTop => Role::BarTop,
+            Piece::BarBottom => Role::BarBottom,
+            Piece::Stack => Role::Stack,
+            Piece::Drawer => Role::Drawer,
+            Piece::Catcher => Role::Catcher,
+        }
+    }
+
+    fn layer_config(self, output: Option<String>) -> LayerConfig {
+        let edges = Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT;
+        let below_bar = BAR_HEIGHT as i32 + GAP as i32;
+        let (layer, anchor, size, margin) = match self {
+            Piece::BarTop => (
+                Layer::Top,
+                Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+                (0, BAR_HEIGHT as u32),
+                (0, 0, 0, 0),
+            ),
+            Piece::BarBottom => (
+                Layer::Top,
+                Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                (0, BAR_HEIGHT as u32),
+                (0, 0, 0, 0),
+            ),
+            // Overlay, where today's shell puts its popups and drawers.
+            Piece::Stack => (
+                Layer::Overlay,
+                Anchor::TOP | Anchor::RIGHT,
+                (STACK_WIDTH as u32, STACK_HEIGHT as u32),
+                (below_bar, GAP as i32, 0, 0),
+            ),
+            Piece::Drawer => (
+                Layer::Overlay,
+                Anchor::TOP | Anchor::LEFT,
+                (DRAWER_WIDTH as u32, DRAWER_HEIGHT as u32),
+                (below_bar, 0, 0, GAP as i32),
+            ),
+            Piece::Catcher => (Layer::Bottom, edges, (0, 0), (0, 0, 0, 0)),
+        };
+        LayerConfig {
+            output,
+            layer,
+            anchor,
+            // Every surface ignores every exclusive zone, including a running shell's, as a layer window does, so each piece lands at the same place in both modes.
+            exclusive_zone: -1,
+            size,
+            margin,
+            keyboard_interactivity: KeyboardInteractivity::None,
+            namespace: self.role().namespace(),
+            reserve_only: false,
+            input_transparent: false,
+            interactive_input_region: false,
+        }
     }
 }
 
@@ -701,8 +779,20 @@ fn script() -> Script {
     s.then(RATE_SPAN + 200, |d| {
         d.scenario("clip-rate", false);
         d.scene.wide.set(SHORT_LABEL.to_owned());
+        d.open_stack();
     });
-    s.then(500, |d| d.open_drawer());
+    s.then(MAP_SETTLE, |d| d.scenario("simultaneous", true));
+    for i in 0..SIMULTANEOUS_COUNT {
+        s.then(if i == 0 { 300 } else { EVENT_GAP }, move |d| {
+            d.simultaneous(i)
+        });
+    }
+    s.then(EVENT_GAP, |d| {
+        d.scenario("simultaneous", false);
+        d.close_stack();
+        d.scene.wide.set(SHORT_LABEL.to_owned());
+    });
+    s.then(1000, |d| d.open_drawer());
     s.then(MAP_SETTLE, |d| {
         d.scenario("drawer", true);
         d.animate_drawer();
@@ -742,6 +832,43 @@ mod tests {
         let before = vec![(1, r(0.0, 44.0))];
         let after = vec![(1, r(0.0, 44.0)), (2, r(0.0, 112.0))];
         assert_eq!(moved(&before, &after), vec![r(0.0, 112.0)]);
+    }
+
+    #[test]
+    fn a_clock_tick_is_bounded_by_its_chip_though_the_chip_did_not_move() {
+        let chip = vec![(0, r(900.0, 4.0))];
+        assert_eq!(
+            expected_repaint(Watch::Clock, &chip, &chip),
+            Expected::bound(vec![r(900.0, 4.0)]),
+            "the chip bounds the tick's damage, which need not fill it"
+        );
+        assert!(
+            expected_repaint(Watch::Wide, &chip, &chip) == Expected::default(),
+            "a clip that kept its size and place repaints nothing"
+        );
+    }
+
+    #[test]
+    fn every_clip_change_resizes_the_clip() {
+        assert_eq!(wide_label(0), LONG_LABEL);
+        assert_eq!(wide_label(1), SHORT_LABEL);
+        assert_eq!(wide_label(2), LONG_LABEL);
+    }
+
+    #[test]
+    fn every_piece_is_a_surface_of_its_own_named_for_its_role() {
+        for piece in [
+            Piece::BarTop,
+            Piece::BarBottom,
+            Piece::Stack,
+            Piece::Drawer,
+            Piece::Catcher,
+        ] {
+            assert_ne!(piece.role(), Role::Top, "{piece:?}");
+            let config = piece.layer_config(None);
+            assert_eq!(config.namespace, piece.role().namespace());
+            assert_eq!(config.exclusive_zone, -1, "{piece:?}");
+        }
     }
 
     #[test]

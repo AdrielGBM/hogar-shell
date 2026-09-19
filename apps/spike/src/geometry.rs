@@ -53,6 +53,15 @@ impl PxRect {
         PxRect::new(self.x - by, self.y - by, self.w + 2 * by, self.h + 2 * by)
     }
 
+    /// The smallest rect holding both.
+    pub fn hull(&self, other: PxRect) -> PxRect {
+        let left = self.x.min(other.x);
+        let top = self.y.min(other.y);
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+        PxRect::new(left, top, right - left, bottom - top)
+    }
+
     fn contains_point(&self, x: f64, y: f64) -> bool {
         x >= self.x as f64
             && x < self.right() as f64

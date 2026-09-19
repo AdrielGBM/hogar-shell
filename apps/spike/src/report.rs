@@ -27,7 +27,7 @@ pub fn render(phase: &Path) -> Result<String, String> {
 
     let mut out = String::new();
     let title = format!(
-        "T-0.4 spike — {}",
+        "T-0.5 benchmark (DEC-11) — {}",
         phase
             .file_name()
             .and_then(|n| n.to_str())
@@ -40,7 +40,8 @@ pub fn render(phase: &Path) -> Result<String, String> {
         analysis::clock_ticks(dec1),
         analysis::arrivals(dec1),
         analysis::clip_resizes(dec1),
-        analysis::interpret(dec1),
+        analysis::simultaneous(dec1),
+        analysis::interpret(today, dec1),
         analysis::full_frames(dec1),
         analysis::drawer(today, dec1),
         analysis::memory(today, dec1),
@@ -49,7 +50,7 @@ pub fn render(phase: &Path) -> Result<String, String> {
     verdicts.push(analysis::exactness());
     let _ = writeln!(
         out,
-        "\nCriteria (judged on the merged run; 6 and 7 as merged ÷ per-surface)"
+        "\nCriteria (judged on the merged run; 4 and 6 as merged ÷ per-surface, 7 as merged − per-surface)"
     );
     for verdict in &verdicts {
         write_verdict(&mut out, verdict);
@@ -130,6 +131,9 @@ fn context(out: &mut String, today: &Run, dec1: &Run) {
                 .map(|e| format!(" · ERROR: {e}"))
                 .unwrap_or_default()
         );
+        if let Some(path) = run.software_path() {
+            let _ = writeln!(out, "  {:<12} software frames: {path}", "");
+        }
         if run.trace.as_ref().is_some_and(|t| t.relative_stamps > 0) {
             let _ = writeln!(
                 out,
@@ -158,7 +162,7 @@ fn context(out: &mut String, today: &Run, dec1: &Run) {
             either("output-requested")
         );
     }
-    if let Some(buffer) = merged_buffer(dec1) {
+    if let Some(buffer) = dec1.window_buffer() {
         let _ = writeln!(
             out,
             "  window       the merged window's buffer is {}×{} px",
@@ -187,23 +191,18 @@ fn context(out: &mut String, today: &Run, dec1: &Run) {
     );
 }
 
-fn merged_buffer(run: &Run) -> Option<(i64, i64)> {
-    let trace = run.trace.as_ref()?;
-    trace
-        .commits
-        .iter()
-        .filter(|c| run.role(c.surface) == Some("top"))
-        .find_map(|c| c.buffer)
-}
-
 fn caveats(out: &mut String, dec1: &Run) {
     let _ = writeln!(out, "\nWhat these numbers are — and are not");
     let lines = [
         "Damage is what this client SENT: the wl_surface.damage_buffer / damage rects accumulated before each wl_surface.commit, read from libwayland's own WAYLAND_DEBUG output of the spike process. It is what the compositor was told to repaint, not what it repainted or scanned out — a compositor may widen it (a blur rule behind the layer does).",
         "Percentages are of the buffer that commit showed. 'Expected rects' are read back from telar's layout 250 ms after each change; damage outside them counts as excess only past a ±2 px margin for whole-pixel rounding and antialiasing.",
-        "Frame timings are telar's TELAR_PERF counters. They are process-wide 60-frame windows, so only windows that filled entirely inside one scenario are used; 'slowest' is the slowest single frame in those windows, 'average' the window averages weighted by frame count. Software 'interpret' includes 'mask'. The discrete 1 Hz / 0.9 s scenarios rarely fill a window, so frame cost comes mostly from the *-rate variants, which repeat the same change every frame.",
-        "Criterion 6 compares renderer WORK per frame (software: plan + interpret + convert; hardware: interpret + gpu − present), which leaves out the wait for the compositor to release a buffer or for vsync; the whole render_frame, wait included, is shown beside it.",
-        "RSS is this process's /proc/self/status: its shm buffers (RssShmem), the renderer's pixmaps, masks and caches, fonts, and the binary's resident pages. It does not include what the compositor holds for these surfaces. The click catcher is opened only after the last memory reading, so no reading includes it.",
+        "'simultaneous' makes a clock tick, a card arrival and a clip resize in one turn, so one frame carries all three; its expected rects are the union of each change's own. Each expected rect is must-cover (a card that arrived or moved, a clip's old and new bounds: damage must fill it) or bound-only (a clock tick's chip: damage may lie anywhere inside and need not fill it). Criteria 1, 2, 2s and 3 share that representation. For 2, 2s and 3 (user decision after DEC-11): excess that lies only between neighbouring expected rects under 16 px apart — the 8 px gaps between stacked cards that a folded region spans — passes and is still reported in px; stray excess reaching across the window, or damage that misses a must-cover pixel, fails. 'Damage rects per frame' is how many damage_buffer rects one commit carried; telar folds the cheapest pair past 4 (T-1.18).",
+        "Frame timings are telar's TELAR_PERF counters. They are process-wide 60-frame windows, so only windows that filled entirely inside one scenario are used; 'slowest' is the slowest single frame in those windows, 'average' the window averages weighted by frame count. Software 'interpret' includes 'mask'. The discrete 1 Hz / 0.9 s scenarios rarely fill a window, so frame cost comes mostly from the *-rate variants and the drawer, which repeat the same change every frame.",
+        "NOT comparable with F-5.13's plan/interpret: since T-1.19 the software scroll blit is timed in 'interpret' rather than 'plan', and where the frame is drawn straight into the shm buffer there is no 'convert' and a new 'acquire' (waiting for a released buffer and copying into it what changed since it was last filled) runs ahead of 'interpret'. Both runs of one phase use the same telar, so merged ÷ per-surface is like for like.",
+        "Criterion 4 compares frame interpret merged ÷ per-surface per scenario, on the frame-weighted average and on the slowest frame, and only where both runs have clean windows for that scenario. The slowest frame is one sample: a scenario whose per-surface slowest frame is short is the most sensitive to noise.",
+        "Criterion 6 compares renderer WORK per frame (software: plan + interpret, plus convert where frames are converted from a pixmap or acquire where they are drawn straight into the buffer; hardware: interpret + gpu − present). Only the hardware figure leaves out the wait for the compositor; the whole render_frame, wait included, is shown beside it.",
+        "RSS is this process's /proc/self/status: its shm buffers (RssShmem), the renderer's pixmap where it still has one, masks and caches, fonts, and the binary's resident pages. It does not include what the compositor holds for these surfaces. 'steady' is read after 3 s of idle, past telar's 2 s release of a window's second shm buffer. The click catcher is opened only after the last memory reading, so no reading includes it.",
+        "Criterion 7 is the merged run's memory minus the per-surface run's (VmRSS at rest, VmHWM for the peak), against 48 / 80 MiB at 3840×2160 scaled by the merged window's buffer area (12 / 20 MiB at 1920×1080).",
         "The software renderer keeps clip/damage masks of ≈2 bytes per window pixel (15.8 MiB at 3840×2160), up to ≈3 bytes (23.7 MiB) when a rounded clip nests inside another and a descendant reaches its corner — figures from the T-1.17 work. The merged window pays that at full-window size; a bar surface pays it at bar size.",
         "CPU is getrusage for the spike (every thread) and the sum of the compositor's threads' schedstat, as a share of one core over each scenario. On a live session the compositor is also serving every other client; a nested compositor's GPU work lands on the parent session, which is not counted.",
         "WAYLAND_DEBUG and TELAR_PERF were on in both runs: each protocol message costs a write to stderr, equally in both modes.",

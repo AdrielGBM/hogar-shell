@@ -2,9 +2,10 @@
 # The window-model benchmark: one surface per piece, as today, versus one fullscreen window per layer.
 #
 # Usage: nix/spike.sh [1|2|3|all]
-#   1  live session, software renderer, this machine's output, with the click test
-#   2  nested Hyprland with one headless 3840x2160 output, software renderer
-#   3  the same nested setup, hardware (wgpu) renderer
+#   1    live session, software renderer, this machine's output, with the click test
+#   2    nested Hyprland with one headless 3840x2160 output, software renderer
+#   3    the same nested setup, hardware (wgpu) renderer — only when asked for
+#   all  phases 1 and 2 (the default)
 #
 # Run it from the repo's dev shell. Every phase says what it will map and waits for a yes before mapping
 # anything. Results land in target/spike/<timestamp>/ (override with SPIKE_OUT); paste back report.txt.
@@ -36,7 +37,7 @@ die() {
     exit 1
 }
 
-wants() { [ "$phases" = all ] || [ "$phases" = "$1" ]; }
+wants() { [ "$phases" = "$1" ] || { [ "$phases" = all ] && [ "$1" != 3 ]; }; }
 
 confirm() {
     printf '\n%s\n\nProceed? [y/N] ' "$1"
@@ -239,12 +240,26 @@ overrides where it is looked for."
     report "$bin" "$dir"
 }
 
+# A checkout's commit, and how many paths differ from it — the benchmark often runs on uncommitted work.
+revision() {
+    commit=$(git -C "$1" rev-parse --short HEAD 2>/dev/null) || {
+        echo '?'
+        return 0
+    }
+    dirty=$(git -C "$1" status --porcelain 2>/dev/null | wc -l)
+    if [ "$dirty" -gt 0 ]; then
+        echo "$commit + $dirty uncommitted path(s)"
+    else
+        echo "$commit"
+    fi
+}
+
 mkdir -p "$out"
 : >"$out/report.txt"
 {
     printf 'hogar-shell-spike — %s\n' "$(date)"
-    printf 'repo %s at %s\n' "$repo" "$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || echo '?')"
-    printf 'telar at %s\n' "$(git -C "$repo/../telar" rev-parse --short HEAD 2>/dev/null || echo '?')"
+    printf 'repo %s at %s\n' "$repo" "$(revision "$repo")"
+    printf 'telar at %s\n' "$(revision "$repo/../telar")"
     Hyprland --version 2>/dev/null | head -n 1
     printf '\n'
 } >>"$out/report.txt"

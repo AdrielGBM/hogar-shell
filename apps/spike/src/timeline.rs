@@ -27,6 +27,40 @@ impl LogicalRect {
     }
 }
 
+/// What a change should repaint, as the layout says it, split by what each rect means.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Expected {
+    /// Rects the change repaints whole — a card that arrived or moved, a clip's old and new bounds — so its damage must cover them.
+    pub cover: Vec<LogicalRect>,
+    /// Rects the change repaints somewhere inside — a clock tick's chip, where only the glyphs that changed are redrawn — so its damage may lie anywhere in them and need not fill them.
+    pub bound: Vec<LogicalRect>,
+}
+
+impl Expected {
+    pub fn cover(rects: Vec<LogicalRect>) -> Self {
+        Self {
+            cover: rects,
+            bound: Vec::new(),
+        }
+    }
+
+    pub fn bound(rects: Vec<LogicalRect>) -> Self {
+        Self {
+            cover: Vec::new(),
+            bound: rects,
+        }
+    }
+
+    pub fn extend(&mut self, other: Expected) {
+        self.cover.extend(other.cover);
+        self.bound.extend(other.bound);
+    }
+
+    pub fn all(&self) -> impl Iterator<Item = &LogicalRect> {
+        self.cover.iter().chain(&self.bound)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Record {
     /// A fact about the run as a whole: its mode, backend, output, versions.
@@ -38,7 +72,7 @@ pub enum Record {
         scenario: String,
         index: u32,
         role: String,
-        expected: Vec<LogicalRect>,
+        expected: Expected,
     },
     /// A `TELAR_PERF` window summary, verbatim.
     Perf { summary: String },
@@ -129,10 +163,11 @@ impl Record {
                 role,
                 expected,
             } => format!(
-                "event\t{}\t{index}\t{}\t{}",
+                "event\t{}\t{index}\t{}\t{}\t{}",
                 flat(scenario),
                 flat(role),
-                rects_text(expected)
+                rects_text(&expected.cover),
+                rects_text(&expected.bound)
             ),
             Record::Perf { summary } => format!("perf\t{}", flat(summary)),
             Record::Rss { label, fields } => {
@@ -182,7 +217,10 @@ impl Record {
                 scenario: text(1)?,
                 index: fields.get(2)?.parse().ok()?,
                 role: text(3)?,
-                expected: parse_rects(fields.get(4).copied().unwrap_or(""))?,
+                expected: Expected {
+                    cover: parse_rects(fields.get(4)?)?,
+                    bound: parse_rects(fields.get(5)?)?,
+                },
             },
             "perf" => Record::Perf { summary: text(1)? },
             "rss" => Record::Rss {
@@ -220,16 +258,28 @@ impl Record {
     }
 }
 
-/// Reads a timeline back, skipping lines that do not parse — a run killed mid-write leaves at most one.
-pub fn read(text: &str) -> Vec<Entry> {
-    text.lines()
-        .filter_map(|line| {
-            let fields: Vec<&str> = line.split('\t').collect();
-            let at_us = fields.first()?.parse().ok()?;
-            let record = Record::from_fields(&fields[1..])?;
-            Some(Entry { at_us, record })
-        })
-        .collect()
+/// Reads a timeline back, skipping unparsable lines — a run killed mid-write leaves at most one; but an event line with no bound-only field anywhere but last is an error, since it means the harness that wrote it predates must-cover/bound-only rects and can't be judged.
+pub fn read(text: &str) -> Result<Vec<Entry>, String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut entries = Vec::new();
+    for (number, line) in lines.iter().enumerate() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let last = number + 1 == lines.len();
+        if !last && fields.get(1) == Some(&"event") && fields.len() < 7 {
+            return Err(format!(
+                "timeline line {}: an event with no bound-only rects, written by a harness older than must-cover / bound-only expected rects; re-run the benchmark",
+                number + 1
+            ));
+        }
+        let parsed = fields
+            .first()
+            .and_then(|at| at.parse().ok())
+            .zip(fields.get(1..).and_then(Record::from_fields));
+        if let Some((at_us, record)) = parsed {
+            entries.push(Entry { at_us, record });
+        }
+    }
+    Ok(entries)
 }
 
 /// The writing end, shared by the director on the driver thread and the tracing layer on whichever thread logs.
@@ -272,7 +322,7 @@ mod tests {
 
     fn round_trip(record: Record) {
         let line = format!("1789733135000000\t{}", record.to_line());
-        let back = read(&line);
+        let back = read(&line).unwrap();
         assert_eq!(
             back,
             vec![Entry {
@@ -293,19 +343,22 @@ mod tests {
             start: true,
         });
         round_trip(Record::Event {
-            scenario: "notify".into(),
+            scenario: "simultaneous".into(),
             index: 3,
             role: "top".into(),
-            expected: vec![
-                LogicalRect::new(1532.0, 44.0, 380.0, 64.5),
-                LogicalRect::new(1532.0, 116.5, 380.0, 64.5),
-            ],
+            expected: Expected {
+                cover: vec![
+                    LogicalRect::new(1532.0, 44.0, 380.0, 64.5),
+                    LogicalRect::new(1532.0, 116.5, 380.0, 64.5),
+                ],
+                bound: vec![LogicalRect::new(908.0, 4.0, 104.0, 28.0)],
+            },
         });
         round_trip(Record::Event {
             scenario: "clock".into(),
             index: 0,
             role: "top".into(),
-            expected: Vec::new(),
+            expected: Expected::default(),
         });
         round_trip(Record::Perf {
             summary: "build=41/95us(n60) damage=59".into(),
@@ -338,7 +391,7 @@ mod tests {
             target: "telar".into(),
             message: "HW renderer unavailable\t(no adapter)\nfalling back".into(),
         };
-        let back = read(&format!("1\t{}", record.to_line()));
+        let back = read(&format!("1\t{}", record.to_line())).unwrap();
         assert_eq!(back.len(), 1);
         let Record::Log { message, .. } = &back[0].record else {
             panic!("expected a log record");
@@ -347,9 +400,19 @@ mod tests {
     }
 
     #[test]
+    fn an_event_without_bound_only_rects_is_an_error_not_a_guess() {
+        let text = "\
+1\tevent\tsimultaneous\t0\ttop\t908.00,4.00,104.00,28.00;1532.00,44.00,380.00,59.00
+2\tscenario\tsimultaneous\tend";
+        let error = read(text).unwrap_err();
+        assert!(error.starts_with("timeline line 1:"), "{error}");
+        assert!(error.contains("re-run the benchmark"), "{error}");
+    }
+
+    #[test]
     fn a_torn_last_line_is_dropped() {
         let text = "1\tscenario\tidle\tstart\n2\tcpu\tidle:en";
-        let back = read(text);
+        let back = read(text).unwrap();
         assert_eq!(back.len(), 1);
     }
 }

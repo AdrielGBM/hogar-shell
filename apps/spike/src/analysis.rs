@@ -1,15 +1,11 @@
-//! Judging a phase: the timeline and the protocol log of both runs, turned into a measured value and a verdict for each of the plan's criteria.
-//!
-//! Attribution is by time. The timeline stamps every scenario boundary and every discrete change from `CLOCK_REALTIME`; libwayland stamps every protocol message from the same clock, as a UTC time of day. A commit belongs to the scenario whose span holds it, and to the change whose window — from that change to the next — holds it. That is sound only because the director never runs two kinds of change at once; nothing here tries to untangle overlapping work.
-//!
-//! A verdict is only ever `Pass` when the thing it speaks for was actually observed. No data is `NotMeasured`, never a pass by default.
+//! Turns each run's timeline and protocol log into a measured value and verdict per criterion; attribution is by wall-clock time, which is sound only because the director never runs two kinds of change at once (`simultaneous` is the deliberate exception, recorded as one change).
 
 use std::path::Path;
 
 use crate::geometry::{PxRect, PxRegion};
 use crate::perf::{self, PerfWindow};
 use crate::scene::NAMESPACE_PREFIX;
-use crate::timeline::{self, Entry, LogicalRect, Record};
+use crate::timeline::{self, Entry, Expected, LogicalRect, Record};
 use crate::trace::{self, Commit, Damage, InputRegion, Trace};
 use crate::wire::Stamp;
 
@@ -24,15 +20,27 @@ const PERF_LEAD_IN_US: u64 = 50_000;
 /// Damage rects at least this large on either side are the "everything" some WSIs send (`INT32_MAX`), not a real extent.
 const EVERYTHING: i64 = 1 << 30;
 
-pub const MEASURED_SCENARIOS: [&str; 6] = [
+/// Expected rects closer than this, in logical pixels, are one neighbourhood: stacked cards 8 px apart are one, the clock and a chip on the other bar are two.
+const NEIGHBOURHOOD_PX: f64 = 16.0;
+
+/// Criterion 4's bound on merged ÷ per-surface frame interpret, on both the average and the slowest frame.
+pub const INTERPRET_RATIO: f64 = 1.25;
+
+/// Criterion 7's budget for the merged window's memory over the per-surface model's, in MiB at [`BUDGET_AREA_PX`] and scaled by area elsewhere.
+pub const REST_BUDGET_MIB: f64 = 48.0;
+pub const PEAK_BUDGET_MIB: f64 = 80.0;
+pub const BUDGET_AREA_PX: f64 = 3840.0 * 2160.0;
+
+pub const MEASURED_SCENARIOS: [&str; 7] = [
     "clock",
     "clock-rate",
     "notify",
     "notify-rate",
     "clip",
     "clip-rate",
+    "simultaneous",
 ];
-pub const ALL_SCENARIOS: [&str; 9] = [
+pub const ALL_SCENARIOS: [&str; 10] = [
     "idle",
     "clock",
     "clock-rate",
@@ -40,6 +48,7 @@ pub const ALL_SCENARIOS: [&str; 9] = [
     "notify-rate",
     "clip",
     "clip-rate",
+    "simultaneous",
     "drawer",
     "clicks",
 ];
@@ -60,7 +69,7 @@ pub struct Event<'a> {
     pub at: u64,
     pub index: u32,
     pub role: &'a str,
-    pub expected: &'a [LogicalRect],
+    pub expected: &'a Expected,
 }
 
 pub struct TimedPerf {
@@ -95,7 +104,8 @@ impl Run {
             .ok()
             .map(|log| trace::replay(&log))
             .filter(|t| t.messages > 0);
-        Ok(Self::new(timeline::read(&text), trace))
+        let timeline = timeline::read(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(Self::new(timeline, trace))
     }
 
     pub fn meta(&self, key: &str) -> Option<&str> {
@@ -305,15 +315,41 @@ impl Run {
             .collect()
     }
 
-    /// The renderer that actually drew, as the perf windows show it: only the software renderer has `plan`/`convert`, only the hardware one has `gpu`.
+    /// The merged window's buffer, in buffer pixels, as the first of its frames the log saw created showed it.
+    pub fn window_buffer(&self) -> Option<(i64, i64)> {
+        self.trace
+            .as_ref()?
+            .commits
+            .iter()
+            .filter(|c| self.role(c.surface) == Some("top"))
+            .find_map(|c| c.buffer)
+    }
+
+    fn has_phase(&self, phase: &str) -> bool {
+        self.perf().iter().any(|p| p.window.phase(phase).is_some())
+    }
+
+    /// The renderer that actually drew, as the perf windows show it: only the software renderer has `plan`/`convert`/`acquire`, only the hardware one has `gpu`.
     pub fn observed_backend(&self) -> Option<&'static str> {
-        let windows = self.perf();
-        let has = |phase: &str| windows.iter().any(|p| p.window.phase(phase).is_some());
-        match (has("gpu"), has("convert") || has("plan")) {
+        let software = ["plan", "convert", "acquire"]
+            .iter()
+            .any(|phase| self.has_phase(phase));
+        match (self.has_phase("gpu"), software) {
             (true, true) => Some("mixed"),
             (true, false) => Some("hardware"),
             (false, true) => Some("software"),
             (false, false) => None,
+        }
+    }
+
+    /// How the software renderer reached the compositor: converted into the shm buffers from a pixmap (`convert`), or drawn straight into them (`acquire` and no `convert`). `None` when there is no software window to tell by.
+    pub fn software_path(&self) -> Option<&'static str> {
+        if self.has_phase("convert") {
+            Some("converted from a pixmap into the shm buffer")
+        } else if self.has_phase("acquire") {
+            Some("drawn straight into the shm buffer (no convert)")
+        } else {
+            None
         }
     }
 
@@ -374,10 +410,14 @@ pub fn frame_damage(commit: &Commit) -> Option<FrameDamage> {
     })
 }
 
-fn scaled(rects: &[LogicalRect], scale: f64, inflate: i64) -> PxRegion {
+fn scaled<'a>(
+    rects: impl IntoIterator<Item = &'a LogicalRect>,
+    scale: f64,
+    inflate: i64,
+) -> PxRegion {
     PxRegion::from_rects(
         rects
-            .iter()
+            .into_iter()
             .map(|r| PxRect::enclosing(r.x, r.y, r.w, r.h, scale).inflate(inflate)),
     )
 }
@@ -389,44 +429,77 @@ pub struct EventCheck {
     pub frames: usize,
     /// Pixels damaged across the change's frames, counted once.
     pub damaged: i64,
-    /// Pixels the expected rects cover.
+    /// Pixels the must-cover expected rects hold; bound-only rects are not in it.
     pub expected: i64,
-    /// Damaged pixels outside the expected rects even after [`TOLERANCE_PX`].
+    /// Damaged pixels outside every expected rect, must-cover or bound-only, even after [`TOLERANCE_PX`].
     pub excess: i64,
-    /// Expected pixels the damage covered.
+    /// Must-cover pixels the damage covered.
     pub covered: i64,
     /// The largest share of the buffer any one of the change's frames damaged.
     pub worst_fraction: f64,
     pub full_frames: usize,
     pub buffer: Option<(i64, i64)>,
+    /// The most damage rects any one of the change's frames sent.
+    pub regions: usize,
+    /// Excess that lies outside every neighbourhood of expected rects as well: damage that reached across the window, rather than filling the gaps between changes next to each other.
+    pub stray: i64,
 }
 
-/// Checks each change of `scenario`: its frames are the ones committed on its surface between it and the next change (or the scenario's end). `None` when there is no protocol log or no such scenario.
+/// The bounding boxes of `rects` grouped by proximity: rects within `reach` of each other, directly or through others, share one box.
+fn neighbourhoods(rects: &[PxRect], reach: i64) -> Vec<PxRect> {
+    let mut hulls: Vec<PxRect> = Vec::new();
+    for rect in rects {
+        let mut hull = *rect;
+        while let Some(i) = hulls
+            .iter()
+            .position(|h| h.inflate(reach).intersect(hull).is_some())
+        {
+            hull = hulls.swap_remove(i).hull(hull);
+        }
+        hulls.push(hull);
+    }
+    hulls
+}
+
+/// Checks each change of `scenario`: its frames are the ones committed on its surface between it and the next later change (or the scenario's end). `None` when there is no protocol log or no such scenario.
 pub fn check_events(run: &Run, scenario: &str) -> Option<Vec<EventCheck>> {
     run.trace.as_ref()?;
     let span = run.scenario(scenario)?;
     let events = run.events(scenario);
     let mut checks = Vec::new();
     for (i, event) in events.iter().enumerate() {
-        let end = events.get(i + 1).map_or(span.end, |next| next.at);
-        let frames: Vec<FrameDamage> = run
-            .frames(
-                event.role,
-                Span {
-                    start: event.at,
-                    end,
-                },
-            )
-            .into_iter()
-            .filter_map(frame_damage)
-            .collect();
+        // Later rather than next: one change that landed on several surfaces is recorded once per surface, at the same moment.
+        let end = events[i + 1..]
+            .iter()
+            .find(|next| next.at > event.at)
+            .map_or(span.end, |next| next.at);
+        let commits = run.frames(
+            event.role,
+            Span {
+                start: event.at,
+                end,
+            },
+        );
+        let regions = commits.iter().map(|c| c.damage.len()).max().unwrap_or(0);
+        let frames: Vec<FrameDamage> = commits.into_iter().filter_map(frame_damage).collect();
         let scale = frames.first().map_or(1.0, |f| f.scale);
         let mut damaged = PxRegion::default();
         for frame in &frames {
             damaged.extend(&frame.damage);
         }
-        let exact = scaled(event.expected, scale, 0);
-        let allowed = scaled(event.expected, scale, TOLERANCE_PX);
+        let exact = scaled(&event.expected.cover, scale, 0);
+        let allowed = scaled(event.expected.all(), scale, TOLERANCE_PX);
+        let expected_px: Vec<PxRect> = event
+            .expected
+            .all()
+            .map(|r| PxRect::enclosing(r.x, r.y, r.w, r.h, scale))
+            .collect();
+        let reach = (NEIGHBOURHOOD_PX * scale).ceil() as i64;
+        let near = PxRegion::from_rects(
+            neighbourhoods(&expected_px, reach)
+                .into_iter()
+                .map(|hull| hull.inflate(TOLERANCE_PX)),
+        );
         checks.push(EventCheck {
             index: event.index,
             frames: frames.len(),
@@ -437,6 +510,8 @@ pub fn check_events(run: &Run, scenario: &str) -> Option<Vec<EventCheck>> {
             worst_fraction: frames.iter().map(FrameDamage::fraction).fold(0.0, f64::max),
             full_frames: frames.iter().filter(|f| f.full()).count(),
             buffer: frames.first().map(|f| (f.bounds.w, f.bounds.h)),
+            regions,
+            stray: damaged.area_outside(&near),
         });
     }
     Some(checks)
@@ -603,13 +678,29 @@ fn damage_containment(
             ),
         );
     }
-    let clean = observed.iter().filter(|c| c.excess == 0).count();
+    let exact = observed.iter().filter(|c| c.excess == 0).count();
+    let gap_only = observed
+        .iter()
+        .filter(|c| c.excess > 0 && c.stray == 0)
+        .count();
     let worst_excess = checks.iter().map(|c| c.excess).max().unwrap_or(0);
+    let worst_stray = checks.iter().map(|c| c.stray).max().unwrap_or(0);
+    let worst_missing = observed
+        .iter()
+        .map(|c| c.expected - c.covered)
+        .max()
+        .unwrap_or(0);
     let worst_cover = observed
         .iter()
-        .map(|c| c.covered as f64 / c.expected.max(1) as f64)
+        .map(|c| {
+            if c.expected == 0 {
+                1.0
+            } else {
+                c.covered as f64 / c.expected as f64
+            }
+        })
         .fold(1.0, f64::min);
-    let status = if worst_excess > 0 {
+    let status = if worst_stray > 0 || worst_missing > 0 {
         Status::Fail
     } else if observed.len() < checks.len() {
         Status::Incomplete
@@ -621,23 +712,48 @@ fn damage_containment(
         title,
         status,
         format!(
-            "{clean}/{} {noun} inside the expected rects (±{TOLERANCE_PX} px) · worst excess {worst_excess} px · least coverage {}",
+            "{exact}/{} {noun} inside the expected rects (±{TOLERANCE_PX} px), {gap_only} more with excess only in gaps < {NEIGHBOURHOOD_PX:.0} px between them · worst excess {worst_excess} px, of which stray {worst_stray} px · least coverage {}",
             checks.len(),
             percent(worst_cover)
         ),
-    );
+    )
+    .note(format!(
+        "rule (DEC-11 follow-up): each expected rect is must-cover (a card that arrived or moved, a clip's old and new bounds) or bound-only (a clock tick's chip, where only the changed glyphs repaint). A change passes when its damage covers every must-cover pixel and lies within the expected rects (±{TOLERANCE_PX} px) or the bounding box of expected rects less than {NEIGHBOURHOOD_PX:.0} px apart (the gaps a folded region spans); stray damage beyond those, reaching across the window, or a missed must-cover pixel fails"
+    ));
     if observed.len() < checks.len() {
         verdict = verdict.note(format!(
             "{} of them produced no frame",
             checks.len() - observed.len()
         ));
     }
-    if worst_cover < 0.999 {
-        verdict = verdict.note(
-            "coverage under 100% means the declared damage missed pixels the layout moved — not this criterion, but a correctness question for the renderer",
-        );
+    if worst_missing > 0 {
+        verdict = verdict.note(format!(
+            "the declared damage missed up to {worst_missing} must-cover px the layout changed"
+        ));
     }
-    verdict
+    if worst_stray > 0 {
+        verdict = verdict.note(format!(
+            "up to {worst_stray} px of excess lies away from every group of neighbouring expected rects: damage reached across the window"
+        ));
+    }
+    let (fewest, most) = observed
+        .iter()
+        .map(|c| c.regions)
+        .fold((usize::MAX, 0), |(lo, hi), n| (lo.min(n), hi.max(n)));
+    verdict.note(format!(
+        "damage rects per frame: {fewest}–{most} (the most any one of a change's frames sent)"
+    ))
+}
+
+/// A clock tick, a card arrival and a clip resize in one frame damage only the union of what each alone should.
+pub fn simultaneous(merged: &Run) -> Verdict {
+    damage_containment(
+        merged,
+        "2s",
+        "tick + arrival + clip resize in one frame damage only ∪ of each one's rects",
+        "simultaneous",
+        "simultaneous changes",
+    )
 }
 
 /// Criterion 2: an arriving notification damages only its card and the siblings it moves.
@@ -681,59 +797,109 @@ pub fn slowest(windows: &[PerfWindow], phase: &str) -> Option<f64> {
         .reduce(f64::max)
 }
 
-/// Criterion 4: frame interpret < 2 ms, judged on the slowest frame of every clean window the merged run produced.
-pub fn interpret(merged: &Run) -> Verdict {
+/// Criterion 4: per scenario, the merged run's frame interpret over the per-surface run's, at most [`INTERPRET_RATIO`] on both the frame-weighted average and the slowest frame; a scenario measured by only one run leaves the verdict incomplete rather than passing by default.
+pub fn interpret(per_surface: &Run, merged: &Run) -> Verdict {
     const ID: &str = "4";
-    const TITLE: &str = "frame interpret < 2 ms";
-    let mut per_scenario = Vec::new();
-    let mut all = Vec::new();
-    for scenario in ALL_SCENARIOS {
-        let windows = merged.clean_perf(scenario);
-        if let (Some(avg), Some(max)) = (
-            weighted(&windows, "interpret"),
-            slowest(&windows, "interpret"),
+    const TITLE: &str =
+        "frame interpret merged ÷ per-surface ≤ 1.25× on average and slowest frame, per scenario";
+    let stats = |windows: &[PerfWindow]| {
+        Some((
+            weighted(windows, "interpret")?,
+            slowest(windows, "interpret")?,
+        ))
+    };
+    let mut compared = 0;
+    let mut over = Vec::new();
+    let mut one_sided = Vec::new();
+    let mut lines = Vec::new();
+    let mut worst: Option<(f64, &str)> = None;
+    let mut merged_windows = Vec::new();
+    for scenario in ALL_SCENARIOS.into_iter().filter(|s| *s != "clicks") {
+        let dec1_windows = merged.clean_perf(scenario);
+        match (
+            stats(&per_surface.clean_perf(scenario)),
+            stats(&dec1_windows),
         ) {
-            per_scenario.push(format!(
-                "{scenario}: avg {avg:.0} µs, slowest {max:.0} µs ({} windows)",
-                windows.len()
-            ));
+            (Some((today_avg, today_max)), Some((dec1_avg, dec1_max))) => {
+                compared += 1;
+                let avg = dec1_avg / today_avg.max(1.0);
+                let max = dec1_max / today_max.max(1.0);
+                let within = avg <= INTERPRET_RATIO && max <= INTERPRET_RATIO;
+                if !within {
+                    over.push(scenario);
+                }
+                if worst.is_none_or(|(w, _)| avg.max(max) > w) {
+                    worst = Some((avg.max(max), scenario));
+                }
+                lines.push(format!(
+                    "{scenario}: average {avg:.2}× ({dec1_avg:.0} vs {today_avg:.0} µs), slowest {max:.2}× ({dec1_max:.0} vs {today_max:.0} µs){}",
+                    if within { "" } else { " — OVER" }
+                ));
+            }
+            (None, None) => {}
+            (today, _) => one_sided.push(format!(
+                "{scenario} ({} only)",
+                if today.is_some() {
+                    "per-surface"
+                } else {
+                    "merged"
+                }
+            )),
         }
-        all.extend(windows);
+        merged_windows.extend(dec1_windows);
     }
-    let (Some(avg), Some(max)) = (weighted(&all, "interpret"), slowest(&all, "interpret")) else {
+    let Some((worst, worst_scenario)) = worst else {
         return Verdict::new(
             ID,
             TITLE,
             Status::NotMeasured,
-            "no TELAR_PERF window filled entirely inside a scenario (was TELAR_PERF set?)",
+            "no scenario has a TELAR_PERF window that filled inside it in both runs (was TELAR_PERF set?)",
         );
+    };
+    let status = if !over.is_empty() {
+        Status::Fail
+    } else if !one_sided.is_empty() {
+        Status::Incomplete
+    } else {
+        Status::Pass
     };
     let mut verdict = Verdict::new(
         ID,
         TITLE,
-        if max < 2000.0 {
-            Status::Pass
-        } else {
-            Status::Fail
-        },
+        status,
         format!(
-            "slowest frame {max:.0} µs · average {avg:.0} µs over {} clean windows",
-            all.len()
+            "{}/{compared} scenarios within {INTERPRET_RATIO}× · worst {worst:.2}× ({worst_scenario})",
+            compared - over.len()
         ),
     );
-    if let Some(mask) = weighted(&all, "mask") {
+    for line in lines {
+        verdict = verdict.note(line);
+    }
+    if !one_sided.is_empty() {
         verdict = verdict.note(format!(
-            "of which masking averages {mask:.0} µs — interpret − mask ≈ {:.0} µs of rasterisation",
-            avg - mask
+            "measured in one run only, so not compared: {}",
+            one_sided.join(", ")
         ));
     }
-    for line in per_scenario {
-        verdict = verdict.note(line);
+    if let (Some(avg), Some(max)) = (
+        weighted(&merged_windows, "interpret"),
+        slowest(&merged_windows, "interpret"),
+    ) {
+        verdict = verdict.note(format!(
+            "merged, absolute: average {avg:.0} µs, slowest {max:.0} µs over {} clean windows (the 2 ms bound DEC-11 replaced)",
+            merged_windows.len()
+        ));
+        if let Some(mask) = weighted(&merged_windows, "mask") {
+            verdict = verdict.note(format!(
+                "of which masking averages {mask:.0} µs — interpret − mask ≈ {:.0} µs of rasterisation",
+                avg - mask
+            ));
+        }
     }
     verdict
 }
 
-/// Criterion 5: no full-surface frame on clock ticks, arrivals or clip resizes.
+/// Criterion 5: no full-surface frame on clock ticks, arrivals, clip resizes or all three at once.
 pub fn full_frames(merged: &Run) -> Verdict {
     const ID: &str = "5";
     const TITLE: &str = "no full-surface frame on ticks, arrivals or clip resizes";
@@ -794,7 +960,7 @@ pub fn full_frames(merged: &Run) -> Verdict {
 /// What one frame of a scenario cost the renderer, from its clean perf windows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameCost {
-    /// Time the renderer spent working, with the wait for the compositor taken out: `plan + interpret + convert` on software, `interpret + gpu − present` on hardware.
+    /// Time the renderer spent working. On hardware `interpret + gpu − present`, the wait for the compositor taken out. On software `plan + interpret`, plus `convert` where the frame is converted from a pixmap, or `acquire` where it is drawn straight into the buffer — there the copy of stale regions from the front buffer replaced the convert, and any wait for a released buffer is in it too.
     pub work_us: f64,
     /// The renderer's whole `render_frame`, the wait for a free buffer or a vsync included.
     pub frame_us: f64,
@@ -808,17 +974,18 @@ pub fn frame_cost(windows: &[PerfWindow]) -> Option<FrameCost> {
         .map(|s| s.n)
         .sum();
     let interpret = weighted(windows, "interpret")?;
-    let work = if windows.iter().any(|w| w.phase("gpu").is_some()) {
-        interpret + weighted(windows, "gpu").unwrap_or(0.0)
-            - weighted(windows, "present").unwrap_or(0.0)
+    let has = |phase: &str| windows.iter().any(|w| w.phase(phase).is_some());
+    let phase = |name: &str| weighted(windows, name).unwrap_or(0.0);
+    let work = if has("gpu") {
+        interpret + phase("gpu") - phase("present")
+    } else if has("convert") {
+        interpret + phase("plan") + phase("convert")
     } else {
-        interpret
-            + weighted(windows, "plan").unwrap_or(0.0)
-            + weighted(windows, "convert").unwrap_or(0.0)
+        interpret + phase("plan") + phase("acquire")
     };
     Some(FrameCost {
         work_us: work,
-        frame_us: weighted(windows, "frame").unwrap_or(0.0),
+        frame_us: phase("frame"),
         frames,
     })
 }
@@ -874,10 +1041,21 @@ fn mib(kb: u64) -> String {
     format!("{:.1} MiB", kb as f64 / 1024.0)
 }
 
-/// Criterion 7: the merged window's RSS stays under 150 % of today's, at rest and at its peak.
+/// How much more the merged run held than the per-surface one, in MiB; negative when it held less.
+fn increase_mib((today, dec1): (u64, u64)) -> f64 {
+    (dec1 as f64 - today as f64) / 1024.0
+}
+
+/// Criterion 7's budgets, at rest and at the peak, for a merged window of `area` buffer pixels.
+pub fn memory_budget_mib(area: i64) -> (f64, f64) {
+    let scale = area as f64 / BUDGET_AREA_PX;
+    (REST_BUDGET_MIB * scale, PEAK_BUDGET_MIB * scale)
+}
+
+/// Criterion 7: the merged run's memory over the per-surface run's — `VmRSS` after the idle for the rest, `VmHWM` at the end for the peak — stays within [`REST_BUDGET_MIB`] and [`PEAK_BUDGET_MIB`], scaled from 3840×2160 by the merged window's buffer area.
 pub fn memory(per_surface: &Run, merged: &Run) -> Verdict {
     const ID: &str = "7";
-    const TITLE: &str = "RSS < 150% of the per-surface model";
+    const TITLE: &str = "merged − per-surface memory ≤ 48 MiB at rest, ≤ 80 MiB at peak (3840×2160, scaled by area)";
     let pair = |label: &str, field: &str| {
         Some((
             per_surface.rss_field(label, field)?,
@@ -892,40 +1070,55 @@ pub fn memory(per_surface: &Run, merged: &Run) -> Verdict {
             "a run is missing its memory readings",
         );
     };
-    let ratio = |(today, dec1): (u64, u64)| dec1 as f64 / today.max(1) as f64;
-    let (at_rest, at_peak) = (ratio(steady), ratio(peak));
+    let (at_rest, at_peak) = (increase_mib(steady), increase_mib(peak));
+    let readings = format!(
+        "at rest {at_rest:+.1} MiB ({} vs {}) · peak {at_peak:+.1} MiB ({} vs {})",
+        mib(steady.1),
+        mib(steady.0),
+        mib(peak.1),
+        mib(peak.0)
+    );
+    let Some((w, h)) = merged.window_buffer() else {
+        return Verdict::new(
+            ID,
+            TITLE,
+            Status::NotMeasured,
+            "the merged window's buffer size is not in its protocol log, so there is no budget to scale",
+        )
+        .note(readings);
+    };
+    let (rest_budget, peak_budget) = memory_budget_mib(w * h);
     let mut verdict = Verdict::new(
         ID,
         TITLE,
-        if at_rest < 1.5 && at_peak < 1.5 {
+        if at_rest <= rest_budget && at_peak <= peak_budget {
             Status::Pass
         } else {
             Status::Fail
         },
         format!(
-            "at rest {:.0}% ({} vs {}) · peak {:.0}% ({} vs {})",
-            at_rest * 100.0,
-            mib(steady.1),
-            mib(steady.0),
-            at_peak * 100.0,
-            mib(peak.1),
-            mib(peak.0)
+            "{readings} · budget {rest_budget:.1} / {peak_budget:.1} MiB for the {w}×{h} window"
         ),
-    );
+    )
+    .note(format!(
+        "at rest that is {:.1} B per pixel of the merged window",
+        at_rest * 1024.0 * 1024.0 / (w * h).max(1) as f64
+    ));
     if let Some(open) = pair("drawer", "VmRSS") {
         verdict = verdict.note(format!(
-            "with the drawer open {:.0}% ({} vs {})",
-            ratio(open) * 100.0,
+            "with the drawer open {:+.1} MiB ({} vs {})",
+            increase_mib(open),
             mib(open.1),
             mib(open.0)
         ));
     }
     for field in ["RssAnon", "RssFile", "RssShmem"] {
-        if let Some((today, dec1)) = pair("steady", field) {
+        if let Some(fields) = pair("steady", field) {
             verdict = verdict.note(format!(
-                "at rest {field}: {} merged vs {} per-surface",
-                mib(dec1),
-                mib(today)
+                "at rest {field}: {} merged vs {} per-surface ({:+.1} MiB)",
+                mib(fields.1),
+                mib(fields.0),
+                increase_mib(fields)
             ));
         }
     }
@@ -1189,7 +1382,7 @@ mod tests {
         ]
     }
 
-    /// The merged window, a 1920×1080 buffer, and one frame per line of damage given.
+    /// The merged window, a 1920×1080 buffer, and one frame per entry given, its damage rects separated by `;`.
     fn log(frames: &[(&str, &str)]) -> String {
         let mut log = String::from(
             "[10:00:00.000100]  -> wl_compositor#4.create_surface(new id wl_surface#25)
@@ -1200,8 +1393,15 @@ mod tests {
         );
         for (stamp, damage) in frames {
             log.push_str(&format!(
-                "[{stamp}]  -> wl_surface#25.attach(wl_buffer#41, 0, 0)\n[{stamp}]  -> wl_surface#25.damage_buffer({damage})\n[{stamp}]  -> wl_surface#25.commit()\n"
+                "[{stamp}]  -> wl_surface#25.attach(wl_buffer#41, 0, 0)\n"
             ));
+            for rect in damage.split(';') {
+                log.push_str(&format!(
+                    "[{stamp}]  -> wl_surface#25.damage_buffer({})\n",
+                    rect.trim()
+                ));
+            }
+            log.push_str(&format!("[{stamp}]  -> wl_surface#25.commit()\n"));
         }
         log
     }
@@ -1217,7 +1417,7 @@ mod tests {
                 scenario: "clock".into(),
                 index,
                 role: "top".into(),
-                expected: vec![LogicalRect::new(900.0, 4.0, 104.0, 28.0)],
+                expected: Expected::bound(vec![LogicalRect::new(900.0, 4.0, 104.0, 28.0)]),
             },
         )
     }
@@ -1295,10 +1495,10 @@ mod tests {
                 scenario: "clip".into(),
                 index: 0,
                 role: "top".into(),
-                expected: vec![
+                expected: Expected::cover(vec![
                     LogicalRect::new(100.0, 1048.0, 40.0, 28.0),
                     LogicalRect::new(100.0, 1048.0, 300.0, 28.0),
-                ],
+                ]),
             },
         ));
         timeline.sort_by_key(|e| e.at_us);
@@ -1324,7 +1524,7 @@ mod tests {
                 scenario: "notify".into(),
                 index: 0,
                 role: "top".into(),
-                expected: vec![LogicalRect::new(1532.0, 44.0, 380.0, 60.0)],
+                expected: Expected::cover(vec![LogicalRect::new(1532.0, 44.0, 380.0, 60.0)]),
             },
         ));
         timeline.sort_by_key(|e| e.at_us);
@@ -1389,6 +1589,296 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_frame_drawn_straight_into_the_buffer_costs_its_acquire_instead_of_a_convert() {
+        let mut timeline = scenario("drawer", at(10, 0, 10, 0), at(10, 0, 20, 0)).to_vec();
+        timeline.extend([
+            perf(at(10, 0, 11, 0), "interpret=1/1us(n1)"),
+            perf(
+                at(10, 0, 12, 0),
+                "interpret=400/900us(n60) plan=10/20us(n60) acquire=30/200us(n60) present=50/90us(n60) frame=600/1200us(n60)",
+            ),
+        ]);
+        timeline.sort_by_key(|e| e.at_us);
+        let run = Run::new(timeline, None);
+        let cost = frame_cost(&run.clean_perf("drawer")).unwrap();
+        assert_eq!(cost.work_us, 400.0 + 10.0 + 30.0);
+        assert_eq!(run.observed_backend(), Some("software"));
+        assert_eq!(
+            run.software_path(),
+            Some("drawn straight into the shm buffer (no convert)")
+        );
+    }
+
+    /// One run's clean interpret windows: per scenario, one window of 60 frames with the given average and slowest frame, in µs.
+    fn interpret_run(scenarios: &[(&str, u32, u32)]) -> Run {
+        let mut timeline = Vec::new();
+        for (i, (name, avg, max)) in scenarios.iter().enumerate() {
+            let start = at(10, 1 + i as u64, 0, 0);
+            timeline.extend(scenario(name, start, start + 20_000_000));
+            timeline.push(perf(start + 1_000_000, "interpret=1/1us(n1)"));
+            timeline.push(perf(
+                start + 2_000_000,
+                &format!("interpret={avg}/{max}us(n60) mask=50/80us(n60)"),
+            ));
+        }
+        timeline.sort_by_key(|e| e.at_us);
+        Run::new(timeline, None)
+    }
+
+    #[test]
+    fn interpret_is_judged_as_merged_over_per_surface_per_scenario() {
+        let today = interpret_run(&[("clock-rate", 300, 800), ("drawer", 4000, 4800)]);
+        let close = interpret_run(&[("clock-rate", 360, 950), ("drawer", 4900, 5900)]);
+        let verdict = interpret(&today, &close);
+        assert_eq!(verdict.status, Status::Pass, "{}", verdict.measured);
+        assert!(
+            verdict.measured.starts_with("2/2 scenarios within 1.25×"),
+            "{}",
+            verdict.measured
+        );
+        assert!(
+            verdict.notes.iter().any(|n| n.contains("2 ms bound")),
+            "the absolute figure is still shown: {:?}",
+            verdict.notes
+        );
+
+        let slow_average = interpret_run(&[("clock-rate", 380, 950), ("drawer", 4900, 5900)]);
+        assert_eq!(
+            interpret(&today, &slow_average).status,
+            Status::Fail,
+            "an average 1.27× over fails however close the slowest frame is"
+        );
+        let slow_frame = interpret_run(&[("clock-rate", 300, 800), ("drawer", 4000, 6100)]);
+        let verdict = interpret(&today, &slow_frame);
+        assert_eq!(
+            verdict.status,
+            Status::Fail,
+            "a slowest frame 1.27× over fails however close the average is"
+        );
+        assert!(
+            verdict.measured.contains("(drawer)"),
+            "{}",
+            verdict.measured
+        );
+    }
+
+    #[test]
+    fn interpret_measured_in_one_run_only_is_not_a_pass() {
+        let today = interpret_run(&[("clock-rate", 300, 800)]);
+        let more = interpret_run(&[("clock-rate", 300, 800), ("drawer", 4000, 4800)]);
+        let verdict = interpret(&today, &more);
+        assert_eq!(verdict.status, Status::Incomplete);
+        assert!(
+            verdict
+                .notes
+                .iter()
+                .any(|n| n.contains("drawer (merged only)")),
+            "{:?}",
+            verdict.notes
+        );
+        assert_eq!(
+            interpret(&Run::new(Vec::new(), None), &more).status,
+            Status::NotMeasured
+        );
+    }
+
+    fn simultaneous_event(at_us: u64, index: u32) -> Entry {
+        entry(
+            at_us,
+            Record::Event {
+                scenario: "simultaneous".into(),
+                index,
+                role: "top".into(),
+                expected: Expected {
+                    cover: vec![
+                        LogicalRect::new(1532.0, 44.0, 380.0, 64.0),
+                        LogicalRect::new(1532.0, 116.0, 380.0, 64.0),
+                        LogicalRect::new(1532.0, 44.0, 380.0, 64.0),
+                        LogicalRect::new(400.0, 1048.0, 60.0, 28.0),
+                        LogicalRect::new(400.0, 1048.0, 330.0, 28.0),
+                    ],
+                    bound: vec![LogicalRect::new(908.0, 4.0, 104.0, 28.0)],
+                },
+            },
+        )
+    }
+
+    fn simultaneous_run(damage: &str) -> Run {
+        let mut timeline = scenario("simultaneous", at(10, 0, 1, 0), at(10, 0, 3, 0)).to_vec();
+        timeline.push(simultaneous_event(at(10, 0, 1, 500_000), 0));
+        timeline.sort_by_key(|e| e.at_us);
+        run(timeline, &[("10:00:01.510000", damage)])
+    }
+
+    #[test]
+    fn three_changes_in_one_frame_pass_as_regions_of_their_own() {
+        let run = simultaneous_run(
+            "908, 4, 104, 28; 1532, 44, 380, 64; 1532, 116, 380, 64; 400, 1048, 330, 28",
+        );
+        let checks = check_events(&run, "simultaneous").unwrap();
+        assert_eq!(checks[0].regions, 4);
+        let verdict = simultaneous(&run);
+        assert_eq!(verdict.status, Status::Pass, "{}", verdict.measured);
+        assert!(
+            verdict
+                .notes
+                .iter()
+                .any(|n| n.starts_with("damage rects per frame: 4–4")),
+            "{:?}",
+            verdict.notes
+        );
+    }
+
+    #[test]
+    fn a_tick_that_damages_only_part_of_its_chip_passes() {
+        let run = simultaneous_run(
+            "931, 5, 59, 20; 1532, 44, 380, 64; 1532, 116, 380, 64; 400, 1048, 330, 28",
+        );
+        let verdict = simultaneous(&run);
+        assert_eq!(verdict.status, Status::Pass, "{}", verdict.measured);
+        assert!(
+            verdict.measured.contains("least coverage 100.00%"),
+            "the chip is a bound, not something to cover: {}",
+            verdict.measured
+        );
+    }
+
+    #[test]
+    fn card_damage_that_misses_part_of_a_card_still_fails() {
+        let run = simultaneous_run(
+            "931, 5, 59, 20; 1532, 44, 380, 64; 1532, 116, 380, 40; 400, 1048, 330, 28",
+        );
+        let verdict = simultaneous(&run);
+        assert_eq!(verdict.status, Status::Fail);
+        assert!(
+            verdict
+                .notes
+                .iter()
+                .any(|n| n.contains("missed up to 9120 must-cover px")),
+            "{:?}",
+            verdict.notes
+        );
+    }
+
+    #[test]
+    fn three_changes_unioned_into_one_rect_fail_with_damage_across_the_window() {
+        let run = simultaneous_run("400, 4, 1512, 1072");
+        let checks = check_events(&run, "simultaneous").unwrap();
+        assert_eq!(checks[0].regions, 1);
+        assert!(checks[0].stray > 0);
+        let verdict = simultaneous(&run);
+        assert_eq!(verdict.status, Status::Fail);
+        assert!(
+            verdict
+                .notes
+                .iter()
+                .any(|n| n.contains("across the window")),
+            "{:?}",
+            verdict.notes
+        );
+    }
+
+    #[test]
+    fn excess_only_in_the_gaps_between_stacked_cards_passes_and_is_reported() {
+        let mut timeline = scenario("notify", at(10, 0, 1, 0), at(10, 0, 3, 0)).to_vec();
+        timeline.push(entry(
+            at(10, 0, 1, 500_000),
+            Record::Event {
+                scenario: "notify".into(),
+                index: 0,
+                role: "top".into(),
+                expected: Expected::cover(vec![
+                    LogicalRect::new(1532.0, 44.0, 380.0, 60.0),
+                    LogicalRect::new(1532.0, 112.0, 380.0, 60.0),
+                ]),
+            },
+        ));
+        timeline.sort_by_key(|e| e.at_us);
+        let run = run(timeline, &[("10:00:01.510000", "1532, 44, 380, 128")]);
+        let checks = check_events(&run, "notify").unwrap();
+        assert_eq!(checks[0].excess, 380 * (8 - 2 * TOLERANCE_PX));
+        assert_eq!(checks[0].stray, 0);
+        let verdict = arrivals(&run);
+        assert_eq!(verdict.status, Status::Pass, "{}", verdict.measured);
+        assert!(
+            verdict.measured.contains("1 more with excess only in gaps")
+                && verdict
+                    .measured
+                    .contains("worst excess 1520 px, of which stray 0 px"),
+            "the excess is still reported: {}",
+            verdict.measured
+        );
+    }
+
+    #[test]
+    fn damage_that_misses_an_expected_rect_fails() {
+        let mut timeline = scenario("clip", at(10, 0, 1, 0), at(10, 0, 3, 0)).to_vec();
+        timeline.push(entry(
+            at(10, 0, 1, 500_000),
+            Record::Event {
+                scenario: "clip".into(),
+                index: 0,
+                role: "top".into(),
+                expected: Expected::cover(vec![LogicalRect::new(100.0, 1048.0, 300.0, 28.0)]),
+            },
+        ));
+        timeline.sort_by_key(|e| e.at_us);
+        let run = run(timeline, &[("10:00:01.510000", "100, 1048, 200, 28")]);
+        let verdict = clip_resizes(&run);
+        assert_eq!(verdict.status, Status::Fail);
+        assert!(
+            verdict
+                .notes
+                .iter()
+                .any(|n| n.contains("missed up to 2800 must-cover px")),
+            "{:?}",
+            verdict.notes
+        );
+    }
+
+    /// Per-surface, one simultaneous change lands on three surfaces and is recorded once for each, at the same moment: each record keeps the frames of its own surface until the next change.
+    #[test]
+    fn a_change_recorded_on_several_surfaces_keeps_each_ones_frames() {
+        let log = "\
+[10:00:00.000100]  -> wl_compositor#4.create_surface(new id wl_surface#25)
+[10:00:00.000200]  -> zwlr_layer_shell_v1#9.get_layer_surface(new id zwlr_layer_surface_v1#26, wl_surface#25, nil, 2, \"hogar-shell-spike-bar-top\")
+[10:00:00.000300]  -> wl_compositor#4.create_surface(new id wl_surface#27)
+[10:00:00.000400]  -> zwlr_layer_shell_v1#9.get_layer_surface(new id zwlr_layer_surface_v1#28, wl_surface#27, nil, 3, \"hogar-shell-spike-stack\")
+[10:00:00.020100]  -> wl_shm_pool#40.create_buffer(new id wl_buffer#41, 0, 1920, 36, 7680, 0)
+[10:00:00.020200]  -> wl_shm_pool#40.create_buffer(new id wl_buffer#42, 0, 380, 480, 1520, 0)
+[10:00:01.510000]  -> wl_surface#25.attach(wl_buffer#41, 0, 0)
+[10:00:01.510000]  -> wl_surface#25.damage_buffer(908, 4, 104, 28)
+[10:00:01.510000]  -> wl_surface#25.commit()
+[10:00:01.511000]  -> wl_surface#27.attach(wl_buffer#42, 0, 0)
+[10:00:01.511000]  -> wl_surface#27.damage_buffer(0, 0, 380, 64)
+[10:00:01.511000]  -> wl_surface#27.commit()
+";
+        let mut timeline = scenario("simultaneous", at(10, 0, 1, 0), at(10, 0, 3, 0)).to_vec();
+        for (role, rect) in [
+            ("bar-top", LogicalRect::new(908.0, 4.0, 104.0, 28.0)),
+            ("stack", LogicalRect::new(0.0, 0.0, 380.0, 64.0)),
+        ] {
+            timeline.push(entry(
+                at(10, 0, 1, 500_000),
+                Record::Event {
+                    scenario: "simultaneous".into(),
+                    index: 0,
+                    role: role.into(),
+                    expected: Expected::cover(vec![rect]),
+                },
+            ));
+        }
+        timeline.sort_by_key(|e| e.at_us);
+        let run = Run::new(timeline, Some(trace::replay(log)));
+        let checks = check_events(&run, "simultaneous").unwrap();
+        assert_eq!(
+            checks.iter().map(|c| c.frames).collect::<Vec<_>>(),
+            vec![1, 1]
+        );
+        assert!(checks.iter().all(|c| c.excess == 0));
+    }
+
     fn rss(at_us: u64, label: &str, rss: u64, hwm: u64) -> Entry {
         entry(
             at_us,
@@ -1400,33 +1890,70 @@ mod tests {
     }
 
     #[test]
-    fn memory_must_hold_at_rest_and_at_the_peak() {
+    fn the_memory_budget_scales_with_the_windows_area() {
+        assert_eq!(memory_budget_mib(3840 * 2160), (48.0, 80.0));
+        assert_eq!(memory_budget_mib(1920 * 1080), (12.0, 20.0));
+    }
+
+    /// Both runs' memory, the merged one over a 1920×1080 window, so the budget is 12 MiB at rest and 20 MiB at the peak.
+    fn memory_runs(rest_kb: u64, peak_kb: u64) -> (Run, Run) {
         let today = Run::new(
             vec![
-                rss(1, "steady", 100_000, 100_000),
-                rss(2, "end", 110_000, 120_000),
+                rss(1, "steady", 12_000, 12_000),
+                rss(2, "end", 14_000, 26_000),
             ],
             None,
         );
-        let fine = Run::new(
+        let merged = run(
             vec![
-                rss(1, "steady", 140_000, 140_000),
-                rss(2, "end", 150_000, 170_000),
+                rss(1, "steady", 12_000 + rest_kb, 12_000 + rest_kb),
+                rss(2, "end", 14_000 + rest_kb, 26_000 + peak_kb),
             ],
-            None,
+            &[("10:00:00.030000", "0, 0, 1920, 1080")],
         );
-        assert_eq!(memory(&today, &fine).status, Status::Pass);
-        let spiky = Run::new(
-            vec![
-                rss(1, "steady", 140_000, 140_000),
-                rss(2, "end", 150_000, 190_000),
-            ],
-            None,
+        (today, merged)
+    }
+
+    #[test]
+    fn memory_must_hold_its_budget_at_rest_and_at_the_peak() {
+        let (today, within) = memory_runs(11 * 1024, 19 * 1024);
+        let verdict = memory(&today, &within);
+        assert_eq!(verdict.status, Status::Pass, "{}", verdict.measured);
+        assert!(
+            verdict
+                .measured
+                .contains("budget 12.0 / 20.0 MiB for the 1920×1080 window")
         );
+
+        let (today, heavy) = memory_runs(13 * 1024, 19 * 1024);
+        assert_eq!(
+            memory(&today, &heavy).status,
+            Status::Fail,
+            "+13 MiB at rest is over 12"
+        );
+        let (today, spiky) = memory_runs(11 * 1024, 21 * 1024);
         assert_eq!(
             memory(&today, &spiky).status,
             Status::Fail,
-            "a peak of 158% fails even though rest is 140%"
+            "a peak 21 MiB over fails even though rest is within"
+        );
+        let (today, lighter) = memory_runs(0, 0);
+        assert_eq!(memory(&today, &lighter).status, Status::Pass);
+    }
+
+    #[test]
+    fn memory_without_the_windows_size_has_no_budget_to_judge_against() {
+        let today = Run::new(vec![rss(1, "steady", 1, 1), rss(2, "end", 1, 1)], None);
+        let merged = Run::new(vec![rss(1, "steady", 2, 2), rss(2, "end", 2, 2)], None);
+        let verdict = memory(&today, &merged);
+        assert_eq!(verdict.status, Status::NotMeasured);
+        assert!(
+            verdict
+                .notes
+                .iter()
+                .any(|n| n.starts_with("at rest +0.0 MiB")),
+            "the readings are still shown: {:?}",
+            verdict.notes
         );
     }
 
