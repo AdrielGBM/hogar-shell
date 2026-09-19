@@ -15,15 +15,14 @@ fn render(now: &chrono::DateTime<chrono::Local>, config: &ClockConfig) -> String
     }
 }
 
-let config = ui::module::surface_env()
-    .map(|e| e.config.clock.clone())
-    .unwrap_or_default();
+let host = ui::host::Host::current()?;
+let config = host.options::<::config::ClockConfig>().clone();
 let for_tick = config.clone();
 
 let now = signal(render(&chrono::Local::now(), &config));
 let now_view = now.read_only();
 // module_shell provides the box, hover/press feedback and drawer-opening click; this module supplies only content, painted with the container-chosen foreground.
-let fg = ui::module::module_fg();
+let fg = host.foreground;
 // One ticker for the whole shell, aligned to the second boundary; every clock surface reads the same broadcast.
 platform_wayland::watch(clock::subscribe, move |t: clock::Now| {
     now.set(render(&t, &for_tick));

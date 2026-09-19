@@ -11,9 +11,9 @@ use telar::{
 
 use config::theme::{FontRole, NordTheme};
 use services::notes::{self, Note};
-use surfaces::drawer::content_radius;
+use ui::host::Host;
 use ui::icon::{icon_picker_overlay, icon_view};
-use ui::module::{icon_px, module_fg, surface_env};
+use ui::panel::content_radius;
 use ui::scale::{corner, space};
 
 /// How long after the last edit to a note before it is written to disk (trailing-edge debounce).
@@ -28,16 +28,13 @@ struct PanelState {
 }
 
 /// The bar chip: a sticky-note glyph that opens the notes panel.
-pub fn notes_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fg = module_fg();
-    icon_view(|| "sticky-note".to_string(), move || fg.get(), icon_px())
+pub fn notes_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fg = host.foreground;
+    icon_view(|| "sticky-note".to_string(), move || fg, host.icon_size())
 }
 
 /// The notes panel: a header (title + add) over the editable note list, each note an icon, title, body, and delete, with an inline icon picker per note. Loads the notes on open, from memory after the first; every edit persists (debounced).
-pub fn notes_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
-    }
+pub fn notes_panel(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let radius = content_radius();
     let state = PanelState {

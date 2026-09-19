@@ -169,7 +169,9 @@ mod tests {
     /// It did not: the client read one line and dropped the rest, so `shell status` reported its first row and nothing else — a census that looked like an answer while omitting most of it. Exercised end to end, over a real socket, because the truncation was in the client's framing and no test of the command itself could have seen it.
     #[test]
     fn a_reply_spanning_several_lines_survives_the_socket() {
-        let dir = std::env::temp_dir().join(format!("hogar-shell-ipc-{}", std::process::id()));
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("ipc");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("multiline.sock");
         let _ = std::fs::remove_file(&path);

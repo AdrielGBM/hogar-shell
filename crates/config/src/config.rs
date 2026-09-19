@@ -703,12 +703,7 @@ impl Config {
     }
 
     pub fn default_path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .filter(|p| !p.as_os_str().is_empty())
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .unwrap_or_else(|| PathBuf::from(".config"));
-        base.join("hogar-shell").join("config.toml")
+        paths::config_dir().join("config.toml")
     }
 
     /// Persists a single `[name]` section back to `config.toml`, replacing just that table while preserving every other section, key order, and comment in the file (format-preserving via `toml_edit`). `value` is a section struct such as [`ThemeConfig`]. Creates the file and its parent directory if missing. The running shell's config watcher then hot-reloads the change, so a save applies live.

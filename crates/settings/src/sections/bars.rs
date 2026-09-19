@@ -3,6 +3,8 @@
 //! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
 use std::rc::Rc;
+use ui::descriptor::ModuleDescriptor;
+use ui::icon::icon_view;
 use ui::scale::space;
 
 use telar::{
@@ -173,6 +175,7 @@ fn bar_rows(
 
 const ZONE_LABELS: [&str; 3] = ["start", "center", "end"];
 const PILL_RADIUS: f32 = 8.0;
+const PALETTE_ICON: f32 = 14.0;
 
 /// One zone: its name, and the pills in it.
 fn zone_row(
@@ -282,33 +285,51 @@ fn module_pill(
     Ok(Box::new(pill))
 }
 
-/// Every module the shell registers, as something to press. The add half of K3: the CSV field it replaces required knowing a module existed before it could be typed.
+/// Every module in the installed table a bar can place, which is every one with a chip, sorted by id.
+fn bar_modules() -> Vec<&'static ModuleDescriptor> {
+    let mut modules: Vec<&'static ModuleDescriptor> = ui::descriptor::installed()
+        .iter()
+        .filter(|module| module.representations.chip.is_some())
+        .collect();
+    modules.sort_unstable_by_key(|module| module.id);
+    modules
+}
+
+/// Every module a bar can place, as something to press: the CSV field it replaces required knowing a module existed before it could be typed.
 fn module_palette(
     editor: &ZoneEditor,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut chips: Vec<Box<dyn LayoutItem>> = Vec::new();
-    for id in ui::module::with_registry(|registry| registry.ids()) {
+    for module in bar_modules() {
         let editor = editor.clone();
-        let label = id.clone();
+        let (id, name, glyph) = (module.id, module.name, module.icon);
+        let icon = icon_view(
+            move || glyph.to_string(),
+            move || theme.subtle,
+            PALETTE_ICON,
+        )?;
         let text = Text::new(
-            move || label.clone(),
+            move || name.to_string(),
             LayoutStyle::new(),
             move || theme.text_style(FontRole::Caption, theme.subtle),
         )?;
         chips.push(Box::new(
             StyledContainer::new(
                 LayoutStyle::new()
+                    .flex_row()
+                    .align_items(AlignItems::CENTER)
+                    .gap(space::sm())
                     .padding_horizontal(space::md())
                     .padding_vertical(space::sm())
                     .flex_shrink(0.0),
                 move |_r| RectStyle::filled(theme.base, PILL_RADIUS),
-                vec![box_item(text)],
+                vec![icon, box_item(text)],
             )?
             .hover_style(move |_r| RectStyle::filled(theme.overlay, PILL_RADIUS))
             .on_press(move || {
                 let zone = editor.target.peek();
-                editor.append(zone, ModuleEntry::bare(id.clone()));
+                editor.append(zone, ModuleEntry::bare(id.to_string()));
             }),
         ));
     }
@@ -400,7 +421,10 @@ pub(crate) fn bars_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
 pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let (config, path) = crate::form::source();
     let theme = telar::use_theme::<NordTheme>();
-    let mut ids: Vec<String> = ui::module::with_registry(|registry| registry.ids());
+    let mut ids: Vec<String> = bar_modules()
+        .iter()
+        .map(|module| module.id.to_string())
+        .collect();
     for configured in config.modules.keys() {
         if !ids.contains(configured) {
             ids.push(configured.clone());

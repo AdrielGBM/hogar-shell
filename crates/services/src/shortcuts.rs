@@ -102,7 +102,7 @@ fn command_for(id: &str) -> Option<&'static str> {
 
 /// The producer for `platform_wayland::watch`: registers the shortcuts, then turns every `Activated` signal into the same [`Request`] the socket would have delivered, so a shortcut and a `hogar-shell …` invocation run through one code path and cannot drift apart.
 pub fn serve(tx: EventSender<Request>) {
-    let Some(conn) = Connection::session().ok() else {
+    let Some(conn) = crate::bus::private_session(None) else {
         tracing::info!(
             "global shortcuts: no session bus; keybinds still work through `exec, hogar-shell …`"
         );

@@ -11,9 +11,10 @@ use telar::{
     StyledContainer, Text, anchor_rect, box_item, effect, signal, use_theme,
 };
 
-use super::{CollectionState, icon_collection, icon_view};
+use super::{icon_collection, icon_view};
 use config::surface_env;
 use config::theme::{FontRole, NordTheme};
+use util::asset::Load;
 use util::search;
 
 const CELL: f32 = 40.0;
@@ -110,7 +111,7 @@ fn picker_body(
 /// Re-filters `filtered` from `collection` a short beat after `query` (or the collection) last changed, so the grid only rebuilds once typing settles rather than on every keystroke.
 fn debounced_filter(
     query: ReadSignal<String>,
-    collection: ReadSignal<CollectionState>,
+    collection: ReadSignal<Load<Vec<String>>>,
     filtered: RwSignal<Vec<String>>,
 ) -> Effect {
     let generation = Rc::new(Cell::new(0u64));
@@ -127,7 +128,7 @@ fn debounced_filter(
                 return;
             }
             let ids = collection.with(|state| match state {
-                CollectionState::Ready(all) => filter_ids(all, &needle),
+                Load::Ready(all) => filter_ids(all, &needle),
                 _ => Vec::new(),
             });
             filtered.set(ids);
@@ -163,7 +164,7 @@ fn name_part(id: &str) -> &str {
 fn results_view(
     vp: ScrollViewport,
     filtered: ReadSignal<Vec<String>>,
-    collection: ReadSignal<CollectionState>,
+    collection: ReadSignal<Load<Vec<String>>>,
     theme: NordTheme,
     pick: Rc<dyn Fn(String)>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -185,13 +186,13 @@ fn results_view(
 }
 
 /// A coarse kind for the results area, so the outer list only swaps between message and grid when the mode changes — a grid persists (and reconciles) as the filtered set changes within `Ready`.
-fn view_kind(collection: &ReadSignal<CollectionState>, filtered: &ReadSignal<Vec<String>>) -> u8 {
+fn view_kind(collection: &ReadSignal<Load<Vec<String>>>, filtered: &ReadSignal<Vec<String>>) -> u8 {
     let empty = filtered.with(|f| f.is_empty());
     collection.with(|state| match state {
-        CollectionState::Loading => 0,
-        CollectionState::Unavailable => 1,
-        CollectionState::Ready(_) if empty => 2,
-        CollectionState::Ready(_) => 3,
+        Load::Loading => 0,
+        Load::Missing => 1,
+        Load::Ready(_) if empty => 2,
+        Load::Ready(_) => 3,
     })
 }
 

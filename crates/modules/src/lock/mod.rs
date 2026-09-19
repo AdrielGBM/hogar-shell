@@ -43,13 +43,11 @@ impl App for LockApp {
             return mount(minimal_screen);
         }
         // Not a `PanelSurface` — the compositor's lock session mounts this, and it is the one surface that must never be translucent — but its content reads settings the same way every panel does, so it installs the same environment by hand.
-        let edge = ui::panel::drawn_edge(&config);
-        set_surface_env(SurfaceEnv {
-            edge,
-            bar_size: config.bars.get(edge).size,
-            output: self.output.clone(),
-            config: Arc::clone(&config),
-        });
+        set_surface_env(SurfaceEnv::for_edge(
+            Arc::clone(&config),
+            ui::panel::drawn_edge(&config),
+            self.output.clone(),
+        ));
         mount(|| screen(&config))
     }
 
@@ -94,12 +92,12 @@ fn screen(config: &Arc<Config>) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let mut column: Vec<Box<dyn LayoutItem>> = Vec::new();
     column.push(clock(config, theme)?);
-    if config.lock.show_avatar
-        && let Some(avatar) = avatar(config)
-    {
-        column.push(avatar);
+    let crate::user::Identity { face, name } =
+        crate::user::identity(&config.dashboard, AVATAR, theme)?;
+    if config.lock.show_avatar {
+        column.push(face);
     }
-    column.push(user_name(theme)?);
+    column.push(centred(name)?);
     column.extend(prompt(theme)?);
     column.extend(crate::lock::content::extras(config, theme)?);
     card(column, theme)
@@ -203,20 +201,6 @@ pub(crate) fn centred(item: Box<dyn LayoutItem>) -> Result<Box<dyn LayoutItem>, 
             .justify_content(JustifyContent::CENTER)
             .width(SizeDimension::Percent(1.0)),
         vec![item],
-    )?))
-}
-
-fn avatar(config: &Arc<Config>) -> Option<Box<dyn LayoutItem>> {
-    let path = crate::dashboard::avatar_path(&config.dashboard)?;
-    util::picture::circle(&path, AVATAR)
-}
-
-fn user_name(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let name = services::pam::current_user();
-    centred(box_item(Text::new(
-        move || name.clone(),
-        LayoutStyle::new(),
-        move || theme.text_style(FontRole::Title, theme.text),
     )?))
 }
 

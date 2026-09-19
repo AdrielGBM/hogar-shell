@@ -337,8 +337,7 @@ fn open_stack(output: Option<String>, config: &Config) -> Stack {
     let placement = placement(&config.stack, output.as_deref())
         .margin(config.panel_margin(config.stack.edge))
         .output(output.clone());
-    let handle =
-        PanelSurface::new(placement, |env| cards(env).expect("stack build failed")).open_handle();
+    let handle = PanelSurface::new(placement, cards).open_handle();
     Stack { output, handle }
 }
 
@@ -439,9 +438,8 @@ fn cards(env: &config::SurfaceEnv) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let theme = use_theme::<NordTheme>();
     let radius = content_radius();
-    let width = config.stack.width;
-    let animation = config.animation.clone();
     let owned = config.clone();
+    let built_with = Arc::clone(config);
     let source = move || {
         let _ = departures.get();
         let live = Live {
@@ -462,7 +460,7 @@ fn cards(env: &config::SurfaceEnv) -> Result<Box<dyn LayoutItem>, LayoutError> {
         placement(&config.stack, env.output.as_deref()).column(card_gap()),
         source,
         Card::key,
-        move |card: Card| build(card, theme, radius, width, &animation),
+        move |card: Card| build(card, &built_with, theme, radius),
     )?;
     Ok(Box::new(list))
 }
@@ -470,19 +468,24 @@ fn cards(env: &config::SurfaceEnv) -> Result<Box<dyn LayoutItem>, LayoutError> {
 /// One card, built by whichever module owns it. The column knows how to place a card and nothing about what is on it.
 fn build(
     card: Card,
+    config: &Config,
     theme: NordTheme,
     radius: f32,
-    width: f32,
-    animation: &AnimationConfig,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let slot = card.slot();
     let content = match card {
-        Card::Notification(n) => crate::notifications::popup_card(&n, theme, radius, width),
+        Card::Notification(n) => crate::notifications::popup_card(
+            &n,
+            &config.notifications,
+            &config.stack,
+            theme,
+            radius,
+        ),
         Card::Toast(t) => crate::toast::card(&t, theme, radius),
         Card::Osd(kind) => Ok(crate::osd::osd_content(kind, theme)),
     }?;
     // Here rather than in each of the three, so a notification, a toast and an OSD arrive and leave alike.
-    transition::arriving(&slot, content, animation)
+    transition::arriving(&slot, content, &config.animation)
 }
 
 #[cfg(test)]

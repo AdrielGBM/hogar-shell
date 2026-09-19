@@ -12,14 +12,15 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use telar::{
-    App, Color, Component, Container, Image, ImageData, LayoutError, LayoutItem, LayoutStyle,
-    ObjectFit, Raster, RectStyle, SizeDimension, StyledContainer, WindowConfig, box_item,
-    motion::Animated, reset_layout_runtime, set_theme, signal,
+    App, Color, Component, Container, Image, ImageData, LayoutError, LayoutItem, ObjectFit, Raster,
+    RectStyle, StyledContainer, WindowConfig, box_item, motion::Animated, reset_layout_runtime,
+    set_theme, signal,
 };
 
 use config::{Config, WallpaperTransition};
 use services::wallpaper;
 use telar::WindowRoot;
+use ui::layout::fill;
 
 /// How far a wipe travels when the compositor has not said how wide this screen is. Only reached before the output list has been read, and a wipe that starts slightly off-screen is invisible either way.
 const FALLBACK_TRAVEL: f32 = 1920.0;
@@ -209,13 +210,6 @@ fn decoded(output: Option<&str>, path: &Path) -> Option<Arc<ImageData>> {
         });
     }
     Some(image)
-}
-
-/// A full-surface style, used for every layer so they stack rather than sit side by side.
-fn fill() -> LayoutStyle {
-    LayoutStyle::new()
-        .width(SizeDimension::Percent(1.0))
-        .height(SizeDimension::Percent(1.0))
 }
 
 /// One image slot: absolutely filling the surface, shown in proportion to how close `fade` is to `visible_at`.

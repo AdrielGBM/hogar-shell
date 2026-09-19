@@ -558,6 +558,28 @@ end = ["battery", "volume"]
     }
 
     #[test]
+    fn a_reading_is_as_severe_as_the_highest_threshold_it_reaches() {
+        let d = TemperatureConfig::default();
+        assert_eq!(d.severity(69.9), Severity::Normal);
+        assert_eq!(
+            d.severity(70.0),
+            Severity::Warn,
+            "the threshold itself warns"
+        );
+        assert_eq!(d.severity(85.0), Severity::Critical);
+        let inverted = TemperatureConfig {
+            warn: 90.0,
+            critical: 80.0,
+            ..TemperatureConfig::default()
+        };
+        assert_eq!(
+            inverted.severity(85.0),
+            Severity::Critical,
+            "critical wins even over a warn set above it"
+        );
+    }
+
+    #[test]
     fn lock_status_shows_both_keys_until_told_otherwise() {
         let d: Config = toml::from_str("").unwrap();
         assert!(d.lock_status.caps && d.lock_status.num);

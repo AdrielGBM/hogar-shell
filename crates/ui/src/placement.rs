@@ -128,6 +128,10 @@ pub struct Placement {
 }
 
 impl Placement {
+    pub fn namespace(&self) -> &'static str {
+        self.namespace
+    }
+
     fn new(namespace: &'static str, anchor: Anchor, layer: Layer) -> Self {
         Self {
             namespace,
@@ -496,12 +500,7 @@ mod tests {
     use super::*;
 
     fn env_on(edge: Edge) -> SurfaceEnv {
-        SurfaceEnv {
-            edge,
-            bar_size: 34,
-            output: None,
-            config: std::sync::Arc::new(config::Config::starter()),
-        }
+        SurfaceEnv::for_edge(std::sync::Arc::new(config::Config::starter()), edge, None)
     }
 
     fn a_chip() -> Rect {
@@ -548,12 +547,11 @@ mod tests {
             width: 30.0,
             height: 30.0,
         };
-        let env = SurfaceEnv {
-            edge: Edge::Top,
-            bar_size: 34,
-            output: None,
-            config: std::sync::Arc::new(config::Config::starter()),
-        };
+        let env = SurfaceEnv::for_edge(
+            std::sync::Arc::new(config::Config::starter()),
+            Edge::Top,
+            None,
+        );
         let every = [
             ("bar", Placement::bar(Edge::Top, 34)),
             ("reservation", Placement::reservation(Edge::Top, 34)),
@@ -607,12 +605,11 @@ mod tests {
     /// **And a hosted shape is asserted twice**, because it announces its namespace through a second path: the surface host derives it from the [`SurfaceRole`], which never sees the string this carries. The two are kept in step by hand, and while they were not, the tray's menu — a card that had been made dismissable — went out as `hogar-shell-popup`, a name no primitive claims and no `layer_rule` in anyone's config mentions.
     #[test]
     fn every_primitive_announces_the_namespace_it_always_has() {
-        let env = SurfaceEnv {
-            edge: Edge::Top,
-            bar_size: 34,
-            output: None,
-            config: std::sync::Arc::new(config::Config::starter()),
-        };
+        let env = SurfaceEnv::for_edge(
+            std::sync::Arc::new(config::Config::starter()),
+            Edge::Top,
+            None,
+        );
         let chip = Rect {
             x: 200.0,
             y: 0.0,

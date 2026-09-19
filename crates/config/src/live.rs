@@ -130,11 +130,20 @@ impl From<Arc<Config>> for LiveConfig {
 #[derive(Clone)]
 pub struct SurfaceEnv {
     pub edge: Edge,
-    /// The bar's thickness in px (height for top/bottom, width for left/right).
-    pub bar_size: u32,
     /// The monitor this bar lives on, so panels it opens (drawer/float/OSD) land on the same screen; `None` = the compositor's active/default output.
     pub output: Option<String>,
     pub config: Arc<Config>,
+}
+
+impl SurfaceEnv {
+    /// The surface `config` draws against `edge`'s bar on `output`.
+    pub fn for_edge(config: Arc<Config>, edge: Edge, output: Option<String>) -> Self {
+        Self {
+            edge,
+            output,
+            config,
+        }
+    }
 }
 
 /// Per-surface context: resolves against this surface's own scope, so a module reading [`surface_env`] — including from an effect — gets THIS bar's env even though all surfaces share one UI thread under M3 (the reactive flush re-enters the surface). Written on every build, so a rebuilt bar's modules read the config the edit produced rather than the one the surface opened under.

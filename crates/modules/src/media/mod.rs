@@ -62,13 +62,8 @@ fn truncate(text: &str, max: usize) -> String {
     format!("{}…", kept.trim_end())
 }
 
-/// The marquee's clock: one tick per `[media] marquee_speed_ms`, forever.
-///
-/// A `watch` producer rather than a re-armed `timeout`, and that is the whole point: `watch` binds the subscription to the surface and drops it when the surface goes away, so the ticker ends with the bar it belongs to. A self-rescheduling timeout would keep firing into a torn-down surface.
-pub fn marquee_ticks(tx: platform_wayland::EventSender<u64>) {
-    let step = config::shared_config()
-        .map(|c| c.media.marquee_step())
-        .unwrap_or_else(|| std::time::Duration::from_millis(220));
+/// The marquee's clock: one tick per `step`, until the surface it was watched from goes away; a `watch` producer rather than a re-armed `timeout` so the ticker ends with its surface instead of firing into a torn-down one.
+pub fn marquee_ticks(tx: platform_wayland::EventSender<u64>, step: std::time::Duration) {
     let mut frame: u64 = 0;
     loop {
         std::thread::sleep(step);
@@ -85,10 +80,8 @@ pub fn toggle() {
 }
 
 /// The wheel over the chip, per `[media] scroll`: adjust the volume (the common case — the chip is where your pointer already is when a track is too loud), skip tracks, or nothing.
-pub fn scroll(_dx: f32, dy: f32) {
-    let config = config::config()
-        .map(|c| c.media.clone())
-        .unwrap_or_default();
+pub fn scroll(host: &ui::host::Host, _dx: f32, dy: f32) {
+    let config = host.options::<MediaConfig>();
     let up = dy > 0.0;
     match config.scroll {
         MediaScroll::Seek => {

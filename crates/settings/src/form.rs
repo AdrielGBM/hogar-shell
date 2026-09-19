@@ -181,19 +181,40 @@ pub(crate) fn source() -> (Config, PathBuf) {
 }
 
 thread_local! {
-    /// The page area's scroll window, for the one form that draws more rows than fit in it. Ambient for the same reason the source file is: a section takes no arguments, and threading a viewport through every one of them to reach a single list is the shape `Build` exists not to have.
-    static VIEWPORT: std::cell::RefCell<Option<telar::ScrollViewport>> =
+    /// The page area's scroll window, for the one form that draws more rows than fit in it, and the owner it was named under. Ambient for the same reason the source file is: a section takes no arguments, and threading a viewport through every one of them to reach a single list is the shape `Build` exists not to have.
+    static VIEWPORT: std::cell::RefCell<Option<(telar::OwnerId, telar::ScrollViewport)>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// Names the scroll window the forms on this page sit in.
+/// Names the scroll window the forms on this page sit in, under an owner of its own — a child of whatever is building right now, so its teardown (this page rebuilt, or the window closing) is what clears the slot. A fresh owner every call rather than the ambient one: two names in a row must not race a wrongly-timed disposal into clearing the second because both happened to share an id.
 pub(crate) fn set_viewport(viewport: telar::ScrollViewport) {
-    VIEWPORT.with(|slot| *slot.borrow_mut() = Some(viewport));
+    let owner = telar::owner_scope().id();
+    VIEWPORT.with(|slot| *slot.borrow_mut() = Some((owner, viewport)));
+    telar::with_owner(Some(owner), || {
+        telar::on_cleanup(move || {
+            // Only if this is still the entry it named: a page rebuilt since has already overwritten it with its own, and clearing that one out from under it on this owner's teardown would hand the next reader a slot that looks empty when a viewport is live.
+            VIEWPORT.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                if slot
+                    .as_ref()
+                    .is_some_and(|(named_by, _)| *named_by == owner)
+                {
+                    *slot = None;
+                }
+            });
+        });
+    });
 }
 
 /// The scroll window, or `None` for a form built outside a page — a preview or a test, where there is nothing to virtualise against and a plain list is the right answer.
 pub(crate) fn viewport() -> Option<telar::ScrollViewport> {
-    VIEWPORT.with(|slot| slot.borrow().clone())
+    VIEWPORT.with(|slot| slot.borrow().as_ref().map(|(_, viewport)| viewport.clone()))
+}
+
+/// Drops the scroll window unconditionally. For a test that wants a clean slate without waiting on an owner to dispose.
+#[cfg(test)]
+pub(crate) fn clear_viewport() {
+    VIEWPORT.with(|slot| *slot.borrow_mut() = None);
 }
 
 thread_local! {
@@ -841,5 +862,49 @@ mod tests {
         );
         surfaces::shell::close(MODULE);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// A form built outside a page reads no viewport at all — not the last page's, dropped when that page closed. Without clearing the slot on close, a section built later on the same thread (a preview, a test, a page assembled off-window) could still read a handle to a viewport that no longer exists.
+    #[test]
+    fn closing_the_page_drops_its_viewport() {
+        telar::reset_runtime();
+        clear_viewport();
+
+        let captured: std::rc::Rc<std::cell::RefCell<Option<telar::ScrollViewport>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let sink = std::rc::Rc::clone(&captured);
+        let content = telar::Canvas::new(LayoutStyle::new().width(10.0).height(10.0), |_| {
+            telar::RenderNode::Empty
+        })
+        .unwrap();
+        let scroll = telar::LayoutScrollArea::new_with(
+            LayoutStyle::new().width(10.0).height(10.0),
+            move |viewport| {
+                *sink.borrow_mut() = Some(viewport);
+                Ok(Box::new(content) as Box<dyn LayoutItem>)
+            },
+        )
+        .unwrap();
+        telar::compute_layout(
+            scroll.layout_node(),
+            telar::AvailableSpace::Definite(10.0),
+            telar::AvailableSpace::Definite(10.0),
+        )
+        .unwrap();
+        let page_viewport = captured.borrow().clone().expect("the builder ran");
+
+        // Stands in for the page's own build owner, the way a real page's is minted by the `.rsx` component that draws it.
+        let page = telar::owner_scope();
+        let page_id = page.id();
+        telar::with_owner(Some(page_id), || set_viewport(page_viewport));
+        drop(page);
+        assert!(viewport().is_some(), "the page named its viewport");
+
+        // Disposing the page, not clearing the slot directly: this is what a real window close or page switch does, and the slot has to notice on its own.
+        telar::dispose_owner(page_id);
+        assert!(
+            viewport().is_none(),
+            "a viewport from a closed page must not outlive it"
+        );
     }
 }

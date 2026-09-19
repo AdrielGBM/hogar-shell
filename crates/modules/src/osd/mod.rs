@@ -1,6 +1,8 @@
 use telar::{Color, LayoutItem, LayoutStyle, RectStyle, SizeDimension, StyledContainer, set_theme};
 
 use config::theme::NordTheme;
+use config::{AudioConfig, BrightnessConfig};
+use ui::host::Host;
 
 /// Which live state an OSD reflects. A single-slot OSD (§6): one at a time, replaced on the next trigger.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,13 +79,13 @@ fn scroll_step(increment: i32, dy: f32) -> i32 {
 }
 
 /// The wheel step for the audio chips, from `[audio] increment`.
-fn audio_step(dy: f32) -> i32 {
-    scroll_step(services::volume::settings().step(), dy)
+fn audio_step(host: &Host, dy: f32) -> i32 {
+    scroll_step(host.options::<AudioConfig>().step(), dy)
 }
 
 /// The wheel step for the backlight chip, from `[brightness] increment`.
-fn brightness_step(dy: f32) -> i32 {
-    scroll_step(services::brightness::settings().step(), dy)
+fn brightness_step(host: &Host, dy: f32) -> i32 {
+    scroll_step(host.options::<BrightnessConfig>().step(), dy)
 }
 
 /// Flashes the volume OSD without changing anything — for callers that already moved the level (a keybind routed through IPC) and only want the feedback.
@@ -104,8 +106,8 @@ pub fn mic_action() {
     show(OsdKind::Microphone);
 }
 
-pub fn mic_scroll(_dx: f32, dy: f32) {
-    services::volume::step_mic(audio_step(dy));
+pub fn mic_scroll(host: &Host, _dx: f32, dy: f32) {
+    services::volume::step_mic(audio_step(host, dy));
     show(OsdKind::Microphone);
 }
 
@@ -114,8 +116,8 @@ pub fn volume_action() {
     show(OsdKind::Volume);
 }
 
-pub fn volume_scroll(_dx: f32, dy: f32) {
-    services::volume::step(audio_step(dy));
+pub fn volume_scroll(host: &Host, _dx: f32, dy: f32) {
+    services::volume::step(audio_step(host, dy));
     show(OsdKind::Volume);
 }
 
@@ -123,7 +125,7 @@ pub fn brightness_action() {
     show(OsdKind::Brightness);
 }
 
-pub fn brightness_scroll(_dx: f32, dy: f32) {
-    services::brightness::step(brightness_step(dy));
+pub fn brightness_scroll(host: &Host, _dx: f32, dy: f32) {
+    services::brightness::step(brightness_step(host, dy));
     show(OsdKind::Brightness);
 }

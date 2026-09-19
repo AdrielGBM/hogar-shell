@@ -6,15 +6,13 @@ use std::sync::Arc;
 
 use telar::{PreviewEntry, PreviewSurface};
 
-use config::{Config, DrawerConfig};
+use config::Config;
 
 /// The previews this crate registers by hand, for the surfaces whose content is still built by a Rust function. The drawer is not among them: its panel is `drawer_panel.rsx`, so its preview is a `[preview]` block there.
 pub fn entries() -> Vec<PreviewEntry> {
     let config = config::config().unwrap_or_else(|| Arc::new(Config::starter()));
     let popouts = config.popouts;
-    // A screen's length would not fit the page; what a bar has to be given exactly is its thickness, which is the axis every chip on it sizes itself against — and on the axis it actually runs along, since a vertical bar handed 940 × its thickness is a top bar's strip standing in for one, with no room to hold a zone.
-    //
-    // Read from the config, as `bar_chip` reads it when the preview builds. The surface env cannot answer here: it is set by the build, and this list is drawn up before any of them runs — so it named whichever edge the previous preview happened to leave behind, or `Top` on the first.
+    // What a bar must be given exactly is its thickness, the axis every chip sizes against; read from config since the surface env isn't set yet at this point in the build.
     let edge = ui::panel::drawn_edge(&config);
     let thickness = config.bars.get(edge).size as f32;
     let bar_surface = if edge.is_horizontal() {
@@ -63,6 +61,6 @@ pub fn entries() -> Vec<PreviewEntry> {
 
 /// Which module the drawer is showing, which is decided by the chip that opened it and so has to be put in scope before the panel builds. `clock` because it needs nothing from the machine to draw.
 pub fn drawer() {
-    ui::preview::bar_chip();
-    crate::drawer::set_drawer_ctx("clock".to_string(), DrawerConfig::default());
+    let env = ui::preview::bar_surface();
+    crate::drawer::set_drawer_host("clock", &env);
 }

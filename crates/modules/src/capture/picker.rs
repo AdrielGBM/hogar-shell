@@ -80,7 +80,6 @@ pub fn pick(then: impl Fn(Picked) + 'static) {
             Rc::clone(&frozen),
             Rc::clone(&then),
         )
-        .expect("picker build failed")
     })
     .open_handle();
     OPEN.with(|slot| *slot.borrow_mut() = Some(handle));

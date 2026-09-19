@@ -523,6 +523,26 @@ impl Default for TemperatureConfig {
     }
 }
 
+/// How hot a reading is against `[temperature] warn` and `critical`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Normal,
+    Warn,
+    Critical,
+}
+
+impl TemperatureConfig {
+    pub fn severity(&self, celsius: f32) -> Severity {
+        if celsius >= self.critical {
+            Severity::Critical
+        } else if celsius >= self.warn {
+            Severity::Warn
+        } else {
+            Severity::Normal
+        }
+    }
+}
+
 /// One charge level worth interrupting the user about, declared as a `[[battery.warn_levels]]` table. It fires once as the charge crosses down through `level` while discharging, and re-arms once the battery is charging again — so a laptop left at 19 % does not warn every minute.
 ///
 /// `title` and `message` left empty take the shell's own translated text, so the defaults follow the UI language instead of pinning English into everyone's config; `{level}` in either is replaced with the charge at the moment it fired.

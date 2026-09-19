@@ -9,15 +9,13 @@ fn focus(id: i32) {
     hyprland::focus_workspace_id(id);
 }
 
-let env = ui::module::surface_env();
-let config = env
-    .as_ref()
-    .map(|e| e.config.workspaces.clone())
-    .unwrap_or_default();
-let output = env.as_ref().and_then(|e| e.output.clone());
+let host = ui::host::Host::current()?;
+let config = host.options::<::config::WorkspacesConfig>().clone();
+let output = host.output.clone();
 
 let occupied_background = config.occupied_background;
 let indicator = config.indicator;
+let trail = config.trail();
 
 // Seeded from the last snapshot rather than left empty until the first event lands: the subscription below delivers it, but only on the next turn of the loop, so the bar's first frame would draw an empty row.
 let list = signal(
@@ -34,12 +32,14 @@ platform_wayland::watch(hyprland::subscribe, move |snap: Snapshot| {
 let style = PillStyle {
     theme: use_theme::<NordTheme>(),
     // Pills round like the sibling chips instead of a fixed radius, so they follow the theme/`[shape]` radius.
-    radius: ui::module::chip_radius(),
+    radius: host.corner_radius(),
     // A stretched horizontal chip can't derive its width from its height, so size both sides to make a square.
-    side: ui::module::bar_thickness(),
-    vertical: ui::module::bar_is_vertical(),
+    side: host.thickness(),
+    vertical: host.is_vertical(),
     occupied_background,
     indicator,
+    spring: host.config().animation.spring(),
+    trail,
 };
 [view]
 pill_grid items:items style:style on_press:focus

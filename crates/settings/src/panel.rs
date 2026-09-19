@@ -11,8 +11,8 @@ use telar::{
 use crate::form::*;
 use config::Config;
 use config::theme::{FontRole, NordTheme};
+use ui::host::Host;
 use ui::icon::icon_view;
-use ui::module::{icon_px, module_fg};
 use util::state::kept;
 
 /// This application's module id, which is also the id its surface is registered under — the entry its own writes stamp, so the reload each one causes passes the window by (see [`surfaces::shell::stamp`]).
@@ -24,9 +24,9 @@ const NAV_GAP: f32 = 24.0;
 const SEARCH_WIDTH: f32 = 220.0;
 
 /// The bar chip: a gear that opens the settings panel.
-pub fn settings_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fg = module_fg();
-    icon_view(|| "settings".to_string(), move || fg.get(), icon_px())
+pub fn settings_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fg = host.foreground;
+    icon_view(|| "settings".to_string(), move || fg, host.icon_size())
 }
 
 /// The settings panel: an in-shell editor for `config.toml`. Each section's fields are seeded from the current file, and a form applies itself a moment after the last edit — its Save button is the same write without the wait (see [`live_apply`]). Both go through [`Config::save_section`] (format-preserving), which the running shell hot-reloads and applies live; Revert (in the header) puts the file back to how it was when the window opened.
@@ -36,7 +36,6 @@ pub fn settings_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     // Before anything reads the file, so what the window vouches for can only lag behind what its forms show.
     crate::form::seeding_from(&path);
     let config = Arc::new(Config::load_or_default(&path));
-    services::locale::attach(config.language());
     // Which file the forms on this window edit, said once here rather than handed to each of them — see `form::source`.
     crate::form::set_source((*path).clone());
 

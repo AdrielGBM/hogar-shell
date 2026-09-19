@@ -168,6 +168,11 @@ pub fn current() -> Option<Graph> {
     GRAPH.current()
 }
 
+/// Stands a graph in for PipeWire's, without starting the monitor — what a `[preview]` draws its device rows from. See [`util::broadcast::Service::seed`].
+pub fn seed(graph: Graph) {
+    GRAPH.seed(graph);
+}
+
 /// Publishes a graph the shell itself just caused, so a chip moves on the same frame instead of waiting for the monitor to report back. The reading that follows reconciles whatever PipeWire actually accepted.
 pub fn publish(graph: Graph) {
     GRAPH.publish(graph);

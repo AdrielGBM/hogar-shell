@@ -12,13 +12,9 @@ use config::theme::{FontRole, NordTheme};
 use services::session::{self, Action};
 
 /// The bar chip: a power symbol that opens the session menu.
-pub fn power_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fg = ui::module::module_fg();
-    ui::icon::icon_view(
-        || "power".to_string(),
-        move || fg.get(),
-        ui::module::icon_px(),
-    )
+pub fn power_chip(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fg = host.foreground;
+    ui::icon::icon_view(|| "power".to_string(), move || fg, host.icon_size())
 }
 
 /// The session menu: one tile per action this machine can actually perform.

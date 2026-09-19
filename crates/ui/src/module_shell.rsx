@@ -1,6 +1,6 @@
 [logic]
 use crate::icon_glyph::{icon_glyph, IconGlyphProps};
-use crate::module::{DragOpen, chip_pad, from_chip, open_panel};
+use crate::module::{DragOpen, from_chip, open_panel};
 use ::config::Variant;
 use ::config::theme::NordTheme;
 use std::cell::RefCell;
@@ -17,6 +17,10 @@ pub struct Props {
     pub radius: f32 = 0.0,
     /// A square icon chip that scales with the bar, rather than a content-width text pill.
     pub square: bool = false,
+    /// The padding around a square chip's icon, which is what makes it as wide as its bar is thick: [`crate::host::Host::inset`].
+    pub inset: f32 = 0.0,
+    /// Whether the chip runs down a vertical bar, where it has no length to give up.
+    pub vertical: bool = false,
     /// Gives up width when the bar is short of it, instead of holding the chip's content width. Only for a chip whose label elides — otherwise it hides its own tail with nothing to say so.
     pub elastic: bool = false,
     pub on_press: Option<Rc<dyn Fn()>> = None,
@@ -33,12 +37,12 @@ let (hover, active) = match props.variant {
     Variant::Filled => (accent.darken(0.08), accent.darken(0.16)),
 };
 
-// A square chip stretches to the bar's thickness, and symmetric padding around a bar-proportional icon (see `icon_px`) makes the other side match.
-let inset_x = if props.square { chip_pad() } else { 8.0 };
-let inset_y = if props.square { chip_pad() } else { 2.0 };
+// A square chip stretches to the bar's thickness, and symmetric padding around a bar-proportional icon (see `Host::icon_size`) makes the other side match.
+let inset_x = if props.square { props.inset } else { 8.0 };
+let inset_y = if props.square { props.inset } else { 2.0 };
 
 // An elastic chip needs the floor out from under it as well as the willingness to shrink: a flex item's own minimum is its content, and a label that has not been told it may elide reports the whole title as content. Only along a horizontal bar, where there is a length to give up — down a vertical one a chip's width is the bar's, and these modules show their glyph alone anyway.
-let elastic = props.elastic && !crate::module::bar_is_vertical();
+let elastic = props.elastic && !props.vertical;
 let shrink = if elastic { 1.0 } else { 0.0 };
 let floor = if elastic {
     SizeDimension::Px(0.0)
@@ -81,5 +85,5 @@ row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shr
 [preview "Module chip" fixture:crate::preview::bar_chip]
 // Wrapped in a row so the chip keeps its own width: on the preview page's column it would stretch the full width instead, which is the one shape a bar never gives it.
 row
-    module_shell radius:8 square:true rest:(use_theme::<::config::theme::NordTheme>().overlay)
+    module_shell radius:8 square:true inset:(crate::host::Host::current()?.inset()) rest:(use_theme::<::config::theme::NordTheme>().overlay)
         icon_glyph name:(Reactive::of(|| "cpu".to_string())) size:18

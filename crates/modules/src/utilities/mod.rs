@@ -6,7 +6,7 @@
 
 mod capture;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, RectStyle,
@@ -14,11 +14,11 @@ use telar::{
 };
 use ui::scale::{paint, space};
 
-use config::UtilitiesConfig;
 use config::theme::{FontRole, NordTheme};
+use config::{Config, UtilitiesConfig};
 use ui::glyph;
+use ui::host::Host;
 use ui::icon::icon_view;
-use ui::module::{icon_px, module_fg, surface_env};
 use ui::placeholder;
 use util::report::{Finding, Report};
 
@@ -170,12 +170,12 @@ impl Default for TileState {
 }
 
 /// The bar chip: a slider glyph that opens the panel.
-pub fn utilities_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fg = module_fg();
+pub fn utilities_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fg = host.foreground;
     icon_view(
         || glyph::utilities().to_string(),
-        move || fg.get(),
-        icon_px(),
+        move || fg,
+        host.icon_size(),
     )
 }
 
@@ -214,15 +214,34 @@ pub fn check(config: &UtilitiesConfig, file: &Path) -> Report {
 }
 
 /// The panel: the toggles, then the capture controls, then what has been recorded.
-pub fn utilities_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let theme = use_theme::<NordTheme>();
-    let config = surface_env()
-        .map(|env| env.config.utilities.clone())
-        .unwrap_or_default();
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
-    }
+pub fn utilities_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    utilities_view(
+        host.options::<UtilitiesConfig>(),
+        Recordings::of(host.config()),
+        use_theme::<NordTheme>(),
+    )
+}
 
+/// Where the recordings the panel lists are, which `[paths] recordings` and `[recorder]` configure rather than `[utilities]`.
+struct Recordings {
+    dir: PathBuf,
+    limit: usize,
+}
+
+impl Recordings {
+    fn of(config: &Config) -> Self {
+        Self {
+            dir: config.recordings_dir(),
+            limit: config.recorder.entries(),
+        }
+    }
+}
+
+fn utilities_view(
+    config: &UtilitiesConfig,
+    recordings: Recordings,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let title = Text::new(
         || telar::t!("utilities.title"),
         LayoutStyle::new(),
@@ -233,12 +252,16 @@ pub fn utilities_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
         },
     )?;
 
-    let mut children: Vec<Box<dyn LayoutItem>> = vec![box_item(title), grid(&config, theme)?];
+    let mut children: Vec<Box<dyn LayoutItem>> = vec![box_item(title), grid(config, theme)?];
     if config.show_capture {
         children.push(capture::capture_card(theme)?);
     }
     if config.show_recordings {
-        children.push(capture::recordings_card(theme)?);
+        children.push(capture::recordings_card(
+            recordings.dir,
+            recordings.limit,
+            theme,
+        )?);
     }
 
     Ok(Box::new(Container::new(
@@ -259,16 +282,19 @@ pub(crate) fn panel_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
             .padding_all(space::xl())
             .width(420.0),
         paint::xl(theme.surface),
-        vec![utilities_panel()?],
+        vec![{
+            let config = config::config().unwrap_or_else(|| std::sync::Arc::new(Config::starter()));
+            utilities_view(&config.utilities, Recordings::of(&config), theme)?
+        }],
     )?))
 }
 
 /// The toggle grid on its own, for a surface that wants the switches without the rest of the panel — the notification centre hosts exactly these, and hosting a second copy of them is what the sidebar existing at all is supposed to avoid.
-pub fn toggles_grid(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = surface_env()
-        .map(|env| env.config.utilities.clone())
-        .unwrap_or_default();
-    grid(&config, theme)
+pub fn toggles_grid(
+    config: &UtilitiesConfig,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    grid(config, theme)
 }
 
 /// The toggles, laid out in rows of `[utilities] columns`.
@@ -749,7 +775,14 @@ mod tests {
 
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        assert!(utilities_panel().is_ok());
+        assert!(
+            utilities_view(
+                &UtilitiesConfig::default(),
+                Recordings::of(&Config::default()),
+                NordTheme::new()
+            )
+            .is_ok()
+        );
     }
 
     #[test]

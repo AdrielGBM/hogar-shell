@@ -1,21 +1,19 @@
-//! What the shell draws where a config names something this build does not have.
-//!
-//! Drawing nothing was the old answer, and the worst one available: a misspelt module id vanished from its bar and a misspelt toggle from its grid, and the only record that either had ever been asked for was a warning in a log nobody reads. A placeholder keeps the place the user gave the entry, in the error colour, carrying the id as it was written — so the mistake is on screen, where the user is looking, beside whatever they meant it to sit next to.
-//!
-//! **What a press does, and what it deliberately does not.** It opens the settings window, where the config is edited, through the same route a chip opens its own panel by. It offers no "remove" or "reset": both would act on the config model that a later sprint replaces with a layout model, and would be written against a shape already slated for deletion. But a press has to do *something*: one that fell through would click whatever is under the bar, and one swallowed without a response reads as a shell that has stopped working.
+//! What the shell draws where a config names something this build does not have, or where a module failed to build; a placeholder keeps the entry's place in the error colour rather than vanishing it silently into a log nobody reads.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use telar::{
-    AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, Slots, Text, box_item,
+    AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension,
+    Slots, StyledContainer, Text, box_item,
 };
 
+use config::Variant;
 use config::theme::{FontRole, NordTheme};
-use config::{Edge, Variant};
 
+use crate::host::{Host, Representation};
 use crate::icon::icon_view;
-use crate::module::{icon_px, module_foreground, open_panel};
+use crate::module::{module_foreground, open_panel};
 use crate::module_shell::{ModuleShellProps, module_shell};
 use crate::scale::space;
 
@@ -40,18 +38,29 @@ pub fn open_settings() {
     open_panel(FIXED_IN);
 }
 
-/// The chip a bar draws for `id` when no module answers to it.
-///
-/// Built on [`module_shell`] like every other chip, so it takes the size, padding, corner radius and hover of the chips beside it in every shape mode — a placeholder that sized itself would be the one chip on the bar that got the bar wrong. Along a horizontal bar it shows the glyph and the id; down a vertical one there is no length to write an id along, so it is the glyph alone in a square chip, the way a text chip shows only its glyph down one.
-pub fn placeholder_chip(
+/// What stands in for `id` as `host.representation`: a chip on a bar, and elsewhere a box saying which id, and `reason` when there is one.
+pub fn placeholder(
     id: &str,
-    edge: Edge,
+    reason: Option<&str>,
+    host: &Host,
     theme: NordTheme,
-    radius: f32,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    match host.representation {
+        Representation::Chip => placeholder_chip(id, host, theme),
+        _ => placeholder_box(id, reason, host, theme),
+    }
+}
+
+/// Built on [`module_shell`] like every other chip, so it takes the size, padding, corner radius and hover of the chips beside it in every shape mode — a placeholder that sized itself would be the one chip on the bar that got the bar wrong. Along a horizontal bar it shows the glyph and the id; down a vertical one there is no length to write an id along, so it is the glyph alone in a square chip, the way a text chip shows only its glyph down one.
+fn placeholder_chip(
+    id: &str,
+    host: &Host,
+    theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let ink = ink(theme);
-    let glyph = icon_view(|| GLYPH.to_string(), move || ink, icon_px())?;
-    let content: Box<dyn LayoutItem> = if edge.is_vertical() {
+    let glyph = icon_view(|| GLYPH.to_string(), move || ink, host.icon_size())?;
+    let vertical = host.is_vertical();
+    let content: Box<dyn LayoutItem> = if vertical {
         glyph
     } else {
         let id = id.to_string();
@@ -74,8 +83,10 @@ pub fn placeholder_chip(
         ModuleShellProps::props()
             .variant(Variant::Filled)
             .accent(fill(theme))
-            .radius(radius)
-            .square(edge.is_vertical())
+            .radius(host.corner_radius())
+            .square(vertical)
+            .inset(host.inset())
+            .vertical(vertical)
             .on_press(Some(Rc::new(open_settings) as Rc<dyn Fn()>))
             .build(),
         telar::Children::new({
@@ -90,6 +101,55 @@ pub fn placeholder_chip(
     )
 }
 
+/// Takes no press, unlike the chip: it may stand where a `ReadOnly` representation was promised — on the lock screen, over the desktop — and a placeholder must not be the one thing there that takes input.
+fn placeholder_box(
+    id: &str,
+    reason: Option<&str>,
+    host: &Host,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let ink = ink(theme);
+    let glyph = icon_view(|| GLYPH.to_string(), move || ink, 18.0)?;
+    let text = |line: String, role: FontRole| {
+        Text::new(
+            move || line.clone(),
+            LayoutStyle::new(),
+            move || theme.text_style(role, ink),
+        )
+        .map(box_item)
+    };
+    let heading = Container::new(
+        LayoutStyle::new()
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .gap(space::sm()),
+        vec![glyph, text(id.to_string(), FontRole::Body)?],
+    )?;
+    let mut lines: Vec<Box<dyn LayoutItem>> = vec![Box::new(heading)];
+    if let Some(reason) = reason {
+        lines.push(text(reason.to_string(), FontRole::Caption)?);
+    }
+    let style = LayoutStyle::new()
+        .flex_column()
+        .gap(space::sm())
+        .padding_all(space::lg());
+    let style = match host.widget_size() {
+        Some(size) => {
+            let extent = size.extent();
+            style.width(extent.width).height(extent.height)
+        }
+        None if host.extent.width.is_finite() => style.width(host.extent.width),
+        None => style.width(SizeDimension::Percent(1.0)),
+    };
+    let radius = host.shape.radius;
+    let fill = fill(theme);
+    Ok(Box::new(StyledContainer::new(
+        style,
+        move |_| RectStyle::filled(fill, radius),
+        lines,
+    )?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +157,17 @@ mod tests {
         AvailableSpace, Event, PointerButton, PointerSource, compute_layout, reset_layout_runtime,
         set_theme, track_layout,
     };
+
+    fn host() -> Host {
+        Host::chip(
+            crate::host::InstanceId::new("clokc"),
+            std::sync::Arc::new(config::Config::starter()),
+            config::Edge::Top,
+            fill(NordTheme::new()),
+            ink(NordTheme::new()),
+            None,
+        )
+    }
 
     thread_local! {
         static OPENED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -111,7 +182,7 @@ mod tests {
             OPENED.with(|opened| opened.borrow_mut().push(panel.to_string()))
         });
         let mut chip =
-            placeholder_chip("clokc", Edge::Top, NordTheme::new(), 8.0).expect("the chip builds");
+            placeholder_chip("clokc", &host(), NordTheme::new()).expect("the chip builds");
         let rect = track_layout(chip.layout_node()).expect("the chip registers its rect");
         compute_layout(
             chip.layout_node(),

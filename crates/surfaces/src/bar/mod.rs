@@ -5,6 +5,7 @@ pub use app::BarApp;
 pub use autohide::{AutoHide, RevealMargins};
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use telar::{
     AlignItems, Clip, ClippedItem, Color, Container, JustifyContent, LayoutError, LayoutItem,
@@ -12,39 +13,36 @@ use telar::{
 };
 
 use config::theme::NordTheme;
-use config::{Config, Edge, ModuleEntry, ResolvedShape, Shape, Zone};
-use ui::module::{
-    DragOpen, ModuleClick, ModuleCtx, ModuleDef, ModuleRegistry, module_foreground, resting_fill,
-    set_module_fg,
-};
+use config::{Config, Edge, ModuleEntry, ResolvedShape, Shape, Variant, Zone};
+use ui::descriptor::{ChipDef, ChipFrame, ModuleDescriptor};
+use ui::host::{Host, InstanceId};
+use ui::module::{DragOpen, module_foreground, resting_fill};
 use ui::module_shell::{ModuleShellProps, module_shell};
-use ui::placeholder::placeholder_chip;
+use ui::placeholder::placeholder;
 
-/// The bar the running config draws, for [`crate::preview`] — every chip the user put on it, in the zones and the shape they configured, against the registry the app installed.
+/// The bar the running config draws, for [`crate::preview`] — every chip the user put on it, in the zones and the shape they configured, against the module table the app installed.
 pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let env = ui::preview::bar_chip();
+    let env = ui::preview::bar_surface();
     let theme = env.config.resolve_theme();
-    ui::module::with_registry(|registry| {
-        build_bar(&env.config, env.edge, theme.accent, registry, theme)
-    })
+    build_bar(
+        &env.config,
+        env.edge,
+        env.output.as_deref(),
+        ui::descriptor::installed(),
+        theme,
+    )
 }
 
 /// Builds the content tree for the bar, branching on its resolved `mode` (bar/sections/chips); visual properties come from gap/spacing/radius, not mode.
 pub fn build_bar(
-    config: &Config,
+    config: &Arc<Config>,
     edge: Edge,
-    accent: Color,
-    registry: &ModuleRegistry,
+    output: Option<&str>,
+    modules: &[ModuleDescriptor],
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let bar = config.bars.get(edge);
     let shape = config.shape_for(edge);
-    let ctx = ModuleCtx {
-        theme,
-        accent,
-        bar_size: bar.size,
-        edge,
-    };
     // `[corners]` sugar: corner modules are routed to the owning bar's start/end zones, not separate surfaces.
     let (lead, trail) = config.corner_modules_for(edge);
     let mut start: Vec<ModuleEntry> = Vec::new();
@@ -57,18 +55,17 @@ pub fn build_bar(
         (bar.center.as_slice(), Zone::Center),
         (end.as_slice(), Zone::End),
     ];
-    let chrome = Chrome { edge, shape, theme };
+    let chrome = Chrome {
+        config,
+        edge,
+        shape,
+        theme,
+        output,
+    };
     match shape.mode {
-        Shape::Bar => build_whole_bar(config, &chrome, &zones, registry, &ctx),
-        Shape::Sections => build_units(
-            config,
-            &chrome,
-            &zones,
-            registry,
-            &ctx,
-            Granularity::Section,
-        ),
-        Shape::Chips => build_units(config, &chrome, &zones, registry, &ctx, Granularity::Chip),
+        Shape::Bar => build_whole_bar(&chrome, &zones, modules),
+        Shape::Sections => build_units(&chrome, &zones, modules, Granularity::Section),
+        Shape::Chips => build_units(&chrome, &zones, modules, Granularity::Chip),
     }
 }
 
@@ -84,10 +81,25 @@ fn justify(zone: Zone) -> JustifyContent {
 }
 
 #[derive(Clone, Copy)]
-struct Chrome {
+struct Chrome<'a> {
+    config: &'a Arc<Config>,
     edge: Edge,
     shape: ResolvedShape,
     theme: NordTheme,
+    output: Option<&'a str>,
+}
+
+impl Chrome<'_> {
+    fn host(&self, id: &str, accent: Color, foreground: Color) -> Host {
+        Host::chip(
+            InstanceId::of_module(id),
+            Arc::clone(self.config),
+            self.edge,
+            accent,
+            foreground,
+            self.output.map(str::to_string),
+        )
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -105,13 +117,17 @@ fn bar_fill(config: &Config, token: Color) -> Color {
 }
 
 fn build_whole_bar(
-    config: &Config,
     chrome: &Chrome,
     zones: &Zones,
-    registry: &ModuleRegistry,
-    ctx: &ModuleCtx,
+    modules: &[ModuleDescriptor],
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let Chrome { edge, shape, theme } = *chrome;
+    let Chrome {
+        config,
+        edge,
+        shape,
+        theme,
+        ..
+    } = *chrome;
     // With a frame up, the ring it draws already fills the strip this bar sits in. Painting again on top is what made two translucent fills stack and darken along the edges the two share.
     let base = bar_fill(config, theme.base);
     let spacing = shape.spacing;
@@ -121,10 +137,9 @@ fn build_whole_bar(
     for (entries, in_zone) in zones {
         // Modules blend into the shared surface (transparent rest); STRETCH makes every chip the bar's height so text pills and icon chips line up. The hover/press (and Filled) highlight rounds at the theme's chip radius, matching chip mode.
         let items = build_items(
-            config,
+            chrome,
             entries,
-            registry,
-            ctx,
+            modules,
             Color::TRANSPARENT,
             shape.chip_radius(),
         )?;
@@ -154,14 +169,18 @@ fn build_whole_bar(
 }
 
 fn build_units(
-    config: &Config,
     chrome: &Chrome,
     zones: &Zones,
-    registry: &ModuleRegistry,
-    ctx: &ModuleCtx,
+    modules: &[ModuleDescriptor],
     granularity: Granularity,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let Chrome { edge, shape, theme } = *chrome;
+    let Chrome {
+        config,
+        edge,
+        shape,
+        theme,
+        ..
+    } = *chrome;
     let spacing = shape.spacing;
     // Section: modules share a per-zone surface panel (wrapped in `unit`); Chip: each module is its own free-standing pill, no `unit`.
     let surface = bar_fill(config, theme.surface);
@@ -171,7 +190,7 @@ fn build_units(
     };
     let mut slots = Vec::with_capacity(3);
     for (entries, in_zone) in zones {
-        let items = build_items(config, entries, registry, ctx, rest, shell_radius)?;
+        let items = build_items(chrome, entries, modules, rest, shell_radius)?;
         let content: Vec<Box<dyn LayoutItem>> = if items.is_empty() {
             Vec::new()
         } else {
@@ -179,7 +198,6 @@ fn build_units(
                 Granularity::Section => {
                     vec![unit(edge, *in_zone, shape.radius, spacing, surface, items)?]
                 }
-                // The shells already are the chips; place them directly.
                 Granularity::Chip => items,
             }
         };
@@ -297,7 +315,7 @@ fn end_air(config: &Config, edge: Edge, air: f32) -> (f32, f32) {
 /// It runs along the bar for the same reason [`zone`] does. A wrapper fixed to a row applies `cross` across the *screen's* vertical, so on a left or right bar it stretched each chip's height — which is already its content — and left its width free: every wrapped chip then sat at its own content width, ragged against the bar's inner edge, with the wide ones running off the screen. Thirteen chips carry a popout, so on a vertical bar that was most of them. `elastic` is the chip's own, forwarded. The wrapper is what the zone actually sizes, so a rigid one around an elastic chip is a chip that never gets the chance to give anything up — and both modules whose label elides carry a popout, which is to say both of them are wrapped.
 fn chip_wrapper(
     content: Box<dyn LayoutItem>,
-    on_scroll: Option<fn(f32, f32)>,
+    on_scroll: Option<Wheel>,
     popout: Option<&str>,
     cross: AlignItems,
     edge: Edge,
@@ -313,7 +331,7 @@ fn chip_wrapper(
     let style = axis(style, edge);
     let mut wrapper = StyledContainer::new(style, move |_r| paint, vec![content])?;
     if let Some(on_scroll) = on_scroll {
-        wrapper = wrapper.on_scroll(on_scroll);
+        wrapper = wrapper.on_scroll(move |dx, dy| on_scroll(dx, dy));
     }
     if let Some(module) = popout {
         // Tracked before the handler that reads it is attached, so the popout has a rect the first time the pointer arrives.
@@ -327,19 +345,26 @@ fn chip_wrapper(
     Ok(Box::new(wrapper))
 }
 
-/// The drag-to-open gesture for a chip, when it has a panel to open and the gesture is switched on.
-///
-/// Only a module whose click *opens a panel* gets one: dragging a volume chip has nothing to open, and arming a gesture that can only do nothing would still cancel the tap that does something.
-fn drag_open_for(id: &str, def: Option<&ModuleDef>, edge: Edge) -> Option<DragOpen> {
-    if !matches!(def?.click, Some(ModuleClick::Panel)) {
+/// The drag-to-open gesture for a chip, when it has a panel to open and the gesture is switched on; a chip with nothing to open gets none, since arming a gesture that can only do nothing would still cancel its tap.
+fn drag_open_for(config: &Config, module: &ModuleDescriptor, edge: Edge) -> Option<DragOpen> {
+    if !opens_panel(module) {
         return None;
     }
-    let threshold = config::surface_env()?.config.panels.drag_threshold()?;
+    let threshold = config.panels.drag_threshold()?;
     Some(DragOpen {
-        module: id.to_string(),
+        module: module.id.to_string(),
         edge,
         threshold,
     })
+}
+
+/// A chip opens its module's panel when the module has one and the chip was given no press of its own.
+fn opens_panel(module: &ModuleDescriptor) -> bool {
+    let chip_acts = module
+        .representations
+        .chip
+        .is_some_and(|chip| chip.press.is_some());
+    module.representations.panel.is_some() && !chip_acts
 }
 
 fn axis(style: LayoutStyle, edge: Edge) -> LayoutStyle {
@@ -350,118 +375,233 @@ fn axis(style: LayoutStyle, edge: Edge) -> LayoutStyle {
     }
 }
 
-/// Builds each entry's content and wraps it in its base container. The variant and accent come from the entry when it names them and from `[modules.<id>]` otherwise, which is what lets the same module sit on a bar twice looking different.
-///
-/// An id no module answers to is drawn as a [placeholder](ui::placeholder) where it was declared. It used to be skipped with a log line, so a misspelt module vanished from the bar with nothing on screen to say it had been asked for; the placeholder keeps the chip's place and says which id is wrong, and `hogar-shell config check` says where.
+/// Builds each entry's content and wraps it in its base container; an id no module answers to, one whose module has no chip, and a chip whose build fails or panics are each drawn as a [placeholder](ui::placeholder) where declared, so the mistake stays on screen.
 fn build_items(
-    config: &Config,
+    chrome: &Chrome,
     entries: &[ModuleEntry],
-    registry: &ModuleRegistry,
-    ctx: &ModuleCtx,
+    modules: &[ModuleDescriptor],
     rest: Color,
     radius: f32,
 ) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
+    let config = chrome.config;
     let mut items: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(entries.len());
     for entry in entries {
         let id = &entry.id;
         let variant = config.entry_variant(entry);
-        let accent = ctx.theme.accent_by_name(config.entry_accent_name(entry));
-        // Set the foreground BEFORE building the content so `module_fg()` snapshots this module's color.
-        set_module_fg(module_foreground(variant, accent, ctx.theme));
-        let content = match registry.build(id, ctx) {
-            Some(Ok(content)) => content,
-            Some(Err(e)) => return Err(e),
-            None => {
-                items.push(placeholder_chip(id, ctx.edge, ctx.theme, radius)?);
-                continue;
-            }
-        };
-        let def = registry.def(id);
-        let popout = def.is_some_and(|d| d.popout) && config.popouts.enabled;
-        if def.is_some_and(|d| d.self_managed) {
-            // A self-managed module skips `module_shell` — it lays itself out and takes its own presses — so its wheel handler, popout tracking and the surface it rests on go on a wrapper with no padding or hover state.
-            let scroll = def.and_then(|d| d.scroll);
-            let fill = if def.is_some_and(|d| d.filler) {
-                Color::TRANSPARENT
-            } else {
-                resting_fill(variant, rest, accent)
-            };
-            if scroll.is_none() && !popout && fill == Color::TRANSPARENT {
-                items.push(content);
-            } else {
-                items.push(chip_wrapper(
-                    content,
-                    scroll,
-                    popout.then_some(id.as_str()),
-                    AlignItems::CENTER,
-                    ctx.edge,
-                    false,
-                    RectStyle::filled(fill, radius),
-                )?);
-            }
+        let accent = chrome.theme.accent_by_name(config.entry_accent_name(entry));
+        let host = chrome.host(id, accent, module_foreground(variant, accent, chrome.theme));
+        let placed = ui::descriptor::lookup(modules, id)
+            .and_then(|module| Some((*module, module.representations.chip?)));
+        let Some((module, chip)) = placed else {
+            items.push(placeholder(id, None, &host, chrome.theme)?);
             continue;
-        }
-        // Handed over bare: the chip shell dispatches every press with its own rect in scope, `Panel` and `Action` alike, so whatever this opens can hang off the chip without being told where it is.
-        let on_press: Option<Rc<dyn Fn()>> = match def.and_then(|d| d.click) {
-            Some(ModuleClick::Panel) => {
-                let id = id.clone();
-                Some(Rc::new(move || crate::panel::toggle_panel(&id)))
-            }
-            Some(ModuleClick::Action(action)) => Some(Rc::new(action)),
-            None => None,
         };
-        let mut inner = Slots::new();
-        inner.push(None, content);
-        let chip = module_shell(
-            ModuleShellProps::props()
-                .variant(variant)
-                .rest(rest)
-                .accent(accent)
-                .radius(radius)
-                .square(def.is_some_and(|d| d.icon))
-                .elastic(def.is_some_and(|d| d.elastic))
-                .on_press(on_press)
-                .on_scroll(
-                    def.and_then(|d| d.scroll)
-                        .map(|wheel| Rc::new(wheel) as Rc<dyn Fn(f32, f32)>),
-                )
-                .drag_open(drag_open_for(id, def, ctx.edge))
-                .build(),
-            telar::Children::new({
-                let inner = std::cell::RefCell::new(Some(inner));
-                move || {
-                    inner
-                        .borrow_mut()
-                        .take()
-                        .ok_or_else(|| LayoutError::Engine("children built twice".into()))
-                }
-            }),
-        )?;
-        // Outside the chip rather than on it: the chip's own hover already swaps its paint, and stacking a second meaning onto that callback would tie the two together.
-        items.push(if popout {
-            chip_wrapper(
-                chip,
-                None,
-                Some(id.as_str()),
-                AlignItems::STRETCH,
-                ctx.edge,
-                def.is_some_and(|d| d.elastic),
-                RectStyle::filled(Color::TRANSPARENT, 0.0),
-            )?
-        } else {
-            chip
-        });
+        let look = Look {
+            variant,
+            rest,
+            accent,
+            radius,
+            edge: chrome.edge,
+            popout: module.representations.popout.is_some() && config.popouts.enabled,
+            drag_open: drag_open_for(config, &module, chrome.edge),
+        };
+        let style = chip_box(&chip, chrome.edge);
+        let built = host.clone();
+        items.push(ui::descriptor::guard(id, &host, style, move || {
+            placed_chip(&module, &chip, &built, look)
+        })?);
     }
     Ok(items)
+}
+
+/// How a chip is dressed on this bar, resolved before its build so the build can run where a failure is caught.
+struct Look {
+    variant: Variant,
+    rest: Color,
+    accent: Color,
+    radius: f32,
+    edge: Edge,
+    popout: bool,
+    drag_open: Option<DragOpen>,
+}
+
+/// The box a chip's failure is caught in, carrying the part the chip plays in its zone: a filler takes the room left over, an elastic chip gives up length, and every other chip holds its own.
+fn chip_box(chip: &ChipDef, edge: Edge) -> LayoutStyle {
+    let style = axis(LayoutStyle::new().align_items(AlignItems::STRETCH), edge);
+    match (chip.frame, chip.elastic) {
+        (ChipFrame::Filler, _) => style.flex_grow(1.0).flex_shrink(1.0),
+        (_, true) => style.flex_shrink(1.0).min_width(0.0).min_height(0.0),
+        (_, false) => style.flex_shrink(0.0),
+    }
+}
+
+fn placed_chip(
+    module: &ModuleDescriptor,
+    chip: &ChipDef,
+    host: &Host,
+    look: Look,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let content = module.build(host).unwrap_or_else(|| {
+        Err(LayoutError::Engine(format!(
+            "'{}' declares no chip",
+            module.id
+        )))
+    })?;
+    let popout = look.popout.then_some(module.id);
+    let wheel = wheel(chip, host);
+    if chip.is_bare() {
+        return bare_chip(
+            content,
+            chip,
+            wheel,
+            popout,
+            look.edge,
+            resting_fill(look.variant, look.rest, look.accent),
+            look.radius,
+        );
+    }
+    // Handed over bare: the chip shell dispatches every press with its own rect in scope, a panel toggle and a press of the chip's own alike, so whatever this opens can hang off the chip without being told where it is.
+    let on_press: Option<Rc<dyn Fn()>> = match chip.press {
+        Some(press) => Some(Rc::new(press)),
+        None if opens_panel(module) => {
+            let id = module.id;
+            Some(Rc::new(move || crate::panel::toggle_panel(id)))
+        }
+        None => None,
+    };
+    let mut inner = Slots::new();
+    inner.push(None, content);
+    let shell = module_shell(
+        ModuleShellProps::props()
+            .variant(look.variant)
+            .rest(look.rest)
+            .accent(look.accent)
+            .radius(look.radius)
+            .square(chip.square)
+            .inset(host.inset())
+            .vertical(host.is_vertical())
+            .elastic(chip.elastic)
+            .on_press(on_press)
+            .on_scroll(wheel)
+            .drag_open(look.drag_open)
+            .build(),
+        telar::Children::new({
+            let inner = std::cell::RefCell::new(Some(inner));
+            move || {
+                inner
+                    .borrow_mut()
+                    .take()
+                    .ok_or_else(|| LayoutError::Engine("children built twice".into()))
+            }
+        }),
+    )?;
+    // Outside the chip rather than on it: the chip's own hover already swaps its paint, and stacking a second meaning onto that callback would tie the two together.
+    match popout {
+        Some(module) => chip_wrapper(
+            shell,
+            None,
+            Some(module),
+            AlignItems::STRETCH,
+            look.edge,
+            chip.elastic,
+            RectStyle::filled(Color::TRANSPARENT, 0.0),
+        ),
+        None => Ok(shell),
+    }
+}
+
+type Wheel = Rc<dyn Fn(f32, f32)>;
+
+/// The chip's wheel handler bound to the host it was built under, so a notch acts on this bar's options rather than the global config.
+fn wheel(chip: &ChipDef, host: &Host) -> Option<Wheel> {
+    let scroll = chip.scroll?;
+    let host = host.clone();
+    Some(Rc::new(move |dx, dy| scroll(&host, dx, dy)))
+}
+
+/// A self-managed module skips `module_shell` — it lays itself out and takes its own presses — so its wheel handler, popout tracking and the surface it rests on go on a wrapper with no padding or hover state.
+fn bare_chip(
+    content: Box<dyn LayoutItem>,
+    chip: &ChipDef,
+    wheel: Option<Wheel>,
+    popout: Option<&str>,
+    edge: Edge,
+    resting: Color,
+    radius: f32,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fill = match chip.frame {
+        ChipFrame::Filler => Color::TRANSPARENT,
+        _ => resting,
+    };
+    if wheel.is_none() && popout.is_none() && fill == Color::TRANSPARENT {
+        return Ok(content);
+    }
+    chip_wrapper(
+        content,
+        wheel,
+        popout,
+        AlignItems::CENTER,
+        edge,
+        false,
+        RectStyle::filled(fill, radius),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use telar::{AvailableSpace, compute_layout, reset_layout_runtime, set_theme};
-    use ui::module::ModuleDef;
+    use ui::descriptor::{CardDef, Input, Representations};
 
-    fn dummy(_ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    fn test_host(edge: Edge) -> Host {
+        let theme = NordTheme::new();
+        let mut config = Config::default();
+        for bar in [
+            &mut config.bars.top,
+            &mut config.bars.bottom,
+            &mut config.bars.left,
+            &mut config.bars.right,
+        ] {
+            bar.size = 32;
+        }
+        Host::chip(
+            InstanceId::new("dummy"),
+            Arc::new(config),
+            edge,
+            theme.accent,
+            theme.text,
+            None,
+        )
+    }
+
+    fn module(id: &'static str, chip: ChipDef) -> ModuleDescriptor {
+        ModuleDescriptor {
+            id,
+            name: id,
+            icon: "circle",
+            options: &[],
+            representations: Representations {
+                chip: Some(chip),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        }
+    }
+
+    fn chip(build: ui::descriptor::Build) -> ChipDef {
+        ChipDef::new(build, Input::ReadOnly)
+    }
+
+    fn with_popout(mut module: ModuleDescriptor) -> ModuleDescriptor {
+        module.representations.popout = Some(CardDef {
+            build: |_| ui::card::Card::titled("probe"),
+            input: Input::ReadOnly,
+        });
+        module
+    }
+
+    fn dummy(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         Ok(Box::new(StyledContainer::new(
             LayoutStyle::new().width(20.0).height(20.0),
             |_r| RectStyle::filled(telar::Color::from_rgb_u8(255, 255, 255), 0.0),
@@ -470,7 +610,7 @@ mod tests {
     }
 
     /// A chip the width of a window title, next to which `dummy` is the same chip after the title got shorter.
-    fn wide(_ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    fn wide(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         Ok(Box::new(StyledContainer::new(
             LayoutStyle::new().width(320.0).height(20.0),
             |_r| RectStyle::filled(telar::Color::from_rgb_u8(255, 255, 255), 0.0),
@@ -484,8 +624,8 @@ mod tests {
     }
 
     /// `dummy`, publishing where it landed — the one chip a centring test needs to find again.
-    fn centred(ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
-        let item = dummy(ctx)?;
+    fn centred(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        let item = dummy(host)?;
         let rect = track_layout(item.layout_node()).expect("a container registers its rect");
         CENTRED.with(|c| *c.borrow_mut() = Some(rect));
         Ok(item)
@@ -497,7 +637,7 @@ mod tests {
     }
 
     /// A module whose own content will give up width if anything above it lets the pressure through, and says how much it kept — the probe for whether a chip's elasticity survives the wrappers around it.
-    fn stretchy(_ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    fn stretchy(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let item = StyledContainer::new(
             LayoutStyle::new()
                 .width(320.0)
@@ -512,19 +652,25 @@ mod tests {
         Ok(Box::new(item))
     }
 
-    fn registry() -> ModuleRegistry {
-        let mut r = ModuleRegistry::new();
-        r.register("dummy", ModuleDef::new(dummy));
-        r.register("wide", ModuleDef::new(wide));
-        r.register("centred", ModuleDef::new(centred));
-        // Both eliding modules carry a hover popout, so the wrapper is part of the path under test.
-        let mut elastic = ModuleDef::new(stretchy).elastic();
-        elastic.popout = true;
-        r.register("stretchy", elastic);
-        let mut rigid = ModuleDef::new(stretchy);
-        rigid.popout = true;
-        r.register("rigid", rigid);
-        r
+    fn registry() -> Vec<ModuleDescriptor> {
+        vec![
+            module("dummy", chip(dummy)),
+            module("wide", chip(wide)),
+            module("centred", chip(centred)),
+            // Both eliding modules carry a hover popout, so the wrapper is part of the path under test.
+            with_popout(module("stretchy", chip(stretchy).elastic())),
+            with_popout(module("rigid", chip(stretchy))),
+            module("panics", chip(panics)),
+            module("fails", chip(fails)),
+        ]
+    }
+
+    fn panics(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        panic!("a chip that panics while it builds")
+    }
+
+    fn fails(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        Err(LayoutError::Engine("a chip that fails to build".into()))
     }
 
     thread_local! {
@@ -532,14 +678,14 @@ mod tests {
             const { std::cell::RefCell::new(Vec::new()) };
     }
 
-    fn wanted(ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    fn wanted(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         BUILT.with(|built| built.borrow_mut().push("wanted"));
-        dummy(ctx)
+        dummy(host)
     }
 
-    fn unwanted(ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    fn unwanted(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         BUILT.with(|built| built.borrow_mut().push("unwanted"));
-        dummy(ctx)
+        dummy(host)
     }
 
     /// A module no zone names costs nothing at all.
@@ -547,9 +693,10 @@ mod tests {
     /// The registry holds every module the shell ships, so a build that walked *it* rather than the zones would construct a chip nobody asked for — and constructing a chip is what subscribes it, which turns an unused module into a running service. That is the residency half of the rule, reached through the one door that makes it invisible: the widget tree, where an extra chip is off-screen rather than wrong.
     #[test]
     fn a_module_no_zone_names_is_never_built() {
-        let mut registry = ModuleRegistry::new();
-        registry.register("wanted", ModuleDef::new(wanted));
-        registry.register("unwanted", ModuleDef::new(unwanted));
+        let registry = vec![
+            module("wanted", chip(wanted)),
+            module("unwanted", chip(unwanted)),
+        ];
 
         reset_layout_runtime();
         set_theme(NordTheme::new());
@@ -558,9 +705,9 @@ mod tests {
             toml::from_str("[bars.top]\nsize=34\ncenter=[\"wanted\"]\n").unwrap();
 
         build_bar(
-            &config,
+            &Arc::new(config.clone()),
             Edge::Top,
-            NordTheme::new().accent,
+            None,
             &registry,
             NordTheme::new(),
         )
@@ -585,16 +732,7 @@ mod tests {
         reset_layout_runtime();
         set_theme(NordTheme::new());
         let mut inner = Slots::new();
-        inner.push(
-            None,
-            dummy(&ModuleCtx {
-                theme: NordTheme::new(),
-                accent: NordTheme::new().accent,
-                bar_size: 32,
-                edge: Edge::Top,
-            })
-            .unwrap(),
-        );
+        inner.push(None, dummy(&test_host(Edge::Top)).unwrap());
         let chip = module_shell(
             ModuleShellProps::props()
                 .variant(config::Variant::Default)
@@ -654,28 +792,31 @@ mod tests {
         static OPENED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     }
 
-    /// A misspelt module used to vanish, and the bar closed up around the gap as if it had never been asked for. It is drawn where it was declared instead — between the chips it was written between, as thick as they are, naming itself where there is room to — and a press on it lands on it and opens the settings window rather than falling through to whatever is under the bar. Every shape, down a vertical bar as well as across a horizontal one.
+    /// A misspelt module used to vanish, and the bar closed up around the gap as if it had never been asked for; a chip whose build failed or panicked took the whole bar down. Either is drawn where it was declared instead — between the chips it was written between, as thick as they are, naming itself where there is room to — and a press on it lands on it and opens the settings window rather than falling through to whatever is under the bar. Every shape, down a vertical bar as well as across a horizontal one.
     #[test]
-    fn an_unknown_module_holds_its_place_between_its_neighbours() {
+    fn an_unknown_or_failing_module_holds_its_place_between_its_neighbours() {
         use telar::{DrawCommand, Event, Paint, PointerButton, PointerSource, Rect};
 
         let theme = NordTheme::new();
         ui::module::set_panel_opener(|panel| {
             OPENED.with(|opened| opened.borrow_mut().push(panel.to_string()))
         });
-        for edge in [Edge::Top, Edge::Left] {
-            for mode in ["bar", "sections", "chips"] {
+        for broken in ["nope", "panics", "fails"] {
+            for (edge, mode) in [Edge::Top, Edge::Left]
+                .into_iter()
+                .flat_map(|edge| ["bar", "sections", "chips"].map(|mode| (edge, mode)))
+            {
                 reset_layout_runtime();
                 set_theme(theme);
                 OPENED.with(|opened| opened.borrow_mut().clear());
                 let cfg: Config = toml::from_str(&format!(
                     "[shape]\nmode=\"{mode}\"\n[bars.{}]\nsize=32\n\
-                     start=[{{id=\"dummy\",variant=\"filled\",accent=\"green\"}},\"nope\",\
+                     start=[{{id=\"dummy\",variant=\"filled\",accent=\"green\"}},\"{broken}\",\
                      {{id=\"dummy\",variant=\"filled\",accent=\"purple\"}}]\n",
                     edge.as_str()
                 ))
                 .unwrap();
-                let bar = build_bar(&cfg, edge, theme.accent, &registry(), theme)
+                let bar = build_bar(&Arc::new(cfg.clone()), edge, None, &registry(), theme)
                     .expect("the bar builds");
                 let (w, h) = if edge.is_horizontal() {
                     (600.0, 32.0)
@@ -721,12 +862,12 @@ mod tests {
                 let before = rect_of(theme.green).expect("the chip before it draws");
                 let after = rect_of(theme.purple).expect("the chip after it draws");
                 let placeholder = rect_of(ui::placeholder::fill(theme)).unwrap_or_else(|| {
-                    panic!("{edge:?}/{mode}: the unknown id put nothing on the bar")
+                    panic!("{broken}/{edge:?}/{mode}: the placeholder put nothing on the bar")
                 });
 
                 assert!(
                     along(before).0 < along(placeholder).0 && along(placeholder).0 < along(after).0,
-                    "{edge:?}/{mode}: the placeholder is at {:?}, not between the chips at {:?} and {:?} it was declared \
+                    "{broken}/{edge:?}/{mode}: the placeholder is at {:?}, not between the chips at {:?} and {:?} it was declared \
                      between",
                     along(placeholder),
                     along(before),
@@ -735,21 +876,21 @@ mod tests {
                 assert_eq!(
                     across(placeholder),
                     across(before),
-                    "{edge:?}/{mode}: the placeholder is not as thick as the chip beside it"
+                    "{broken}/{edge:?}/{mode}: the placeholder is not as thick as the chip beside it"
                 );
                 assert!(
-                    along(placeholder).1 >= ui::module::icon_px(),
-                    "{edge:?}/{mode}: the placeholder is {}px long, too short to hold its own glyph",
+                    along(placeholder).1 >= test_host(edge).icon_size(),
+                    "{broken}/{edge:?}/{mode}: the placeholder is {}px long, too short to hold its own glyph",
                     along(placeholder).1
                 );
                 let named = tree
                     .commands()
                     .iter()
-                    .any(|command| matches!(command, DrawCommand::Text { text, .. } if &**text == "nope"));
+                    .any(|command| matches!(command, DrawCommand::Text { text, .. } if &**text == broken));
                 assert_eq!(
                     named,
                     edge.is_horizontal(),
-                    "{edge:?}/{mode}: the id is written along a horizontal bar, and only there — down a vertical one \
+                    "{broken}/{edge:?}/{mode}: the id is written along a horizontal bar, and only there — down a vertical one \
                      there is no length to write it along"
                 );
 
@@ -776,7 +917,7 @@ mod tests {
                 assert_eq!(
                     OPENED.with(|opened| opened.borrow().clone()),
                     ["settings"],
-                    "{edge:?}/{mode}: a press on the placeholder has to land on it and open the settings window"
+                    "{broken}/{edge:?}/{mode}: a press on the placeholder has to land on it and open the settings window"
                 );
             }
         }
@@ -784,20 +925,19 @@ mod tests {
 
     #[test]
     fn a_self_managed_module_rests_on_a_chip_like_its_neighbours() {
-        let surfaces = |mode: &str, def: ModuleDef| {
+        let surfaces = |mode: &str, def: ChipDef| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let mut registry = ModuleRegistry::new();
-            registry.register("probe", def);
+            let registry = vec![module("probe", def)];
             let cfg: Config = toml::from_str(&format!(
                 "[shape]\nmode=\"{mode}\"\n[bars.top]\nsize=32\ncenter=[\"probe\"]\n"
             ))
             .unwrap();
             let surface = telar::Paint::Solid(bar_fill(&cfg, NordTheme::new().surface));
             let bar = build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Top,
-                NordTheme::new().accent,
+                None,
                 &registry,
                 NordTheme::new(),
             )
@@ -824,23 +964,23 @@ mod tests {
         };
 
         assert_eq!(
-            surfaces("chips", ModuleDef::new(dummy)),
+            surfaces("chips", chip(dummy)),
             1,
             "a plain chip rests on the chip bar's surface"
         );
         assert_eq!(
-            surfaces("chips", ModuleDef::new(dummy).self_managed()),
+            surfaces("chips", chip(dummy).self_managed()),
             1,
             "a self-managed module on a chip bar sat on nothing — workspaces, tray and lockstatus floated bare between \
              their neighbours' pills"
         );
         assert_eq!(
-            surfaces("chips", ModuleDef::new(dummy).filler()),
+            surfaces("chips", chip(dummy).filler()),
             0,
             "a filler is a gap, and a gap with a pill behind it is a chip with nothing in it"
         );
         assert_eq!(
-            surfaces("bar", ModuleDef::new(dummy).self_managed()),
+            surfaces("bar", chip(dummy).self_managed()),
             0,
             "a whole bar is the surface, so nothing on it rests on one of its own"
         );
@@ -857,9 +997,9 @@ mod tests {
             reset_layout_runtime();
             set_theme(NordTheme::new());
             let bar = build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Top,
-                NordTheme::new().accent,
+                None,
                 &registry(),
                 NordTheme::new(),
             );
@@ -883,9 +1023,9 @@ mod tests {
             ))
             .unwrap();
             let bar = build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Top,
-                NordTheme::new().accent,
+                None,
                 &registry(),
                 NordTheme::new(),
             )
@@ -938,14 +1078,11 @@ mod tests {
         for edge in [Edge::Top, Edge::Left] {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let ctx = ModuleCtx {
-                theme: NordTheme::new(),
-                accent: NordTheme::new().accent,
-                bar_size: 32,
-                edge,
-            };
+            let host = test_host(edge);
             let overrun = || -> Vec<Box<dyn LayoutItem>> {
-                (0..4).map(|_| wide(&ctx).expect("a chip builds")).collect()
+                (0..4)
+                    .map(|_| wide(&host).expect("a chip builds"))
+                    .collect()
             };
 
             let start_zone = zone(
@@ -958,7 +1095,7 @@ mod tests {
             )
             .unwrap();
             let start_rect = track_layout(start_zone.layout_node()).expect("the zone registers");
-            let centre_chip = dummy(&ctx).expect("a chip builds");
+            let centre_chip = dummy(&host).expect("a chip builds");
             let centre_rect = track_layout(centre_chip.layout_node()).expect("the chip registers");
             let centre_zone = zone(
                 edge,
@@ -1036,9 +1173,9 @@ mod tests {
             ))
             .unwrap();
             let bar = build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Left,
-                NordTheme::new().accent,
+                None,
                 &registry(),
                 NordTheme::new(),
             )
@@ -1104,9 +1241,9 @@ mod tests {
             ))
             .unwrap();
             let bar = build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Top,
-                NordTheme::new().accent,
+                None,
                 &registry(),
                 NordTheme::new(),
             )
@@ -1145,32 +1282,33 @@ mod tests {
         const RUN: f32 = 900.0;
         const BAR: f32 = 400.0;
 
-        fn overrunner(_ctx: &ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        fn overrunner(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
             Ok(Box::new(StyledContainer::new(
                 LayoutStyle::new().width(32.0).height(RUN).flex_shrink(0.0),
                 |_r| RectStyle::filled(telar::Color::from_rgb_u8(255, 255, 255), 0.0),
                 vec![],
             )?))
         }
-        fn nudge(_dx: f32, _dy: f32) {}
+        fn nudge(_host: &Host, _dx: f32, _dy: f32) {}
 
         reset_layout_runtime();
         set_theme(NordTheme::new());
-        let mut registry = ModuleRegistry::new();
-        registry.register("dummy", ModuleDef::new(dummy));
-        registry.register(
-            "overrunner",
-            ModuleDef::new(overrunner).self_managed().on_scroll(nudge),
-        );
+        let registry = vec![
+            module("dummy", chip(dummy)),
+            module(
+                "overrunner",
+                chip(overrunner).self_managed().on_scroll(nudge),
+            ),
+        ];
         let cfg: Config = toml::from_str(
             "[shape]\nmode=\"bar\"\nspacing=8\n\
              [bars.left]\nsize=32\nstart=[\"overrunner\"]\ncenter=[\"dummy\"]\n",
         )
         .unwrap();
         let bar = build_bar(
-            &cfg,
+            &Arc::new(cfg.clone()),
             Edge::Left,
-            NordTheme::new().accent,
+            None,
             &registry,
             NordTheme::new(),
         )
@@ -1237,9 +1375,9 @@ mod tests {
             ))
             .unwrap();
             let bar = build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Top,
-                NordTheme::new().accent,
+                None,
                 &registry(),
                 NordTheme::new(),
             )
@@ -1302,9 +1440,9 @@ mod tests {
         )
         .unwrap();
         let bar = build_bar(
-            &cfg,
+            &Arc::new(cfg.clone()),
             Edge::Top,
-            NordTheme::new().accent,
+            None,
             &registry(),
             NordTheme::new(),
         )
@@ -1364,9 +1502,9 @@ mod tests {
             reset_layout_runtime();
             set_theme(NordTheme::new());
             let bar = build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Top,
-                NordTheme::new().accent,
+                None,
                 &registry(),
                 NordTheme::new(),
             );
@@ -1384,9 +1522,9 @@ mod tests {
         set_theme(NordTheme::new());
         assert!(
             build_bar(
-                &cfg,
+                &Arc::new(cfg.clone()),
                 Edge::Top,
-                NordTheme::new().accent,
+                None,
                 &registry(),
                 NordTheme::new()
             )
@@ -1405,9 +1543,9 @@ mod tests {
             set_theme(NordTheme::new());
             assert!(
                 build_bar(
-                    &cfg,
+                    &Arc::new(cfg.clone()),
                     Edge::Left,
-                    NordTheme::new().accent,
+                    None,
                     &registry(),
                     NordTheme::new()
                 )
@@ -1421,7 +1559,7 @@ mod tests {
     ///
     /// The regression: the wrapper a popout-bearing chip sits in was fixed to a row, so on a left or right bar it stretched the chip's height (already its content) and left the width free. Each wrapped chip then took its own content width, ragged against the bar's inner edge, and the wide ones ran off the screen. Building proves none of that — the wrapper builds happily either way — so this lays a real bar out and measures the chips.
     #[test]
-    fn a_wrapped_chip_fills_the_bar_thickness_on_a_vertical_bar() {
+    fn a_wrapped_chip_fills_a_vertical_bar_across() {
         let side = 44.0;
         // A chip wider than the bar is the case that shows the bug: a clock, a window title, a netspeed readout. Its own width is content-driven, so only `align-items: stretch` on the right axis reins it in.
         let content_width = 120.0;

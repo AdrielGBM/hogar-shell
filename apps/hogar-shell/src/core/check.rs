@@ -1,8 +1,4 @@
-//! What the user's config asks for that the shell cannot do, and where the file says it.
-//!
-//! Each name is asked of the owner that knows it, because no one of them knows every id: `config` knows the dashboard's pages, the palettes, accents and colour tokens, and which corners a bar is there to draw; `modules` knows the utility toggles and the status icons; and which ids a bar can hold is the module registry, which exists nowhere below this crate. This file asks each of them, adds where each answer sits in the text, and keeps the user told.
-//!
-//! **Building a report runs nothing and changes nothing**, the discipline [`resolves`](crate::core::commands::resolves) keeps for the command table. A module id is looked up with [`ModuleRegistry::def`] and never built, because building a chip is what subscribes its service; and a file is read, never loaded through [`Config::load`], which writes the starter config when there is none — so asking whether a config is fine on a machine that has none would have answered by creating one. The one read that does go through the loader, merging a monitor override over the global config, is only made when both files exist, which is the case where the loader has nothing to write.
+//! Checks what the config file says without running or loading anything, since [`Config::load`] writes a starter config when none exists.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -13,23 +9,24 @@ use std::path::{Path, PathBuf};
 use config::{Config, Corner, Edge, GLOBAL_ONLY_SECTIONS, LoadError};
 use services::notifications::{Urgency, notify_status, withdraw_status};
 use toml::de::{DeTable, DeValue};
-use ui::module::ModuleRegistry;
+use ui::descriptor::ModuleDescriptor;
 use util::report::{Finding, Report, Span};
 
 /// How many new findings a notification lists before it counts the rest. A card is read at a glance; the full list is what `config check` is for.
 const LISTED: usize = 3;
 
-/// Every id on a bar or in a corner that no module answers to — each of which the bar draws as a placeholder.
-fn unknown_modules(config: &Config, file: &Path, registry: &ModuleRegistry) -> Report {
+/// Every id on a bar or in a corner the bar draws as a placeholder: one no module answers to, and one whose module has no chip.
+fn unplaceable_modules(config: &Config, file: &Path, modules: &[ModuleDescriptor]) -> Report {
     let mut report = Report::default();
     let mut unknown = |key: String, id: &str| {
-        if registry.def(id).is_none() {
-            report.error(Finding::new(
-                file,
-                key,
-                telar::t!("config.unknown_module", id = id),
-            ));
-        }
+        let message = match ui::descriptor::lookup(modules, id) {
+            None => telar::t!("config.unknown_module", id = id),
+            Some(module) if module.representations.chip.is_none() => {
+                telar::t!("config.module_without_chip", id = id)
+            }
+            Some(_) => return,
+        };
+        report.error(Finding::new(file, key, message));
     };
     for edge in Edge::ALL {
         let bar = config.bars.get(edge);
@@ -52,8 +49,8 @@ fn unknown_modules(config: &Config, file: &Path, registry: &ModuleRegistry) -> R
 }
 
 /// What is wrong with a config that has already been parsed, attributed to `file`: every id it names that its owner does not have. Spans are left to whoever has the text.
-fn problems(config: &Config, file: &Path, registry: &ModuleRegistry) -> Report {
-    let mut report = unknown_modules(config, file, registry);
+fn problems(config: &Config, file: &Path, modules: &[ModuleDescriptor]) -> Report {
+    let mut report = unplaceable_modules(config, file, modules);
     report.merge(config.dashboard.check(file));
     report.merge(modules::utilities::check(&config.utilities, file));
     report.merge(modules::statusicons::check(&config.status_icons, file));
@@ -103,7 +100,12 @@ fn global_only(table: &DeTable, file: &Path) -> Report {
 /// Everything wrong with one file's text: that it does not parse, or what it names that the shell does not have. `global` is the `config.toml` that `file` overrides, for a `monitors/<output>/config.toml` — which may not set every section, and whose screen is drawn from the two merged.
 ///
 /// Parsed straight into [`Config`] rather than through a `toml::Value` first, as the loader does: the result is the same config, but a type error keeps the place it was made at.
-fn check_text(file: &Path, text: &str, registry: &ModuleRegistry, global: Option<&Path>) -> Report {
+fn check_text(
+    file: &Path,
+    text: &str,
+    modules: &[ModuleDescriptor],
+    global: Option<&Path>,
+) -> Report {
     let config: Config = match toml::from_str(text) {
         Ok(config) => config,
         Err(error) => {
@@ -112,7 +114,7 @@ fn check_text(file: &Path, text: &str, registry: &ModuleRegistry, global: Option
             return report;
         }
     };
-    let mut report = problems(&config, file, registry);
+    let mut report = problems(&config, file, modules);
     match global {
         None => report.merge(corners_shown_nowhere(&config, None, file)),
         Some(global) => {
@@ -188,11 +190,11 @@ fn overrides(path: &Path) -> Vec<PathBuf> {
 }
 
 /// Every override beside `path`, each checked on its own terms.
-fn check_overrides(path: &Path, registry: &ModuleRegistry) -> Report {
+fn check_overrides(path: &Path, modules: &[ModuleDescriptor]) -> Report {
     let mut report = Report::default();
     for file in overrides(path) {
         match std::fs::read_to_string(&file) {
-            Ok(text) => report.merge(check_text(&file, &text, registry, Some(path))),
+            Ok(text) => report.merge(check_text(&file, &text, modules, Some(path))),
             Err(error) => report.error(unreadable(&file, &error)),
         }
     }
@@ -200,9 +202,9 @@ fn check_overrides(path: &Path, registry: &ModuleRegistry) -> Report {
 }
 
 /// The files at `path` as they are on disk, for `hogar-shell config check`: `config.toml` and every monitor override beside it, each read and parsed here. A missing `config.toml` is not a problem — the shell writes its starter config there on first run — and is never created by asking.
-pub(crate) fn on_disk(path: &Path, registry: &ModuleRegistry) -> Report {
+pub(crate) fn on_disk(path: &Path, modules: &[ModuleDescriptor]) -> Report {
     let mut report = match std::fs::read_to_string(path) {
-        Ok(text) => check_text(path, &text, registry, None),
+        Ok(text) => check_text(path, &text, modules, None),
         Err(error) if error.kind() == ErrorKind::NotFound => Report::default(),
         Err(error) => {
             let mut report = Report::default();
@@ -210,38 +212,29 @@ pub(crate) fn on_disk(path: &Path, registry: &ModuleRegistry) -> Report {
             report
         }
     };
-    report.merge(check_overrides(path, registry));
+    report.merge(check_overrides(path, modules));
     report
 }
 
-/// What the notice shows while the shell runs `config`: `config.toml` as `config` was loaded from it at `path` — or, when `failed` says it did not load, that failure — and the monitor overrides beside it as they are on disk, against the registry the bars build from.
-///
-/// **The files, and not what is running, decide what the notice says.** The two differ exactly when `config.toml` did not load: a reload that fails keeps the last config that loaded, and startup, which has none, runs the starter config. `config`'s own problems then describe a text the user has already edited away — fixed, perhaps, in the very save that broke the file — so they are set aside, and the file's one problem stands in for them: it did not load, and why. The overrides are checked on their own terms either way. That is also exactly what `hogar-shell config check` says about the same files, which is where the card sends the user.
-///
-/// When the file loads again, the reload that loads it reports what it holds. When putting the file back to what is on screen was the whole fix there is no reload to do it, and the reload path asks for this report itself, `failed` gone.
-///
-/// The loaded config rather than the file when it did load, because it is what the load itself read: reading the file again here would be a second look at a different moment, with room for an edit the shell has not applied yet.
+/// Reports config.toml and the monitor overrides' state; on a failed reload, reports the file's own failure rather than the still-running config, since that config describes a text the user has already edited away.
 pub fn running(config: &Config, path: &Path, failed: Option<&LoadError>) -> Report {
-    ui::module::with_registry(|registry| {
-        let mut report = Report::default();
-        match failed {
-            Some(LoadError::Parse(error)) => report.error(unparsable(path, error, None)),
-            Some(LoadError::Io(error)) => report.error(unreadable(path, error)),
-            None => {
-                report.merge(problems(config, path, registry));
-                report.merge(corners_shown_nowhere(config, None, path));
-            }
+    let modules = ui::descriptor::installed();
+    let mut report = Report::default();
+    match failed {
+        Some(LoadError::Parse(error)) => report.error(unparsable(path, error, None)),
+        Some(LoadError::Io(error)) => report.error(unreadable(path, error)),
+        None => {
+            report.merge(problems(config, path, modules));
+            report.merge(corners_shown_nowhere(config, None, path));
         }
-        report.merge(check_overrides(path, registry));
-        report
-    })
+    }
+    report.merge(check_overrides(path, modules));
+    report
 }
 
 /// `hogar-shell config check`: the report on what is at `path`, failing when there is an error so a script can branch on it, and saying plainly when there is nothing wrong.
 pub(crate) fn command(path: &Path) -> Result<String, String> {
-    let registry =
-        crate::core::registry::default_registry(&crate::core::popouts::default_popouts());
-    let report = on_disk(path, &registry);
+    let report = on_disk(path, crate::core::modules::MODULES);
     if report.is_clean() {
         return Ok(nothing_wrong(path));
     }
@@ -423,8 +416,8 @@ fn card(report: &Report) -> String {
 mod tests {
     use super::*;
 
-    fn registry() -> ModuleRegistry {
-        crate::core::registry::default_registry(&crate::core::popouts::default_popouts())
+    fn table() -> &'static [ModuleDescriptor] {
+        crate::core::modules::MODULES
     }
 
     /// A config written by hand with one of each mistake the report knows about, beside ids that are fine, so a report that named the wrong entry — or every entry in a list with one bad one — fails here.
@@ -444,7 +437,7 @@ toggles = ["wifi", "teleporter"]
     #[test]
     fn a_config_with_an_unknown_module_tab_and_toggle_reports_exactly_those_three() {
         telar::set_locale("en");
-        let report = check_text(Path::new("config.toml"), FIXTURE, &registry(), None);
+        let report = check_text(Path::new("config.toml"), FIXTURE, table(), None);
 
         assert_eq!(
             report.render(),
@@ -452,6 +445,19 @@ toggles = ["wifi", "teleporter"]
              config.toml:7:17: error: dashboard.tabs[1]: the dashboard has no page called 'wether'\n\
              config.toml:10:20: error: utilities.toggles[1]: there is no toggle called 'teleporter'\n",
             "each of the three is named once, where it is written, by the owner that knows it is wrong"
+        );
+    }
+
+    /// A module the table has but a bar cannot place passes a lookup and is still a placeholder on screen, so it is reported as its own error, where it is written.
+    #[test]
+    fn a_module_with_no_chip_on_a_bar_is_reported_where_it_is_written() {
+        telar::set_locale("en");
+        let text = "[bars.top]\nstart = [\"clock\", \"weather\"]\n\n[corners]\ntop_left = \"visualiser\"\n";
+        let report = check_text(Path::new("config.toml"), text, table(), None);
+        assert_eq!(
+            report.render(),
+            "config.toml:2:19: error: bars.top.start[1]: the 'weather' module has no chip to put on a bar\n\
+             config.toml:5:12: error: corners.top_left: the 'visualiser' module has no chip to put on a bar\n",
         );
     }
 
@@ -479,7 +485,7 @@ bse = "#2e3440"
     #[test]
     fn every_other_silent_drop_is_reported_where_it_is_written() {
         telar::set_locale("en");
-        let report = check_text(Path::new("config.toml"), MORE_DROPS, &registry(), None);
+        let report = check_text(Path::new("config.toml"), MORE_DROPS, table(), None);
 
         assert_eq!(
             report.render(),
@@ -496,7 +502,9 @@ bse = "#2e3440"
     #[test]
     fn a_corner_in_a_monitor_override_is_checked_against_the_merged_config() {
         telar::set_locale("en");
-        let dir = std::env::temp_dir().join(format!("hogar-shell-corners-{}", std::process::id()));
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("corners");
         std::fs::create_dir_all(dir.join("monitors/DP-1")).expect("a scratch directory");
         std::fs::create_dir_all(dir.join("monitors/HDMI-A-1")).expect("a scratch directory");
         let path = dir.join("config.toml");
@@ -516,7 +524,7 @@ bse = "#2e3440"
         )
         .expect("an override taking the top bar away");
 
-        let report = on_disk(&path, &registry());
+        let report = on_disk(&path, table());
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(
@@ -554,7 +562,7 @@ bse = "#2e3440"
         let starter = toml::to_string_pretty(&Config::starter()).expect("the starter serialises");
         let schema = config::schema::render(None).expect("the schema renders");
         for (name, text) in [("starter", starter), ("schema", schema)] {
-            let report = check_text(Path::new("config.toml"), &text, &registry(), None);
+            let report = check_text(Path::new("config.toml"), &text, table(), None);
             assert!(
                 report.is_clean(),
                 "the {name} config reports:\n{}",
@@ -567,9 +575,7 @@ bse = "#2e3440"
         static BUILT: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     }
 
-    fn built(
-        _ctx: &ui::module::ModuleCtx,
-    ) -> Result<Box<dyn telar::LayoutItem>, telar::LayoutError> {
+    fn built(_host: &ui::host::Host) -> Result<Box<dyn telar::LayoutItem>, telar::LayoutError> {
         BUILT.with(|built| built.borrow_mut().push("clock"));
         Err(telar::LayoutError::Engine(
             "a report must never build a module".into(),
@@ -579,7 +585,9 @@ bse = "#2e3440"
     /// Asking is not doing. A module built to see whether it exists is a module subscribed to its service, and a config loaded to see whether it parses is a starter config written to a machine that had none — so the report looks ids up, reads files, and does neither.
     #[test]
     fn building_a_report_runs_nothing_and_writes_nothing() {
-        let dir = std::env::temp_dir().join(format!("hogar-shell-check-{}", std::process::id()));
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("check");
         std::fs::create_dir_all(dir.join("monitors/DP-1")).expect("a scratch directory");
         let path = dir.join("config.toml");
         let _ = std::fs::remove_file(&path);
@@ -588,11 +596,24 @@ bse = "#2e3440"
             "[bars.left]\nstart = [\"clock\", \"clokc\"]\n",
         )
         .expect("an override to read");
-        let mut registry = ModuleRegistry::new();
-        registry.register("clock", ui::module::ModuleDef::new(built));
+        static CLOCK_ONLY: &[ModuleDescriptor] = &[ModuleDescriptor {
+            id: "clock",
+            name: "Clock",
+            icon: "clock",
+            options: &[],
+            representations: ui::descriptor::Representations {
+                chip: Some(ui::descriptor::ChipDef::new(
+                    built,
+                    ui::descriptor::Input::ReadOnly,
+                )),
+                ..ui::descriptor::Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        }];
 
-        let report = on_disk(&path, &registry);
-        ui::module::install(registry);
+        let report = on_disk(&path, CLOCK_ONLY);
+        ui::descriptor::install(CLOCK_ONLY);
         let running = running(&Config::starter(), &path, None);
 
         assert!(
@@ -628,8 +649,9 @@ bse = "#2e3440"
     #[test]
     fn config_check_fails_on_an_error_and_says_plainly_when_nothing_is_wrong() {
         telar::set_locale("en");
-        let dir =
-            std::env::temp_dir().join(format!("hogar-shell-check-command-{}", std::process::id()));
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("check-command");
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let path = dir.join("config.toml");
         let _ = std::fs::remove_file(&path);
@@ -671,7 +693,7 @@ bse = "#2e3440"
         let report = check_text(
             Path::new("monitors/DP-1/config.toml"),
             "[general]\nlanguage = \"es\"\n\n[bars.top]\ncenter = [\"clock\"]\n",
-            &registry(),
+            table(),
             Some(Path::new("config.toml")),
         );
 
@@ -688,7 +710,7 @@ bse = "#2e3440"
         let report = check_text(
             Path::new("config.toml"),
             "[bars.top]\nsize = \"tall\"\n",
-            &registry(),
+            table(),
             None,
         );
 
@@ -826,9 +848,10 @@ bse = "#2e3440"
     fn a_parse_failure_shows_on_the_one_card_and_a_fix_takes_it_off_leaving_the_rest() {
         telar::set_locale("en");
         fresh_notice();
-        ui::module::install(registry());
-        let dir =
-            std::env::temp_dir().join(format!("hogar-shell-check-unloaded-{}", std::process::id()));
+        ui::descriptor::install(table());
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("check-unloaded");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("monitors/DP-1")).expect("a scratch directory");
         let path = dir.join("config.toml");
@@ -896,6 +919,7 @@ bse = "#2e3440"
             assert!(!telar::t!("config.problems_hint").is_empty());
             assert!(telar::t!("config.problems_more", count = 2).contains('2'));
             assert!(telar::t!("config.unknown_module", id = "x").contains("'x'"));
+            assert!(telar::t!("config.module_without_chip", id = "x").contains("'x'"));
             assert!(telar::t!("config.global_only", section = "general").contains("[general]"));
             assert!(telar::t!("config.corner_nowhere", id = "x").contains("'x'"));
         }

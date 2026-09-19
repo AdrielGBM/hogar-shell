@@ -12,7 +12,7 @@ pub(crate) const PANEL: Target = Target {
             args: "<module>",
             help: "open a module's panel, or close it if it is up",
             run: |args| {
-                let module = arg(args, 0, "module")?;
+                let module = with_panel(arg(args, 0, "module")?)?;
                 surfaces::panel::toggle_panel(module);
                 Ok(module.to_string())
             },
@@ -22,7 +22,7 @@ pub(crate) const PANEL: Target = Target {
             args: "<module>",
             help: "open a module's panel (idempotent)",
             run: |args| {
-                let module = arg(args, 0, "module")?;
+                let module = with_panel(arg(args, 0, "module")?)?;
                 surfaces::panel::open_panel(module);
                 Ok(module.to_string())
             },
@@ -45,6 +45,15 @@ pub(crate) const PANEL: Target = Target {
         },
     ],
 };
+
+/// `module`, when it has a panel to open; the reply says so when it has none, rather than an `ok` for a request nothing acted on.
+fn with_panel(module: &str) -> Result<&str, String> {
+    if ui::descriptor::has_panel(module) {
+        Ok(module)
+    } else {
+        Err(format!("'{module}' has no panel"))
+    }
+}
 
 pub(crate) const LAUNCHER: Target = Target {
     name: "launcher",
@@ -91,7 +100,7 @@ pub(crate) const DASHBOARD: Target = Target {
                     set_dashboard_tab(name)?;
                 }
                 surfaces::panel::open_panel(modules::dashboard::ID);
-                Ok(modules::dashboard::tab().id().to_string())
+                Ok(dashboard_tab())
             },
         },
         Command {
@@ -111,7 +120,7 @@ pub(crate) const DASHBOARD: Target = Target {
                 if let Some(name) = args.first() {
                     set_dashboard_tab(name)?;
                 }
-                Ok(modules::dashboard::tab().id().to_string())
+                Ok(dashboard_tab())
             },
         },
     ],

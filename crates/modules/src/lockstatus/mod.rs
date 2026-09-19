@@ -47,7 +47,7 @@ pub fn shown(keys: LockKeys, config: LockStatusConfig) -> Vec<Lock> {
 pub struct IndicatorProps {
     pub lock: Lock,
     pub keys: ReadSignal<LockKeys>,
-    pub fg: ReadSignal<Color>,
+    pub fg: Color,
     pub idle: Color,
     pub size: f32,
     pub pad: f32,
@@ -68,11 +68,7 @@ pub fn indicator(
     let glyph = ui::icon::icon_view(
         move || lock.glyph().to_string(),
         move || {
-            if lock.engaged(keys.get()) {
-                fg.get()
-            } else {
-                idle
-            }
+            if lock.engaged(keys.get()) { fg } else { idle }
         },
         size,
     )?;

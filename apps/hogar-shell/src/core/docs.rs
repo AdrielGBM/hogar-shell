@@ -517,9 +517,10 @@ fn every_page_declares_a_known_kind_and_status() {
 /// A module a user can put on a bar and cannot read about is the gap this catches, and it closes in both directions: a page for a module that no longer exists is just as wrong as a module with no page.
 #[test]
 fn every_module_has_a_page_and_every_module_page_has_a_module() {
-    let popouts = crate::core::popouts::default_popouts();
-    let registry = crate::core::registry::default_registry(&popouts);
-    let registered: BTreeSet<String> = registry.iter().map(|(id, _)| id.to_string()).collect();
+    let registered: BTreeSet<String> = crate::core::modules::MODULES
+        .iter()
+        .map(|module| module.id.to_string())
+        .collect();
 
     let documented: BTreeSet<String> = feature_pages()
         .iter()

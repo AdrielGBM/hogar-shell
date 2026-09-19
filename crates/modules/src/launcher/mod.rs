@@ -381,7 +381,7 @@ fn open() -> SurfaceToken {
 
     // No `.size(...)`: a modal is dismissed by a press outside it, so its *surface* is full-screen and the scaffold centres the window inside it. The window's own size is a layout property (see `panel`), not a surface one — asking the surface to be 640×420 would leave every press beyond that box unheard.
     PanelSurface::new(Placement::centred(Centred::Modal).output(output), |env| {
-        panel(env.config.resolve_theme(), &env.config.launcher).expect("launcher build failed")
+        panel(env.config.resolve_theme(), &env.config.launcher)
     })
     .open()
 }

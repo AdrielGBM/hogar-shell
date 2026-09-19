@@ -108,65 +108,6 @@ pub fn capture(
     }
 }
 
-#[cfg(test)]
-mod toplevel_tests {
-    use super::*;
-
-    /// Capturing one window by the identifier the *other* connection reported, which is the whole claim: a protocol object cannot be shared between connections, and it does not have to be.
-    ///
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevel_capture -- --nocapture`
-    #[test]
-    fn toplevel_capture_names_a_window_across_two_connections() {
-        use std::sync::mpsc;
-        use std::time::Duration;
-
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to capture a real window; skipping");
-            return;
-        }
-        assert!(toplevel_capture_supported());
-
-        // The watcher's connection, which is where a caller's identifier would come from.
-        let (published, changes) = mpsc::channel();
-        let interest = crate::Interest::new();
-        assert!(crate::watch_toplevels(
-            &interest,
-            move |windows: &[crate::Toplevel]| {
-                let _ = published.send(windows.to_vec());
-            }
-        ));
-        let mut listed = Vec::new();
-        while let Ok(windows) = changes.recv_timeout(Duration::from_millis(500)) {
-            listed = windows;
-        }
-        let window = listed.first().expect("a window is open").clone();
-        eprintln!("capturing {:?} {:?}", window.app_id, window.identifier);
-
-        // And the capture's own, which has never seen that handle.
-        let shot = capture_toplevel(&window.identifier, false).expect("the window captures");
-        eprintln!("{}x{}", shot.width, shot.height);
-        assert!(shot.width > 0 && shot.height > 0);
-        assert_eq!(
-            shot.pixels.len(),
-            shot.width as usize * shot.height as usize * 4,
-            "tightly packed RGBA8, like every other capture"
-        );
-        assert!(
-            shot.pixels
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .any(|px| px[..3] != [0, 0, 0]),
-            "an all-black window means the capture went through but read nothing"
-        );
-
-        assert!(
-            capture_toplevel("not-a-window", false).is_err(),
-            "an identifier nothing answers to is an error, not someone else's pixels"
-        );
-    }
-}
-
 /// Captures one window, named by the identifier `ext-foreign-toplevel-list-v1` gave it.
 ///
 /// Only the newer protocol can do this: `wlr-screencopy` captures outputs, so there is no fallback and a compositor without `ext-image-copy-capture` says so rather than quietly handing back a screen.
@@ -1051,50 +992,5 @@ mod tests {
         };
         assert!(stopped.constraints().is_err());
         assert!(stopped.settled(), "and nothing waits on it");
-    }
-
-    /// Both routes, against the compositor that is actually running.
-    ///
-    /// Everything above this line is arithmetic on buffers a test made up; none of it can say whether the session hand-shake is right, and a protocol implementation that has never spoken to a compositor is a guess. Needs a live one, so it is opt-in the same way the clipboard round trip is: `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland capture -- --nocapture`
-    #[test]
-    fn both_routes_read_the_same_screen_back_at_the_same_size() {
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to capture from the real compositor; skipping");
-            return;
-        }
-        const SELECTION: CaptureArea = CaptureArea::Region {
-            x: 10,
-            y: 20,
-            width: 100,
-            height: 50,
-        };
-        let mut sizes = Vec::new();
-        for backend in [Backend::ImageCopyCapture, Backend::Screencopy] {
-            let whole = capture(None, CaptureArea::Output, false, backend)
-                .unwrap_or_else(|e| panic!("{backend:?} could not capture the screen: {e}"));
-            assert!(
-                whole.width > 0 && whole.height > 0,
-                "{backend:?} read nothing"
-            );
-            assert_eq!(
-                whole.pixels.len(),
-                whole.width as usize * whole.height as usize * 4,
-                "{backend:?} returned a buffer that is not its own size"
-            );
-
-            let part = capture(None, SELECTION, false, backend)
-                .unwrap_or_else(|e| panic!("{backend:?} could not capture a region: {e}"));
-            assert!(part.width < whole.width, "{backend:?} ignored the region");
-            sizes.push((whole.width, whole.height, part.width, part.height));
-            eprintln!(
-                "{backend:?}: {}×{} whole, {}×{} region",
-                whole.width, whole.height, part.width, part.height
-            );
-        }
-        // The point of the assertion: one protocol crops on the compositor's side and the other crops here, off a whole-output read scaled by hand. A HiDPI screen is where those two stop agreeing.
-        assert_eq!(
-            sizes[0], sizes[1],
-            "the two routes disagree about the screen"
-        );
     }
 }

@@ -1,16 +1,9 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 
-use telar::{Color, LayoutError, LayoutItem, ReadSignal, Rect, signal};
+use telar::{Color, Rect};
 
 use config::theme::NordTheme;
 use config::{Edge, Variant};
-
-pub use config::{SurfaceEnv, set_surface_env, surface_env};
-
-pub fn bar_edge() -> Edge {
-    surface_env().map(|e| e.edge).unwrap_or(Edge::Top)
-}
 
 thread_local! {
     static PRESSED_CHIP: Cell<Option<Rect>> = const { Cell::new(None) };
@@ -54,55 +47,6 @@ pub(crate) fn open_panel(module: &str) {
     });
 }
 
-pub fn bar_is_vertical() -> bool {
-    bar_edge().is_vertical()
-}
-
-#[derive(Clone, Copy)]
-pub struct ModuleCtx {
-    pub theme: NordTheme,
-    pub accent: Color,
-    /// The bar's thickness in px (height for top/bottom, width for left/right).
-    pub bar_size: u32,
-    pub edge: Edge,
-}
-
-thread_local! {
-    // The bar sets this per module, just before building that module's content.
-    static MODULE_FG: RefCell<Color> = RefCell::new(NordTheme::new().text);
-}
-
-pub fn set_module_fg(color: Color) {
-    MODULE_FG.with(|c| *c.borrow_mut() = color);
-}
-
-/// Snapshot of the current module's foreground for a `.rsx` module to bind as `color:$fg`; must be called once at build time so each module captures its OWN color, not the last-set one.
-pub fn module_fg() -> ReadSignal<Color> {
-    signal(MODULE_FG.with(|c| *c.borrow())).read_only()
-}
-
-/// The bar's thickness in px, or a sane default outside a surface; everything a module sizes derives from this, so a thin bar yields a small, proportional chip instead of an oversized one that squashes.
-pub fn bar_thickness() -> f32 {
-    surface_env().map(|e| e.bar_size).unwrap_or(34) as f32
-}
-
-/// Icon size for the current bar: ~0.75 of its thickness, so the glyph fills most of its square chip and scales with the bar.
-pub fn icon_px() -> f32 {
-    (bar_thickness() * 0.75).round().clamp(8.0, 64.0)
-}
-
-/// The resolved chip corner radius for this bar (per-bar → `[shape]` → theme), so a self-managed module's inner elements (e.g. workspace pills) round like the sibling chips instead of a hardcoded value.
-pub fn chip_radius() -> f32 {
-    surface_env()
-        .map(|e| e.config.shape_for(e.edge).chip_radius())
-        .unwrap_or(0.0)
-}
-
-/// Chosen so the chip's width (icon ≈ 0.75·thickness + two of these ≈ 0.25·thickness) equals the bar thickness, so a chip stretched to the bar's height comes out square.
-pub fn chip_pad() -> f32 {
-    (bar_thickness() * 0.125).round().max(1.0)
-}
-
 /// The foreground for a container variant: the plain text token when blending into the bar (default), or the higher-contrast of text/base over the accent when filled.
 pub fn module_foreground(variant: Variant, accent: Color, theme: NordTheme) -> Color {
     match variant {
@@ -141,152 +85,10 @@ impl DragOpen {
     }
 }
 
-pub type ModuleBuilder = fn(&ModuleCtx) -> Result<Box<dyn LayoutItem>, LayoutError>;
-
-/// What clicking a module does: `Panel` toggles its panel (drawer or float, per the module's `open` config); `Action` runs a custom handler.
-#[derive(Clone, Copy)]
-pub enum ModuleClick {
-    Panel,
-    Action(fn()),
-}
-
-pub struct ModuleDef {
-    pub builder: ModuleBuilder,
-    /// If true, the bar places the module bare instead of wrapping it in [`crate::module_shell::module_shell`] (e.g. the workspaces grid).
-    pub self_managed: bool,
-    /// If true, the container is a square chip that scales with the bar instead of a content-width text pill.
-    pub icon: bool,
-    /// What clicking the module does; `None` is a display-only chip.
-    pub click: Option<ModuleClick>,
-    /// What the wheel does over the module, as `(dx, dy)` in pixels; `None` leaves the chip inert to scroll.
-    pub scroll: Option<fn(f32, f32)>,
-    /// Whether resting the pointer on the chip opens its hover popout. Set from `popout::has_popout` rather than declared twice, so a module can't be wired for a card it has no content for.
-    pub popout: bool,
-    /// Whether this chip gives up width when its zone runs short, instead of holding its content width like every other one. For the chips whose text has no natural length — a window title, a track name — which are the reason a zone runs short in the first place. Their label elides, so what they lose is the tail of a string rather than anything a reader needs; a chip that gave up width without eliding would just hide its own end.
-    pub elastic: bool,
-    pub filler: bool,
-}
-
-impl ModuleDef {
-    pub fn new(builder: ModuleBuilder) -> Self {
-        Self {
-            builder,
-            self_managed: false,
-            filler: false,
-            icon: false,
-            click: None,
-            scroll: None,
-            popout: false,
-            elastic: false,
-        }
-    }
-
-    pub fn icon(mut self) -> Self {
-        self.icon = true;
-        self
-    }
-
-    pub fn opens(mut self) -> Self {
-        self.click = Some(ModuleClick::Panel);
-        self
-    }
-
-    pub fn on_click(mut self, action: fn()) -> Self {
-        self.click = Some(ModuleClick::Action(action));
-        self
-    }
-
-    /// Wires the wheel over this chip to `action`, receiving the scroll delta in pixels (positive `dy` is a scroll up). Used by the level modules so the chip is a control, not just a readout.
-    pub fn on_scroll(mut self, action: fn(f32, f32)) -> Self {
-        self.scroll = Some(action);
-        self
-    }
-
-    pub fn self_managed(mut self) -> Self {
-        self.self_managed = true;
-        self
-    }
-
-    /// Also self-managed: a filler is room rather than a chip, so it is placed bare and rests on no surface even on a chip bar.
-    pub fn filler(mut self) -> Self {
-        self.self_managed = true;
-        self.filler = true;
-        self
-    }
-
-    /// Lets this chip shrink when its zone is short of room, eliding its label rather than holding a width nothing else can give back.
-    pub fn elastic(mut self) -> Self {
-        self.elastic = true;
-        self
-    }
-}
-
-#[derive(Default)]
-pub struct ModuleRegistry {
-    modules: HashMap<String, ModuleDef>,
-}
-
-impl ModuleRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn register(&mut self, id: &str, def: ModuleDef) {
-        self.modules.insert(id.to_string(), def);
-    }
-
-    pub fn def(&self, id: &str) -> Option<&ModuleDef> {
-        self.modules.get(id)
-    }
-
-    /// Every registered id, sorted. What the settings application's per-module overrides enumerate, so a chip can be restyled before it has been put on a bar.
-    pub fn ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.modules.keys().cloned().collect();
-        ids.sort_unstable();
-        ids
-    }
-
-    /// Marks every registered module the popout layer has card content for. Driven off that list rather than declared per module, so the two cannot drift into a chip that opens an empty card.
-    pub fn wire_popouts(&mut self, has_popout: impl Fn(&str) -> bool) {
-        for (id, def) in self.modules.iter_mut() {
-            def.popout = has_popout(id);
-        }
-    }
-
-    /// Every registered module. What lets a test walk the table and check the roles against the routing it is supposed to match.
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &ModuleDef)> {
-        self.modules.iter()
-    }
-
-    pub fn build(
-        &self,
-        id: &str,
-        ctx: &ModuleCtx,
-    ) -> Option<Result<Box<dyn LayoutItem>, LayoutError>> {
-        self.modules.get(id).map(|d| (d.builder)(ctx))
-    }
-}
-
-thread_local! {
-    static LIVE: RefCell<Option<ModuleRegistry>> = const { RefCell::new(None) };
-}
-
-/// Publishes the module vocabulary every bar builds from, and that the settings application enumerates. Set once at startup by whoever owns the module list — the same arrangement as [`crate::panels`], so neither the bar nor a panel that lists modules has to name one.
-pub fn install(registry: ModuleRegistry) {
-    LIVE.with(|live| *live.borrow_mut() = Some(registry));
-}
-
-/// Runs `act` against the installed registry, or against an empty one when nothing has been installed — a bar with no modules rather than a panic, which is what a test that never composed a shell should see.
-pub fn with_registry<R>(act: impl FnOnce(&ModuleRegistry) -> R) -> R {
-    LIVE.with(|live| match live.borrow().as_ref() {
-        Some(registry) => act(registry),
-        None => act(&ModuleRegistry::new()),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use telar::{LayoutError, LayoutItem};
     #[test]
     fn a_drag_opens_a_panel_only_when_it_pulls_away_from_the_bar() {
         let gesture = |edge| DragOpen {

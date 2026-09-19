@@ -6,9 +6,7 @@
 
 use std::path::Path;
 
-use telar::{
-    AlignItems, Color, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReadSignal, signal,
-};
+use telar::{AlignItems, Color, JustifyContent, LayoutError, LayoutItem, LayoutStyle, signal};
 
 use config::StatusIconsConfig;
 use config::theme::NordTheme;
@@ -89,7 +87,7 @@ pub fn check(config: &StatusIconsConfig, file: &Path) -> Report {
 /// Each is a separate subscription rather than one combined snapshot, so a cluster that shows only the network never starts the audio watcher — the services are lazy, and asking for a reading is what starts one.
 fn icon(
     which: StatusIcon,
-    fg: ReadSignal<Color>,
+    fg: Color,
     theme: NordTheme,
     size: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -103,7 +101,7 @@ fn icon(
             platform_wayland::watch(volume::subscribe, move |v| state.set(v));
             icon_view(
                 move || glyph::volume(read.get()).to_string(),
-                move || fg.get(),
+                move || fg,
                 size,
             )
         }
@@ -116,7 +114,7 @@ fn icon(
             platform_wayland::watch(volume::subscribe_mic, move |v| state.set(v));
             icon_view(
                 move || glyph::microphone(read.get()).to_string(),
-                move || fg.get(),
+                move || fg,
                 size,
             )
         }
@@ -126,7 +124,7 @@ fn icon(
             platform_wayland::watch(network::subscribe, move |net| state.set(net));
             icon_view(
                 move || glyph::network(read.get()).to_string(),
-                move || fg.get(),
+                move || fg,
                 size,
             )
         }
@@ -141,7 +139,7 @@ fn icon(
             platform_wayland::watch(network::subscribe_wifi, move |w| state.set(w.status()));
             icon_view(
                 move || glyph::wifi(glyph_state.get()).to_string(),
-                move || glyph::wifi_tint(tint_state.get(), theme, fg.get()),
+                move || glyph::wifi_tint(tint_state.get(), theme, fg),
                 size,
             )
         }
@@ -156,7 +154,7 @@ fn icon(
             platform_wayland::watch(bluetooth::subscribe, move |bt| state.set(bt.status()));
             icon_view(
                 move || glyph::bluetooth(glyph_state.get()).to_string(),
-                move || glyph::bluetooth_tint(tint_state.get(), theme, theme.accent, fg.get()),
+                move || glyph::bluetooth_tint(tint_state.get(), theme, theme.accent, fg),
                 size,
             )
         }
@@ -172,7 +170,7 @@ fn icon(
             });
             icon_view(
                 move || glyph::battery(charging_glyph.get()).to_string(),
-                move || glyph::battery_tint(level_read.get(), charging_read.get(), theme, fg.get()),
+                move || glyph::battery_tint(level_read.get(), charging_read.get(), theme, fg),
                 size,
             )
         }
@@ -196,7 +194,7 @@ fn icon(
                     } else {
                         read.get().num
                     };
-                    if engaged { fg.get() } else { theme.muted }
+                    if engaged { fg } else { theme.muted }
                 },
                 size,
             )
@@ -205,14 +203,12 @@ fn icon(
 }
 
 /// The cluster's content: the configured icons in a row (or a column on a vertical bar).
-pub fn cluster() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = ui::module::surface_env()
-        .map(|env| env.config.status_icons.clone())
-        .unwrap_or_default();
+pub fn cluster(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let config = host.options::<config::StatusIconsConfig>().clone();
     let theme = telar::use_theme::<NordTheme>();
-    let fg = ui::module::module_fg();
-    let size = ui::module::icon_px();
-    let vertical = ui::module::bar_is_vertical();
+    let fg = host.foreground;
+    let size = host.icon_size();
+    let vertical = host.is_vertical();
 
     let mut items: Vec<Box<dyn LayoutItem>> = Vec::new();
     for which in icons(&config) {
@@ -310,7 +306,7 @@ mod tests {
     fn every_icon_the_cluster_offers_builds() {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        let fg = signal(NordTheme::new().text).read_only();
+        let fg = NordTheme::new().text;
         for which in [
             StatusIcon::Volume,
             StatusIcon::Mic,

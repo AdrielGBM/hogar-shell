@@ -753,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn vertical_bar_ends_inset_by_adjacent_bar_thickness() {
+    fn vertical_bar_ends_inset_by_an_adjacent_bars_thickness() {
         let cfg = config(
             "[bars.top]\nsize=30\ncenter=[\"clock\"]\n\
              [bars.bottom]\nsize=40\nstart=[\"clock\"]\n\

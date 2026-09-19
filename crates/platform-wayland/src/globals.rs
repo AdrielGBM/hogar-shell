@@ -1,10 +1,20 @@
-//! Asking the compositor what it advertises, from anywhere.
-//!
-//! The other "is this supported" answers in this crate read state the driver put there — `lock_supported` asks the driver facts, `idle_supported` a thread-local the event loop owns — which is right inside a running shell and silently wrong outside one, where both answer `false` because there is no driver rather than because the compositor is missing the protocol.
-//!
-//! That distinction is the whole point of asking: a dependency check runs in a bare CLI process, on the machine where something is broken, quite possibly *because* the shell will not start. So this connects on its own and reads the registry, and separates "the compositor does not have it" from "nothing here could tell".
+//! Asks the compositor what it advertises directly, rather than reading driver state, so a bare CLI dependency check (possibly running because the shell won't start) can tell "not supported" apart from "no driver to ask"; gated by [`allow_compositor_probes`] so tests and previews never reach the real compositor.
+
+use std::sync::OnceLock;
 
 use wayland_client::{Connection, globals::registry_queue_init};
+
+static PROBES_ALLOWED: OnceLock<()> = OnceLock::new();
+
+/// Lets this process open a probing connection to the compositor.
+pub fn allow_compositor_probes() {
+    let _ = PROBES_ALLOWED.set(());
+}
+
+/// Whether [`allow_compositor_probes`] has run. A probing connection is opened only when this answers `true`.
+fn compositor_probes_allowed() -> bool {
+    PROBES_ALLOWED.get().is_some()
+}
 
 struct Probe;
 
@@ -38,6 +48,9 @@ pub fn advertises(interface: &str) -> Option<bool> {
 ///
 /// One protocol is not always one global: `ext-image-copy-capture` is a capture manager plus the factory that makes the sources it takes, and a compositor carrying one without the other can capture nothing. Asking for the set together is also what keeps this cheap enough to call from a surface deciding whether to offer a gesture — a connection and a registry read per interface would be a round trip per name.
 pub fn advertises_all(interfaces: &[&str]) -> Option<bool> {
+    if !compositor_probes_allowed() {
+        return None;
+    }
     let connection = Connection::connect_to_env().ok()?;
     let (globals, _queue) = registry_queue_init::<Probe>(&connection).ok()?;
     Some(globals.contents().with_list(|list| {
@@ -56,6 +69,14 @@ fn all_present(announced: &[&str], wanted: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A process that never opted in gets the same "nothing here could tell" answer a machine with no compositor would give it — never a real probe.
+    #[test]
+    fn a_process_that_never_allowed_probes_reaches_no_compositor() {
+        assert!(!compositor_probes_allowed(), "nothing under test opts in");
+        assert_eq!(advertises("wl_shm"), None);
+        assert_eq!(advertises_all(&["wl_shm", "wl_compositor"]), None);
+    }
 
     /// Half a protocol is none of it — the rule the multi-interface rows in the dependency registry rest on.
     #[test]

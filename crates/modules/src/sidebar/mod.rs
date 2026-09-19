@@ -41,10 +41,7 @@ pub fn is_open() -> bool {
 fn open_sidebar() -> SurfaceToken {
     let config = config::config().unwrap_or_else(|| Arc::new(Config::default()));
     let output = surfaces::shell::focused_output();
-    PanelSurface::new(placement(&config, output), |env| {
-        body(&env.config).expect("sidebar build failed")
-    })
-    .open()
+    PanelSurface::new(placement(&config, output), |env| body(&env.config)).open()
 }
 
 /// A dock: spans its edge over the windows, at the shared panel margin off them. The zone a dock takes is zero, not -1 — the compositor has already cleared the bars, and the margin is the only extra distance a panel of any kind puts between itself and them.
@@ -61,10 +58,13 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let mut children: Vec<Box<dyn LayoutItem>> = vec![header(theme)?];
     if config.sidebar.show_toggles {
-        children.push(crate::utilities::toggles_grid(theme)?);
+        children.push(crate::utilities::toggles_grid(&config.utilities, theme)?);
     }
     if config.sidebar.show_history {
-        children.push(crate::notifications::bell_panel()?);
+        children.push(crate::notifications::bell_view(
+            &config.notifications,
+            &config.stack,
+        )?);
     }
 
     let column = Container::new(
@@ -88,7 +88,7 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
             .padding_all(space::xl())
             .width(SizeDimension::Percent(1.0))
             .height(SizeDimension::Percent(1.0)),
-        move |_| RectStyle::filled(surfaces::drawer::panel_fill(), radius),
+        move |_| RectStyle::filled(ui::panel::panel_fill(), radius),
         vec![Box::new(scroll)],
     )?))
 }

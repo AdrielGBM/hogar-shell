@@ -28,7 +28,7 @@ pub use gamma::{
     GAMMA_INTERFACE, MAX_TEMPERATURE, MIN_TEMPERATURE, NEUTRAL_TEMPERATURE,
     current as current_temperature, gamma_supported, neutral as neutral_gamma, warm,
 };
-pub use globals::{advertises, advertises_all};
+pub use globals::{advertises, advertises_all, allow_compositor_probes};
 pub use idle::{IdleHandle, idle_notification, idle_supported};
 pub use interest::Interest;
 pub use layer_window::LayerWindowHandle;
@@ -39,7 +39,7 @@ pub use placement::{
     KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
 };
 pub use platform::{
-    EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken,
+    EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken, app_watch,
     background_effect_supported, detached, enumerate_outputs, interval, live_surfaces, on_close,
     on_outputs_changed, open_layer_window, open_reservation, open_surface, outputs,
     request_blur_region, request_close, request_margin, request_size, run_on_start,

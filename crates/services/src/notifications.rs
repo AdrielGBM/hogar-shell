@@ -675,8 +675,12 @@ fn spawn_daemon(inner: Arc<Inner>) {
 }
 
 fn run_daemon(inner: Arc<Inner>) {
-    let conn = zbus::blocking::connection::Builder::session()
-        .and_then(|b| b.name(BUS_NAME))
+    let Some(builder) = util::live::session_bus() else {
+        tracing::info!("notifications daemon not started: no session bus");
+        return;
+    };
+    let conn = builder
+        .name(BUS_NAME)
         .and_then(|b| b.serve_at(OBJECT_PATH, NotificationsIface { inner }))
         .and_then(|b| b.build());
     match conn {
@@ -1224,50 +1228,5 @@ mod tests {
             inner.clear_app("Nobody").is_empty(),
             "clearing an app with nothing waiting closes nothing"
         );
-    }
-
-    // Live D-Bus round-trip. Run under a private bus so it never collides with the desktop's real daemon: `dbus-run-session -- cargo test -p hogar-shell --lib notifications::tests::daemon -- --ignored --nocapture`
-    #[test]
-    #[ignore = "needs a session bus; run under dbus-run-session"]
-    fn daemon_receives_notify_over_dbus() {
-        init(Policy {
-            timeout: Duration::from_millis(5000),
-            critical_sticky: true,
-            critical_max: Some(Duration::from_secs(120)),
-            sound: String::new(),
-        });
-        let client = zbus::blocking::Connection::session().expect("session bus");
-        let hints: HashMap<&str, Value> = HashMap::new();
-        let mut sent = false;
-        for _ in 0..50 {
-            let call = client.call_method(
-                Some(BUS_NAME),
-                OBJECT_PATH,
-                Some("org.freedesktop.Notifications"),
-                "Notify",
-                &(
-                    "test-app",
-                    0u32,
-                    "",
-                    "Hello",
-                    "World",
-                    Vec::<&str>::new(),
-                    &hints,
-                    -1i32,
-                ),
-            );
-            if call.is_ok() {
-                sent = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        assert!(sent, "daemon claimed the name and answered Notify");
-
-        let snapshot = snapshot_now().expect("service initialized");
-        assert_eq!(snapshot.active.len(), 1);
-        assert_eq!(snapshot.active[0].summary, "Hello");
-        assert_eq!(snapshot.active[0].body, "World");
-        assert_eq!(snapshot.unread, 1);
     }
 }

@@ -1,15 +1,10 @@
-//! One D-Bus connection per (bus, method timeout) instead of one per call.
-//!
-//! Opening a connection is not cheap: a socket, an auth handshake, an executor thread and a message queue. A service that opens one inside a poll loop or a click handler pays that several times a second, and every live connection costs a thread whose allocations glibc scatters across its own malloc arena.
-//!
-//! The timeout is part of the key because it is a per-connection setting in zbus and the services mean different things by it — a tray read gives up after 2 s, a VPN action is allowed 60 s. Collapsing those onto one connection would silently retime every call made through it.
+//! One D-Bus connection per (bus, method timeout) instead of one per call, since opening a connection is costly and the timeout is a per-connection zbus setting — collapsing different timeouts onto one connection would silently retime every call through it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use zbus::blocking::Connection;
-use zbus::blocking::connection::Builder;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
@@ -44,6 +39,11 @@ pub fn private_session(timeout: Option<Duration>) -> Option<Connection> {
     build(Kind::Session, timeout)
 }
 
+/// A system connection of its own, outside the shared pool, for the same reason as [`private_session`].
+pub fn private_system(timeout: Option<Duration>) -> Option<Connection> {
+    build(Kind::System, timeout)
+}
+
 fn shared(kind: Kind, timeout: Option<Duration>) -> Option<Connection> {
     let slot = slots()
         .lock()
@@ -64,10 +64,9 @@ fn shared(kind: Kind, timeout: Option<Duration>) -> Option<Connection> {
 // A failure is deliberately not cached: a service that isn't up yet, or a bus that isn't there on this machine, is asked again on the next call rather than written off for the life of the process.
 fn build(kind: Kind, timeout: Option<Duration>) -> Option<Connection> {
     let builder = match kind {
-        Kind::System => Builder::system(),
-        Kind::Session => Builder::session(),
-    }
-    .ok()?;
+        Kind::System => util::live::system_bus(),
+        Kind::Session => util::live::session_bus(),
+    }?;
     match timeout {
         Some(t) => builder.method_timeout(t),
         None => builder,

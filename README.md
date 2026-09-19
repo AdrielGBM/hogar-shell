@@ -16,8 +16,9 @@ therefore the window-info panel, the window count behind a workspace pill and th
 grouped `sections`, or individual `chips` — with per-monitor overrides.
 
 **Modules.** `activewindow` `battery` `bluetooth` `brightness` `clock` `cpu` `dashboard` `gpu` `kblayout`
-`launcher` `lockstatus` `logo` `media` `memory` `mic` `netspeed` `network` `notes` `notifications` `session`
-`settings` `spacer` `statusicons` `temperature` `tray` `utilities` `volume` `windowinfo` `workspaces`.
+`launcher` `lockstatus` `logo` `media` `memory` `mic` `mixer` `netspeed` `network` `notes` `notifications` `session`
+`settings` `spacer` `statusicons` `temperature` `tray` `user` `utilities` `visualiser` `volume` `weather` `windowinfo`
+`workspaces`.
 
 **Surfaces.** Drawers and floats anchored to the chip that opened them, hover popouts, OSDs, a full-screen
 launcher, a notification centre, a session-lock screen, a per-monitor wallpaper layer, and in-shell toasts.

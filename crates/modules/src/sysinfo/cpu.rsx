@@ -15,6 +15,7 @@ fn load_color(percent: f32, fg: Color) -> Color {
     }
 }
 
+let host = ui::host::Host::current()?;
 let initial = resources::current().unwrap_or_default();
 let load = signal(initial.cpu);
 let load_text = load.read_only();
@@ -22,14 +23,13 @@ let load_tint = load.read_only();
 
 platform_wayland::watch(resources::subscribe, move |r: Resources| load.set(r.cpu));
 
-let fg = ui::module::module_fg();
-let fg_tint = fg.clone();
+let fg = host.foreground;
 let percent = memo(move || format!("{:.0}%", load_text.get()));
 
 [view]
 row align:center gap:(::ui::scale::space::md())
-    icon_glyph name:(Reactive::of(|| "cpu".to_string())) tint:(Reactive::of(move || load_color(load_tint.get(), fg_tint.get()))) size:(ui::module::icon_px())
-    text "{$percent}" font_size:$theme.font(FontRole::Body) color:$fg
+    icon_glyph name:(Reactive::of(|| "cpu".to_string())) tint:(Reactive::of(move || load_color(load_tint.get(), fg))) size:(host.icon_size())
+    text "{$percent}" font_size:$theme.font(FontRole::Body) color:fg
 
 [preview "Cpu" fixture:ui::preview::bar_chip]
 cpu

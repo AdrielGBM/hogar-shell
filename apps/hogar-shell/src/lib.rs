@@ -20,6 +20,34 @@ use telar::{App, AppPathsProvider, run_multi_with_platform};
 
 use surfaces::reconcile::{Content, Surfaces};
 
+/// How far into the user's machine a mode of the binary reaches. Until a mode opens its reach, every file resolves under a scratch root and every bus, daemon and compositor probe answers as if absent, which is what a test and a preview get.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// The user's files: the config a check reads, the socket a command is sent over.
+    Files,
+    /// The files, the live session's buses and daemons, and the compositor.
+    Machine,
+}
+
+impl Reach {
+    /// What the mode the binary's first argument names may reach: the shell and the dependency check reach the whole machine, every other command the user's files alone.
+    pub fn of(command: Option<&str>) -> Self {
+        match command {
+            None | Some("run" | "deps") => Self::Machine,
+            Some(_) => Self::Files,
+        }
+    }
+
+    /// Opens what this reach allows. The only place any of the three gates is opened.
+    pub fn open(self) {
+        util::paths::install();
+        if self == Self::Machine {
+            util::live::install();
+            platform_wayland::allow_compositor_probes();
+        }
+    }
+}
+
 /// Every crate's `rsx_modules!` emits its own `telar_all_preview_entries`, so the list is per crate rather than per process and the app is the only place that has all eight.
 ///
 /// The second list is the previews written in Rust: a surface's content is built by a function, not by a `.rsx` component, so there is no `[preview]` block to hang one off. They are entries of exactly the same kind — `cargo telar preview`/`test` cannot tell the two apart — and each replaces a `TELAR_VISUAL_*` test that only rendered when an environment variable asked it to.
@@ -67,9 +95,7 @@ fn surface_fonts(config: &Config) -> telar::AppConfig {
     }
 }
 
-/// The ambient world a `[preview]` builds against: config, locale, font, icon store and theme. Deliberately not `apply_config` — that also arms the idle stages, the notification policy and the toast watchers, which reach the machine and have no business running to render a component.
-///
-/// [`install_hooks`] is part of it because three of the previews are surfaces that dispatch by module id — the bar, the drawer and the popout all ask a registry what to draw, and a registry nobody installed answers "nothing". It publishes tables and function pointers and starts nothing.
+/// Builds the ambient world a `[preview]` needs; deliberately not `apply_config`, which also arms idle stages, notifications and toast watchers that have no business running just to render a component.
 fn seed_preview_world() {
     let config = Arc::new(Config::load_or_default(&Config::default_path()));
     services::locale::init(config.language());
@@ -85,6 +111,7 @@ pub fn run() {
     if telar::dev_entry(preview_entries, preview_window(), seed_preview_world) {
         return;
     }
+    Reach::of(None).open();
     // One shell per compositor instance: a second one would fight over the notification bus name and the IPC socket, and the user would see two of every bar. Checked before anything is opened so the failure is a clean message rather than a half-started shell.
     if crate::core::ipc::another_instance_is_running() {
         eprintln!(
@@ -423,11 +450,7 @@ fn install_hooks() {
         })
     });
     ui::module::set_panel_opener(surfaces::panel::open_panel);
-    // Published together because they check each other: a chip is wired for a hover card from the card list, and one that opens a panel is checked against the panel list.
-    let popouts = crate::core::popouts::default_popouts();
-    ui::module::install(crate::core::registry::default_registry(&popouts));
-    ui::popouts::install(popouts);
-    ui::panels::install(crate::core::panels::default_panels());
+    ui::descriptor::install(crate::core::modules::MODULES);
 }
 
 /// Everything a config change affects outside the surfaces themselves: the UI language, the process-wide font, the icon store, and the context that code reached from outside a surface resolves against.
@@ -573,8 +596,9 @@ mod reload_baseline_tests {
     const BROKEN: &str = "[clock\nformat = ";
 
     fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("hogar-shell-startup-{name}-{}", std::process::id()));
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join(format!("startup-{name}"));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("config.toml")
@@ -704,13 +728,10 @@ mod reloader_tests {
     fn started(name: &str) -> (PathBuf, Reloader) {
         telar::set_locale("en");
         check::fresh_notice();
-        ui::module::install(crate::core::registry::default_registry(
-            &crate::core::popouts::default_popouts(),
-        ));
-        let dir = std::env::temp_dir().join(format!(
-            "hogar-shell-reloader-{name}-{}",
-            std::process::id()
-        ));
+        ui::descriptor::install(crate::core::modules::MODULES);
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join(format!("reloader-{name}"));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(dir.join("monitors/DP-1")).unwrap();
         let path = dir.join("config.toml");

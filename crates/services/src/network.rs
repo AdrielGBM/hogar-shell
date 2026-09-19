@@ -777,7 +777,7 @@ fn run(out: &Arc<Broadcast<Network>>) {
 
 /// Blocks on every `PropertiesChanged` NetworkManager emits, on any of its objects: the manager's own state (connect/disconnect, primary connection type) and each access point's signal strength. One subscription therefore covers both what the icon's shape shows and how full its arc is, with no polling.
 fn watch_network_manager(out: &Broadcast<Network>) -> Option<()> {
-    let conn = Connection::system().ok()?;
+    let conn = crate::bus::private_system(None)?;
     let rule = zbus::MatchRule::builder()
         .msg_type(MessageType::Signal)
         .sender(NM_BUS)

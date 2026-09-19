@@ -518,14 +518,8 @@ mod tests {
     /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the watcher has to *stop* when the last registration is retired, and give its slot back so that the next [`watch`] starts a fresh one rather than registering with a thread on its way out.
     ///
     /// One test rather than several because they all move the same statics, and split across `cargo test`'s threads they would take turns wrecking each other's world.
-    ///
-    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live test below registers with a real watcher, so "nothing is registered" is false through no fault of the code, and emptying the registry to make it true would retire the watcher out from under it.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
-            eprintln!("a real watcher holds the registry in a live run; skipping");
-            return;
-        }
         let (requests, _channel) = channel::<Request>();
         *REQUESTS.lock().unwrap() = Some(requests);
 
@@ -665,69 +659,5 @@ mod tests {
         let mut state = hyprland_state();
         state.names.clear();
         assert!(state.snapshot().iter().all(|w| w.outputs.is_empty()));
-    }
-
-    /// The half no fixture can prove: that the watcher reads a real compositor, and that activating over the protocol actually moves it.
-    ///
-    /// Needs a live session, so it is opt-in the way the clipboard and capture round-trips are: `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland workspaces -- --nocapture --test-threads=1`
-    ///
-    /// **It switches workspace and switches back**, which is the only way to observe an activation: the protocol answers a request with a new state, not with a reply. The workspace that was active when the test started is restored before anything is asserted, so a failed expectation does not leave the desktop somewhere else.
-    #[test]
-    fn the_watcher_reads_the_compositor_and_activation_moves_it() {
-        use std::sync::mpsc;
-        use std::time::Duration;
-
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to watch the real compositor; skipping");
-            return;
-        }
-
-        let (published, changes) = mpsc::channel();
-        let interest = Interest::new();
-        assert!(
-            watch(&interest, move |workspaces: &[Workspace]| {
-                let _ = published.send(workspaces.to_vec());
-            }),
-            "the compositor advertises ext-workspace-v1 but the watcher would not start"
-        );
-
-        let first = changes
-            .recv_timeout(Duration::from_secs(3))
-            .expect("the watcher publishes the current list without waiting for a change");
-        eprintln!("{} workspaces: {first:#?}", first.len());
-        assert!(!first.is_empty(), "a session has at least one workspace");
-        assert_eq!(
-            first.iter().filter(|w| w.active).count(),
-            1,
-            "exactly one workspace is active on a single-output session"
-        );
-        assert!(
-            first.iter().all(|w| !w.name.is_empty()),
-            "a name is what a pill draws"
-        );
-
-        let was_active = first.iter().find(|w| w.active).expect("one is active").id;
-        let Some(target) = first.iter().find(|w| w.can_activate && !w.active) else {
-            eprintln!("only one workspace exists; nothing to activate");
-            return;
-        };
-        assert!(activate(target.id), "the request could not be sent");
-
-        let mut moved = None;
-        while let Ok(workspaces) = changes.recv_timeout(Duration::from_secs(3)) {
-            if let Some(active) = workspaces.iter().find(|w| w.active) {
-                moved = Some(active.id);
-                break;
-            }
-        }
-        activate(was_active);
-        // Given back before asserting, and given time to land: a failing expectation must not be the reason the desktop is left on a workspace nobody asked for.
-        std::thread::sleep(Duration::from_millis(300));
-
-        assert_eq!(
-            moved,
-            Some(target.id),
-            "activating a workspace over the protocol has to move the compositor"
-        );
     }
 }

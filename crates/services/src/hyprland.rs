@@ -258,8 +258,11 @@ struct KeyboardJson {
     active_keymap: String,
 }
 
-/// The per-instance Hyprland socket directory, or `None` when not running under Hyprland. Hyprland ≥ 0.40 puts it under `$XDG_RUNTIME_DIR/hypr/$SIG`; older versions used `/tmp/hypr/$SIG`.
+/// The per-instance Hyprland socket directory, or `None` when not running under Hyprland — or when this process is sealed from the user's session (see [`util::live`]), which every IPC request and event stream here goes through. Hyprland ≥ 0.40 puts it under `$XDG_RUNTIME_DIR/hypr/$SIG`; older versions used `/tmp/hypr/$SIG`.
 pub fn socket_dir() -> Option<PathBuf> {
+    if !util::live::installed() {
+        return None;
+    }
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
     if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
         let path = PathBuf::from(runtime).join("hypr").join(&sig);
@@ -906,6 +909,11 @@ pub fn subscribe_active_window(tx: EventSender<ActiveWindow>) {
 /// The last published focused window, without a round trip to anything.
 pub fn current_active_window() -> Option<ActiveWindow> {
     ACTIVE_WINDOW.current()
+}
+
+/// Stands `window` in for the focused one, without starting the listener — so a `[preview]` titles its chip the same whichever window has focus while it renders.
+pub fn seed_active_window(window: ActiveWindow) {
+    ACTIVE_WINDOW.seed(window);
 }
 
 /// Focuses a window over whichever route the compositor offers, preferring the protocol.

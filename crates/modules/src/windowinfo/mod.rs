@@ -15,11 +15,12 @@ use telar::{
     use_theme,
 };
 
+use config::UtilitiesConfig;
 use config::theme::{FontRole, NordTheme};
 use services::hyprland::{self, Client};
 use services::screenshot::{self, Area, Target};
+use ui::host::Host;
 use ui::icon::icon_view;
-use ui::module::{icon_px, module_fg, surface_env};
 use ui::widget::label_value;
 
 pub const ID: &str = "windowinfo";
@@ -28,24 +29,19 @@ const PREVIEW_HEIGHT: f32 = 150.0;
 const ROW_RADIUS: f32 = 10.0;
 
 /// The bar chip: a window glyph that opens the panel.
-pub fn window_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fg = module_fg();
+pub fn window_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fg = host.foreground;
     icon_view(
         || ui::glyph::window_info().to_string(),
-        move || fg.get(),
-        icon_px(),
+        move || fg,
+        host.icon_size(),
     )
 }
 
 /// The panel: a preview, the window's own facts, and what can be done to it.
-pub fn window_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub fn window_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
-    }
-    let interval = surface_env()
-        .map(|env| env.config.utilities.window_preview_interval())
-        .unwrap_or(Some(Duration::from_secs(1)));
+    let interval = host.options::<UtilitiesConfig>().window_preview_interval();
 
     // The focused window, live: the panel follows focus rather than pinning whatever was focused when it opened, which is what makes it usable for looking at one window after another.
     let focused = signal(current_focus());
@@ -444,7 +440,15 @@ mod tests {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
         assert!(
-            window_panel().is_ok(),
+            window_panel(&ui::preview::surface_host(
+                "windowinfo",
+                ui::host::Representation::Panel,
+                ui::host::Size {
+                    width: 420.0,
+                    height: 600.0,
+                },
+            ))
+            .is_ok(),
             "no compositor: the panel still builds"
         );
 

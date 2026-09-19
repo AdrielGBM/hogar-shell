@@ -21,20 +21,22 @@ impl App for BarApp {
         let config = self.config.get();
         let theme = config.resolve_theme();
         set_theme(theme);
-        // Apply the configured UI language on this surface's thread and subscribe it to live language switches.
         services::locale::attach(config.language());
-        let bar_config = config.bars.get(self.edge);
-        set_surface_env(SurfaceEnv {
-            edge: self.edge,
-            bar_size: bar_config.size,
-            output: self.output.clone(),
-            config: Arc::clone(&config),
-        });
-        let accent = theme.accent;
-        let bar = ui::module::with_registry(|registry| {
-            build_bar(&config, self.edge, accent, registry, theme)
-        })
-        .expect("bar build failed");
+        set_surface_env(SurfaceEnv::for_edge(
+            Arc::clone(&config),
+            self.edge,
+            self.output.clone(),
+        ));
+        let bar = ui::panel::or_empty(
+            "bar",
+            build_bar(
+                &config,
+                self.edge,
+                self.output.as_deref(),
+                ui::descriptor::installed(),
+                theme,
+            ),
+        );
         // `persistent = false` moves the surface itself, so the wrapper goes here — around the whole bar, inside the surface root that drives it — rather than around any one zone.
         let bar: Box<dyn LayoutItem> = if config.bar_is_persistent(self.edge) {
             bar

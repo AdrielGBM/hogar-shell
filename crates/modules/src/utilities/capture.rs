@@ -10,7 +10,6 @@ use telar::{
     RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal,
 };
 
-use config::surface_env;
 use config::theme::{FontRole, NordTheme};
 use services::recorder::{self, Entry, Recording};
 use services::screenshot::{self, Shot, Target};
@@ -209,12 +208,11 @@ fn shot_line(shot: &Shot) -> String {
 /// The recordings, newest first: press to open, right-click twice to delete.
 ///
 /// Right-click-to-delete arms first, like the bluetooth panel's forget: a recording is minutes of something that cannot be taken again, and a stray click must not be able to remove it.
-pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let dir = recordings_dir();
-    let limit = surface_env()
-        .map(|env| env.config.recorder.entries())
-        .unwrap_or(12);
-
+pub fn recordings_card(
+    dir: PathBuf,
+    limit: usize,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let entries = signal(recorder::recordings(&dir, limit));
     // A finished recording is a new file in the list, and the recorder is the only thing that puts one there — so its state change is the refresh signal, rather than a watch on the directory.
     let refresh = entries;
@@ -261,13 +259,6 @@ pub fn recordings_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutEr
         vec![box_item(heading), Box::new(rows), box_item(empty)],
         theme,
     )
-}
-
-fn recordings_dir() -> PathBuf {
-    surface_env()
-        .map(|env| env.config.recordings_dir())
-        .or_else(|| config::config().map(|c| c.recordings_dir()))
-        .unwrap_or_else(|| util::paths::data_dir().join("recordings"))
 }
 
 /// Keyed on what the row draws: a file being written grows, so its size — and therefore its subtitle — changes while the row is on screen.
@@ -431,7 +422,7 @@ fn card(
             .gap(space::md())
             .padding_all(space::lg())
             .width(SizeDimension::Percent(1.0)),
-        move |_| RectStyle::filled(theme.base, surfaces::drawer::content_radius()),
+        move |_| RectStyle::filled(theme.base, ui::panel::content_radius()),
         children,
     )?))
 }
@@ -536,7 +527,14 @@ mod tests {
 
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        assert!(recordings_card(NordTheme::new()).is_ok());
+        assert!(
+            recordings_card(
+                config::Config::default().recordings_dir(),
+                config::RecorderConfig::default().entries(),
+                NordTheme::new()
+            )
+            .is_ok()
+        );
     }
 
     #[test]

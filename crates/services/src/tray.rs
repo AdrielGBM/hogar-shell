@@ -425,8 +425,11 @@ fn run(out: &Arc<Broadcast<Vec<TrayItem>>>) {
 
 /// Claims the watcher name and serves the registry on it. `false` when another shell got there first, which is not an error — the tray then follows that watcher instead of competing with it.
 fn own_watcher(registry: Arc<Registry>, ping: SyncSender<()>) -> bool {
-    let built = zbus::blocking::connection::Builder::session()
-        .and_then(|b| b.name(WATCHER_NAME))
+    let Some(builder) = util::live::session_bus() else {
+        return false;
+    };
+    let built = builder
+        .name(WATCHER_NAME)
         .and_then(|b| b.serve_at(WATCHER_PATH, WatcherIface { registry, ping }))
         .and_then(|b| b.build());
     match built {
@@ -450,9 +453,7 @@ fn own_watcher(registry: Arc<Registry>, ping: SyncSender<()>) -> bool {
 fn register_as_host(conn: &Connection) {
     // zbus warns that this claims a name with no object server behind it, and that is correct and intended: a host name is a presence marker, not an endpoint. Applications look for one before they will show themselves, and the traffic runs the other way — the host calls items, and the watcher only tracks that the name exists. Serving an empty object here to quiet the warning would add an interface nobody calls.
     let name = format!("org.kde.StatusNotifierHost-{}", std::process::id());
-    let Ok(host) =
-        zbus::blocking::connection::Builder::session().and_then(|b| b.name(name.clone()))
-    else {
+    let Some(Ok(host)) = util::live::session_bus().map(|b| b.name(name.clone())) else {
         return;
     };
     let Ok(host) = host.build() else { return };

@@ -1,3 +1,5 @@
+pub mod reading;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use ui::scale::paint;
@@ -8,11 +10,11 @@ use telar::{
     RwSignal, SizeDimension, Span, StyledContainer, Text, box_item, memo, signal, use_theme,
 };
 
-use config::surface_env;
 use config::theme::{FontRole, NordTheme};
 use config::{FullscreenPopups, NotificationsConfig, StackConfig};
 use services::hyprland::{self, ActiveWindow, Client};
 use services::notifications::{self, Notification, SharedSnapshot, Snapshot, Urgency};
+use ui::host::Host;
 use ui::panel::{card_gap, panel_fill};
 use ui::scale::space;
 
@@ -516,18 +518,15 @@ fn action_pill(
     Ok(Box::new(pill))
 }
 
-/// Builds the reactive card stack from a snapshot signal. Split out so tests can drive it with a fixed snapshot instead of a live subscription. One notification as the column draws it: the same card the history panel shows, at the column's width and standalone — nothing is behind it but the desktop.
+/// One notification as the column draws it: the same card the history panel shows, at the column's width and standalone — nothing is behind it but the desktop.
 pub(crate) fn popup_card(
     notification: &Notification,
+    cfg: &NotificationsConfig,
+    stack: &StackConfig,
     theme: NordTheme,
     radius: f32,
-    width: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let cfg = config::config()
-        .map(|c| c.notifications.clone())
-        .unwrap_or_default();
-    let stack = config::config().map(|c| c.stack).unwrap_or_default();
-    let style = CardStyle::new(&cfg, &stack, width, theme, radius).standalone();
+    let style = CardStyle::new(cfg, stack, stack.width, theme, radius).standalone();
     notification_card(
         notification,
         SizeDimension::Percent(1.0),
@@ -541,8 +540,8 @@ pub(crate) fn covering_focus(cfg: &NotificationsConfig) -> Option<Memo<bool>> {
     fullscreen_focus(cfg)
 }
 
-/// The bar chip: a bell whose glyph flips to `bell-off` under Do-Not-Disturb, with an unread-count badge. Subscribes to the daemon like any other module reflecting a shared service; registered with `.opens()` so a click drops the history panel.
-pub fn bell_module() -> Result<Box<dyn LayoutItem>, LayoutError> {
+/// The bar chip: a bell whose glyph flips to `bell-off` under Do-Not-Disturb, with an unread-count badge.
+pub fn bell_module(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let unread = signal(0u32);
     let dnd = signal(false);
     let unread_read = unread.read_only();
@@ -552,20 +551,20 @@ pub fn bell_module() -> Result<Box<dyn LayoutItem>, LayoutError> {
         dnd.set(snap.dnd);
     });
 
-    let fg = ui::module::module_fg();
+    let fg = host.foreground;
     let theme = use_theme::<NordTheme>();
     let glyph = memo(move || if dnd_read.get() { "bell-off" } else { "bell" });
     let icon = ui::icon::icon_view(
         move || glyph.get().to_string(),
-        move || fg.get(),
-        ui::module::icon_px(),
+        move || fg,
+        host.icon_size(),
     )?;
     let badge = Text::new(
         move || badge_text(unread_read.get()),
         LayoutStyle::new(),
         move || {
             theme
-                .text_style(FontRole::Caption, fg.get())
+                .text_style(FontRole::Caption, fg)
                 .with_font_weight(700)
         },
     )?;
@@ -588,11 +587,19 @@ fn badge_text(unread: u32) -> String {
 }
 
 /// The drawer panel: a header (title, Do-Not-Disturb toggle, clear-all) over the full history, newest first, each card click-to-dismiss. Opening it marks the history read.
-pub fn bell_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub fn bell_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    bell_view(
+        host.options::<NotificationsConfig>(),
+        host.options::<StackConfig>(),
+    )
+}
+
+/// The history panel's content for `config`, for a surface that is not the bell's own panel — the notification centre hosts exactly this.
+pub fn bell_view(
+    cfg: &NotificationsConfig,
+    stack: &StackConfig,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     notifications::mark_read();
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
-    }
     let theme = use_theme::<NordTheme>();
     let snapshot = signal(notifications::snapshot_now().unwrap_or_default());
     let setter = snapshot;
@@ -602,12 +609,9 @@ pub fn bell_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let read = snapshot.read_only();
 
     // The cards sit inside the panel (drawer or float), so they carry its (bar-matching) radius.
-    let radius = surfaces::drawer::content_radius();
-    let cfg = surface_env().map_or_else(NotificationsConfig::default, |env| {
-        env.config.notifications.clone()
-    });
+    let radius = ui::panel::content_radius();
     let header = panel_header(read, theme)?;
-    let list = history_list(read, &cfg, theme, radius)?;
+    let list = history_list(read, cfg, stack, theme, radius)?;
     let panel = Container::new(
         LayoutStyle::new()
             .flex_column()
@@ -781,13 +785,13 @@ fn history_rows(
 fn history_list(
     read: ReadSignal<SharedSnapshot>,
     cfg: &NotificationsConfig,
+    stack: &StackConfig,
     theme: NordTheme,
     radius: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     // A signal rather than a cell, because the row list derives from it: a plain value would change without anything asking the list to rebuild.
     let expanded = signal(BTreeSet::<String>::new());
-    let stack = config::config().map(|c| c.stack).unwrap_or_default();
-    let style = CardStyle::new(cfg, &stack, PANEL_CARD_WIDTH, theme, radius);
+    let style = CardStyle::new(cfg, stack, PANEL_CARD_WIDTH, theme, radius);
     let source = {
         let cfg = cfg.clone();
         let expanded = expanded.read_only();
@@ -1012,7 +1016,15 @@ pub(crate) fn popups_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let cards = sample_snapshot()
         .active
         .iter()
-        .map(|n| popup_card(n, theme, 12.0, PANEL_CARD_WIDTH))
+        .map(|n| {
+            popup_card(
+                n,
+                &NotificationsConfig::default(),
+                &StackConfig::default(),
+                theme,
+                12.0,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Box::new(Container::new(
         LayoutStyle::new()
@@ -1036,7 +1048,13 @@ pub(crate) fn panel_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
             .width(PANEL_CARD_WIDTH),
         vec![
             panel_header(read, theme)?,
-            history_list(read, &NotificationsConfig::default(), theme, 12.0)?,
+            history_list(
+                read,
+                &NotificationsConfig::default(),
+                &StackConfig::default(),
+                theme,
+                12.0,
+            )?,
         ],
     )?))
 }
@@ -1388,7 +1406,16 @@ mod tests {
                         "a row failed to build with group_by_app={group_by_app}"
                     );
                 }
-                assert!(history_list(snapshot.read_only(), &cfg, NordTheme::new(), 12.0).is_ok());
+                assert!(
+                    history_list(
+                        snapshot.read_only(),
+                        &cfg,
+                        &StackConfig::default(),
+                        NordTheme::new(),
+                        12.0
+                    )
+                    .is_ok()
+                );
             }
         }
     }

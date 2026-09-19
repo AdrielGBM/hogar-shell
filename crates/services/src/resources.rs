@@ -339,7 +339,7 @@ fn read_disk(mount: &Path) -> Option<Disk> {
 /// The mounts worth charting: the root filesystem, and `/home` when the user put it on its own device.
 fn interesting_mounts() -> Vec<PathBuf> {
     let root = PathBuf::from("/");
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = util::paths::home_dir();
     let mut mounts = vec![root];
     if let Some(home) = home
         && let (Ok(home_meta), Ok(root_meta)) = (fs::metadata(&home), fs::metadata("/"))

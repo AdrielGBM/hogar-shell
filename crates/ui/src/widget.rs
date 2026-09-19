@@ -192,8 +192,10 @@ pub fn spectrum(
         if values.is_empty() {
             return RenderNode::Empty;
         }
+        // A band reading zero with no floor has no bar to draw, which is how a silent row with no floor disappears.
         RenderNode::group(
             bar_rects(&values, edge, style, rect)
+                .filter(|bar| bar.width > 0.0 && bar.height > 0.0)
                 .map(|bar| RenderNode::rect(bar, RectStyle::filled(color, style.radius))),
         )
     })?;
@@ -278,26 +280,30 @@ pub fn spectrum_ring(
         let spokes = values.len() * 2;
         let thickness = ((std::f32::consts::TAU * inner / spokes as f32) - style.gap).max(1.0);
 
-        RenderNode::group((0..spokes).map(|spoke| {
+        // A band with no length is a bar with nothing to draw, which is how a silent ring with no floor disappears.
+        RenderNode::group((0..spokes).filter_map(|spoke| {
             let band = if spoke < values.len() {
                 spoke
             } else {
                 spokes - 1 - spoke
             };
             let length = (values[band].clamp(0.0, 1.0) * reach).max(style.floor);
+            if length <= 0.0 {
+                return None;
+            }
             let bar = Rect {
                 x: cx - thickness / 2.0,
                 y: cy - inner - length,
                 width: thickness,
-                height: length.max(f32::EPSILON),
+                height: length,
             };
-            RenderNode::transform_with(
+            Some(RenderNode::transform_with(
                 Transform::rotate_around(spoke as f32 * 360.0 / spokes as f32, cx, cy).to_array(),
                 [RenderNode::rect(
                     bar,
                     RectStyle::filled(color, style.radius),
                 )],
-            )
+            ))
         }))
     })?;
     Ok(Box::new(canvas))

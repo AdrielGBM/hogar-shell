@@ -69,6 +69,10 @@ pub struct PillStyle {
     pub occupied_background: bool,
     /// Whether a sliding indicator paints the active pill. When it does, the pill must not paint its own accent fill: two accents in the same place is the indicator arriving on top of a pill that already recoloured, which reads as no animation at all.
     pub indicator: bool,
+    /// The spring the indicator chases its target with: `[animation] curve`, so one section governs every moving part.
+    pub spring: Spring,
+    /// How far the indicator stretches while travelling, as a fraction of the distance left to cover. `0` is a square box the whole way.
+    pub trail: f32,
 }
 
 /// The three states, three fills: the active pill takes the accent, an occupied one the surface token so it reads as "something lives here", and an empty one the bar's own background so it recedes.
@@ -229,13 +233,6 @@ pub fn pill_grid(
     Ok(Box::new(Container::new(axis, children)?))
 }
 
-/// The box that marks the active workspace, carried to it rather than repainted in place. The spring the indicator chases its target with: `[animation] curve`, else the shell's own default. Read from the surface's config rather than hardcoded, so one `[animation]` section governs every moving part.
-fn indicator_spring() -> Spring {
-    config::surface_env()
-        .map(|env| env.config.animation.spring())
-        .unwrap_or_else(Spring::gentle)
-}
-
 /// The box actually painted: `target` stretched along its direction of travel toward `goal`.
 ///
 /// Not new machinery — the same animated rect, drawn as the union of where it is and a `trail` fraction of where it is still going. That makes it exactly one pill wide the instant it arrives (the distance is zero, so the union is the rect itself) and longest at the moment it is moving fastest, which is what reads as speed rather than as a box that grew.
@@ -253,15 +250,9 @@ fn with_trail(target: Rect, goal: Rect, trail: f32) -> Rect {
     }
 }
 
-/// How far the indicator stretches while travelling, as a fraction of the distance left to cover. `0` is the square box that was there before; the config bounds it below `1`, where the trail would reach the whole way to the goal and read as one long bar rather than as motion.
-fn indicator_trail() -> f32 {
-    config::surface_env()
-        .map(|env| env.config.workspaces.trail())
-        .unwrap_or(0.0)
-}
-
+/// The box that marks the active workspace, carried to it rather than repainted in place.
 fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let trail = indicator_trail();
+    let (trail, spring) = (style.trail, style.spring);
     // Built on the first target rather than at construction: an `Animated` seeded with a zero rect would travel out of the corner the first time the bar ever draws, which reads as a glitch rather than as the motion this exists for. A spring rather than a tween because it keeps velocity through a retarget — holding a workspace key down should bend the indicator's path, not restart it from a standstill.
     let motion: Rc<RefCell<Option<Animated<Rect>>>> = Rc::new(RefCell::new(None));
 
@@ -287,7 +278,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
                         width: 0.0,
                         height: 0.0,
                     };
-                    let animated = Animated::new(seed, indicator_spring());
+                    let animated = Animated::new(seed, spring);
                     animated.retarget(wanted);
                     *motion.borrow_mut() = Some(animated);
                 }
@@ -480,11 +471,8 @@ pub fn scroll_target(snapshot: &Snapshot, up: bool) -> Option<i32> {
 /// The wheel over the pills switches workspace, when `[workspaces] scroll` allows it.
 ///
 /// Reads the shared snapshot rather than the compositor: a wheel notch must not spend a socket round-trip deciding where to go, and the service already holds the answer.
-pub fn scroll(_dx: f32, dy: f32) {
-    let enabled = config::config()
-        .map(|c| c.workspaces.scroll)
-        .unwrap_or(true);
-    if !enabled {
+pub fn scroll(host: &ui::host::Host, _dx: f32, dy: f32) {
+    if !host.options::<WorkspacesConfig>().scroll {
         return;
     }
     let Some(snapshot) = services::hyprland::current_workspaces() else {
@@ -706,6 +694,8 @@ mod tests {
             vertical,
             occupied_background: true,
             indicator: false,
+            spring: Spring::gentle(),
+            trail: 0.0,
         };
         let bare = Pill {
             id: 1,
@@ -777,6 +767,8 @@ mod tests {
                 vertical,
                 occupied_background: true,
                 indicator: true,
+                spring: Spring::gentle(),
+                trail: 0.0,
             };
             let grid = pill_grid(
                 PillGridProps::props()
@@ -855,6 +847,8 @@ mod tests {
                     vertical,
                     occupied_background: true,
                     indicator,
+                    spring: Spring::gentle(),
+                    trail: 0.0,
                 };
                 assert!(
                     pill_grid(
@@ -890,6 +884,8 @@ mod tests {
             vertical: false,
             occupied_background: true,
             indicator,
+            spring: Spring::gentle(),
+            trail: 0.0,
         };
         let theme = NordTheme::new();
         assert_eq!(
@@ -1034,6 +1030,8 @@ mod tests {
             vertical: false,
             occupied_background: true,
             indicator: true,
+            spring: Spring::gentle(),
+            trail: 0.0,
         };
         let built = pill_grid(
             PillGridProps::props()

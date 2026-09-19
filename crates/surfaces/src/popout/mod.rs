@@ -6,24 +6,21 @@
 //!
 //! Placement is [`shared::anchor`](ui::anchor), the same helper the tray's context menus use.
 
-use std::rc::Rc;
-
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use platform_wayland::timeout;
 use telar::{
-    AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, Rect,
-    SizeDimension, Slots,
+    AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, Rect,
+    RectStyle, SizeDimension, StyledContainer,
 };
 
-use config::theme::NordTheme;
-use config::{Config, Edge};
-use ui::card_frame::{CardFrameProps, card_frame};
-use ui::module::SurfaceEnv;
+use config::Edge;
+use config::SurfaceEnv;
+use ui::descriptor;
+use ui::host::{Host, InstanceId, Representation, Size};
 use ui::panel::PanelSurface;
 use ui::placement::{OffChip, Placement};
-use ui::popouts;
 
 /// One popout at a time: a second card on screen would be two readouts competing for the same glance.
 const SURFACE_ID: &str = "popout";
@@ -74,7 +71,7 @@ pub fn close() {
 ///
 /// `chip` is the rect as it stands now, not the signal behind it: the timer fires on the shared loop rather than inside the bar surface, and a chip cannot move under a resting pointer without the bar being rebuilt, which tears this down anyway.
 pub fn hover(module_id: &str, chip: Rect, entered: bool) {
-    let Some(env) = ui::module::surface_env() else {
+    let Some(env) = config::surface_env() else {
         return;
     };
     if !env.config.popouts.enabled {
@@ -120,16 +117,14 @@ fn keep_open(entered: bool) {
 
 /// Opens `module_id`'s card under its chip, replacing whatever was up. Runs on the driver thread — it is reached from a hover handler through a timer on the shared loop, which is where a surface may be opened.
 fn open(module_id: &str, chip: Rect, env: &SurfaceEnv) {
-    if !popouts::has_popout(module_id) {
+    if !descriptor::has_popout(module_id) {
         return;
     }
     // The module's own panel is already showing what the card would preview, and two of it — one hanging off the chip, one over it — is harder to read than either alone. Checked here rather than at the hover, because the delay is long enough for the panel to open inside it: pressing a chip the pointer is already resting on schedules the card first and opens the panel second.
     if crate::panel::is_panel_open(module_id) {
         return;
     }
-    // The delay is long enough for a config reload to land inside it, and a card built against the outgoing config would carry a stale theme onto a screen the rest of the shell has already left.
-    //
-    // Compared against *this screen's* config, not the global one: they are different `Arc`s whenever the compositor names its outputs — which is always — so the global one never matched and the popout never opened at all.
+    // The delay is long enough for a config reload to land inside it, and a card built against the outgoing config would carry a stale theme; compared against *this screen's* config, because the global one is a different `Arc` whenever the compositor names its outputs, which is always.
     if !Arc::ptr_eq(&config::config_for(env.output.as_deref()), &env.config) {
         return;
     }
@@ -138,12 +133,7 @@ fn open(module_id: &str, chip: Rect, env: &SurfaceEnv) {
     let module = module_id.to_string();
     let placement = placement(env, chip);
     crate::shell::toggle_window(SURFACE_ID, move || {
-        PanelSurface::new(placement, move |env| {
-            let theme = telar::use_theme::<NordTheme>();
-            popout_content(&module, &env.config, env.edge, theme)
-                .expect("popout content build failed")
-        })
-        .open()
+        PanelSurface::new(placement, move |env| popout_content(&module, env)).open()
     });
 }
 
@@ -186,56 +176,61 @@ pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         level: 64,
         muted: false,
     });
-    let env = ui::preview::bar_chip();
-    let theme = env.config.resolve_theme();
-    popout_content("volume", &env.config, env.edge, theme)
+    let speakers = "alsa_output.pci-0000_0a_00.6.analog-stereo";
+    services::pipewire::seed(services::pipewire::Graph {
+        nodes: vec![services::pipewire::Node {
+            id: 48,
+            name: speakers.to_string(),
+            description: "Family 17h/19h HD Audio Controller Analog Stereo".to_string(),
+            app: String::new(),
+            media: String::new(),
+            icon: String::new(),
+            kind: services::pipewire::NodeKind::Sink,
+            level: 64,
+            muted: false,
+        }],
+        default_sink: speakers.to_string(),
+        default_source: String::new(),
+    });
+    popout_content("volume", &ui::preview::bar_surface())
 }
 
 /// Builds a popout's tree for `module_id`; public so a surface that only *presents* one — and a preview — can build it without a compositor.
 pub fn popout_content(
     module_id: &str,
-    config: &Config,
-    edge: Edge,
-    theme: NordTheme,
+    env: &SurfaceEnv,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let inner = match popouts::build(module_id, config, theme) {
-        Some(card) => card?,
-        None => return Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?)),
-    };
-    let mut content = Slots::new();
-    content.push(None, inner);
-    let framed = card_frame(
-        CardFrameProps::props()
-            .fill(config.panel_fill())
-            .width(config.popouts.card_width())
-            .radius(config.panel_radius(edge))
-            .on_hover(Rc::new(keep_open))
-            .build(),
-        telar::Children::new({
-            let content = std::cell::RefCell::new(Some(content));
-            move || {
-                content
-                    .borrow_mut()
-                    .take()
-                    .ok_or_else(|| LayoutError::Engine("children built twice".into()))
-            }
-        }),
-    )?;
-    Ok(Box::new(Container::new(corner_style(edge), vec![framed])?))
+    let popouts = env.config.popouts;
+    let host = Host::on_surface(
+        InstanceId::of_module(module_id),
+        Representation::Popout,
+        env,
+        Size {
+            width: popouts.card_width(),
+            height: popouts.card_height(),
+        },
+    );
+    let card = descriptor::place(module_id, &host, LayoutStyle::new().flex_column())?;
+    let tracked = StyledContainer::new(
+        LayoutStyle::new(),
+        |_| RectStyle::filled(Color::TRANSPARENT, 0.0),
+        vec![card],
+    )?
+    .on_hover(keep_open);
+    Ok(Box::new(Container::new(
+        corner_style(env.edge),
+        vec![Box::new(tracked)],
+    )?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use config::Config;
     use platform_wayland::KeyboardInteractivity;
 
     fn env(edge: Edge) -> SurfaceEnv {
-        SurfaceEnv {
-            edge,
-            bar_size: 34,
-            output: None,
-            config: Arc::new(Config::starter()),
-        }
+        SurfaceEnv::for_edge(Arc::new(Config::starter()), edge, None)
     }
 
     fn chip() -> Rect {
@@ -303,14 +298,12 @@ mod tests {
         );
     }
 
-    /// A module with no card registered still builds — an empty tree rather than a panic, which is what the surface must do for an id the hover wiring let through.
+    /// An id the hover wiring let through with no card builds a placeholder rather than taking the surface down.
     #[test]
-    fn a_module_with_no_card_builds_an_empty_popout() {
-        let config = Config::starter();
-        let theme = config.resolve_theme();
+    fn a_module_with_no_card_builds_a_placeholder_popout() {
         telar::reset_layout_runtime();
-        telar::set_theme(theme);
-        assert!(popout_content("nothing-registered", &config, Edge::Top, theme).is_ok());
+        telar::set_theme(Config::starter().resolve_theme());
+        assert!(popout_content("nothing-registered", &env(Edge::Top)).is_ok());
     }
 
     #[test]

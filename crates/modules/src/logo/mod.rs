@@ -39,10 +39,8 @@ fn parse_id(text: &str) -> Option<String> {
 }
 
 /// The icon the logo chip shows: the configured `[general] logo` when set, else the running distribution's mark detected from `/etc/os-release`.
-pub fn logo_icon() -> String {
-    let configured = ui::module::surface_env()
-        .map(|env| env.config.general.logo.clone())
-        .unwrap_or_default();
+fn logo_icon(general: &config::GeneralConfig) -> String {
+    let configured = general.logo.clone();
     if !configured.trim().is_empty() {
         return configured;
     }
@@ -53,14 +51,10 @@ pub fn logo_icon() -> String {
     glyph_for(&id).to_string()
 }
 
-pub fn logo_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fg = ui::module::module_fg();
-    let icon = logo_icon();
-    ui::icon::icon_view(
-        move || icon.clone(),
-        move || fg.get(),
-        ui::module::icon_px(),
-    )
+pub fn logo_chip(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fg = host.foreground;
+    let icon = logo_icon(host.options::<config::GeneralConfig>());
+    ui::icon::icon_view(move || icon.clone(), move || fg, host.icon_size())
 }
 
 #[cfg(test)]

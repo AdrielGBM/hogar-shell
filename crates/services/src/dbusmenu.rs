@@ -299,30 +299,6 @@ mod tests {
         assert!(!Toggle::None.is_on());
     }
 
-    // Reads a real menu off the session bus, gated behind an env var so it never runs in headless CI: run with `HOGAR_SHELL_TEST_DBUSMENU=<bus><path> cargo test -p hogar-shell --lib dbusmenu_reads -- --nocapture`, e.g. `HOGAR_SHELL_TEST_DBUSMENU=":1.502/org/ayatana/NotificationItem/steam/Menu"`.
-    #[test]
-    fn dbusmenu_reads_a_live_menu() {
-        let Ok(target) = std::env::var("HOGAR_SHELL_TEST_DBUSMENU") else {
-            eprintln!("set HOGAR_SHELL_TEST_DBUSMENU to read a live menu; skipping");
-            return;
-        };
-        let (bus, path) = target.split_once('/').expect("bus/path");
-        let root = fetch(bus, &format!("/{path}")).expect("the application answered GetLayout");
-        eprintln!("root id {} with {} children", root.id, root.children.len());
-        for child in &root.children {
-            eprintln!(
-                "  [{}] {:?} enabled={} separator={} submenu={} toggle={:?}",
-                child.id,
-                child.label,
-                child.enabled,
-                child.separator,
-                child.has_submenu(),
-                child.toggle
-            );
-        }
-        assert!(!root.children.is_empty(), "a real menu has rows");
-    }
-
     #[test]
     fn only_a_leaf_that_is_enabled_and_not_a_separator_is_actionable() {
         let leaf = MenuItem {

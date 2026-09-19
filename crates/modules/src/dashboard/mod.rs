@@ -1,92 +1,158 @@
-//! The dashboard: one panel, four pages.
-//!
-//! It is a panel like every other one — routed through `module_panel`, presented as a drawer or a float per `[modules.dashboard] open`, opened from a chip, from IPC or from a keybind through the same bookkeeping — so nothing here is a second way to put a surface on screen.
-//!
-//! Which page is showing lives in a [`Store`] rather than in the panel, for two reasons. Reopening the dashboard should land where it was left, and `hogar-shell dashboard tab weather` has to reach the tab a click would set; a signal owned by the surface could do neither, since the surface is rebuilt on every open and does not exist between them.
+//! The dashboard: one panel, four pages. The page showing is per-instance state in an [`InstanceStore`] rather than in the panel, so a reopen or a reload lands where it was left and `hogar-shell dashboard tab` reaches the tab a click sets; the surface does not exist between opens.
 
-mod card;
 mod dash;
 mod media;
 mod performance;
 mod weather;
 
-use std::sync::Arc;
 use ui::scale::{corner, paint, space};
 
-use platform_wayland::EventSender;
 use telar::{
     AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
     ReactiveList, RectStyle, SizeDimension, StyledContainer, Text, box_item, signal, use_theme,
 };
 
 pub use config::DashboardTab;
-pub use dash::avatar_path;
 
-use config::Config;
+use config::DashboardConfig;
+
 use config::theme::{FontRole, NordTheme};
+use ui::card::{Card, Density};
+use ui::host::{Host, InstanceId, InstanceStore, Representation};
 use ui::icon::icon_view;
-use ui::module::{icon_px, module_fg, surface_env};
-use util::broadcast::Store;
 
 /// The module id, so the chip, the panel routing and the IPC target cannot spell it three ways.
 pub const ID: &str = "dashboard";
 
 const TAB_ICON: f32 = 16.0;
 
-/// The page currently showing. Producerless: the shell owns it, nothing polls, and it survives the panel.
-static TAB: Store<DashboardTab> = Store::new(DashboardTab::default);
+/// Tall enough that a minute of history reads as a shape rather than a jagged line, short enough that six of them stack inside one drawer.
+const CHART_HEIGHT: f32 = 40.0;
 
-pub fn tab() -> DashboardTab {
-    TAB.get()
+static TAB: InstanceStore<DashboardTab> = InstanceStore::new(DashboardTab::default);
+
+pub fn tab(instance: &InstanceId) -> DashboardTab {
+    TAB.get(instance)
 }
 
-pub fn set_tab(tab: DashboardTab) {
-    TAB.update(|current| *current = tab);
+pub fn set_tab(instance: &InstanceId, tab: DashboardTab) {
+    TAB.set(instance, tab);
 }
 
-pub fn subscribe_tab(tx: EventSender<DashboardTab>) {
-    TAB.subscribe(tx);
+/// The dashboard's cards one at a time, as the `card` representation of the module each one reads — which is also how its pages place them.
+pub mod cards {
+    use super::*;
+    use config::{ClockConfig, MediaConfig, TemperatureConfig, VisualiserConfig};
+
+    pub fn clock(host: &Host) -> Card {
+        dash::clock_card(
+            host.options::<ClockConfig>().clone(),
+            use_theme::<NordTheme>(),
+        )
+    }
+
+    pub fn cpu(host: &Host) -> Card {
+        performance::cpu_card(
+            performance::machine(host.options::<DashboardConfig>()),
+            host.options::<TemperatureConfig>(),
+            use_theme::<NordTheme>(),
+        )
+    }
+
+    pub fn gpu(host: &Host) -> Card {
+        performance::gpu_card(
+            host.options::<TemperatureConfig>().unit,
+            use_theme::<NordTheme>(),
+        )
+    }
+
+    pub fn memory(host: &Host) -> Card {
+        performance::memory_card(
+            performance::machine(host.options::<DashboardConfig>()),
+            use_theme::<NordTheme>(),
+        )
+    }
+
+    pub fn netspeed(_host: &Host) -> Card {
+        performance::network_card(use_theme::<NordTheme>())
+    }
+
+    pub fn battery(_host: &Host) -> Card {
+        performance::battery_card(use_theme::<NordTheme>())
+    }
+
+    pub fn media(host: &Host) -> Card {
+        media::now_playing_card(
+            host.options::<DashboardConfig>(),
+            media::ring_bands(
+                host.options::<MediaConfig>(),
+                host.options::<VisualiserConfig>(),
+            ),
+            use_theme::<NordTheme>(),
+        )
+    }
+
+    pub fn track(host: &Host) -> Card {
+        media::track_card(
+            media::ring_bands(
+                host.options::<MediaConfig>(),
+                host.options::<VisualiserConfig>(),
+            ),
+            use_theme::<NordTheme>(),
+        )
+    }
 }
 
-/// The bar chip.
-pub fn dashboard_chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fg = module_fg();
+/// A reading the cards on one page share, started by the page before its cards build so they find it; a card built anywhere else starts its own.
+fn shared<T: Clone + 'static>(start: impl FnOnce() -> T) -> T {
+    util::state::context::<T>().unwrap_or_else(|| {
+        let reading = start();
+        util::state::set_context(reading.clone());
+        reading
+    })
+}
+
+pub fn dashboard_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let fg = host.foreground;
     icon_view(
         || "layout-dashboard".to_string(),
-        move || fg.get(),
-        icon_px(),
+        move || fg,
+        host.icon_size(),
     )
 }
 
-/// The panel: a tab strip over the configured pages, and the active one under it.
-pub fn dashboard_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = live_config();
-    services::locale::attach(config.language());
+pub fn dashboard_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let tabs = config.dashboard.tabs();
+    let tabs = host.options::<DashboardConfig>().tabs();
 
     // A page can be dropped from `[dashboard] tabs` while it is the one showing, and a stored page the config no longer offers would leave the strip with nothing highlighted and the panel on a page it never listed.
-    let active = signal(match tabs.contains(&TAB.get()) {
-        true => TAB.get(),
+    let instance = host.instance.clone();
+    let stored = TAB.get(&instance);
+    let active = signal(match tabs.contains(&stored) {
+        true => stored,
         false => tabs[0],
     });
-    if active.peek() != TAB.get() {
-        set_tab(active.peek());
+    if active.peek() != stored {
+        set_tab(&instance, active.peek());
     }
     let sink = active;
     let offered = tabs.clone();
-    platform_wayland::watch(subscribe_tab, move |tab| {
-        if offered.contains(&tab) {
-            sink.set(tab);
-        }
-    });
+    let followed = instance.clone();
+    platform_wayland::watch(
+        move |tx| TAB.subscribe(&followed, tx),
+        move |tab| {
+            if offered.contains(&tab) {
+                sink.set(tab);
+            }
+        },
+    );
 
     let source = active.read_only();
-    let page_config = Arc::clone(&config);
+    let page_host = host.clone();
     let body = ReactiveList::new(
         move || vec![source.get()],
         |tab: &DashboardTab| tab.id().to_string(),
-        move |tab: DashboardTab| page(tab, &page_config, theme),
+        move |tab: DashboardTab| page(tab, &page_host, theme),
         0.0,
     )?;
 
@@ -95,39 +161,61 @@ pub fn dashboard_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
             .flex_column()
             .gap(space::lg())
             .width(SizeDimension::Percent(1.0)),
-        vec![strip(&tabs, active, theme)?, Box::new(body)],
+        vec![strip(&tabs, active, theme, &instance)?, Box::new(body)],
+    )?))
+}
+
+/// One card on a page: a module's `card` representation from the installed table, or one only the page draws.
+enum PageCard {
+    Module(&'static str),
+    Own(Card),
+}
+
+fn cards_page(host: &Host, cards: Vec<PageCard>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let full_width = || {
+        LayoutStyle::new()
+            .flex_column()
+            .width(SizeDimension::Percent(1.0))
+    };
+    let mut built: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(cards.len());
+    for card in cards {
+        built.push(match card {
+            PageCard::Module(id) => ui::descriptor::place(
+                id,
+                &host.inner(id, Representation::Card, host.extent),
+                full_width(),
+            )?,
+            PageCard::Own(card) => card.build(Density::Page)?,
+        });
+    }
+    Ok(Box::new(Container::new(
+        full_width().gap(space::lg()),
+        built,
     )?))
 }
 
 fn page(
     tab: DashboardTab,
-    config: &Config,
+    host: &Host,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     match tab {
-        DashboardTab::Dash => dash::page(config, theme),
-        DashboardTab::Media => media::page(config, theme),
-        DashboardTab::Performance => performance::page(config, theme),
-        DashboardTab::Weather => weather::page(config, theme),
+        DashboardTab::Dash => dash::page(host, theme),
+        DashboardTab::Media => media::page(host, theme),
+        DashboardTab::Performance => performance::page(host, theme),
+        DashboardTab::Weather => weather::page(host, theme),
     }
-}
-
-/// The config the panel resolves against: the bar's when a chip opened it, the running one when IPC or a keybind did — never the defaults, which would silently ignore everything the user configured.
-fn live_config() -> Arc<Config> {
-    surface_env()
-        .map(|env| env.config)
-        .or_else(config::config)
-        .unwrap_or_default()
 }
 
 fn strip(
     tabs: &[DashboardTab],
     active: telar::RwSignal<DashboardTab>,
     theme: NordTheme,
+    instance: &InstanceId,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut pills: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(tabs.len());
     for tab in tabs {
-        pills.push(pill(*tab, active, theme)?);
+        pills.push(pill(*tab, active, theme, instance.clone())?);
     }
     Ok(Box::new(Container::new(
         LayoutStyle::new()
@@ -142,11 +230,10 @@ fn pill(
     tab: DashboardTab,
     active: telar::RwSignal<DashboardTab>,
     theme: NordTheme,
+    instance: InstanceId,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let selected_ink = theme.accent.most_readable(&[theme.text, theme.base]);
-    // One handle per closure: a signal is not `Copy`, and each of the three readers below outlives the others.
-    let (icon_state, label_state, fill_state) =
-        (active.read_only(), active.read_only(), active.read_only());
+    let state = active.read_only();
 
     let ink = move |current: DashboardTab| {
         if current == tab {
@@ -157,7 +244,7 @@ fn pill(
     };
     let icon = icon_view(
         move || tab.icon().to_string(),
-        move || ink(icon_state.get()),
+        move || ink(state.get()),
         TAB_ICON,
     )?;
     let label = Text::new(
@@ -165,7 +252,7 @@ fn pill(
         LayoutStyle::new(),
         move || {
             theme
-                .text_style(FontRole::Caption, ink(label_state.get()))
+                .text_style(FontRole::Caption, ink(state.get()))
                 .with_font_weight(700)
         },
     )?;
@@ -183,7 +270,7 @@ fn pill(
                 .padding_vertical(space::md())
                 .padding_horizontal(space::md()),
             move |_r| {
-                let fill = if fill_state.get() == tab {
+                let fill = if state.get() == tab {
                     theme.accent
                 } else {
                     Color::TRANSPARENT
@@ -194,7 +281,7 @@ fn pill(
         )?
         .hover_style(paint::md(theme.overlay))
         // Through the store, not the local signal: a click and `hogar-shell dashboard tab …` must land in the same place, and the watch above is what brings the change back to this surface.
-        .on_press(move || set_tab(tab)),
+        .on_press(move || set_tab(&instance, tab)),
     ))
 }
 
@@ -210,7 +297,20 @@ fn tab_label(tab: DashboardTab) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::DashboardConfig;
+    use config::Config;
+    use std::sync::Arc;
+
+    fn panel_host(config: Config) -> Host {
+        ui::preview::host_on(
+            Arc::new(config),
+            ID,
+            Representation::Panel,
+            ui::host::Size {
+                width: 420.0,
+                height: 600.0,
+            },
+        )
+    }
 
     #[test]
     fn every_tab_has_a_label_a_glyph_and_a_stable_id() {
@@ -280,19 +380,33 @@ mod tests {
         telar::set_locale("en");
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        assert!(dashboard_chip().is_ok(), "the bar chip builds");
+        assert!(
+            dashboard_chip(&ui::preview::bar_chip()).is_ok(),
+            "the bar chip builds"
+        );
 
-        let config = Config::default();
+        let host = panel_host(Config::default());
         let theme = NordTheme::new();
         for tab in DashboardTab::ALL {
             telar::reset_layout_runtime();
             telar::set_theme(theme);
-            assert!(page(tab, &config, theme).is_ok(), "the {tab:?} page builds");
+            assert!(page(tab, &host, theme).is_ok(), "the {tab:?} page builds");
         }
 
         telar::reset_layout_runtime();
         telar::set_theme(theme);
-        assert!(dashboard_panel().is_ok(), "the panel builds around them");
+        let host = ui::preview::surface_host(
+            ID,
+            ui::host::Representation::Panel,
+            ui::host::Size {
+                width: 420.0,
+                height: 600.0,
+            },
+        );
+        assert!(
+            dashboard_panel(&host).is_ok(),
+            "the panel builds around them"
+        );
     }
 
     /// The weather page has a second shape: `[weather] enabled = false` means no service to subscribe to, and the page has to say so rather than subscribe to a producer that was switched off.
@@ -304,7 +418,7 @@ mod tests {
         telar::set_theme(theme);
         let mut config = Config::default();
         config.weather.enabled = false;
-        assert!(page(DashboardTab::Weather, &config, theme).is_ok());
+        assert!(page(DashboardTab::Weather, &panel_host(config), theme).is_ok());
     }
 
     #[test]
@@ -321,5 +435,92 @@ mod tests {
         assert_eq!(with("saturday"), chrono::Weekday::Sat);
         assert_eq!(with("monday"), chrono::Weekday::Mon);
         assert_eq!(with("nonsense"), chrono::Weekday::Mon, "the common default");
+    }
+
+    fn with_tabs(ids: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.dashboard.tabs = ids.iter().map(|id| id.to_string()).collect();
+        config
+    }
+
+    /// Builds `instance`'s panel on a fresh runtime against `config`, then tears it down as a closing surface would.
+    fn build_panel(instance: &str, config: Config) {
+        telar::set_locale("en");
+        telar::reset_layout_runtime();
+        telar::set_theme(NordTheme::new());
+        let host = ui::preview::host_on(
+            Arc::new(config),
+            instance,
+            ui::host::Representation::Panel,
+            ui::host::Size {
+                width: 420.0,
+                height: 600.0,
+            },
+        );
+        let scope = telar::owner_scope();
+        let owner = scope.id();
+        assert!(dashboard_panel(&host).is_ok(), "{instance}'s panel builds");
+        drop(scope);
+        telar::dispose_owner(owner);
+    }
+
+    #[test]
+    fn two_dashboards_keep_a_page_each_through_a_rebuild_and_a_reload() {
+        const EVERY: [&str; 4] = ["dash", "media", "performance", "weather"];
+        let (left, right) = (
+            InstanceId::new("dashboard-left"),
+            InstanceId::new("dashboard-right"),
+        );
+        build_panel(left.as_str(), with_tabs(&EVERY));
+        build_panel(right.as_str(), with_tabs(&EVERY));
+        set_tab(&left, DashboardTab::Weather);
+        set_tab(&right, DashboardTab::Media);
+        assert_eq!(
+            tab(&left),
+            DashboardTab::Weather,
+            "a click on one moves only that one"
+        );
+        assert_eq!(tab(&right), DashboardTab::Media);
+
+        build_panel(left.as_str(), with_tabs(&EVERY));
+        build_panel(right.as_str(), with_tabs(&EVERY));
+        assert_eq!(
+            tab(&left),
+            DashboardTab::Weather,
+            "a rebuild keeps the page"
+        );
+        assert_eq!(tab(&right), DashboardTab::Media);
+
+        let reloaded = ["weather", "media", "dash"];
+        build_panel(left.as_str(), with_tabs(&reloaded));
+        build_panel(right.as_str(), with_tabs(&reloaded));
+        assert_eq!(tab(&left), DashboardTab::Weather, "a reload keeps the page");
+        assert_eq!(tab(&right), DashboardTab::Media);
+    }
+
+    #[test]
+    fn a_reload_that_drops_a_page_moves_only_the_dashboard_showing_it() {
+        let (showing, other) = (
+            InstanceId::new("dashboard-showing"),
+            InstanceId::new("dashboard-other"),
+        );
+        set_tab(&showing, DashboardTab::Performance);
+        set_tab(&other, DashboardTab::Media);
+
+        build_panel(showing.as_str(), with_tabs(&["media", "dash"]));
+        build_panel(other.as_str(), with_tabs(&["media", "dash"]));
+        assert_eq!(
+            tab(&showing),
+            DashboardTab::Media,
+            "onto the first page still offered"
+        );
+        assert_eq!(tab(&other), DashboardTab::Media);
+
+        build_panel(other.as_str(), with_tabs(&["dash", "media"]));
+        assert_eq!(
+            tab(&other),
+            DashboardTab::Media,
+            "a page still offered stays"
+        );
     }
 }

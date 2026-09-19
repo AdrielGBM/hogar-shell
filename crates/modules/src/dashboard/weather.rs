@@ -1,8 +1,4 @@
-//! The Weather page: what it is doing now, and what it will do.
-//!
-//! Everything here already ships — the service, its disk cache, the condition glyphs and the translated descriptions — so the page adds no I/O of its own.
-//!
-//! The unit toggle is local to the surface. Pressing a reading to check it in the other scale is a glance, not a preference, and writing `[temperature] unit` from a glance would change what the bar and the OSD show because someone looked at a number. The settings application is where that choice is made.
+//! The Weather page. The unit toggle is local to the surface: checking a reading in the other scale is a glance, and writing `[temperature] unit` from it would change what the bar shows because someone looked at a number.
 
 use chrono::NaiveDate;
 use telar::{
@@ -11,66 +7,71 @@ use telar::{
 };
 use ui::scale::{paint, space};
 
-use super::card::{self, Card};
+use super::{PageCard, cards_page};
+use crate::weather;
+use config::TemperatureUnit;
 use config::theme::{FontRole, NordTheme};
-use config::{Config, TemperatureUnit};
-use services::weather::{self, Day, Weather};
+use services::weather::{Day, Weather};
+use ui::card::Card;
 use ui::glyph;
+use ui::host::Host;
 use ui::icon::icon_view;
-use ui::widget;
-use util::reactive::{Live, derive, derive_pair, fixed_text};
+use util::reactive::{Live, derive, fixed_text};
 
 const CONDITION_ICON: f32 = 52.0;
 const FORECAST_ICON: f32 = 20.0;
 
-pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub fn page(host: &Host, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let config = host.config();
     if !config.weather.enabled {
-        return card::page(vec![card::frame(
-            vec![card::detail(
-                fixed_text(telar::t!("dashboard.weather_off")),
-                theme,
-            )?],
-            theme,
-        )?]);
+        return cards_page(host, vec![PageCard::Own(weather::off())]);
     }
 
-    let state = signal(weather::current().unwrap_or_default());
-    let sink = state;
-    platform_wayland::watch(weather::subscribe, move |w| sink.set(w));
+    let state = weather::reading();
     let unit = signal(config.temperature.unit);
 
-    card::page(vec![
-        current_card(state, unit, theme)?,
-        forecast_card(state, unit, config.weather.forecast_days(), theme)?,
-    ])
+    cards_page(
+        host,
+        vec![
+            PageCard::Own(current_card(state, unit, theme)),
+            PageCard::Own(forecast_card(
+                state,
+                unit,
+                config.weather.forecast_days(),
+                theme,
+            )),
+        ],
+    )
 }
 
 fn current_card(
-    state: RwSignal<Weather>,
+    state: RwSignal<Option<Weather>>,
+    unit: RwSignal<TemperatureUnit>,
+    theme: NordTheme,
+) -> Card {
+    weather::with_rows(
+        Card::new(weather::place(state))
+            .icon(fixed_text("map-pin"))
+            .child(move || headline(state, unit, theme)),
+        state,
+        unit,
+    )
+}
+
+fn headline(
+    state: RwSignal<Option<Weather>>,
     unit: RwSignal<TemperatureUnit>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let icon_state = derive(state, |w| {
-        glyph::weather(w.condition(), w.is_day).to_string()
-    });
+    let icon_state = weather::sky(state);
     let icon = icon_view(
         move || icon_state.get(),
         move || theme.accent,
         CONDITION_ICON,
     )?;
 
-    let reading = derive_pair(state.read_only(), unit.read_only(), |w, unit| {
-        unit.format(w.temperature)
-    });
-    let condition = derive(state, |w| w.condition().label());
-    let place = derive(state, |w| {
-        let place = w.place.trim();
-        if place.is_empty() {
-            telar::t!("sysinfo.no_reading")
-        } else {
-            place.to_string()
-        }
-    });
+    let temperature = weather::temperature(state, unit);
+    let condition = weather::condition(state);
 
     let headline = Container::new(
         LayoutStyle::new()
@@ -86,7 +87,7 @@ fn current_card(
                     .flex_grow(1.0)
                     .gap(space::xs()),
                 vec![
-                    unit_toggle(reading, unit, theme)?,
+                    unit_toggle(temperature, unit, theme)?,
                     box_item(Text::new(
                         move || condition.get(),
                         LayoutStyle::new(),
@@ -96,42 +97,9 @@ fn current_card(
             )?),
         ],
     )?;
-
-    let caption = theme.font(FontRole::Caption);
-    let rows: Vec<Box<dyn LayoutItem>> = vec![
-        widget::label_value(
-            fixed_text(telar::t!("dashboard.feels_like")),
-            derive_pair(state.read_only(), unit.read_only(), |w, unit| {
-                unit.format(w.feels_like)
-            }),
-            caption,
-            theme.muted,
-            theme.text,
-        )?,
-        widget::label_value(
-            fixed_text(telar::t!("dashboard.humidity")),
-            derive(state, |w| format!("{}%", w.humidity)),
-            caption,
-            theme.muted,
-            theme.text,
-        )?,
-        widget::label_value(
-            fixed_text(telar::t!("dashboard.wind")),
-            derive(state, |w| format!("{:.0} km/h", w.wind)),
-            caption,
-            theme.muted,
-            theme.text,
-        )?,
-    ];
-
-    let mut card = Card::new(place).icon("map-pin").child(Box::new(headline));
-    for row in rows {
-        card = card.child(row);
-    }
-    card.build(theme)
+    Ok(Box::new(headline))
 }
 
-/// The reading, pressable. A press swaps the scale for this surface, and writes it back only when the user has live settings on — see the module note.
 fn unit_toggle(
     reading: Live<String>,
     unit: RwSignal<TemperatureUnit>,
@@ -165,7 +133,26 @@ fn other_unit(unit: TemperatureUnit) -> TemperatureUnit {
 }
 
 fn forecast_card(
-    state: RwSignal<Weather>,
+    state: RwSignal<Option<Weather>>,
+    unit: RwSignal<TemperatureUnit>,
+    limit: u32,
+    theme: NordTheme,
+) -> Card {
+    let empty = derive(state, |w| {
+        if w.is_none_or(|w| w.days.is_empty()) {
+            telar::t!("dashboard.no_forecast")
+        } else {
+            String::new()
+        }
+    });
+    Card::titled(telar::t!("dashboard.forecast"))
+        .icon(fixed_text("calendar-days"))
+        .child(move || forecast_days(state, unit, limit, theme))
+        .detail(empty)
+}
+
+fn forecast_days(
+    state: RwSignal<Option<Weather>>,
     unit: RwSignal<TemperatureUnit>,
     limit: u32,
     theme: NordTheme,
@@ -177,7 +164,8 @@ fn forecast_card(
             let unit = unit_source.get();
             source
                 .get()
-                .days
+                .map(|w| w.days)
+                .unwrap_or_default()
                 .into_iter()
                 .take(limit as usize)
                 .map(|day| (day, unit))
@@ -187,20 +175,7 @@ fn forecast_card(
         move |(day, unit): (Day, TemperatureUnit)| forecast_row(day, unit, theme),
         6.0,
     )?;
-
-    let empty = derive(state, |w| {
-        if w.days.is_empty() {
-            telar::t!("dashboard.no_forecast")
-        } else {
-            String::new()
-        }
-    });
-
-    Card::titled(telar::t!("dashboard.forecast"))
-        .icon("calendar-days")
-        .child(Box::new(days))
-        .child(card::detail(empty, theme)?)
-        .build(theme)
+    Ok(Box::new(days))
 }
 
 /// One day: when, what, how likely to rain, and the range. Kept to a single row so a week reads as a column of comparable lines rather than seven small cards.

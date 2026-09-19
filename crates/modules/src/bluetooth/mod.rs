@@ -12,17 +12,16 @@ use config::BluetoothConfig;
 use config::theme::{FontRole, NordTheme};
 use services::bluetooth::{self, Bluetooth, Device};
 use ui::glyph;
+use ui::host::Host;
 use ui::icon::icon_view;
-use ui::module::{icon_px, module_fg, surface_env};
 
 const ROW_ICON: f32 = 22.0;
 const ROW_RADIUS: f32 = 8.0;
 
 /// The bar chip: the radio's state in one glyph, opening the device panel on click.
-pub fn chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub fn chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let accent = theme.accent;
-    // The `Copy` summary, not the whole state: the tint closure also reads the foreground signal, and a `with` over the state would still be holding the reactive runtime's borrow when it did.
     let state = signal(
         bluetooth::current()
             .map(|bt| bt.status())
@@ -31,25 +30,19 @@ pub fn chip() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let sink = state;
     platform_wayland::watch(bluetooth::subscribe, move |bt| sink.set(bt.status()));
 
-    let fg = module_fg();
+    let fg = host.foreground;
     let glyph_state = state.read_only();
     let tint_state = state.read_only();
     icon_view(
         move || glyph::bluetooth(glyph_state.get()).to_string(),
-        move || glyph::bluetooth_tint(tint_state.get(), theme, accent, fg.get()),
-        icon_px(),
+        move || glyph::bluetooth_tint(tint_state.get(), theme, accent, fg),
+        host.icon_size(),
     )
 }
 
 /// The panel: the adapter's controls over the devices it knows about.
-pub fn bluetooth_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = surface_env()
-        .map(|env| env.config.bluetooth)
-        .unwrap_or_default();
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
-    }
-    bluetooth_view(config)
+pub fn bluetooth_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    bluetooth_view(*host.options::<BluetoothConfig>())
 }
 
 /// The panel's whole content, taking its config rather than reading the surface's, so a caller that already resolved one — a drawer, a float — does not have to be a surface for this to build.
@@ -504,11 +497,17 @@ mod tests {
     fn the_chip_and_the_panel_build_without_a_re_entrant_borrow() {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        assert!(chip().is_ok(), "the bar chip builds");
+        assert!(
+            chip(&ui::preview::bar_chip()).is_ok(),
+            "the bar chip builds"
+        );
 
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        assert!(bluetooth_panel().is_ok(), "the device panel builds");
+        assert!(
+            bluetooth_view(BluetoothConfig::default()).is_ok(),
+            "the device panel builds"
+        );
     }
 
     #[test]

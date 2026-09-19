@@ -13,19 +13,20 @@ use std::sync::Arc;
 
 use telar::motion::Animated;
 use telar::{
-    App, Color, Component, LayoutError, LayoutItem, LayoutStyle, RectStyle, StyledContainer,
-    SurfaceToken, WindowConfig, reset_layout_runtime, set_theme, surface_content,
+    App, Color, Component, Container, LayoutError, LayoutItem, LayoutStyle, RectStyle,
+    StyledContainer, SurfaceToken, WindowConfig, reset_layout_runtime, set_theme, surface_content,
 };
 
 use config::{AnimationConfig, Config, Edge, SurfaceEnv, set_surface_env, surface_env};
 use platform_wayland::SurfaceHandle;
 use util::state::kept;
 
+use crate::descriptor::Built;
 use crate::placement::Placement;
 use telar::WindowRoot;
 
 /// What a panel draws, given the environment this build resolved. `Fn` rather than `FnOnce`: a surface outlives the config it opened under, and a rebuild is how it follows an edit.
-pub type PanelContent = Rc<dyn Fn(&SurfaceEnv) -> Box<dyn LayoutItem>>;
+pub type PanelContent = Rc<dyn Fn(&SurfaceEnv) -> Built>;
 
 /// A window that is not a bar: a drawer, a float, a card, the launcher, an OSD, a toast stack, the region picker. Built from a [`Placement`] and its content, opened with [`open`](Self::open).
 pub struct PanelSurface {
@@ -36,10 +37,7 @@ pub struct PanelSurface {
 }
 
 impl PanelSurface {
-    pub fn new(
-        placement: Placement,
-        content: impl Fn(&SurfaceEnv) -> Box<dyn LayoutItem> + 'static,
-    ) -> Self {
+    pub fn new(placement: Placement, content: impl Fn(&SurfaceEnv) -> Built + 'static) -> Self {
         Self {
             placement,
             edge: None,
@@ -92,18 +90,13 @@ impl PanelSurface {
             .unwrap_or_else(|| drawn_edge(&config));
         set_theme(config.resolve_theme());
         services::locale::attach(config.language());
-        let env = SurfaceEnv {
-            edge,
-            bar_size: config.bars.get(edge).size,
-            output,
-            config: Arc::clone(&config),
-        };
+        let env = SurfaceEnv::for_edge(Arc::clone(&config), edge, output);
         set_surface_env(env.clone());
-        let content = (self.content)(&env);
-        if !self.transition {
-            return content;
-        }
-        panel_transition(content, edge, &config.animation).expect("panel transition build failed")
+        let content = (self.content)(&env).and_then(|content| match self.transition {
+            true => panel_transition(content, edge, &config.animation),
+            false => Ok(content),
+        });
+        or_empty(self.placement.namespace(), content)
     }
 }
 
@@ -128,6 +121,14 @@ impl App for PanelApp {
             ..WindowConfig::default()
         })
     }
+}
+
+/// `built`, or an empty tree and the error in the log when a surface's own chrome failed to build. Module builds inside it are already guarded ([`crate::descriptor::guard`]); what reaches here is the shell's own layout failing, which costs that surface rather than the shell.
+pub fn or_empty(surface: &str, built: Built) -> Box<dyn LayoutItem> {
+    built.unwrap_or_else(|e| {
+        tracing::error!("the {surface} surface failed to build: {e}");
+        Box::new(Container::new(LayoutStyle::new(), Vec::new()).expect("an empty container"))
+    })
 }
 
 /// The background a panel paints, at `[panels] opacity` — or `[theme] opacity` where the panel names none.
@@ -280,12 +281,7 @@ mod tests {
         const PANEL_WIDTH: f32 = 320.0;
         const SURFACE: f32 = 1280.0;
 
-        let env = SurfaceEnv {
-            edge: Edge::Top,
-            bar_size: 34,
-            output: None,
-            config: Arc::new(Config::starter()),
-        };
+        let env = SurfaceEnv::for_edge(Arc::new(Config::starter()), Edge::Top, None);
 
         for align in [
             platform_wayland::SurfaceAlign::Start,
@@ -364,12 +360,7 @@ mod tests {
             width: 30.0,
             height: 30.0,
         };
-        let env = SurfaceEnv {
-            edge: Edge::Top,
-            bar_size: 34,
-            output: None,
-            config: Arc::new(Config::starter()),
-        };
+        let env = SurfaceEnv::for_edge(Arc::new(Config::starter()), Edge::Top, None);
         // Every primitive a window that is not a bar is built from, and the edge each must report: the one it hangs off, or the one named for a shape that hangs off none.
         let every: Vec<(&str, Placement, Option<Edge>)> = vec![
             (
@@ -413,25 +404,25 @@ mod tests {
             let sink = Rc::clone(&seen);
             let mut panel = PanelSurface::new(placement, move |_| {
                 *sink.borrow_mut() = surface_env();
-                content()
+                Ok(content())
             });
             if let Some(edge) = edge {
                 panel = panel.edge(edge);
             }
             // A surface that installs nothing would read back whatever the last one left in scope, so what it must not answer is planted first: only an env this build wrote can fail to be the sentinel.
-            set_surface_env(SurfaceEnv {
-                bar_size: u32::MAX,
+            let planted = SurfaceEnv {
+                config: Arc::new(Config::starter()),
                 ..env.clone()
-            });
+            };
+            set_surface_env(planted.clone());
             panel.build();
 
             let seen = seen
                 .borrow()
                 .clone()
                 .expect("a panel builds inside a surface scope");
-            assert_ne!(
-                seen.bar_size,
-                u32::MAX,
+            assert!(
+                !Arc::ptr_eq(&seen.config, &planted.config),
                 "the {name} built without installing a `SurfaceEnv`: every module, icon lookup and \
                  `panel_fill` inside it silently resolves the global config instead of this screen's, and no \
                  per-monitor override ever reaches it"
@@ -439,11 +430,6 @@ mod tests {
             if let Some(want) = want {
                 assert_eq!(seen.edge, want, "the {name} resolves against the wrong bar");
             }
-            assert_eq!(
-                seen.bar_size,
-                seen.config.bars.get(seen.edge).size,
-                "the {name} reports a bar thickness that is not its edge's"
-            );
         }
     }
 
@@ -464,7 +450,7 @@ mod tests {
             "crates/surfaces/src/reconcile.rs",
             "crates/ui/src/panel.rs",
             "crates/platform-wayland/src",
-            // The benchmark measures raw layer surfaces, deliberately outside the shell's config environment.
+            // The benchmark's per-surface mode measures today's raw layer surfaces, deliberately outside the shell's config environment; its merged mode opens a layer window instead.
             "apps/spike/",
         ];
         let mut offenders = Vec::new();
@@ -515,12 +501,7 @@ mod tests {
     fn content_rounds_to_the_bar_of_the_edge_the_panel_hangs_off() {
         let config = Arc::new(Config::starter());
         for edge in Edge::ALL {
-            set_surface_env(SurfaceEnv {
-                edge,
-                bar_size: config.bars.get(edge).size,
-                output: None,
-                config: Arc::clone(&config),
-            });
+            set_surface_env(SurfaceEnv::for_edge(Arc::clone(&config), edge, None));
             assert_eq!(content_radius(), config.panel_radius(edge), "{edge:?}");
         }
     }

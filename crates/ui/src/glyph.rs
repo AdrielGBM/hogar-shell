@@ -5,6 +5,7 @@
 use telar::Color;
 
 use config::theme::NordTheme;
+use config::{Severity, TemperatureConfig};
 use services::bluetooth::Status;
 use services::network::{Network, NetworkKind, WifiStatus};
 use services::volume::Volume;
@@ -135,6 +136,20 @@ pub fn battery_tint(level: i32, charging: bool, theme: NordTheme, fg: Color) -> 
         theme.yellow
     } else {
         fg
+    }
+}
+
+/// A reading past `[temperature] warn` reads amber and one past `critical` red; below both, or with no reading, it takes `fg`, the tint the caller would otherwise paint with.
+pub fn heat_tint(
+    config: &TemperatureConfig,
+    celsius: Option<f32>,
+    theme: NordTheme,
+    fg: Color,
+) -> Color {
+    match celsius.map(|c| config.severity(c)) {
+        Some(Severity::Critical) => theme.red,
+        Some(Severity::Warn) => theme.yellow,
+        Some(Severity::Normal) | None => fg,
     }
 }
 

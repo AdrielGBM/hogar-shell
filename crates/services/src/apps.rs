@@ -48,11 +48,7 @@ impl App {
 /// The XDG directories holding `.desktop` files, most specific first so a user override shadows the system one.
 fn application_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
-        dirs.push(home.join("applications"));
-    } else if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        dirs.push(home.join(".local/share/applications"));
-    }
+    dirs.push(util::paths::xdg_data_home().join("applications"));
     let system = std::env::var("XDG_DATA_DIRS")
         .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
     dirs.extend(

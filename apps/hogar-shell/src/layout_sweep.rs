@@ -13,11 +13,13 @@
 use std::sync::Arc;
 
 use telar::{
-    AvailableSpace, ComponentList, Container, DrawCommand, LayoutError, LayoutStyle, Paint,
-    PreviewEntry, Rect, compute_layout, new_container, reset_layout_runtime, set_theme,
+    AvailableSpace, ComponentList, Container, DrawCommand, LayoutError, LayoutItem, LayoutStyle,
+    Paint, PreviewSurface, Rect, compute_layout, new_container, reset_layout_runtime, set_theme,
 };
 
 use config::{BarConfig, Config, Edge, ModuleEntry, Shape};
+use ui::descriptor::{ChipFrame, ModuleDescriptor};
+use ui::host::{Host, InstanceId, Representation, Size};
 
 /// The page a preview is measured on when it is a tree rather than a surface. Wide enough that a bar-width module is not the thing under test.
 const PAGE: (f32, f32) = (1000.0, 760.0);
@@ -48,21 +50,175 @@ fn seed_world(edge: Edge, mode: Shape, edit: &dyn Fn(&mut Config)) {
 
     let config = Arc::new(config);
     services::locale::init(config.language());
+    seed_home();
     ui::icon::init_store(&config.icons);
     set_theme(config.resolve_theme());
     config::set_config(config);
     crate::install_hooks();
 }
 
-/// What the entry put on screen, in the coordinates its own draw commands carry.
-fn measure(entry: &PreviewEntry) -> Result<Vec<DrawCommand>, LayoutError> {
-    let (width, height) = entry
+/// The home a sweep measures in, checked in under `fixtures/home` and copied into this process's scratch home: the glyphs the previews draw, where a run with a network would have cached them, and the GTK settings that name the application icon theme. A test never downloads and never reads the user's own home, so the sweep brings both.
+fn seed_home() {
+    static SEEDED: std::sync::Once = std::sync::Once::new();
+    SEEDED.call_once(|| {
+        assert!(
+            util::paths::isolated_root().is_some(),
+            "a test seeds only its own scratch home"
+        );
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/home");
+        let home = util::paths::home_dir().expect("the scratch tree has a home");
+        copy_tree(&fixture, &home);
+    });
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).expect("the scratch home is writable");
+    for entry in from
+        .read_dir()
+        .expect("the fixture home is checked in")
+        .flatten()
+    {
+        let (source, target) = (entry.path(), to.join(entry.file_name()));
+        if source.is_dir() {
+            copy_tree(&source, &target);
+        } else {
+            std::fs::copy(&source, &target).expect("the scratch home is writable");
+        }
+    }
+}
+
+/// One thing a sweep lays out: a preview entry, or one representation of a module in the descriptor table.
+struct Subject {
+    component_name: &'static str,
+    preview_name: String,
+    surface: Option<PreviewSurface>,
+    source: Source,
+}
+
+enum Source {
+    Preview(fn() -> Result<Box<dyn LayoutItem>, LayoutError>),
+    Module(&'static ModuleDescriptor, Representation),
+}
+
+impl Subject {
+    /// A filler chip: room on a bar rather than content, so it is the one subject with nothing to draw.
+    fn is_room(&self) -> bool {
+        matches!(
+            self.source,
+            Source::Module(module, Representation::Chip)
+                if module.representations.chip.is_some_and(|chip| chip.frame == ChipFrame::Filler)
+        )
+    }
+
+    fn build(&self) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        match self.source {
+            Source::Preview(build) => build(),
+            Source::Module(module, representation) => {
+                let host = module_host(module.id, representation);
+                telar::batch(|| module.build(&host)).unwrap_or_else(|| {
+                    Err(LayoutError::Engine(format!(
+                        "{} declares {representation:?} and does not build it",
+                        module.id
+                    )))
+                })
+            }
+        }
+    }
+}
+
+fn previews() -> Vec<Subject> {
+    crate::preview_entries()
+        .into_iter()
+        .map(|entry| Subject {
+            component_name: entry.component_name,
+            preview_name: entry.preview_name.to_string(),
+            surface: entry.surface,
+            source: Source::Preview(entry.build),
+        })
+        .collect()
+}
+
+/// The bar the seeded world draws, and its thickness.
+fn drawn_bar() -> (Arc<Config>, Edge, f32) {
+    let config = config::config().expect("the sweep published a config");
+    let edge = ui::panel::drawn_edge(&config);
+    let thickness = config.bars.get(edge).size as f32;
+    (config, edge, thickness)
+}
+
+/// A chip on the bar the seeded world draws; any other representation on a surface of its own the size [`module_surface`] declares.
+fn module_host(id: &str, representation: Representation) -> Host {
+    let (config, edge, _) = drawn_bar();
+    let theme = config.resolve_theme();
+    match representation {
+        Representation::Chip => Host::chip(
+            InstanceId::of_module(id),
+            config,
+            edge,
+            theme.accent,
+            ui::module::module_foreground(config::Variant::Default, theme.accent, theme),
+            None,
+        ),
+        other => {
+            let surface = module_surface(other);
+            let extent = Size {
+                width: surface.width,
+                height: surface.height,
+            };
+            ui::preview::surface_host(id, other, extent)
+        }
+    }
+}
+
+fn module_surface(representation: Representation) -> PreviewSurface {
+    let (config, edge, thickness) = drawn_bar();
+    match representation {
+        Representation::Chip if edge.is_horizontal() => PreviewSurface::new(940.0, thickness),
+        Representation::Chip => PreviewSurface::new(thickness, 940.0),
+        Representation::Popout => {
+            PreviewSurface::new(config.popouts.card_width(), config.popouts.card_height())
+        }
+        Representation::Widget(size) => {
+            let extent = size.extent();
+            PreviewSurface::new(extent.width, extent.height)
+        }
+        Representation::Card | Representation::Panel => PreviewSurface::new(420.0, 600.0),
+    }
+}
+
+/// Every representation every module declares, which is what makes a module added to the table swept on every edge and shape without a preview written for it.
+fn descriptors() -> Vec<Subject> {
+    crate::core::modules::MODULES
+        .iter()
+        .flat_map(|module| {
+            module
+                .declared()
+                .into_iter()
+                .map(move |representation| Subject {
+                    component_name: module.id,
+                    preview_name: format!("{representation:?}"),
+                    surface: Some(module_surface(representation)),
+                    source: Source::Module(module, representation),
+                })
+        })
+        .collect()
+}
+
+fn everything() -> Vec<Subject> {
+    let mut subjects = previews();
+    subjects.extend(descriptors());
+    subjects
+}
+
+/// What the subject put on screen, in the coordinates its own draw commands carry.
+fn measure(subject: &Subject) -> Result<Vec<DrawCommand>, LayoutError> {
+    let (width, height) = subject
         .surface
         .map(|surface| (surface.width, surface.height))
         .unwrap_or(PAGE);
     let page = || LayoutStyle::new().flex_column().width(width).height(height);
 
-    let built = (entry.build)()?;
+    let built = subject.build()?;
     let root_node = new_container(page(), &[built.layout_node()])?;
     let tree = ComponentList::new(Container::new(page(), vec![built])?);
     compute_layout(
@@ -102,15 +258,21 @@ fn paints(command: &DrawCommand) -> bool {
 /// The guard lives here rather than in each test so a sweep added later inherits it. Poisoning is ignored on purpose: a panicking test leaves the world half-set, and the next sweep re-seeds it from scratch before it measures anything.
 static WORLD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn sweep(each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
-    sweep_with(&|_| {}, each);
+type Each<'a> = dyn FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>) + 'a;
+
+fn sweep(mut each: impl FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
+    sweep_over(everything, &|_| {}, &mut each);
 }
 
 /// [`sweep`] over a starter config that `edit` has changed first.
 fn sweep_with(
     edit: &dyn Fn(&mut Config),
-    mut each: impl FnMut(&PreviewEntry, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>),
+    mut each: impl FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>),
 ) {
+    sweep_over(everything, edit, &mut each);
+}
+
+fn sweep_over(subjects: fn() -> Vec<Subject>, edit: &dyn Fn(&mut Config), each: &mut Each) {
     let _world = WORLD
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -119,15 +281,15 @@ fn sweep_with(
             // Seeded before the list is drawn up, not only before each entry is measured: an entry reads the world to declare its surface — a bar's is its thickness, on the axis it runs along — so a list enumerated first describes whichever combination happened to run before this one.
             reset_layout_runtime();
             seed_world(edge, mode, edit);
-            for entry in crate::preview_entries() {
+            for subject in subjects() {
                 reset_layout_runtime();
                 seed_world(edge, mode, edit);
                 // Scoped, and disposed before the next reset. Replacing the layout runtime starts its node ids over, so an unscoped entry keeps its effects running against ids the next entry now owns — and taffy answers a stale one with "invalid SlotMap key used".
                 let scope = telar::owner_scope();
                 let owner = scope.id();
-                let measured = measure(&entry);
+                let measured = measure(&subject);
                 drop(scope);
-                each(&entry, edge, mode, measured);
+                each(&subject, edge, mode, measured);
                 telar::dispose_owner(owner);
             }
         }
@@ -193,7 +355,7 @@ fn every_preview_draws_something() {
     let mut blank = Vec::new();
     sweep(|entry, edge, mode, measured| {
         let Ok(commands) = measured else { return };
-        if commands.iter().any(paints) {
+        if entry.is_room() || commands.iter().any(paints) {
             return;
         }
         blank.push(format!(
@@ -239,7 +401,7 @@ fn an_unknown_module_holds_a_chips_place_on_every_edge_and_shape() {
                     .expect("the sweep published a config")
                     .resolve_theme(),
             );
-            let icon = ui::module::icon_px();
+            let icon = ui::preview::bar_chip().icon_size();
 
             let Some(rect) = commands.iter().find_map(|command| match command {
                 DrawCommand::Rect { rect, style, .. } if style.fill == Some(Paint::Solid(fill)) => {

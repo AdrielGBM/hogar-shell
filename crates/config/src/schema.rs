@@ -354,6 +354,20 @@ mod tests {
         );
     }
 
+    /// A module's options type is the struct the schema documents under the same section, so the reference, the validator and the module read one declaration.
+    #[test]
+    fn every_module_options_type_is_the_struct_its_section_documents() {
+        let structs = section_structs();
+        for (section, options) in crate::options::MODULE_OPTIONS {
+            assert_eq!(
+                structs.get(section),
+                Some(options),
+                "`{options}` is declared as the options of `[{section}]`, which the schema maps to {:?}",
+                structs.get(section)
+            );
+        }
+    }
+
     #[test]
     fn the_schema_carries_the_doc_comments_off_the_source() {
         let text = render(None).expect("renders");

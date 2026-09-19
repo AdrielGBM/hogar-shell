@@ -9,13 +9,14 @@ use telar::{
     ReactiveList, RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal,
 };
 
-use super::card;
+use super::{PageCard, cards_page};
 use config::theme::{FontRole, NordTheme};
 use config::{ClockConfig, Config, DashboardConfig};
 use services::clock;
+use ui::card::Card;
+use ui::host::Host;
 use ui::icon::icon_view;
 use util::paths;
-use util::picture;
 use util::reactive::derive;
 
 /// A month grid is at most six rows of seven — February starting on the last column of the week is the case that needs the sixth.
@@ -23,16 +24,24 @@ const WEEKS: u32 = 6;
 const CELL_HEIGHT: f32 = 30.0;
 const AVATAR: f32 = 56.0;
 
-pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    card::page(vec![
-        clock_card(config.clock.clone(), theme)?,
-        calendar_card(&config.dashboard, theme)?,
-        user_card(&config.dashboard, theme)?,
-    ])
+pub fn page(host: &Host, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let dashboard = host.options::<DashboardConfig>();
+    cards_page(
+        host,
+        vec![
+            PageCard::Module("clock"),
+            PageCard::Own(calendar_card(dashboard, theme)),
+            PageCard::Own(user_card(dashboard, theme)),
+        ],
+    )
 }
 
 /// F2. The same `[clock]` config that drives the bar chip, given the room the bar does not have: the time at display size, the date under it whether or not the chip was asked to show one.
-fn clock_card(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub(super) fn clock_card(config: ClockConfig, theme: NordTheme) -> Card {
+    Card::bare().child(move || clock_face(config, theme))
+}
+
+fn clock_face(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let for_tick = config.clone();
     let now = signal(Local::now());
     let sink = now;
@@ -64,20 +73,34 @@ fn clock_card(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutIte
             .width(SizeDimension::Percent(1.0)),
         vec![box_item(time_text), box_item(date_text)],
     )?;
-    card::frame(vec![Box::new(stack)], theme)
+    Ok(Box::new(stack))
 }
 
-/// F3. The month, navigable, with today marked.
-///
-/// The grid is a keyed list over the anchor rather than a tree rebuilt in place, because that is what makes stepping a month a rebuild of the cells and nothing else — the heading, the weekday row and the card around them are laid out once and stay.
-fn calendar_card(
-    config: &DashboardConfig,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
+/// The grid is a keyed list over the month, so stepping one rebuilds the cells and nothing else: the heading, the weekday row and the card around them are laid out once.
+fn calendar_card(config: &DashboardConfig, theme: NordTheme) -> Card {
     let first_weekday = config.first_weekday();
     let today = Local::now().date_naive();
     let anchor = signal(first_of_month(today));
 
+    Card::bare()
+        .child(move || month_heading(anchor, theme))
+        .child(move || weekday_header(first_weekday, theme))
+        .child(move || {
+            let source = anchor.read_only();
+            let grid = ReactiveList::new(
+                move || vec![source.get()],
+                |month: &NaiveDate| month.format("%Y-%m").to_string(),
+                move |month: NaiveDate| month_grid(month, today, first_weekday, theme),
+                0.0,
+            )?;
+            Ok(Box::new(grid) as Box<dyn LayoutItem>)
+        })
+}
+
+fn month_heading(
+    anchor: RwSignal<NaiveDate>,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let title = derive(anchor, |month| {
         format!("{} {}", month_label(month.month()), month.year())
     });
@@ -104,23 +127,7 @@ fn calendar_card(
             step_button("chevron-right", anchor, 1, theme)?,
         ],
     )?;
-
-    let source = anchor.read_only();
-    let grid = ReactiveList::new(
-        move || vec![source.get()],
-        |month: &NaiveDate| month.format("%Y-%m").to_string(),
-        move |month: NaiveDate| month_grid(month, today, first_weekday, theme),
-        0.0,
-    )?;
-
-    card::frame(
-        vec![
-            Box::new(heading),
-            weekday_header(first_weekday, theme)?,
-            Box::new(grid),
-        ],
-        theme,
-    )
+    Ok(Box::new(heading))
 }
 
 fn step_button(
@@ -240,27 +247,27 @@ fn day_cell(
     )?))
 }
 
-/// F4. Who is logged in, on what machine, and for how long.
-fn user_card(
-    config: &DashboardConfig,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let name = username();
-    let host = hostname();
-
+fn user_card(config: &DashboardConfig, theme: NordTheme) -> Card {
+    let avatar = crate::user::avatar_path(config);
+    let identity_config = config.clone();
     let picking = signal(false);
-    let start = avatar_path(config)
+    let start = avatar
+        .as_deref()
         .and_then(|path| path.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| paths::user_dir("XDG_PICTURES_DIR", "Pictures"));
+    Card::bare()
+        .child(move || identity(&identity_config, picking, theme))
+        .child(move || avatar_picker(start, picking, theme))
+}
 
-    let face = match avatar_path(config).and_then(|path| picture::circle(&path, AVATAR)) {
-        Some(picture) => picture,
-        None => icon_view(
-            || "circle-user-round".to_string(),
-            move || theme.subtle,
-            AVATAR,
-        )?,
-    };
+fn identity(
+    config: &DashboardConfig,
+    picking: RwSignal<bool>,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let crate::user::Identity { face, name } = crate::user::identity(config, AVATAR, theme)?;
+    let host = hostname();
+
     // F4a: the picture is the control. A press opens the browser below it, which is the only affordance the card has room for and the only one a user would look for — nothing else on this card is pressable.
     let open = picking;
     let avatar: Box<dyn LayoutItem> = Box::new(
@@ -276,15 +283,6 @@ fn user_card(
         .on_press(move || open.set(!open.peek())),
     );
 
-    let name_text = Text::new(
-        move || name.clone(),
-        LayoutStyle::new(),
-        move || {
-            theme
-                .text_style(FontRole::Title, theme.text)
-                .with_font_weight(700)
-        },
-    )?;
     let host_text = Text::new(
         move || host.clone(),
         LayoutStyle::new(),
@@ -310,11 +308,7 @@ fn user_card(
             .flex_column()
             .flex_grow(1.0)
             .gap(space::xs()),
-        vec![
-            box_item(name_text),
-            box_item(host_text),
-            box_item(uptime_text),
-        ],
+        vec![name, box_item(host_text), box_item(uptime_text)],
     )?;
 
     let row = Container::new(
@@ -325,17 +319,13 @@ fn user_card(
             .width(SizeDimension::Percent(1.0)),
         vec![avatar, Box::new(labels)],
     )?;
-    card::frame(
-        vec![Box::new(row), avatar_picker(start, picking, theme)?],
-        theme,
-    )
+    Ok(Box::new(row))
 }
 
 /// How many entries the avatar browser draws at once, and how large each thumbnail is. The same bound, and the same reason, as the launcher's wallpaper grid: `ReactiveList` builds a widget per tile up front.
 const PICKER_ENTRIES: usize = 120;
 const PICKER_TILE: f32 = 64.0;
 
-/// One row of the avatar browser: a folder to go into, or a picture to become the avatar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Choice {
     path: PathBuf,
@@ -343,9 +333,7 @@ struct Choice {
     folder: bool,
 }
 
-/// F4a: the file picker the shell did not have.
-///
-/// Deliberately not a portal dialog — that is another process and another toolkit on screen — and deliberately not a second surface: a dashboard page already *is* the surface, and a picker that opened its own would have to be anchored, dismissed and kept on the right monitor for a job that is one press long. It browses instead of asking for a path, because a user who could type the path already has `[dashboard] avatar`.
+/// A browser inside the page rather than a portal dialog or a surface of its own: one is another toolkit on screen, the other a window to anchor and dismiss for a one-press job.
 fn avatar_picker(
     start: PathBuf,
     picking: RwSignal<bool>,
@@ -546,28 +534,6 @@ fn set_avatar(path: &Path) {
     }
 }
 
-/// The first image that exists, in the order a desktop conventionally writes them: the user's own `~/.face` first, then whatever their display manager put in AccountsService. Where the user's picture is: the `[dashboard] avatar` override, else the conventional places a desktop keeps one. Shared with the lock screen so the two never disagree about whose face this is.
-pub fn avatar_path(config: &DashboardConfig) -> Option<PathBuf> {
-    let configured = config.avatar.trim();
-    if !configured.is_empty() {
-        let path = paths::expand_tilde(&PathBuf::from(configured));
-        return path.exists().then_some(path);
-    }
-    let home = paths::home_dir()?;
-    let candidates = [
-        home.join(".face"),
-        home.join(".face.icon"),
-        PathBuf::from("/var/lib/AccountsService/icons").join(username()),
-    ];
-    candidates.into_iter().find(|path| path.exists())
-}
-
-fn username() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| telar::t!("sysinfo.no_reading"))
-}
-
 fn hostname() -> String {
     std::fs::read_to_string("/proc/sys/kernel/hostname")
         .ok()
@@ -576,7 +542,6 @@ fn hostname() -> String {
         .unwrap_or_else(|| telar::t!("sysinfo.no_reading"))
 }
 
-/// Seconds since boot, from `/proc/uptime`'s first field.
 fn read_uptime() -> Option<u64> {
     let text = std::fs::read_to_string("/proc/uptime").ok()?;
     let seconds: f64 = text.split_whitespace().next()?.parse().ok()?;
@@ -614,7 +579,6 @@ fn shift_months(anchor: NaiveDate, months: i32) -> NaiveDate {
     moved.unwrap_or(anchor)
 }
 
-/// The date the grid's first cell shows: the configured first day of the week on or before the 1st.
 fn grid_start(month: NaiveDate, first: Weekday) -> NaiveDate {
     // `+ 7` before the modulo: these indices are unsigned, so subtracting a later weekday from an earlier one wraps to four billion and the grid starts on the wrong day rather than obviously breaking.
     let offset = (month.weekday().num_days_from_monday() + 7 - first.num_days_from_monday()) % 7;
@@ -674,7 +638,9 @@ mod tests {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
         let theme = NordTheme::new();
-        let card = user_card(&DashboardConfig::default(), theme).expect("the user card builds");
+        let card = user_card(&DashboardConfig::default(), theme)
+            .build(ui::card::Density::Page)
+            .expect("the user card builds");
         let card_rect = track_layout(card.layout_node()).expect("the card registers its rect");
 
         let root = new_container(

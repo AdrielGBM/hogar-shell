@@ -106,6 +106,16 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Whether reaching it means talking to a daemon in the user's live session — a bus name, or the audio server behind PipeWire's tools and library — which only a process that installed [`crate::live`] may do.
+    fn lives_in_the_session(&self) -> bool {
+        matches!(self.kind, Kind::Bus { .. })
+            || matches!(self.dep, Dep::PwDump | Dep::Wpctl | Dep::LibPipeWire)
+    }
+
+    fn sealed(&self) -> bool {
+        self.lives_in_the_session() && !crate::live::installed()
+    }
+
     /// The program this row names, for the rows that are programs.
     pub fn program(&self) -> Option<&'static str> {
         match self.kind {
@@ -533,6 +543,9 @@ pub fn refresh() {
 }
 
 fn run_probe(entry: &Entry) -> Presence {
+    if entry.sealed() {
+        return Presence::Unknown;
+    }
     let found = |yes: bool| {
         if yes {
             Presence::Present
@@ -564,11 +577,12 @@ fn run_probe(entry: &Entry) -> Presence {
 /// Both halves matter: most desktop services are D-Bus activatable, so "nobody owns it right now" is not the same as "it is not installed" — asking only the first would report a perfectly good fprintd as missing until something woke it.
 fn bus_name_exists(name: &str, system: bool) -> Presence {
     // No bus to ask is the protocol case again: a machine with no session bus has not told us the peer is missing, only that nothing here could ask.
-    let Ok(connection) = (if system {
-        zbus::blocking::Connection::system()
+    let bus = if system {
+        crate::live::system_bus()
     } else {
-        zbus::blocking::Connection::session()
-    }) else {
+        crate::live::session_bus()
+    };
+    let Some(Ok(connection)) = bus.map(|builder| builder.build()) else {
         return Presence::Unknown;
     };
     let call = |method: &str| {
@@ -595,7 +609,11 @@ fn bus_name_exists(name: &str, system: bool) -> Presence {
 ///
 /// The only way to run one. Taking a [`Dep`] rather than a name is what makes the list in this file complete by construction: a program with no row cannot be reached from here, and a row carries everything the dependency panel needs to say about it.
 pub fn output(dep: Dep, args: &[&str], timeout: Duration) -> Option<String> {
-    let program = entry(dep).program()?;
+    let entry = entry(dep);
+    if entry.sealed() {
+        return None;
+    }
+    let program = entry.program()?;
     process::output(program, args, timeout)
 }
 
@@ -630,6 +648,9 @@ pub unsafe fn open_library<T>(
     preferred: Option<&str>,
     build: impl Fn(libloading::Library) -> Result<T, libloading::Error>,
 ) -> Option<T> {
+    if entry(dep).sealed() {
+        return None;
+    }
     let candidates = preferred
         .map(str::trim)
         .filter(|name| !name.is_empty())
@@ -651,11 +672,15 @@ pub unsafe fn open_library<T>(
 ///
 /// `None` for a row that is not a program, which is what stops a bus name or a sysfs path being spawned.
 pub fn command(dep: Dep) -> Option<std::process::Command> {
-    entry(dep).program().map(process::command)
+    let entry = entry(dep);
+    if entry.sealed() {
+        return None;
+    }
+    entry.program().map(process::command)
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// The guard that makes [`entry`] total, and the reason adding a `Dep` without a row is a test failure rather than a panic in front of a user.
@@ -769,7 +794,7 @@ mod tests {
                 "use `deps::open_library(Dep::…)`",
             ),
         ] {
-            let offenders = sources_containing(needle, exempt);
+            let offenders = sources_containing(needle, &[exempt]);
             assert!(
                 offenders.is_empty(),
                 "these reach outside without declaring it — {fix}: {offenders:#?}"
@@ -778,7 +803,7 @@ mod tests {
     }
 
     /// Walks the workspace's own sources for `needle`, skipping `exempt`, this file — which holds every needle as a literal — and the transpiler's output, which is generated rather than written.
-    fn sources_containing(needle: &str, exempt: &str) -> Vec<String> {
+    pub(crate) fn sources_containing(needle: &str, exempt: &[&str]) -> Vec<String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(std::path::Path::parent)
@@ -802,7 +827,10 @@ mod tests {
                     .extension()
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| e == "rs" || e == "rsx");
-                if !is_source || path.ends_with("util/src/deps.rs") || path.ends_with(exempt) {
+                if !is_source
+                    || path.ends_with("util/src/deps.rs")
+                    || exempt.iter().any(|e| path.ends_with(e))
+                {
                     continue;
                 }
                 if std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle)) {

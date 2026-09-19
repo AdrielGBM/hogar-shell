@@ -1,6 +1,4 @@
-//! The Performance page: six cards over the services that already measure the machine.
-//!
-//! Nothing here starts a producer. Every series is the `History` ring its service already keeps, which is what makes a card open showing the last minute instead of a blank chart that fills in as you watch. The one thing the page owns is *how often it redraws*: `[dashboard] resource_update_interval` throttles the resource subscription, so a slower dashboard costs less without slowing down the bar chips reading the same service.
+//! The Performance page. Every series is the `History` ring its service already keeps, so a card opens showing the last minute; `[dashboard] resource_update_interval` only throttles how often the page redraws, leaving the bar chips on the same service alone.
 
 use std::time::{Duration, Instant};
 use ui::scale::space;
@@ -9,32 +7,39 @@ use telar::{
     Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, RwSignal, SizeDimension, signal,
 };
 
-use super::card::{self, CHART_HEIGHT, Card, METER_HEIGHT};
-use config::theme::{FontRole, NordTheme};
-use config::{Config, TemperatureUnit};
+use super::{CHART_HEIGHT, PageCard, cards_page, shared};
+use config::theme::NordTheme;
+use config::{DashboardConfig, TemperatureConfig, TemperatureUnit};
 use services::{battery, gpu, netspeed, resources};
+use ui::card::{Card, Parts};
 use ui::glyph;
+use ui::host::Host;
 use ui::widget;
 use util::reactive::{derive, fixed, fixed_text};
 
 /// A percentage series has a natural full scale; a byte rate does not, and is scaled to its own peak instead.
 const FULL_SCALE: f32 = 100.0;
 
-pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let machine = throttled_resources(config.dashboard.resource_interval());
-    card::page(vec![
-        cpu_card(machine, config, theme)?,
-        gpu_card(config, theme)?,
-        memory_card(machine, theme)?,
-        storage_card(machine, theme)?,
-        network_card(theme)?,
-        battery_card(theme)?,
-    ])
+pub fn page(host: &Host, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let machine = machine(host.options::<DashboardConfig>());
+    cards_page(
+        host,
+        vec![
+            PageCard::Module("cpu"),
+            PageCard::Module("gpu"),
+            PageCard::Module("memory"),
+            PageCard::Own(storage_card(machine, theme)),
+            PageCard::Module("netspeed"),
+            PageCard::Module("battery"),
+        ],
+    )
 }
 
-/// The shared resource reading, accepted at most once per `interval`.
-///
-/// The service publishes every second for the bar; a dashboard configured to refresh every ten would otherwise redraw six cards and six charts nine times for nothing. Dropping the reading here rather than asking the service to slow down is the only version that leaves the chips alone.
+pub(super) fn machine(config: &DashboardConfig) -> RwSignal<Option<resources::Resources>> {
+    shared(|| throttled_resources(config.resource_interval()))
+}
+
+/// Accepted at most once per `interval`, dropped here rather than slowing the service, which publishes every second for the bar chips.
 fn throttled_resources(interval: Duration) -> RwSignal<Option<resources::Resources>> {
     let state = signal(resources::current());
     let sink = state;
@@ -50,13 +55,13 @@ fn throttled_resources(interval: Duration) -> RwSignal<Option<resources::Resourc
     state
 }
 
-fn cpu_card(
+pub(super) fn cpu_card(
     machine: RwSignal<Option<resources::Resources>>,
-    config: &Config,
+    temperature: &TemperatureConfig,
     theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let unit = config.temperature.unit;
-    let sensor = config.temperature.sensor.clone();
+) -> Card {
+    let unit = temperature.unit;
+    let sensor = temperature.sensor.clone();
     let chart = derive(machine, |r| {
         r.map(|r| r.cpu_history.values()).unwrap_or_default()
     });
@@ -82,21 +87,14 @@ fn cpu_card(
     });
 
     Card::titled(telar::t!("sysinfo.cpu"))
-        .icon("cpu")
+        .icon(fixed_text("cpu"))
         .trailing(derive(machine, |r| percent(r.map(|r| r.cpu))))
-        .child(widget::sparkline(
-            chart,
-            fixed(FULL_SCALE),
-            theme.accent,
-            CHART_HEIGHT,
-        )?)
-        .child(card::detail(detail, theme)?)
-        .build(theme)
+        .child(move || widget::sparkline(chart, fixed(FULL_SCALE), theme.accent, CHART_HEIGHT))
+        .detail(detail)
 }
 
 /// Which of usage, temperature and VRAM a card answers is a property of its driver, so each field says "—" rather than a zero it never measured — the same rule the GPU service itself follows.
-fn gpu_card(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let unit = config.temperature.unit;
+pub(super) fn gpu_card(unit: TemperatureUnit, theme: NordTheme) -> Card {
     let state = signal(gpu::current().unwrap_or_default());
     let sink = state;
     platform_wayland::watch(gpu::subscribe, move |g| sink.set(g));
@@ -117,22 +115,16 @@ fn gpu_card(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, La
     });
 
     Card::titled(telar::t!("sysinfo.gpu"))
-        .icon(glyph::gpu())
+        .icon(fixed_text(glyph::gpu()))
         .trailing(derive(state, |g| percent(g.usage)))
-        .child(widget::sparkline(
-            chart,
-            fixed(FULL_SCALE),
-            theme.accent,
-            CHART_HEIGHT,
-        )?)
-        .child(card::detail(detail, theme)?)
-        .build(theme)
+        .child(move || widget::sparkline(chart, fixed(FULL_SCALE), theme.accent, CHART_HEIGHT))
+        .detail(detail)
 }
 
-fn memory_card(
+pub(super) fn memory_card(
     machine: RwSignal<Option<resources::Resources>>,
     theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
+) -> Card {
     let chart = derive(machine, |r| {
         r.map(|r| r.memory_history.values()).unwrap_or_default()
     });
@@ -157,32 +149,17 @@ fn memory_card(
     });
 
     Card::titled(telar::t!("sysinfo.memory"))
-        .icon("memory-stick")
+        .icon(fixed_text("memory-stick"))
         .trailing(derive(machine, |r| {
             percent(r.map(|r| r.memory.used_percent()))
         }))
-        .child(widget::sparkline(
-            chart,
-            fixed(FULL_SCALE),
-            theme.accent,
-            CHART_HEIGHT,
-        )?)
-        .child(card::detail(detail, theme)?)
-        .build(theme)
+        .child(move || widget::sparkline(chart, fixed(FULL_SCALE), theme.accent, CHART_HEIGHT))
+        .detail(detail)
 }
 
 /// Storage has no history ring — a filesystem does not move fast enough for one to say anything — so the card is a meter per mount instead, which is also what answers the question it is opened for.
-fn storage_card(
-    machine: RwSignal<Option<resources::Resources>>,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
+fn storage_card(machine: RwSignal<Option<resources::Resources>>, theme: NordTheme) -> Card {
     let mounts = derive(machine, |r| r.map(|r| r.disks.clone()).unwrap_or_default());
-    let bars = ReactiveList::new(
-        move || mounts.get(),
-        |disk: &resources::Disk| disk.mount.to_string_lossy().into_owned(),
-        move |disk: resources::Disk| disk_row(disk, theme),
-        space::md(),
-    )?;
     let io = derive(machine, |r| match r {
         Some(r) => format!(
             "{} {} · {} {}",
@@ -195,13 +172,24 @@ fn storage_card(
     });
 
     Card::titled(telar::t!("dashboard.storage"))
-        .icon("hard-drive")
-        .child(Box::new(bars))
-        .child(card::detail(io, theme)?)
-        .build(theme)
+        .icon(fixed_text("hard-drive"))
+        .composed(move |parts| {
+            let bars = ReactiveList::new(
+                move || mounts.get(),
+                |disk: &resources::Disk| disk.mount.to_string_lossy().into_owned(),
+                move |disk: resources::Disk| disk_row(disk, parts, theme),
+                space::md(),
+            )?;
+            Ok(Box::new(bars) as Box<dyn LayoutItem>)
+        })
+        .detail(io)
 }
 
-fn disk_row(disk: resources::Disk, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+fn disk_row(
+    disk: resources::Disk,
+    parts: Parts,
+    theme: NordTheme,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let fraction = (disk.used_percent() / 100.0).clamp(0.0, 1.0);
     // A filesystem past ninety per cent is the one a user opens this card to find.
     let tint = if fraction >= 0.9 {
@@ -223,20 +211,14 @@ fn disk_row(disk: resources::Disk, theme: NordTheme) -> Result<Box<dyn LayoutIte
             .gap(space::sm())
             .width(SizeDimension::Percent(1.0)),
         vec![
-            widget::label_value(
-                fixed_text(label),
-                fixed_text(value),
-                theme.font(FontRole::Caption),
-                theme.subtle,
-                theme.text,
-            )?,
-            widget::meter(fixed(fraction), fixed(tint), theme.overlay, METER_HEIGHT)?,
+            parts.row(fixed_text(label), fixed_text(value))?,
+            parts.meter(fixed(fraction), fixed(tint))?,
         ],
     )?))
 }
 
 /// Down and up share one chart because they share one scale: a card that drew them separately would show a 50 KB/s upload as tall as a 50 MB/s download, which is the opposite of what a throughput chart is for.
-fn network_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub(super) fn network_card(theme: NordTheme) -> Card {
     let state = signal(netspeed::current().unwrap_or_default());
     let sink = state;
     platform_wayland::watch(netspeed::subscribe, move |s| sink.set(s));
@@ -255,20 +237,14 @@ fn network_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     });
 
     Card::titled(telar::t!("dashboard.network"))
-        .icon("arrow-down-up")
+        .icon(fixed_text("arrow-down-up"))
         .trailing(derive(state, |s| netspeed::format_rate(s.down)))
-        .child(widget::sparkline(
-            chart,
-            ceiling,
-            theme.accent,
-            CHART_HEIGHT,
-        )?)
-        .child(card::detail(detail, theme)?)
-        .build(theme)
+        .child(move || widget::sparkline(chart, ceiling, theme.accent, CHART_HEIGHT))
+        .detail(detail)
 }
 
 /// On a desktop the battery service reports nothing, and the card says so rather than drawing an empty meter that reads as a flat battery.
-fn battery_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub(super) fn battery_card(theme: NordTheme) -> Card {
     let state = signal(battery::details());
     let sink = state;
     platform_wayland::watch(battery::stream_details, move |d| sink.set(Some(d)));
@@ -284,7 +260,7 @@ fn battery_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     });
 
     Card::titled(telar::t!("dashboard.battery"))
-        .live_icon(derive(state, |d| {
+        .icon(derive(state, |d| {
             glyph::battery(d.is_some_and(|d| d.state.is_charging())).to_string()
         }))
         .icon_tint(derive(state, move |d| match d {
@@ -295,9 +271,8 @@ fn battery_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
             Some(d) => format!("{}%", d.level),
             None => telar::t!("sysinfo.no_reading"),
         }))
-        .child(widget::meter(fraction, tint, theme.overlay, METER_HEIGHT)?)
-        .child(card::detail(detail, theme)?)
-        .build(theme)
+        .meter(fraction, tint)
+        .detail(detail)
 }
 
 fn battery_detail(details: &battery::BatteryDetails) -> String {

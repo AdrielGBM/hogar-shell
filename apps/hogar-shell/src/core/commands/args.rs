@@ -167,6 +167,17 @@ pub(crate) fn set_dashboard_tab(name: &str) -> Result<(), String> {
         let known: Vec<&str> = DashboardTab::ALL.iter().map(|t| t.id()).collect();
         format!("unknown tab '{name}', expected one of {}", known.join("|"))
     })?;
-    modules::dashboard::set_tab(tab);
+    modules::dashboard::set_tab(&dashboard_instance(), tab);
     Ok(())
+}
+
+/// The config id of the page the dashboard shows.
+pub(crate) fn dashboard_tab() -> String {
+    modules::dashboard::tab(&dashboard_instance())
+        .id()
+        .to_string()
+}
+
+fn dashboard_instance() -> ui::host::InstanceId {
+    ui::host::InstanceId::of_module(modules::dashboard::ID)
 }

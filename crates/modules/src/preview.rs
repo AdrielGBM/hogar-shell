@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use telar::{PreviewEntry, PreviewSurface};
 
-use services::hyprland::{Snapshot, Workspace};
+use services::hyprland::{ActiveWindow, Snapshot, Workspace};
 use services::tray::{Pixmap, Status, TrayItem};
 use services::volume::Volume;
 
@@ -78,6 +78,17 @@ pub fn tray() {
         item("Discord", "Discord", (88, 101, 242)),
         item("Steam", "Steam — 3 friends online", (102, 192, 244)),
     ]);
+}
+
+/// A focused window with a title and no icon to find, so the chip previews the same on every machine rather than as whatever window has focus while it renders.
+pub fn activewindow() {
+    ui::preview::bar_chip();
+    services::hyprland::seed_active_window(ActiveWindow {
+        title: "Preview window".to_string(),
+        class: "hogar-shell-preview".to_string(),
+        address: "0x1".to_string(),
+        handle: None,
+    });
 }
 
 /// Five workspaces on one monitor, three of them holding windows and the second focused — enough for the pill row to show every state it draws: active, occupied and empty.

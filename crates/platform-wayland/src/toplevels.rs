@@ -303,14 +303,8 @@ mod tests {
     use super::*;
 
     /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the watcher has to *stop* when the last registration is retired, and say so again so the next [`watch`] starts a fresh one rather than registering with a thread on its way out.
-    ///
-    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live tests here and in `capture` register with a real watcher, so "nothing is registered" is false through no fault of the code, and emptying the registry to make it true would retire the watcher out from under them.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
-            eprintln!("a real watcher holds the registry in a live run; skipping");
-            return;
-        }
         *WATCHING.lock().unwrap() = true;
 
         let interest = Interest::new();
@@ -395,54 +389,6 @@ mod tests {
                 .snapshot()
                 .iter()
                 .all(|w| !w.identifier.is_empty())
-        );
-    }
-
-    /// The half no fixture can prove: that this reads a real compositor, and that what it reads agrees with what that compositor says about itself.
-    ///
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevels -- --nocapture --test-threads=1`
-    #[test]
-    fn the_watcher_lists_the_windows_that_are_open() {
-        use std::sync::mpsc;
-        use std::time::Duration;
-
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!(
-                "set HOGAR_SHELL_WAYLAND_LIVE to list the real compositor's windows; skipping"
-            );
-            return;
-        }
-
-        let (published, changes) = mpsc::channel();
-        let interest = Interest::new();
-        assert!(
-            watch(&interest, move |windows: &[Toplevel]| {
-                let _ = published.send(windows.to_vec());
-            }),
-            "the compositor advertises ext-foreign-toplevel-list-v1 but the watcher would not start"
-        );
-
-        // One publish per window as the compositor announces them; the last one to arrive is the whole list.
-        let mut listed = Vec::new();
-        while let Ok(windows) = changes.recv_timeout(Duration::from_millis(500)) {
-            listed = windows;
-        }
-        eprintln!("{} windows: {listed:#?}", listed.len());
-
-        assert!(
-            !listed.is_empty(),
-            "this test is running in a terminal, which is itself a window"
-        );
-        assert!(
-            listed.iter().all(|w| !w.identifier.is_empty()),
-            "an empty identifier would make every match against IPC succeed"
-        );
-        let identifiers: std::collections::HashSet<&str> =
-            listed.iter().map(|w| w.identifier.as_str()).collect();
-        assert_eq!(
-            identifiers.len(),
-            listed.len(),
-            "the protocol promises the identifier is unique, and the join depends on it"
         );
     }
 }

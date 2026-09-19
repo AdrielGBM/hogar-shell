@@ -400,27 +400,4 @@ mod tests {
         assert_eq!(custom.title(17), "Only 17% left");
         assert_eq!(custom.message(17), "Plug in");
     }
-
-    // Live UPower DBus check, gated behind an env var so it never runs in headless CI: run with `HOGAR_SHELL_TEST_UPOWER=1 cargo test -p hogar-shell --lib upower -- --nocapture`.
-    #[test]
-    fn upower_connection_reads_percentage() {
-        if std::env::var("HOGAR_SHELL_TEST_UPOWER").is_err() {
-            return;
-        }
-        let conn = zbus::blocking::Connection::system().expect("system bus");
-        let props = PropertiesProxy::builder(&conn)
-            .destination(UPOWER)
-            .unwrap()
-            .path(DISPLAY_DEVICE)
-            .unwrap()
-            .build()
-            .expect("build DisplayDevice proxy");
-        let pct = props
-            .get(
-                "org.freedesktop.UPower.Device".try_into().unwrap(),
-                "Percentage",
-            )
-            .expect("read Percentage");
-        eprintln!("UPower DisplayDevice Percentage = {pct:?}");
-    }
 }

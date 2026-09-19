@@ -3,14 +3,16 @@ use ui::scale::paint;
 
 use platform_wayland::request_close;
 use telar::{
-    LayoutError, LayoutItem, LayoutStyle, StyledContainer, SurfaceFrameStyle, SurfaceToken,
+    Color, LayoutError, LayoutItem, LayoutStyle, StyledContainer, SurfaceFrameStyle, SurfaceToken,
     box_item, use_theme, window_frame,
 };
 
-use crate::drawer::{content_radius, module_panel, panel_wants_keyboard};
 use config::SurfaceEnv;
 use config::theme::{FontRole, NordTheme};
+use ui::descriptor::wants_keyboard;
+use ui::host::{Host, InstanceId, Representation, Size};
 use ui::panel::PanelSurface;
+use ui::panel::content_radius;
 use ui::placement::{Centred, Placement};
 
 /// Opens `module_id`'s panel as a centred, titled, closable window on the bar's own monitor, sized per its `[modules.<id>]` override or `[panels.float]`; the shell only declares the placement, the rsx surface host and `window_frame` realize the window chrome. Toggle/close is the caller's job ([`crate::panel::toggle_panel`]) via the returned token.
@@ -23,32 +25,43 @@ pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
     let (width, height) = env.config.float_size_for(module_id);
     let placement = Placement::centred(Centred::Float)
         .size(width, height)
-        .keyboard(panel_wants_keyboard(module_id))
+        .keyboard(wants_keyboard(module_id))
         .output(env.output.clone());
     // A float hangs off no edge of its own, so it reads the bar its chip lives on — which is what makes its radius, gaps and opacity match the drawer showing the very same panel.
     PanelSurface::new(placement, move |env| {
         let theme = use_theme::<NordTheme>();
-        let radius = content_radius();
-        let body = module_panel(&module).expect("float panel build failed");
-        let style = SurfaceFrameStyle {
-            background: env.config.panel_fill(),
-            title_bar: theme.overlay,
-            title_text: theme.text,
-            close: theme.muted,
-            radius,
-            font_size: theme.font(FontRole::Title),
-            // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
-            controls: Default::default(),
-            body_inset: 12.0,
-            control_hover: telar::Color::TRANSPARENT,
-            close_hover: telar::Color::TRANSPARENT,
-        };
+        let host = Host::on_surface(
+            InstanceId::of_module(&module),
+            Representation::Panel,
+            env,
+            Size {
+                width: width as f32,
+                height: height as f32,
+            },
+        );
+        let body = ui::descriptor::build_panel(&host)?;
+        let style = frame_style(theme, env.config.panel_fill(), content_radius());
         let close: Rc<dyn Fn()> = Rc::new(request_close);
         window_frame(module.clone(), None, style, close, body, None)
-            .expect("surface frame build failed")
     })
     .edge(env.edge)
     .open()
+}
+
+fn frame_style(theme: NordTheme, background: Color, radius: f32) -> SurfaceFrameStyle {
+    SurfaceFrameStyle {
+        background,
+        title_bar: theme.overlay,
+        title_text: theme.text,
+        close: theme.muted,
+        radius,
+        font_size: theme.font(FontRole::Title),
+        // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
+        controls: Default::default(),
+        body_inset: 12.0,
+        control_hover: Color::TRANSPARENT,
+        close_hover: Color::TRANSPARENT,
+    }
 }
 
 /// The window chrome a float is presented in — title bar, ✕ and a placeholder body — for [`crate::preview`]. The chrome rather than a module's panel, because *which* panel a float shows is the caller's choice and every one of them already previews on its own.
@@ -59,19 +72,7 @@ pub(crate) fn frame_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         paint::md(theme.overlay),
         vec![],
     )?);
-    let style = SurfaceFrameStyle {
-        background: theme.surface,
-        title_bar: theme.overlay,
-        title_text: theme.text,
-        close: theme.muted,
-        radius: 14.0,
-        font_size: theme.font(FontRole::Title),
-        // A layer-shell surface has no top-level window: nothing to minimize, and nothing to drag with the compositor's own move. The frame draws close and, where the backend can renegotiate, a grip.
-        controls: Default::default(),
-        body_inset: 12.0,
-        control_hover: telar::Color::TRANSPARENT,
-        close_hover: telar::Color::TRANSPARENT,
-    };
+    let style = frame_style(theme, theme.surface, 14.0);
     window_frame("Clock", None, style, Rc::new(|| {}), body, None)
 }
 

@@ -73,12 +73,7 @@ mod tests {
     const SPAN: f32 = 260.0;
 
     fn env(edge: Edge) -> SurfaceEnv {
-        SurfaceEnv {
-            edge,
-            bar_size: 34,
-            output: None,
-            config: Arc::new(config::Config::starter()),
-        }
+        SurfaceEnv::for_edge(Arc::new(config::Config::starter()), edge, None)
     }
 
     fn chip(x: f32, y: f32) -> Rect {
@@ -120,11 +115,8 @@ mod tests {
     /// The margin is measured from the usable area, not from the screen, because the surface takes no exclusive zone and the compositor places it inside everyone else's. Under `[shape] frame` that area is inset on every edge at once, so a clamp against the output overshoots by the whole ring — which is exactly how the popout on the last chip of a top bar ended up hanging past the right edge of the screen.
     #[test]
     fn a_popout_stays_inside_the_frame_ring_not_merely_inside_the_screen() {
-        let framed = SurfaceEnv {
-            edge: Edge::Top,
-            bar_size: 32,
-            output: None,
-            config: Arc::new(
+        let framed = SurfaceEnv::for_edge(
+            Arc::new(
                 toml::from_str(
                     "[shape]\nframe=true\ngap=0\ninactive_size=8\n\
                      [bars.top]\nsize=32\nend=[\"network\"]\n\
@@ -132,7 +124,9 @@ mod tests {
                 )
                 .unwrap(),
             ),
-        };
+            Edge::Top,
+            None,
+        );
         let (width, _) = output_size(&framed);
         let inner_left = framed.config.edge_reserved(Edge::Left) as f32;
         let inner_right = width - framed.config.edge_reserved(Edge::Right) as f32;

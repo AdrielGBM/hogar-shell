@@ -2,42 +2,88 @@
 //!
 //! Every popout here reads a service that already exists and subscribes to it, so the card follows the value while it is up — hovering the volume chip and scrolling it is one gesture, and a card that froze at the level it opened with would be worse than no card. Nothing polls: each `watch` is bound to the popout surface and dies with it.
 
-use telar::{RwSignal, signal};
+use telar::{RwSignal, signal, use_theme};
 
-use config::Config;
 use config::theme::NordTheme;
+use config::{AudioConfig, TemperatureConfig};
 use services::{
     battery, bluetooth, brightness, gpu, hyprland, lockkeys, mpris, netspeed, network, pipewire,
     resources, volume,
 };
 use ui::card::Card;
 use ui::glyph;
-use ui::popouts::PopoutRegistry;
+use ui::host::Host;
 use util::reactive::{Live, derive, derive_pair, fixed, fixed_text};
 
-/// The modules a hover popout is offered for. A module whose click already opens a panel is deliberately included where the popout is the *faster* read of the same state (battery) and left out where the panel is the only sensible presentation (notes, settings, the session menu).
-pub fn cards() -> PopoutRegistry {
-    let mut cards = PopoutRegistry::new();
-    cards.register("volume", |config, theme| {
-        audio_card(AudioSide::Output, config, theme)
-    });
-    cards.register("mic", |config, theme| {
-        audio_card(AudioSide::Input, config, theme)
-    });
-    cards.register("brightness", |_config, theme| brightness_card(theme));
-    cards.register("battery", |_config, theme| battery_card(theme));
-    cards.register("network", |_config, _theme| network_card());
-    cards.register("bluetooth", |_config, theme| bluetooth_card(theme));
-    cards.register("kblayout", |_config, _theme| keyboard_card());
-    cards.register("lockstatus", |_config, _theme| lock_card());
-    cards.register("activewindow", |_config, _theme| window_card());
-    cards.register("media", |_config, _theme| media_card());
-    cards.register("cpu", |_config, theme| cpu_card(theme));
-    cards.register("gpu", |_config, theme| gpu_card(theme));
-    cards.register("memory", |_config, theme| memory_card(theme));
-    cards.register("temperature", temperature_card);
-    cards.register("netspeed", |_config, _theme| netspeed_card());
-    cards
+pub fn volume(host: &Host) -> Card {
+    audio_card(
+        AudioSide::Output,
+        host.options::<AudioConfig>(),
+        use_theme::<NordTheme>(),
+    )
+}
+
+pub fn mic(host: &Host) -> Card {
+    audio_card(
+        AudioSide::Input,
+        host.options::<AudioConfig>(),
+        use_theme::<NordTheme>(),
+    )
+}
+
+pub fn brightness(_host: &Host) -> Card {
+    brightness_card(use_theme::<NordTheme>())
+}
+
+pub fn battery(_host: &Host) -> Card {
+    battery_card(use_theme::<NordTheme>())
+}
+
+pub fn network(_host: &Host) -> Card {
+    network_card()
+}
+
+pub fn bluetooth(_host: &Host) -> Card {
+    bluetooth_card(use_theme::<NordTheme>())
+}
+
+pub fn kblayout(_host: &Host) -> Card {
+    keyboard_card()
+}
+
+pub fn lockstatus(_host: &Host) -> Card {
+    lock_card()
+}
+
+pub fn activewindow(_host: &Host) -> Card {
+    window_card()
+}
+
+pub fn media(_host: &Host) -> Card {
+    media_card()
+}
+
+pub fn cpu(_host: &Host) -> Card {
+    cpu_card(use_theme::<NordTheme>())
+}
+
+pub fn gpu(_host: &Host) -> Card {
+    gpu_card(use_theme::<NordTheme>())
+}
+
+pub fn memory(_host: &Host) -> Card {
+    memory_card(use_theme::<NordTheme>())
+}
+
+pub fn temperature(host: &Host) -> Card {
+    temperature_card(
+        host.options::<TemperatureConfig>(),
+        use_theme::<NordTheme>(),
+    )
+}
+
+pub fn netspeed(_host: &Host) -> Card {
+    netspeed_card()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -47,7 +93,7 @@ enum AudioSide {
 }
 
 /// Volume and microphone are the same card: a level, a mute state and the wheel step that moves it. Splitting them would duplicate every row to change one glyph and one string.
-fn audio_card(side: AudioSide, config: &Config, theme: NordTheme) -> Card {
+fn audio_card(side: AudioSide, audio: &AudioConfig, theme: NordTheme) -> Card {
     let initial = match side {
         AudioSide::Output => volume::current().unwrap_or(volume::Volume {
             level: 0,
@@ -70,7 +116,7 @@ fn audio_card(side: AudioSide, config: &Config, theme: NordTheme) -> Card {
     let graph_sink = graph;
     platform_wayland::watch(pipewire::subscribe, move |g| graph_sink.set(g));
 
-    let ceiling = config.audio.ceiling() as f32;
+    let ceiling = audio.ceiling() as f32;
     let title = match side {
         AudioSide::Output => telar::t!("popout.volume"),
         AudioSide::Input => telar::t!("popout.microphone"),
@@ -123,7 +169,7 @@ fn audio_card(side: AudioSide, config: &Config, theme: NordTheme) -> Card {
             }),
             match side {
                 AudioSide::Output => derive(graph, |g| playing_label(&g)),
-                AudioSide::Input => fixed_text(format!("{}%", config.audio.step())),
+                AudioSide::Input => fixed_text(format!("{}%", audio.step())),
             },
         )
 }
@@ -545,16 +591,15 @@ fn memory_card(theme: NordTheme) -> Card {
 }
 
 /// Names the sensor the reading came from, which is the one thing `[temperature] sensor` cannot be configured without: the chip shows a number, and only the popout says whose number it is.
-fn temperature_card(config: &Config, theme: NordTheme) -> Card {
+fn temperature_card(settings: &TemperatureConfig, theme: NordTheme) -> Card {
     let state = resource_signal();
-    let settings = config.temperature.clone();
-    let unit = settings.unit;
-    let (warn, critical) = (settings.warn, settings.critical);
+    let settings = settings.clone();
+    let (unit, critical) = (settings.unit, settings.critical);
     let wanted = settings.sensor.clone();
     let for_label = wanted.clone();
 
     let celsius = derive(state, move |r| {
-        r.as_ref().and_then(|r| reading_for(r, &wanted))
+        r.as_ref().and_then(|r| r.temperature_of(&wanted))
     });
     let tint = celsius;
     let meter = celsius;
@@ -570,10 +615,8 @@ fn temperature_card(config: &Config, theme: NordTheme) -> Card {
             derive(meter, move |c| {
                 (c.unwrap_or(0.0) / critical.max(1.0)).clamp(0.0, 1.0)
             }),
-            derive(tint, move |c| match c {
-                Some(c) if c >= critical => theme.red,
-                Some(c) if c >= warn => theme.yellow,
-                _ => theme.accent,
+            derive(tint, move |c| {
+                glyph::heat_tint(&settings, c, theme, theme.accent)
             }),
         )
         .row(
@@ -584,14 +627,6 @@ fn temperature_card(config: &Config, theme: NordTheme) -> Card {
             fixed_text(telar::t!("popout.critical")),
             fixed_text(unit.format(critical)),
         )
-}
-
-/// The configured sensor's reading, or the hottest one — the same fallback the chip uses, so the two never disagree about which sensor is being reported.
-fn reading_for(resources: &resources::Resources, wanted: &str) -> Option<f32> {
-    if wanted.trim().is_empty() {
-        return resources.temperature;
-    }
-    resources.temperature_of(wanted).or(resources.temperature)
 }
 
 fn sensor_label(resources: Option<&resources::Resources>, wanted: &str) -> String {
@@ -650,7 +685,7 @@ fn disk_row(state: RwSignal<Option<resources::Resources>>) -> Live<String> {
 }
 
 /// One subscription to the resource service, shared by whichever card asked for it. Three sysinfo popouts read the same snapshot, so they are all the same signal shaped differently.
-fn resource_signal() -> RwSignal<Option<resources::Resources>> {
+pub(crate) fn resource_signal() -> RwSignal<Option<resources::Resources>> {
     let state = signal(resources::current());
     let sink = state;
     platform_wayland::watch(resources::subscribe, move |r| sink.set(Some(r)));
@@ -674,7 +709,7 @@ fn non_empty(text: &str) -> String {
     }
 }
 
-fn percent(value: Option<f32>) -> String {
+pub(crate) fn percent(value: Option<f32>) -> String {
     match value {
         Some(v) => format!("{v:.0}%"),
         None => telar::t!("sysinfo.no_reading"),
@@ -691,48 +726,6 @@ fn rate(value: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Each card builds for real: every one of them wires its own subscriptions and reads a service, so a card that only compiles is a card nobody has laid out.
-    #[test]
-    fn every_registered_card_builds() {
-        let config = Config::starter();
-        let theme = config.resolve_theme();
-        ui::popouts::install(cards());
-        for id in cards().ids() {
-            telar::reset_layout_runtime();
-            telar::set_theme(theme);
-            assert!(
-                ui::popouts::build(&id, &config, theme)
-                    .expect("a registered card")
-                    .is_ok(),
-                "'{id}' failed to build"
-            );
-        }
-    }
-
-    #[test]
-    fn a_named_sensor_wins_over_the_hottest_and_a_missing_one_falls_back() {
-        let r = resources::Resources {
-            temperature: Some(40.0),
-            sensors: vec![resources::Sensor {
-                chip: "k10temp".to_string(),
-                label: "Tctl".to_string(),
-                celsius: 61.0,
-            }],
-            ..resources::Resources::default()
-        };
-        assert_eq!(
-            reading_for(&r, "Tctl"),
-            Some(61.0),
-            "the named sensor is read"
-        );
-        assert_eq!(
-            reading_for(&r, "nonesuch"),
-            Some(40.0),
-            "an unknown name falls back rather than blanking the card"
-        );
-        assert_eq!(reading_for(&r, ""), Some(40.0), "unset means the hottest");
-    }
 
     #[test]
     fn the_sensor_row_names_the_configured_sensor_or_the_hottest_one() {

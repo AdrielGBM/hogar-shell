@@ -8,10 +8,10 @@ use telar::{
 
 mod menu;
 
-use config::SurfaceEnv;
-use config::TrayConfig;
 use config::theme::NordTheme;
+use config::{SurfaceEnv, TrayConfig};
 use services::tray::{self as tray_service, Pixmap, TrayItem};
+use ui::host::Host;
 use ui::icon::{app_icon_view_tinted, icon_view};
 
 /// Drawn for an application that names an icon nobody can resolve and ships no pixels either — rare, but a blank gap that still takes clicks is worse than an obvious placeholder.
@@ -85,27 +85,33 @@ fn icon_widget(
     icon_view(|| FALLBACK_GLYPH.to_string(), move || tint, size)
 }
 
-/// Where the chip sits inside its bar, and which bar that is — everything the menu needs to anchor itself. `None` outside a surface (a unit test), where there is nothing to anchor to.
-fn anchor_for(rect: ReadSignal<Rect>) -> Option<(Rect, SurfaceEnv)> {
-    ui::module::surface_env().map(|env| (rect.get(), env))
+/// Where the chip sits inside its bar, and which bar that is — everything the menu needs to anchor itself. `None` for a host that runs along no bar, where there is no edge to hang a menu off.
+fn anchor_for(host: &Host, rect: ReadSignal<Rect>) -> Option<(Rect, SurfaceEnv)> {
+    let edge = host.axis?;
+    let env = SurfaceEnv::for_edge(
+        std::sync::Arc::clone(host.config()),
+        edge,
+        host.output.clone(),
+    );
+    Some((rect.get(), env))
 }
 
 /// A primary click. An item that says it is a menu, or that implements no `Activate`, gets its menu opened — which for everything built on libappindicator is the only interaction it has.
-fn primary(item: &TrayItem, rect: ReadSignal<Rect>) {
+fn primary(item: &TrayItem, host: &Host, rect: ReadSignal<Rect>) {
     if item.item_is_menu || !item.has_activate {
-        open_menu(item, rect);
+        open_menu(item, host, rect);
         return;
     }
     tray_service::activate(item, 0, 0);
 }
 
 /// A right click always means "show me the menu". Only when the item exposes none does this fall back to asking the application to pop its own.
-fn open_menu(item: &TrayItem, rect: ReadSignal<Rect>) {
+fn open_menu(item: &TrayItem, host: &Host, rect: ReadSignal<Rect>) {
     if item.menu.trim().is_empty() {
         tray_service::context_menu(item, 0, 0);
         return;
     }
-    let Some((chip, env)) = anchor_for(rect) else {
+    let Some((chip, env)) = anchor_for(host, rect) else {
         return;
     };
     menu::toggle(item, chip, env);
@@ -124,10 +130,8 @@ fn secondary(item: &TrayItem) {
 pub struct TrayIconProps {
     pub item: TrayItem,
     pub config: TrayConfig,
-    pub fg: ReadSignal<Color>,
+    pub host: Host,
     pub theme: NordTheme,
-    pub size: f32,
-    pub radius: f32,
 }
 
 pub fn tray_icon(
@@ -137,12 +141,12 @@ pub fn tray_icon(
     let TrayIconProps {
         item,
         config,
-        fg,
+        host,
         theme,
-        size,
-        radius,
     } = props;
-    let icon = icon_widget(&item, &config, fg.get(), size)?;
+    let size = host.icon_size();
+    let radius = host.corner_radius();
+    let icon = icon_widget(&item, &config, host.foreground, size)?;
     let pad = if config.compact {
         (size * 0.08).round().max(1.0)
     } else {
@@ -163,6 +167,7 @@ pub fn tray_icon(
         .flex_shrink(0.0);
 
     let press_item = item.clone();
+    let alt_host = host.clone();
     let alt_item = item.clone();
     let scroll_item = item;
     let container =
@@ -175,9 +180,9 @@ pub fn tray_icon(
     let container = container
         .hover_style(move |_r| RectStyle::filled(hover, radius))
         .active_style(move |_r| RectStyle::filled(hover.darken(0.14), radius))
-        .on_press(move || primary(&press_item, rect))
+        .on_press(move || primary(&press_item, &host, rect))
         .on_alt_press(move |button| match button {
-            PointerButton::Secondary => open_menu(&alt_item, alt_rect),
+            PointerButton::Secondary => open_menu(&alt_item, &alt_host, alt_rect),
             _ => secondary(&alt_item),
         })
         .on_scroll(move |dx, dy| {

@@ -34,7 +34,12 @@ fn cap_malloc_arenas() {}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
+    let command = args.first().map(String::as_str);
+    // The shell opens its own reach once it knows it is not `cargo telar preview` or `test`, which must reach nothing of the user's.
+    if !matches!(command, None | Some("run")) {
+        hogar_shell::Reach::of(command).open();
+    }
+    match command {
         None | Some("run") => {
             cap_malloc_arenas();
             // Held for the whole run: dropping the guard stops the writer thread and flushes what it has.
@@ -68,7 +73,8 @@ fn main() -> ExitCode {
             }
         }
         // Same reason as the schema, and one more for `deps`: what a dependency panel is *for* is the machine where something is missing, and "the shell will not start" is exactly the case where there is no shell to ask. Probing is a function of the machine, not of a running process.
-        Some("deps" | "man") => answer_locally(&args),
+        Some("deps") => answer_locally(&args),
+        Some("man") => answer_locally(&args),
         // A check reads the files on disk, which is what the user is editing — and one that needed a running shell could not look at a config that stops the shell from starting.
         Some("config") if args.get(1).map(String::as_str) == Some("check") => answer_locally(&args),
         _ => send(&args),

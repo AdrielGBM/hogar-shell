@@ -77,16 +77,10 @@ fn load(path: &Path) -> Option<AppIcon> {
 /// The base directories searched for icon themes, in the spec's precedence: per-user (`$HOME/.icons`, `$XDG_DATA_HOME/icons`) before system (`$XDG_DATA_DIRS/icons`), so a user override wins.
 fn icon_base_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(&home).join(".icons"));
+    if let Some(home) = util::paths::home_dir() {
+        dirs.push(home.join(".icons"));
     }
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    if let Some(data_home) = data_home {
-        dirs.push(data_home.join("icons"));
-    }
+    dirs.push(util::paths::xdg_data_home().join("icons"));
     let data_dirs = std::env::var_os("XDG_DATA_DIRS")
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
@@ -133,13 +127,7 @@ fn theme_search_order(preferred: &str, bases: &[PathBuf]) -> Vec<String> {
 
 /// The user's configured icon theme, read from the GTK settings file (the de-facto source most desktops honour), or empty when none is set — the caller then falls back to `hicolor`.
 fn detected_icon_theme() -> String {
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    let Some(config_home) = config_home else {
-        return String::new();
-    };
+    let config_home = util::paths::xdg_config_home();
     for settings in ["gtk-4.0/settings.ini", "gtk-3.0/settings.ini"] {
         let Ok(text) = fs::read_to_string(config_home.join(settings)) else {
             continue;

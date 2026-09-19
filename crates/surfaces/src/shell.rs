@@ -14,7 +14,7 @@ use telar::SurfaceToken;
 use config::Edge;
 use config::SurfaceEnv;
 use config::fingerprint::{Fingerprint, Reload, Stamp};
-use ui::panels;
+use ui::descriptor;
 
 thread_local! {
     static OPEN: RefCell<OpenSurfaces> = RefCell::new(OpenSurfaces::default());
@@ -61,12 +61,7 @@ pub fn env_for_module(module_id: &str) -> Option<SurfaceEnv> {
         .into_iter()
         .find(|edge| config.zone_of(*edge, module_id).is_some())
         .unwrap_or(Edge::Top);
-    Some(SurfaceEnv {
-        edge,
-        bar_size: config.bars.get(edge).size,
-        output,
-        config,
-    })
+    Some(SurfaceEnv::for_edge(config, edge, output))
 }
 
 /// Whether `id`'s drawer is the one currently showing.
@@ -121,7 +116,7 @@ pub fn toggle_standing_window(id: &str, open: impl FnOnce() -> SurfaceToken) {
 pub fn close_drawer() {
     let open = OPEN.with(|surfaces| surfaces.borrow().drawer.as_ref().map(|(id, _)| id.clone()));
     if let Some(id) = open {
-        panels::closed(&id);
+        descriptor::closed(&id);
         close(&id);
     }
 }
@@ -342,7 +337,6 @@ mod tests {
         ));
         let battery = env_for_module("battery").expect("context is set");
         assert_eq!(battery.edge, Edge::Left, "follows the bar the module is on");
-        assert_eq!(battery.bar_size, 48, "and that bar's thickness");
 
         let stray = env_for_module("notes").expect("context is set");
         assert_eq!(

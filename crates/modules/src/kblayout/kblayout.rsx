@@ -20,6 +20,7 @@ fn short_name(layout: &KeyboardLayout) -> String {
     code.to_uppercase()
 }
 
+let host = ui::host::Host::current()?;
 let initial = hyprland::socket_dir()
     .and_then(|dir| hyprland::keyboard_layout(&dir))
     .unwrap_or_default();
@@ -34,10 +35,10 @@ platform_wayland::watch(
     },
 );
 
-let fg = ui::module::module_fg();
+let fg = host.foreground;
 
 [view]
-text "{$code_view}" font_size:$theme.font(FontRole::Body) color:$fg
+text "{$code_view}" font_size:$theme.font(FontRole::Body) color:fg
 
 [preview "Kblayout" fixture:ui::preview::bar_chip]
 kblayout

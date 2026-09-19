@@ -83,7 +83,6 @@ pub fn toggle(item: &TrayItem, chip: Rect, env: SurfaceEnv) {
                         env.config.resolve_theme(),
                         content_radius(),
                     )
-                    .expect("tray menu build failed")
                 })
                 .open()
             });

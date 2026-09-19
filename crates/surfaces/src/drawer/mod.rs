@@ -1,7 +1,9 @@
-use telar::{Rect, SurfaceToken};
+use telar::{LayoutError, Rect, SurfaceToken};
 
 use config::SurfaceEnv;
 use config::{Align, DrawerConfig, Edge, Zone};
+use ui::descriptor::wants_keyboard;
+use ui::host::{Host, InstanceId, Representation, Size};
 use ui::panel::PanelSurface;
 use ui::placement::{OffChip, Placement};
 use ui::scale::space;
@@ -34,45 +36,37 @@ fn span_along(edge: Edge, drawer: DrawerConfig) -> f32 {
 /// Where `module_id`'s drawer sits on its bar: hanging off the chip that opened it, the way that chip's hover popout does, and aligned to the module's configured zone only when nothing pressed it.
 fn placement_for(env: &SurfaceEnv, module_id: &str, chip: Option<Rect>) -> Placement {
     let span = Some(span_along(env.edge, env.config.panels.drawer));
-    let placement = Placement::off_chip(OffChip::Panel, env, chip, span)
-        .keyboard(panel_wants_keyboard(module_id));
+    let placement =
+        Placement::off_chip(OffChip::Panel, env, chip, span).keyboard(wants_keyboard(module_id));
     match chip {
         Some(_) => placement,
         None => placement.align(align_for(env.config.zone_of(env.edge, module_id))),
     }
 }
 
-pub use ui::panel::{content_radius, panel_fill, panel_transition};
-pub use ui::panels::{build as module_panel, wants_keyboard as panel_wants_keyboard};
-
-/// Which module a drawer shows and how big it may be, set on the drawer surface's own scope so `drawer_panel.rsx` reads it via `inject` — scoped to the surface, not a global thread-local.
-///
-/// The corner radius is *not* here: it is the bar's, so it comes from the surface's own environment ([`content_radius`]) rather than from a copy every panel surface would have to remember to pass on.
+/// The host the drawer's panel is built for, set on the drawer surface's own scope so `drawer_panel.rsx` reads it — scoped to the surface, not a global thread-local. Its extent is the drawer's width and body height.
 #[derive(Clone)]
-struct DrawerCtx {
-    module: String,
-    config: DrawerConfig,
+struct DrawerHost(Host);
+
+/// Puts `module`'s drawer in scope on the surface `env` describes.
+pub fn set_drawer_host(module: &str, env: &SurfaceEnv) {
+    let drawer = env.config.panels.drawer;
+    util::state::set_context(DrawerHost(Host::on_surface(
+        InstanceId::of_module(module),
+        Representation::Panel,
+        env,
+        Size {
+            width: drawer.width,
+            height: drawer.max_height,
+        },
+    )));
 }
 
-fn ctx() -> Option<DrawerCtx> {
-    util::state::context::<DrawerCtx>()
-}
-
-pub fn set_drawer_ctx(module: String, drawer: DrawerConfig) {
-    util::state::set_context(DrawerCtx {
-        module,
-        config: drawer,
-    });
-}
-
-/// The module whose panel the drawer being built shows; read by `drawer_panel.rsx`.
-pub fn current_drawer_module() -> String {
-    ctx().map(|ctx| ctx.module).unwrap_or_default()
-}
-
-/// The drawer size (width / max height) for the drawer being built; read by `drawer_panel.rsx`.
-pub fn current_drawer_config() -> DrawerConfig {
-    ctx().map(|ctx| ctx.config).unwrap_or_default()
+/// The host the drawer being built shows its panel for; read by `drawer_panel.rsx`.
+pub fn current_drawer_host() -> Result<Host, LayoutError> {
+    util::state::context::<DrawerHost>()
+        .map(|DrawerHost(host)| host)
+        .ok_or_else(|| LayoutError::Engine("a drawer was built outside its surface".to_string()))
 }
 
 /// Opens `module_id`'s drawer as a surface floating off the bar edge on the bar's own monitor, hanging off `chip` — the rect of the chip that was pressed, exactly as the hover popout of that chip does. A panel with no chip behind it (IPC, a keybind) has only the module's configured zone to align to instead. Either way the distance off the bar is the shared [`Config::panel_gap`](config::Config), so every panel keeps the same config-controlled gap. The surface/dismiss/slide-in come from the rsx surface host, the panel from `drawer_panel.rsx`. Toggle/close is the caller's job ([`crate::panel::toggle_panel`]) via the returned token.
@@ -81,12 +75,11 @@ pub(crate) fn open_drawer(env: &SurfaceEnv, module_id: &str, chip: Option<Rect>)
     let module = module_id.to_string();
     // What is captured is what the drawer *is* — which module it shows. Everything the config decides is resolved per build by the panel surface, so a rebuilt drawer is a drawer that followed the edit rather than one still drawing the config it opened under.
     PanelSurface::new(placement, move |env| {
-        set_drawer_ctx(module.clone(), env.config.panels.drawer);
+        set_drawer_host(&module, env);
         drawer_panel::drawer_panel(
             drawer_panel::DrawerPanelProps::props().build(),
             telar::Children::default(),
         )
-        .expect("drawer panel build failed")
     })
     .animated()
     .open()
@@ -100,12 +93,7 @@ mod placement_tests {
 
     fn env(edge: Edge, config: &str) -> SurfaceEnv {
         let config: config::Config = toml::from_str(config).expect("config parses");
-        SurfaceEnv {
-            edge,
-            bar_size: config.bars.get(edge).size,
-            output: None,
-            config: Arc::new(config),
-        }
+        SurfaceEnv::for_edge(Arc::new(config), edge, None)
     }
 
     fn chip(x: f32, y: f32) -> Rect {

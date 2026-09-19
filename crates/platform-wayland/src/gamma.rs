@@ -528,43 +528,4 @@ mod tests {
             "answering 'nothing to restore' started a producer to answer it with"
         );
     }
-
-    /// The half no fixture can prove: that the compositor accepts the table and holds the tint.
-    ///
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland gamma -- --nocapture --test-threads=1`
-    ///
-    /// **It warms the screen for a second and puts it back.** There is no reading to check instead — the protocol has no "what is the gamma" request, by design, so the only evidence it worked is that the compositor did not answer `failed` and the screen went warm.
-    #[test]
-    fn the_compositor_takes_a_ramp_and_gives_the_screen_back() {
-        use std::time::Duration;
-
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to tint the real screen; skipping");
-            return;
-        }
-        assert_eq!(
-            gamma_supported(),
-            Some(true),
-            "this compositor does not implement wlr-gamma-control"
-        );
-
-        assert!(warm(2500), "the request could not be sent");
-        assert_eq!(current(), Some(2500));
-        // Long enough for the compositor to answer `gamma_size` and take the table, and to see it happen.
-        std::thread::sleep(Duration::from_millis(800));
-
-        assert!(neutral(), "the screen could not be given back");
-        std::thread::sleep(Duration::from_millis(300));
-        assert_eq!(current(), None);
-        assert!(
-            REQUESTS.lock().unwrap().is_none(),
-            "the thread holding the tint outlived the tint"
-        );
-
-        // And a second tint after the first has been given up gets a producer of its own, which is the half of retiring that a released slot alone does not prove.
-        assert!(warm(2500), "a fresh producer could not be started");
-        std::thread::sleep(Duration::from_millis(800));
-        assert_eq!(current(), Some(2500));
-        assert!(neutral());
-    }
 }

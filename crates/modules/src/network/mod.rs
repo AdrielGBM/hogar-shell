@@ -6,10 +6,10 @@ use telar::{
 use ui::scale::space;
 
 use config::NetworkConfig;
-use config::surface_env;
 use config::theme::{FontRole, NordTheme};
 use services::network::{self as net, AccessPoint, Security, Wifi};
 use ui::glyph;
+use ui::host::Host;
 use ui::icon::icon_view;
 
 const ROW_ICON: f32 = 20.0;
@@ -32,14 +32,8 @@ impl Row {
     }
 }
 
-pub fn network_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = surface_env()
-        .map(|env| env.config.network)
-        .unwrap_or_default();
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
-    }
-    network_view(config)
+pub fn network_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    network_view(host.options::<NetworkConfig>().clone())
 }
 
 /// The panel's whole content, taking its config rather than reading the surface's, so a caller that already resolved one — a drawer, a float — does not have to be a surface for this to build.
@@ -654,6 +648,6 @@ mod tests {
     fn the_panel_builds_without_a_re_entrant_borrow() {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        assert!(network_panel().is_ok());
+        assert!(network_view(NetworkConfig::default()).is_ok());
     }
 }

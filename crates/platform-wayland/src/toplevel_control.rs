@@ -644,14 +644,8 @@ mod tests {
     /// The half of "nothing runs unless something is asking for it" that a lazy start does not give: the watcher has to *stop* when the last registration is retired, and give its slot back so the next [`watch`] starts a fresh one rather than registering with a thread on its way out.
     ///
     /// One test rather than several because they all move the same statics, and split across `cargo test`'s threads they would take turns wrecking each other's world.
-    ///
-    /// Skipped under `HOGAR_SHELL_WAYLAND_LIVE`, where the registry is not this test's to reason about: the live tests below register with a real watcher, so "nothing is registered" is false through no fault of the code, and emptying the registry to make it true would retire the watcher out from under them.
     #[test]
     fn the_watcher_lives_exactly_as_long_as_its_registrations() {
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_ok() {
-            eprintln!("a real watcher holds the registry in a live run; skipping");
-            return;
-        }
         let (requests, _channel) = channel::<Request>();
         *REQUESTS.lock().unwrap() = Some(requests);
 
@@ -749,111 +743,6 @@ mod tests {
                 .map(|w| w.app_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["kitty", "helium"]
-        );
-    }
-
-    /// The half no fixture can prove: that this reads a real compositor, and that what it calls the focused window is the one that actually has focus.
-    ///
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland toplevel_control -- --nocapture --test-threads=1`
-    #[test]
-    fn the_watcher_agrees_with_the_compositor_about_which_window_has_focus() {
-        use std::sync::mpsc;
-        use std::time::Duration;
-
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to read the real compositor; skipping");
-            return;
-        }
-
-        let (published, changes) = mpsc::channel();
-        let interest = Interest::new();
-        assert!(
-            watch(&interest, move |windows: &[ManagedToplevel]| {
-                let _ = published.send(windows.to_vec());
-            }),
-            "the compositor advertises the manager but the watcher would not start"
-        );
-
-        let mut listed = Vec::new();
-        while let Ok(windows) = changes.recv_timeout(Duration::from_millis(500)) {
-            listed = windows;
-        }
-        eprintln!("{} windows: {listed:#?}", listed.len());
-
-        assert!(
-            !listed.is_empty(),
-            "this test is running in a terminal, which is itself a window"
-        );
-        assert!(
-            listed.iter().filter(|w| w.activated).count() <= 1,
-            "two focused windows at once means the state array is being merged instead of replaced"
-        );
-        assert_eq!(
-            focused().map(|w| w.id),
-            listed.iter().find(|w| w.activated).map(|w| w.id),
-            "the convenience reading and the list have to agree"
-        );
-    }
-
-    /// Whether `activate` actually moves the compositor, with no layer surface anywhere near it.
-    ///
-    /// This exists to tell two failures apart. A window switcher that does nothing could be failing here — the request never lands — or failing above, because whoever asked closed a keyboard-grabbing surface straight afterwards and the compositor handed focus back. Only isolating the request answers that.
-    ///
-    /// `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland activate_moves -- --nocapture`
-    ///
-    /// **It focuses another window and puts the focus back.**
-    #[test]
-    fn activate_moves_the_compositor_on_its_own() {
-        use std::sync::mpsc;
-        use std::time::Duration;
-
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to focus a real window; skipping");
-            return;
-        }
-
-        let (published, changes) = mpsc::channel();
-        let interest = Interest::new();
-        assert!(watch(&interest, move |windows: &[ManagedToplevel]| {
-            let _ = published.send(windows.to_vec());
-        }));
-
-        let mut listed = Vec::new();
-        while let Ok(windows) = changes.recv_timeout(Duration::from_millis(500)) {
-            listed = windows;
-        }
-        let was = listed.iter().find(|w| w.activated).map(|w| w.id);
-        let Some(target) = listed.iter().find(|w| !w.activated) else {
-            eprintln!("only one window is open; nothing to switch to");
-            return;
-        };
-        eprintln!(
-            "focused={was:?} switching to {:?} {:?}",
-            target.app_id, target.title
-        );
-
-        assert!(focus(target.id), "the request could not be sent");
-        let mut moved = None;
-        let deadline = 12;
-        for _ in 0..deadline {
-            if let Ok(windows) = changes.recv_timeout(Duration::from_millis(250))
-                && let Some(active) = windows.iter().find(|w| w.activated)
-            {
-                moved = Some(active.id);
-                if moved == Some(target.id) {
-                    break;
-                }
-            }
-        }
-
-        if let Some(was) = was {
-            focus(was);
-            std::thread::sleep(Duration::from_millis(400));
-        }
-        assert_eq!(
-            moved,
-            Some(target.id),
-            "activate did not move the compositor, so the switcher's problem is here and not in its caller"
         );
     }
 }

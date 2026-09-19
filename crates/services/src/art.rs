@@ -1,32 +1,17 @@
-//! Cover art: the local file for whatever `mpris:artUrl` a player handed over.
-//!
-//! Three cases behind one call, which is the point of the module. A `file://` URL is already on disk and needs nothing but percent-decoding. An `http(s)://` one has to be downloaded, and downloading it on the UI thread would stall the frame for as long as the server takes — so it goes through the same request/worker shape the Iconify store uses: ask, get a signal, and let the worker fill it in. A `data:` URL carries the bytes inline and is written straight to the cache.
-//!
-//! The cache is keyed by the URL rather than by the track, because that is what actually identifies the image: two tracks from one album share an `artUrl` and should share one download, and a player that reuses a temporary path for every track (several do) would otherwise poison a track-keyed cache.
+//! Cover art: the local file for whatever `mpris:artUrl` a player handed over; cached by URL rather than by track, since several players reuse one temporary path across tracks, which would poison a track-keyed cache.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
-use platform_wayland::{EventSender, watch};
-use telar::{ReadSignal, RwSignal, signal};
+use telar::{ReadSignal, signal};
 
+use util::asset::{Load, Loader};
 use util::paths;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// Cover art is a few hundred KB at most; anything far larger is a server handing back something that is not an image, and writing it to the user's cache would be the only lasting effect.
 const MAX_BYTES: usize = 8 * 1024 * 1024;
-
-/// Where a request has got to. Mirrors the icon store's states so a view can branch the same way.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ArtState {
-    Loading,
-    Ready(PathBuf),
-    /// Nothing to show: no art URL, an unreachable one, or a payload that was not an image.
-    Missing,
-}
 
 /// `$XDG_CACHE_HOME/hogar-shell/art`.
 pub fn cache_dir() -> PathBuf {
@@ -168,91 +153,38 @@ fn looks_like_an_image(bytes: &[u8]) -> bool {
         || (bytes.len() > 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP")
 }
 
-struct ArtStore {
-    signals: RefCell<HashMap<String, RwSignal<ArtState>>>,
-    requests: Sender<String>,
-}
+type Store = Loader<String, PathBuf>;
 
 thread_local! {
-    static STORE: RefCell<Option<ArtStore>> = const { RefCell::new(None) };
+    static ART: RefCell<Option<Store>> = const { RefCell::new(None) };
 }
 
-/// The state of `url`, starting a fetch if this is the first time it has been asked for.
-///
-/// The signal is cached per URL, so a card rebuilt on every track change does not re-download art it already has, and two surfaces showing the same player share one request.
-pub fn art(url: &str) -> ReadSignal<ArtState> {
-    let url = url.trim().to_string();
+/// The state of `url`, starting a fetch if this is the first time it has been asked for; cached per URL so a card rebuilt on every track change does not re-download art it already has.
+pub fn art(url: &str) -> ReadSignal<Load<PathBuf>> {
+    let url = url.trim();
     if url.is_empty() {
-        return signal(ArtState::Missing).read_only();
+        return signal(Load::Missing).read_only();
     }
     ensure_store();
-    STORE.with(|s| {
-        let borrow = s.borrow();
+    ART.with(|store| {
+        let borrow = store.borrow();
         let Some(store) = borrow.as_ref() else {
-            return signal(ArtState::Missing).read_only();
+            return signal(Load::Missing).read_only();
         };
-        if let Some(existing) = store.signals.borrow().get(&url) {
-            return existing.read_only();
-        }
-        let initial = match ready(&url) {
-            Some(path) => ArtState::Ready(path),
-            None => ArtState::Loading,
-        };
-        let handle = signal(initial.clone());
-        store.signals.borrow_mut().insert(url.clone(), handle);
-        if initial == ArtState::Loading {
-            let _ = store.requests.send(url);
-        }
-        handle.read_only()
+        store.get(url.to_string(), |url| ready(url))
     })
 }
 
 fn ensure_store() {
-    if STORE.with(|s| s.borrow().is_some()) {
+    if ART.with(|store| store.borrow().is_some()) {
         return;
     }
-    let (requests, incoming) = channel::<String>();
-    STORE.with(|s| {
-        *s.borrow_mut() = Some(ArtStore {
-            signals: RefCell::new(HashMap::new()),
-            requests,
-        });
-    });
-    // Headless, `watch` is a no-op: no worker runs and every request stays on `Loading`, which is what an offline render shows.
-    watch(
-        move |sender| run_worker(incoming, sender),
-        |(url, path)| deliver(url, path),
-    );
-}
-
-fn run_worker(incoming: Receiver<String>, sender: EventSender<(String, Option<PathBuf>)>) {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(FETCH_TIMEOUT))
         .build()
         .into();
-    for url in incoming {
-        let path = fetch(&url, &agent);
-        if !sender.send((url, path)) {
-            break;
-        }
-    }
-}
-
-fn deliver(url: String, path: Option<PathBuf>) {
-    STORE.with(|s| {
-        let borrow = s.borrow();
-        let Some(store) = borrow.as_ref() else {
-            return;
-        };
-        // Clone the handle out and drop the map borrow BEFORE `set`: a signal write flushes effects synchronously, and an effect that asks for another URL would re-enter this borrow and panic.
-        let handle = store.signals.borrow().get(&url).cloned();
-        if let Some(handle) = handle {
-            handle.set(match path {
-                Some(path) => ArtState::Ready(path),
-                None => ArtState::Missing,
-            });
-        }
-    });
+    let store = Loader::new(move |url: &String| fetch(url, &agent));
+    ART.with(|cell| *cell.borrow_mut() = Some(store));
 }
 
 #[cfg(test)]
@@ -331,5 +263,27 @@ mod tests {
             ready("file:///nonexistent-cover-9e3f.png").is_none(),
             "a path the player named but that is not there"
         );
+    }
+
+    /// The media card that first shows a cover asks inside its own build, and closing that panel disposed the signal the cache went on handing out: the next open read freed storage and took the UI thread down with it.
+    #[test]
+    fn a_cover_outlives_the_panel_that_first_showed_it() {
+        let cover = cache_dir().join("outlives-its-panel.png");
+        util::fs::write_atomic(&cover, &[0x89, b'P', b'N', b'G']).expect("scratch cover");
+        let url = format!("file://{}", cover.display());
+
+        let panel = telar::owner_scope();
+        let owner = panel.id();
+        assert_eq!(art(&url).get(), Load::Ready(cover.clone()));
+        drop(panel);
+        telar::dispose_owner(owner);
+
+        assert_eq!(
+            art(&url).get(),
+            Load::Ready(cover.clone()),
+            "the reopened panel reads the cached cover, not a freed handle"
+        );
+        telar::reset_layout_runtime();
+        assert_eq!(art(&url).get(), Load::Ready(cover));
     }
 }

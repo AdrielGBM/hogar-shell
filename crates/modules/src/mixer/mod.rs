@@ -11,11 +11,11 @@ use telar::{
 use ui::scale::space;
 
 use config::AudioConfig;
-use config::surface_env;
 use config::theme::{FontRole, NordTheme};
 use services::pipewire::{self, Graph, Node, NodeKind};
 use services::volume::{self, Volume};
 use ui::glyph;
+use ui::host::Host;
 use ui::icon::icon_view;
 use ui::widget;
 use util::reactive::derive;
@@ -68,14 +68,8 @@ impl Row {
 }
 
 /// The panel behind the volume chip's right-click, and the audio settings page's live half.
-pub fn mixer_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = surface_env()
-        .map(|env| env.config.audio)
-        .unwrap_or_default();
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
-    }
-    mixer_view(config, use_theme::<NordTheme>())
+pub fn mixer_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    mixer_view(*host.options::<AudioConfig>(), use_theme::<NordTheme>())
 }
 
 /// The mixer itself, taking its config and theme rather than reading the surface's, so a caller that already resolved them does not have to be a surface for this to build.

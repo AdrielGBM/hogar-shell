@@ -4,9 +4,8 @@ use crate::tray::{TrayIconProps, tray_icon};
 use ::config::theme::NordTheme;
 use ::services::tray::{self, TrayItem};
 
-let config = ui::module::surface_env()
-    .map(|env| env.config.tray.clone())
-    .unwrap_or_default();
+let host = ui::host::Host::current()?;
+let config = host.options::<::config::TrayConfig>().clone();
 let filter_config = config.clone();
 
 let items = signal(visible(&tray::current().unwrap_or_default(), &config));
@@ -19,20 +18,17 @@ if config.enabled {
     });
 }
 
-let fg = ui::module::module_fg();
 let theme = use_theme::<NordTheme>();
-let size = ui::module::icon_px();
-let radius = ui::module::chip_radius();
 let gap = if config.compact {
     0.0
 } else {
-    (size * 0.15).round()
+    (host.icon_size() * 0.15).round()
 };
 
 [view]
 row align:center gap:gap
     for item in $listed key item.key.clone()
-        tray_icon item:item config:config.clone() fg:fg.clone() theme:theme size:size radius:radius
+        tray_icon item:item config:config.clone() host:host.clone() theme:theme
 
 [preview "Tray" fixture:crate::preview::tray]
 tray

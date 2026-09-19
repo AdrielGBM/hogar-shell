@@ -35,8 +35,11 @@ not repeated here.
 | [Status icons](modules/statusicons.md) | Several service icons sharing one chip. | `pw-dump`, `networkmanager`, `bluez`, `upower`, `leds` |
 | [System readings](modules/sysinfo.md) | CPU, GPU, memory, temperature and network throughput as bar chips. | `drm`, `libnvidia-ml` |
 | [System tray](modules/tray.md) | One icon per running tray application. | — |
+| [User](modules/user.md) | Who is signed in — the user's picture and name — drawn as the lock screen and the dashboard draw it; not yet placeable on its own. | — |
 | [Utilities](modules/utilities.md) | The switches you reach for without opening anything. | `gamemode`, `networkmanager`, `bluez`, `pw-dump` |
+| [Visualiser](modules/visualiser.md) | Bars that follow the music, stood along an edge of the desktop. | `libpipewire` |
 | [Volume](modules/volume.md) | The default output's level and mute. | `pw-dump`, `wpctl` |
+| [Weather](modules/weather.md) | The sky and the temperature where you are, as a widget; not yet placeable on its own. | — |
 | [Window info](modules/windowinfo.md) | What the compositor knows about the focused window, and four things to do to it. **(Hyprland only)** | `ext-image-copy-capture`, `wlr-screencopy` |
 | [Workspaces](modules/workspaces.md) | Which workspaces the bar shows, and what each pill says. **(Hyprland only)** | `ext-workspace` |
 

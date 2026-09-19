@@ -4,9 +4,8 @@ use crate::media::{glyph, label, marquee, marquee_ticks, overflows};
 use ::config::theme::{FontRole, NordTheme};
 use ::services::mpris::{self, Player};
 
-let config = ui::module::surface_env()
-    .map(|e| e.config.media.clone())
-    .unwrap_or_default();
+let host = ui::host::Host::current()?;
+let config = host.options::<::config::MediaConfig>().clone();
 let for_frame = config.clone();
 
 let initial = mpris::current().unwrap_or_default();
@@ -14,7 +13,7 @@ let player = signal(initial.clone());
 let icon_name = signal(glyph(&initial).to_string());
 let icon_view = icon_name.read_only();
 // A vertical bar has no room for a track title, so it shows only the transport glyph; the same module works on every edge instead of needing a second one.
-let vertical = ui::module::bar_is_vertical();
+let vertical = host.is_vertical();
 
 // A read handle taken before the watch closure moves the signal in: a signal is not `Copy`.
 let text_player = player.read_only();
@@ -26,7 +25,8 @@ platform_wayland::watch(mpris::subscribe, move |p: Player| {
 // The marquee's step. Only subscribed when the user asked for one, so a bar without it runs no ticker at all; the step still only *moves* the text while a title actually overflows.
 let frame = signal(0u64);
 if config.marquee && !vertical {
-    platform_wayland::watch(marquee_ticks, move |tick: u64| frame.set(tick));
+    let step = config.marquee_step();
+    platform_wayland::watch(move |tx| marquee_ticks(tx, step), move |tick: u64| frame.set(tick));
 }
 
 let frame_read = frame.read_only();
@@ -40,15 +40,14 @@ let text_view = memo(move || {
 });
 let text_empty = text_view.clone();
 
-let fg = ui::module::module_fg();
-let fg_icon = fg.clone();
+let fg = host.foreground;
 let show_text = memo(move || !vertical && !text_empty.get().is_empty());
 
 [view]
 row align:center gap:(::ui::scale::space::md())
-    icon_glyph name:(Reactive::of(move || icon_view.get())) tint:(Reactive::of(move || fg_icon.get())) size:(ui::module::icon_px())
+    icon_glyph name:(Reactive::of(move || icon_view.get())) tint:(Reactive::of(move || fg)) size:(host.icon_size())
     if $show_text
-        text "{$text_view}" font_size:$theme.font(FontRole::Body) color:$fg lines:1 ellipsis
+        text "{$text_view}" font_size:$theme.font(FontRole::Body) color:fg lines:1 ellipsis
 
 [preview "Media" fixture:ui::preview::bar_chip]
 media

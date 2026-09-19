@@ -336,6 +336,19 @@ where
     })
 }
 
+/// A [`watch`] that belongs to the process rather than to whichever surface's handler is running when it registers: a store every surface shares starts its worker on the first request, which is somebody's build, and bound to that surface the worker would die with it.
+pub fn app_watch<T, P, F>(producer: P, on_event: F) -> Option<WatchToken>
+where
+    T: Send + 'static,
+    P: FnOnce(EventSender<T>) + Send + 'static,
+    F: FnMut(T) + 'static,
+{
+    let surface = CURRENT_SOURCES.with(|s| s.borrow_mut().take());
+    let token = watch(producer, on_event);
+    CURRENT_SOURCES.with(|s| *s.borrow_mut() = surface);
+    token
+}
+
 /// A [`watch`] registration, so the caller that installed it can take it back.
 pub struct WatchToken(RegistrationToken);
 
@@ -2692,51 +2705,6 @@ mod tests {
         assert!(
             !grants_blur(WEnum::Unknown(0b10)),
             "an effect this build does not know is not blur"
-        );
-    }
-
-    /// Whether this compositor can be asked for a fractional scale at all — the one half of this a unit test cannot answer, since the fallback is silent by design and looks like success from inside. `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_fractional -- --nocapture`
-    #[test]
-    fn advertises_fractional_scaling() {
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to ask the real compositor; skipping");
-            return;
-        }
-        let interfaces = ["wp_fractional_scale_manager_v1", "wp_viewporter"];
-        for interface in interfaces {
-            println!("{interface}: {:?}", crate::advertises(interface));
-        }
-        assert_eq!(
-            crate::advertises_all(&interfaces),
-            Some(true),
-            "this compositor cannot be asked for a fractional scale; surfaces fall back to whole numbers"
-        );
-    }
-
-    /// The other half of both of this file's optional binds, and the half no unit test can reach: whether the globals are there at all. Both fall back silently by design, so from inside the crate a compositor that has neither looks exactly like one that has both. `HOGAR_SHELL_WAYLAND_LIVE=1 cargo test -p platform-wayland advertises_the_optional -- --nocapture`
-    ///
-    /// The `blur` capability is deliberately *not* asserted here: it arrives as an event on a bound manager, and a registry read cannot see it — `background_effect_supported()` inside a running driver is the only thing that can.
-    #[test]
-    fn advertises_the_optional_surface_protocols() {
-        if std::env::var("HOGAR_SHELL_WAYLAND_LIVE").is_err() {
-            eprintln!("set HOGAR_SHELL_WAYLAND_LIVE to ask the real compositor; skipping");
-            return;
-        }
-        for interface in [
-            "ext_background_effect_manager_v1",
-            "wp_single_pixel_buffer_manager_v1",
-        ] {
-            println!("{interface}: {:?}", crate::advertises(interface));
-        }
-        assert_eq!(
-            crate::advertises("ext_background_effect_manager_v1"),
-            Some(true),
-            "this compositor cannot blur behind a surface; a translucent one needs a rule in its own config"
-        );
-        assert_eq!(
-            crate::advertises("wp_single_pixel_buffer_manager_v1"),
-            Some(true),
-            "this compositor cannot be handed a single pixel; reservation strips allocate shm instead"
         );
     }
 

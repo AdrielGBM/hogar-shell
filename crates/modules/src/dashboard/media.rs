@@ -1,6 +1,4 @@
-//! The Media page: the track, the art, the playhead and the transport.
-//!
-//! The playhead is the one thing here the MPRIS service cannot broadcast: `Position` advances continuously and emits no change signal, so following it means asking, and asking on everyone's behalf would wake the whole shell several times a second for a number no bar chip shows. This page therefore owns the only ticker, at the rate `[dashboard] media_update_interval` sets, and it dies with the surface.
+//! The Media page. The playhead is the one thing MPRIS cannot broadcast — `Position` emits no change signal — so this page owns the only ticker, at `[dashboard] media_update_interval`, and it dies with the surface.
 
 use std::time::Duration;
 use ui::scale::{paint, space};
@@ -11,13 +9,15 @@ use telar::{
     signal, track_layout,
 };
 
-use super::card::{self, Card, METER_HEIGHT};
-use config::Config;
+use super::{PageCard, cards_page, shared};
 use config::theme::{FontRole, NordTheme};
-use services::art::{self, ArtState};
+use config::{DashboardConfig, MediaConfig, VisualiserConfig};
+use services::art;
 use services::lyrics;
 use services::mpris::{self, LoopStatus, Playback, Player};
 use services::visualiser;
+use ui::card::{Card, Parts};
+use ui::host::Host;
 use ui::icon::icon_view;
 use ui::widget;
 use util::asset::Load;
@@ -39,29 +39,57 @@ const LYRICS_HEIGHT: f32 = 200.0;
 /// Kept off the edge when the card scrolls to it, so the current line never sits flush against the top.
 const LYRIC_REVEAL_MARGIN: f32 = 28.0;
 
-pub fn page(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub fn page(host: &Host, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let Playhead { player, position } = playhead(host.options::<DashboardConfig>());
+    let mut cards = vec![PageCard::Module("media")];
+    if host.config().lyrics.enabled {
+        cards.push(PageCard::Own(lyrics_card(player, position, theme)));
+    }
+    cards_page(host, cards)
+}
+
+pub(super) fn now_playing_card(
+    dashboard: &DashboardConfig,
+    ring: Option<usize>,
+    theme: NordTheme,
+) -> Card {
+    let Playhead { player, position } = playhead(dashboard);
+    now_playing(player, position, ring, theme)
+}
+
+/// The cover beside the track, without the playhead or the transport: what is playing, read rather than controlled.
+pub(super) fn track_card(ring: Option<usize>, theme: NordTheme) -> Card {
+    let player = signal(mpris::current().unwrap_or_default());
+    let sink = player;
+    platform_wayland::watch(mpris::subscribe, move |p| sink.set(p));
+    Card::bare().child(move || track_heading(player, ring, theme))
+}
+
+#[derive(Clone)]
+struct Playhead {
+    player: RwSignal<Player>,
+    position: RwSignal<i64>,
+}
+
+fn playhead(dashboard: &DashboardConfig) -> Playhead {
+    shared(|| playback(dashboard.media_interval()))
+}
+
+fn playback(interval: Duration) -> Playhead {
     let player = signal(mpris::current().unwrap_or_default());
     let sink = player;
     platform_wayland::watch(mpris::subscribe, move |p| sink.set(p));
 
     let position = signal(mpris::position().unwrap_or(0));
     let ticker = position;
-    let interval = config.dashboard.media_interval();
     platform_wayland::watch(
         move |tx| poll_position(tx, interval),
         move |micros| ticker.set(micros),
     );
-
-    let mut cards = vec![now_playing(player, position, config, theme)?];
-    if config.lyrics.enabled {
-        cards.push(lyrics_card(player, position, theme)?);
-    }
-    card::page(cards)
+    Playhead { player, position }
 }
 
-/// One line of the lyrics card, or the one line it shows when there are none.
-///
-/// A line carries the window it is sung in rather than the whole song: whether it is the current line is then a comparison against two numbers, instead of every line re-scanning the list on every tick of the playhead.
+/// A lyric carries the window it is sung in, so whether it is the current line is two comparisons rather than a rescan of the song on every tick of the playhead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LyricLine {
     Sung {
@@ -83,7 +111,6 @@ impl LyricLine {
     }
 }
 
-/// Turns timed lines into rows, giving each the moment the next one takes over.
 fn lyric_lines(lines: &[lyrics::Line], searching: bool) -> Vec<LyricLine> {
     if lines.is_empty() {
         return vec![LyricLine::Absent { searching }];
@@ -101,10 +128,14 @@ fn lyric_lines(lines: &[lyrics::Line], searching: bool) -> Vec<LyricLine> {
         .collect()
 }
 
-/// The lyrics, with the line being sung now lit and scrolled to.
-///
-/// The scroll area carries a definite height because it is a layout leaf — its content is laid out as its own root, so nothing inside it contributes to its size and a `max_height` alone would measure zero.
-fn lyrics_card(
+/// The scroll area has a definite height because it is a layout leaf: nothing inside it contributes to its size, so a `max_height` alone would measure zero.
+fn lyrics_card(player: RwSignal<Player>, position: RwSignal<i64>, theme: NordTheme) -> Card {
+    Card::titled(telar::t!("dashboard.lyrics"))
+        .icon(fixed_text("mic-vocal"))
+        .child(move || lyrics_viewport(player, position, theme))
+}
+
+fn lyrics_viewport(
     player: RwSignal<Player>,
     position: RwSignal<i64>,
     theme: NordTheme,
@@ -174,11 +205,7 @@ fn lyrics_card(
             )?) as Box<dyn LayoutItem>)
         },
     )?;
-
-    Card::titled(telar::t!("dashboard.lyrics"))
-        .icon("mic-vocal")
-        .child(Box::new(scroll))
-        .build(theme)
+    Ok(Box::new(scroll))
 }
 
 /// One line of words. An empty line is a gap between verses and still takes its height, so the lines do not shuffle upwards while an instrumental break plays — but it is a *box* of that height rather than a `Text` of blank characters: a space has no outline, and asking the renderer to fill an empty path is how tiny-skia's "empty paths cannot be filled" warning gets emitted once per frame.
@@ -210,7 +237,6 @@ fn lyric_row(
     )?))
 }
 
-/// Reads the playhead on one long-lived thread.
 fn poll_position(tx: platform_wayland::EventSender<i64>, interval: Duration) {
     loop {
         if !tx.send(mpris::position().unwrap_or(0)) {
@@ -223,7 +249,21 @@ fn poll_position(tx: platform_wayland::EventSender<i64>, interval: Duration) {
 fn now_playing(
     player: RwSignal<Player>,
     position: RwSignal<i64>,
-    config: &Config,
+    ring: Option<usize>,
+    theme: NordTheme,
+) -> Card {
+    let identity = derive(player, |p| non_empty(&p.identity));
+    Card::new(fixed_text(telar::t!("dashboard.now_playing")))
+        .icon(fixed_text("disc-3"))
+        .trailing(identity)
+        .child(move || track_heading(player, ring, theme))
+        .composed(move |parts| scrubber(player, position, parts, theme))
+        .child(move || transport(player, theme))
+}
+
+fn track_heading(
+    player: RwSignal<Player>,
+    ring: Option<usize>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let title = derive(player, |p| {
@@ -236,7 +276,6 @@ fn now_playing(
     });
     let artist = derive(player, |p| non_empty(&p.artist));
     let album = derive(player, |p| non_empty(&p.album));
-    let identity = derive(player, |p| non_empty(&p.identity));
 
     let heading = Container::new(
         LayoutStyle::new()
@@ -245,7 +284,7 @@ fn now_playing(
             .gap(space::xl())
             .width(SizeDimension::Percent(1.0)),
         vec![
-            cover(player, config, theme)?,
+            cover(player, ring, theme)?,
             Box::new(Container::new(
                 LayoutStyle::new()
                     .flex_column()
@@ -259,30 +298,25 @@ fn now_playing(
             )?),
         ],
     )?;
-
-    let card = Card::new(fixed_text(telar::t!("dashboard.now_playing")))
-        .icon("disc-3")
-        .trailing(identity)
-        .child(Box::new(heading))
-        .child(scrubber(player, position, theme)?)
-        .child(transport(player, theme)?);
-    card.build(theme)
+    Ok(Box::new(heading))
 }
 
-/// The cover, ringed by the visualiser when `[media] visualiser` asks for it.
-///
-/// The ring is drawn *behind* the art in a box the art is centred in, so switching it on does not move the title beside it by a different amount than it moves the picture. Nothing subscribes to the spectrum unless the key is on, which is what keeps a media page from opening an audio capture nobody asked for.
+pub(super) fn ring_bands(media: &MediaConfig, visualiser: &VisualiserConfig) -> Option<usize> {
+    media.visualiser.then(|| visualiser.band_count())
+}
+
+/// The ring is drawn behind the art in a box the art is centred in, so switching it on moves the title and the picture alike; nothing subscribes to the spectrum while `[media] visualiser` is off.
 fn cover(
     player: RwSignal<Player>,
-    config: &Config,
+    ring: Option<usize>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let art = cover_art(player, theme)?;
-    if !config.media.visualiser {
+    let Some(band_count) = ring else {
         return Ok(art);
-    }
+    };
 
-    let bands = signal(visualiser::Spectrum::quiet(config.visualiser.band_count()).bars);
+    let bands = signal(visualiser::Spectrum::quiet(band_count).bars);
     let sink = bands;
     platform_wayland::watch(
         visualiser::subscribe,
@@ -338,8 +372,8 @@ fn cover_art(
 /// The local file for an `artUrl`, starting a download the first time one is seen. Returns `None` while it is still coming, which the card draws as the placeholder rather than as a gap that pops.
 fn art_file(url: &str) -> Option<String> {
     match art::art(url).get() {
-        ArtState::Ready(path) => Some(path.to_string_lossy().into_owned()),
-        ArtState::Loading | ArtState::Missing => None,
+        Load::Ready(path) => Some(path.to_string_lossy().into_owned()),
+        Load::Loading | Load::Missing => None,
     }
 }
 
@@ -357,12 +391,11 @@ fn placeholder(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// A full-width playhead that seeks where it is pressed.
-///
-/// The jump is expressed as a *relative* `Seek`, because the absolute `SetPosition` takes the track id from the metadata and refuses the call when it does not match — exactly the race a scrub hits when the track changes under it. Which is also why the current position has to be subtracted here rather than sent as-is.
+/// Seeks with a relative `Seek`, not `SetPosition`: the absolute call names the track and is refused when the track changed under the scrub, which is why the current position is subtracted here.
 fn scrubber(
     player: RwSignal<Player>,
     position: RwSignal<i64>,
+    parts: Parts,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let length = derive(player, |p| p.length);
@@ -383,7 +416,7 @@ fn scrubber(
             if can { theme.accent } else { theme.muted }
         },
     );
-    let bar = widget::meter(fraction, tint, theme.overlay, METER_HEIGHT)?;
+    let bar = parts.meter(fraction, tint)?;
 
     let track = StyledContainer::new(
         LayoutStyle::new()
@@ -586,6 +619,8 @@ fn clock_label(micros: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use config::Config;
+    use ui::card::Density;
 
     #[test]
     fn a_playhead_reads_as_a_clock_and_an_unknown_length_says_so() {
@@ -664,7 +699,9 @@ mod tests {
             ..Player::default()
         });
         let position = signal(12_000_000i64);
-        let card = lyrics_card(player, position, NordTheme::new()).expect("the card builds");
+        let card = lyrics_card(player, position, NordTheme::new())
+            .build(Density::Page)
+            .expect("the card builds");
         let rect = track_layout(card.layout_node()).expect("the card registers its rect");
         let root = new_container(
             LayoutStyle::new().flex_column().width(420.0).height(600.0),
@@ -696,8 +733,12 @@ mod tests {
             telar::set_theme(NordTheme::new());
             let mut config = Config::starter();
             config.media.visualiser = visualiser;
-            let cover = cover(signal(Player::default()), &config, NordTheme::new())
-                .expect("the cover builds");
+            let cover = cover(
+                signal(Player::default()),
+                ring_bands(&config.media, &config.visualiser),
+                NordTheme::new(),
+            )
+            .expect("the cover builds");
             let rect = track_layout(cover.layout_node()).expect("the cover registers its rect");
             let root = new_container(
                 LayoutStyle::new().flex_row().width(420.0).height(400.0),
