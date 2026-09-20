@@ -362,13 +362,32 @@ impl Config {
 
     /// Effective shape for edge: per-bar override → global `[shape]` → (for spacing/radius) the theme.
     pub fn shape_for(&self, edge: Edge) -> ResolvedShape {
-        let g = &self.shape;
         let b = &self.bars.get(edge).shape;
+        self.shape_from(b.mode, b.gap, b.spacing, b.radius)
+    }
+
+    /// The same three-step fallback — what was asked for, then global `[shape]`, then the theme — against overrides that came from somewhere other than `[bars.<edge>.shape]`.
+    ///
+    /// Taken as four loose options rather than as a struct because the layout model owns the struct these now come from, and `crates/config` is below it: a parameter of that type here would invert the dependency and make the config crate need the model that is built on top of it.
+    pub fn shape_from(
+        &self,
+        mode: Option<Shape>,
+        gap: Option<u32>,
+        spacing: Option<u32>,
+        radius: Option<u32>,
+    ) -> ResolvedShape {
+        let g = &self.shape;
         ResolvedShape {
-            mode: b.mode.unwrap_or(g.mode),
-            gap: b.gap.unwrap_or(g.gap),
-            spacing: self.resolved_spacing(edge),
-            radius: self.resolved_radius(edge),
+            mode: mode.unwrap_or(g.mode),
+            gap: gap.unwrap_or(g.gap),
+            spacing: spacing
+                .or(g.spacing)
+                .map(|s| s as f32)
+                .unwrap_or_else(|| self.resolve_theme().spacing),
+            radius: radius
+                .or(g.radius)
+                .map(|r| r as f32)
+                .unwrap_or_else(|| self.resolve_theme().radius),
         }
     }
 

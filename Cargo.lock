@@ -909,6 +909,7 @@ name = "hogar-shell"
 version = "0.1.0"
 dependencies = [
  "hogar-shell-config",
+ "hogar-shell-layout",
  "hogar-shell-modules",
  "hogar-shell-services",
  "hogar-shell-settings",
@@ -934,6 +935,19 @@ dependencies = [
  "platform-wayland",
  "serde",
  "serde_json",
+ "telar",
+ "toml",
+ "toml_edit",
+ "tracing",
+]
+
+[[package]]
+name = "hogar-shell-layout"
+version = "0.1.0"
+dependencies = [
+ "hogar-shell-config",
+ "hogar-shell-util",
+ "serde",
  "telar",
  "toml",
  "toml_edit",
@@ -1012,6 +1026,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "hogar-shell-config",
+ "hogar-shell-layout",
  "hogar-shell-services",
  "hogar-shell-ui",
  "hogar-shell-util",

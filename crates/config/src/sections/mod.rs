@@ -21,4 +21,4 @@ pub use wallpaper::*;
 pub use widgets::*;
 
 pub(crate) use bars::{SETTINGS_CHROME, application_panel};
-pub(crate) use system::glob_matches;
+pub use system::glob_matches;

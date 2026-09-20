@@ -1,0 +1,17 @@
+[package]
+name = "hogar-shell-layout"
+description = "The hogar-shell layout model: layers, areas, groups and instances, with resolution, merging and validation."
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+config = { workspace = true }
+telar = { workspace = true }
+util = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tracing = { workspace = true }

@@ -371,7 +371,7 @@ impl BluetoothConfig {
 /// Whether `text` matches `pattern`, in which `*` stands for any run of characters. Matching ignores case.
 ///
 /// A deliberate subset of a regex: tray applications put a PID or a version in their id (`steam_app_12345`, `chrome_status_icon_1`), which a wildcard covers, and a full regex engine is a dependency this shell does not otherwise carry.
-pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
+pub fn glob_matches(pattern: &str, text: &str) -> bool {
     let pattern = pattern.trim().to_lowercase();
     let text = text.trim().to_lowercase();
     let parts: Vec<&str> = pattern.split('*').collect();
