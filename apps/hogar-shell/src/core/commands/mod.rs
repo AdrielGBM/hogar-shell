@@ -5,6 +5,7 @@
 pub mod args;
 pub mod audio;
 pub mod display;
+pub mod layout;
 pub mod shell;
 pub mod surfaces;
 pub mod system;
@@ -50,6 +51,7 @@ pub(crate) static TARGETS: &[Target] = &[
     display::WALLPAPER,
     shell::SCHEME,
     shell::CONFIG,
+    layout::LAYOUT,
     shell::DEPS,
     shell::MAN,
 ];
@@ -262,6 +264,7 @@ mod tests {
             ("toast", "clear"),
             ("notifs", "center"),
             ("keyboard", "next"),
+            ("layout", "import-config"),
         ];
         for (target, command) in ARGUMENTLESS_MUTATIONS {
             assert!(

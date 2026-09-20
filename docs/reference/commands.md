@@ -272,6 +272,15 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `schema` | `[section]` | the annotated default config, or one section of it |
 | `check` |  | what the config and its monitor overrides name that the shell does not have, by file and line; fails on an error |
 
+## `layout`
+
+| Command | Arguments | What it does |
+| --- | --- | --- |
+| `import-config` | `[--name <name>]` | turn today's bars, widgets, stack and lock screen into a layout file |
+| `list` |  | every layout this shell can use |
+| `show` | `[name]` | print a layout as it is stored |
+| `check` | `[name]` | report what is wrong with a layout, without applying it |
+
 ## `deps`
 
 | Command | Arguments | What it does |

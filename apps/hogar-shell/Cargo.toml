@@ -21,6 +21,7 @@ telar = { workspace = true, features = [
 ] }
 platform-wayland = { workspace = true }
 config = { workspace = true }
+layout = { workspace = true }
 services = { workspace = true }
 ui = { workspace = true }
 surfaces = { workspace = true }
