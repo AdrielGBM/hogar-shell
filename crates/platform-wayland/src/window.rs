@@ -7,7 +7,7 @@ use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
-use telar::Window;
+use telar::{Cursor, Window};
 
 #[derive(Clone)]
 pub struct LayerWindow {
@@ -95,5 +95,9 @@ impl Window for LayerWindow {
     }
     fn retains_presented_contents(&self) -> bool {
         true
+    }
+    /// Forwards to the driver thread through [`crate::platform::request_cursor_shape`] (T-2.3): `Inner` holds no protocol objects of its own, only the raw handles and atomics a window needs off the UI thread, and the seat's `wp_cursor_shape_device_v1` is driver state this trait method has no other way to reach.
+    fn set_cursor(&self, cursor: Cursor) {
+        crate::platform::request_cursor_shape(cursor);
     }
 }

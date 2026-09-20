@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -11,11 +11,11 @@ use crate::placement::{
     KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
 };
 use telar::{
-    AlignItems, App, Color, Component, Edge, Event, EventHandler, Key, LocalApp, ModifiersState,
-    MultiSurfacePlatform, NamedKey, PlatformError, PointerButton, PointerSource, ScrollDelta,
-    SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, WindowRoot, SurfaceScaffold,
-    SurfaceToken, SurfaceTransition, Window, WindowConfig,
-    begin_batch, build_surface_handler, end_batch, reset_layout_runtime, set_surface_host,
+    AlignItems, App, Color, Component, Cursor, Edge, Event, EventHandler, Key, LocalApp,
+    ModifiersState, MultiSurfacePlatform, NamedKey, PlatformError, PointerButton, PointerSource,
+    ScrollDelta, SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, WindowRoot,
+    SurfaceScaffold, SurfaceToken, SurfaceTransition, Window, WindowConfig, begin_batch,
+    build_surface_handler, end_batch, reset_layout_runtime, set_surface_host,
 };
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
@@ -55,6 +55,10 @@ use wayland_protocols::ext::background_effect::v1::client::ext_background_effect
     self, ExtBackgroundEffectManagerV1,
 };
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
+    self, WpCursorShapeDeviceV1,
+};
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{
     self, WpFractionalScaleV1,
@@ -95,6 +99,10 @@ thread_local! {
     static OUTPUTS: RefCell<Vec<OutputDescriptor>> = const { RefCell::new(Vec::new()) };
     // Notified when the output set changes once the shell is up, so the app can reconcile its surfaces (hotplug).
     static OUTPUTS_CHANGED: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    // The seat pointer's `wp-cursor-shape-v1` device — `None` before a pointer exists or on a compositor without the global. Set by `SeatHandler` and read by `request_cursor_shape`, which reaches the driver thread only through `Window::set_cursor`'s bare `&self`.
+    static CURSOR_SHAPE_DEVICE: RefCell<Option<WpCursorShapeDeviceV1>> = const { RefCell::new(None) };
+    // The serial of the pointer's last `enter`, which `set_shape` must echo back or be ignored (the protocol's own rule, not a guess this crate makes).
+    static LAST_POINTER_SERIAL: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Files `token` against the surface currently being driven, so its teardown removes the source. Outside a surface the token is dropped: app-level sources (the config watcher) live as long as the process.
@@ -839,6 +847,8 @@ pub(crate) struct Driver {
     pub(crate) background_effect: Option<ExtBackgroundEffectManagerV1>,
     /// The 1×1-buffer factory a reservation strip is mapped with instead of a strip-sized shm pool. `None` keeps [`commit_reservation`]'s shm path in service.
     single_pixel: Option<WpSinglePixelBufferManagerV1>,
+    /// The factory behind [`CURSOR_SHAPE_DEVICE`], `None` on a compositor without `wp-cursor-shape-v1`. Kept here only to mint the device once a pointer capability arrives (`SeatHandler::new_capability`) — nothing else asks it for anything.
+    cursor_shape_manager: Option<WpCursorShapeManagerV1>,
 }
 
 /// The two globals a surface needs to render on the device pixel grid, held together because either alone is useless: a preferred scale with no viewport is a number nothing can act on, and a viewport with no scale to put in it is a mapping with nothing to map.
@@ -1090,6 +1100,11 @@ where
         .bind::<WpSinglePixelBufferManagerV1, Driver, ()>(&qh, 1..=1, ())
         .inspect_err(|e| tracing::info!("wp-single-pixel-buffer-v1 unavailable: {e}"))
         .ok();
+    // Optional, and the request is simply dropped without it: a handle still takes the drag or resize, and the pointer keeps whatever image it entered with (T-2.3, F-2.12).
+    let cursor_shape_manager = globals
+        .bind::<WpCursorShapeManagerV1, Driver, ()>(&qh, 1..=1, ())
+        .inspect_err(|e| tracing::info!("wp-cursor-shape-v1 unavailable: {e}"))
+        .ok();
     FACTS.with(|facts| facts.borrow_mut().lock_supported = lock_manager.is_some());
 
     let mut driver = Driver {
@@ -1108,6 +1123,7 @@ where
         scaling,
         background_effect,
         single_pixel,
+        cursor_shape_manager,
     };
 
     let mut event_loop: EventLoop<Driver> =
@@ -1841,6 +1857,52 @@ impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
     }
 }
 
+/// Maps a box's resolved [`Cursor`] (F-5.10 picks one winner per surface) onto the shape `wp-cursor-shape-v1` shows for it. Every variant has a namesake in the protocol's `shape` enum, including the resize and grab shapes an edit-mode handle needs (T-2.3): `EwResize`/`NsResize` for a straight edge, `NwseResize`/`NeswResize` for a corner, `Move` for a handle that moves freely in both axes.
+fn cursor_shape(cursor: Cursor) -> wp_cursor_shape_device_v1::Shape {
+    use wp_cursor_shape_device_v1::Shape;
+    match cursor {
+        Cursor::Default => Shape::Default,
+        Cursor::Pointer => Shape::Pointer,
+        Cursor::Crosshair => Shape::Crosshair,
+        Cursor::Grab => Shape::Grab,
+        Cursor::Grabbing => Shape::Grabbing,
+        Cursor::ColResize => Shape::ColResize,
+        Cursor::RowResize => Shape::RowResize,
+        Cursor::EwResize => Shape::EwResize,
+        Cursor::NsResize => Shape::NsResize,
+        Cursor::NwseResize => Shape::NwseResize,
+        Cursor::NeswResize => Shape::NeswResize,
+        Cursor::Move => Shape::Move,
+        Cursor::Text => Shape::Text,
+        Cursor::NotAllowed => Shape::NotAllowed,
+        Cursor::Wait => Shape::Wait,
+    }
+}
+
+/// Whether [`request_cursor_shape`] has already logged that it has nowhere to send a shape. Set once per process: the condition (no protocol, or no pointer yet) does not change from one hover to the next, so repeating the line would only bury whatever else is logged at info level.
+static CURSOR_SHAPE_UNAVAILABLE_LOGGED: AtomicBool = AtomicBool::new(false);
+
+/// Asks the seat's pointer to show `cursor`'s shape, through `wp-cursor-shape-v1` (T-2.3). The only caller is [`LayerWindow::set_cursor`](crate::window::LayerWindow::set_cursor), which a box's `.cursor(…)` drives; a `Window` trait method gets nothing but `&self`, so [`CURSOR_SHAPE_DEVICE`] and [`LAST_POINTER_SERIAL`] are how this reaches back into driver state.
+///
+/// A no-op, logged once, on a compositor without the global or before a pointer capability has arrived: a handle still takes the drag or resize, and the pointer keeps whatever image it already had (F-2.12).
+pub(crate) fn request_cursor_shape(cursor: Cursor) {
+    let shape = cursor_shape(cursor);
+    let sent = CURSOR_SHAPE_DEVICE.with(|device| {
+        device
+            .borrow()
+            .as_ref()
+            .map(|device| device.set_shape(LAST_POINTER_SERIAL.with(Cell::get), shape))
+    });
+    if sent.is_some() {
+        return;
+    }
+    if !CURSOR_SHAPE_UNAVAILABLE_LOGGED.swap(true, Ordering::Relaxed) {
+        tracing::info!(
+            "wp-cursor-shape-v1 unavailable: handles still work, but the pointer image will not change"
+        );
+    }
+}
+
 fn map_button(code: u32) -> Option<PointerButton> {
     // Codes from linux/input-event-codes.h — not immediately obvious why these specific hex values.
     match code {
@@ -2000,6 +2062,9 @@ fn grants_blur(flags: WEnum<ext_background_effect_manager_v1::Capability>) -> bo
 delegate_noop!(Driver: ignore ExtBackgroundEffectSurfaceV1);
 delegate_noop!(Driver: ignore WpSinglePixelBufferManagerV1);
 delegate_noop!(Driver: ignore wl_buffer::WlBuffer);
+// Neither sends an event: the manager only mints devices, and a device is written to (`set_shape`) and never read.
+delegate_noop!(Driver: ignore WpCursorShapeManagerV1);
+delegate_noop!(Driver: ignore WpCursorShapeDeviceV1);
 
 impl OutputHandler for Driver {
     fn output_state(&mut self) -> &mut OutputState {
@@ -2072,6 +2137,11 @@ impl SeatHandler for Driver {
         }
         if capability == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            // One device per pointer, minted with it rather than on the first `set_shape`: the manager has no per-pointer uniqueness rule to violate, but there is still only ever one pointer to speak for.
+            if let (Some(manager), Some(pointer)) = (&self.cursor_shape_manager, &self.pointer) {
+                let device = manager.get_pointer(pointer, qh, ());
+                CURSOR_SHAPE_DEVICE.with(|d| *d.borrow_mut() = Some(device));
+            }
         }
     }
     fn remove_capability(
@@ -2089,6 +2159,9 @@ impl SeatHandler for Driver {
         if capability == Capability::Pointer
             && let Some(ptr) = self.pointer.take()
         {
+            if let Some(device) = CURSOR_SHAPE_DEVICE.with(|d| d.borrow_mut().take()) {
+                device.destroy();
+            }
             ptr.release();
         }
     }
@@ -2248,7 +2321,11 @@ impl PointerHandler for Driver {
                 },
             };
             match event.kind {
-                PointerEventKind::Enter { .. } => self.pointer_focus = Some(id.clone()),
+                PointerEventKind::Enter { serial } => {
+                    self.pointer_focus = Some(id.clone());
+                    // `set_shape` must echo the latest `enter` serial or the compositor ignores it — kept beside the device rather than on the entry, since the request names no surface.
+                    LAST_POINTER_SERIAL.with(|s| s.set(serial));
+                }
                 PointerEventKind::Leave { .. } if self.pointer_focus.as_ref() == Some(&id) => {
                     self.pointer_focus = None
                 }
@@ -2720,5 +2797,34 @@ mod tests {
         assert_eq!(named_from_keysym(Keysym::Tab), Some(NamedKey::Tab));
         assert_eq!(named_from_keysym(Keysym::Left), Some(NamedKey::ArrowLeft));
         assert_eq!(named_from_keysym(Keysym::Right), Some(NamedKey::ArrowRight));
+    }
+
+    /// The resize and grab shapes an edit-mode handle needs (T-2.3) map onto the protocol's own names for them, with nothing lost or substituted in translation.
+    #[test]
+    fn every_cursor_maps_to_its_namesake_shape() {
+        use wp_cursor_shape_device_v1::Shape;
+
+        assert_eq!(cursor_shape(Cursor::Default), Shape::Default);
+        assert_eq!(cursor_shape(Cursor::Pointer), Shape::Pointer);
+        assert_eq!(cursor_shape(Cursor::Crosshair), Shape::Crosshair);
+        assert_eq!(cursor_shape(Cursor::Grab), Shape::Grab);
+        assert_eq!(cursor_shape(Cursor::Grabbing), Shape::Grabbing);
+        assert_eq!(cursor_shape(Cursor::ColResize), Shape::ColResize);
+        assert_eq!(cursor_shape(Cursor::RowResize), Shape::RowResize);
+        assert_eq!(cursor_shape(Cursor::EwResize), Shape::EwResize);
+        assert_eq!(cursor_shape(Cursor::NsResize), Shape::NsResize);
+        assert_eq!(cursor_shape(Cursor::NwseResize), Shape::NwseResize);
+        assert_eq!(cursor_shape(Cursor::NeswResize), Shape::NeswResize);
+        assert_eq!(cursor_shape(Cursor::Move), Shape::Move);
+        assert_eq!(cursor_shape(Cursor::Text), Shape::Text);
+        assert_eq!(cursor_shape(Cursor::NotAllowed), Shape::NotAllowed);
+        assert_eq!(cursor_shape(Cursor::Wait), Shape::Wait);
+    }
+
+    /// Without a device — no protocol, or no pointer yet — the request is dropped rather than panicking, and [`request_cursor_shape`] does not need a live driver to be called this way.
+    #[test]
+    fn requesting_a_shape_with_no_device_is_a_silent_no_op() {
+        CURSOR_SHAPE_DEVICE.with(|d| assert!(d.borrow().is_none()));
+        request_cursor_shape(Cursor::Grab);
     }
 }

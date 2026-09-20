@@ -350,6 +350,11 @@ fn advertises_the_optional_surface_protocols() {
         Some(true),
         "this compositor cannot be handed a single pixel; reservation strips allocate shm instead"
     );
+    assert_eq!(
+        advertises("wp_cursor_shape_manager_v1"),
+        Some(true),
+        "this compositor cannot be asked for a cursor shape; a handle's pointer never changes"
+    );
 }
 
 mod clipboard {
