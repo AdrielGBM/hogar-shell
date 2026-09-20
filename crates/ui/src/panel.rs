@@ -197,6 +197,8 @@ pub fn drawn_edge(config: &Config) -> Edge {
 /// Constructed away from its goal and retargeted at once, never at the goal: an `Animated` born settled never registers with the ticker, so nothing would schedule the frames that carry it in — the same trap the workspace indicator hit.
 ///
 /// Kept across rebuilds ([`kept`]), because arriving is something the panel did once: a fresh `Animated` would start at 1 again and slide the panel back in, so every config edit would look like the drawer reopening. The one this finds on a rebuild has already settled at 0, which is exactly where the panel is.
+///
+/// The box claims nothing for the input region, and must not: it paints nothing, and the panel inside it is what carries the claim. A wrapper that claimed its own rect would go on catching presses through the whole exit, which is the "faded layer still takes the touch" bug — and it would claim the travel as well as the panel, since the box is where the panel *would* sit rather than where it has slid to.
 pub fn panel_transition(
     content: Box<dyn LayoutItem>,
     edge: Edge,

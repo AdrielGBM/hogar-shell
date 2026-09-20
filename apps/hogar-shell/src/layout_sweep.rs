@@ -6,7 +6,7 @@
 //!
 //! **"Did the preview draw anything at all?" took a correction to become askable.** It reported 79 of 456 combinations blank, and the reading taken from that was that `battery`, `brightness`, `mic`, `network`, `volume` and `lockstatus` have no reading on a machine with no battery and no PipeWire — a hardware-dependent answer, and so a flaky assertion. That was wrong twice over: those chips draw their glyph at a fallback level and are on screen, and what was blank was the *accounting*. Every icon is an SVG, an SVG is a `Path`, and only boxes were counted — so a chip whose whole content is an icon was invisible to this file rather than measured by it. [`paints`] counts artwork too, which makes the question machine-independent rather than merely askable.
 //!
-//! **What this cannot ask: *"did anything draw outside its surface?"* — the avatar bug.** Not for the reason it looks like. Draw rects being pre-transform is twelve lines of matrix stack, which telar already owns in `DrawState` and merely does not re-export; and content legitimately below the fold has a clean discriminator, since a scroll area emits a viewport and being outside one is what scrolling means, so a draw that nothing is clipping has no such reading. What blocks it is that **a preview has no bounds to be outside of**: `PreviewSurface` is a sizing hint rather than a viewport — `surfaces::preview` gives the bar 940 × its thickness on purpose — and entries stack their variants well past it. Measured, the check calls every such gallery a fault. Asking it needs real surfaces, which a sweep over previews does not have.
+//! **What this cannot ask: *"did anything draw outside its surface?"* — the avatar bug.** Not for the reason it looks like. Draw rects being pre-transform was twelve lines of matrix stack, and they are now here ([`under_transform`]) — the markers are in the command stream even though telar keeps `DrawState` to itself; and content legitimately below the fold has a clean discriminator, since a scroll area emits a viewport and being outside one is what scrolling means, so a draw that nothing is clipping has no such reading. What blocks it is that **a preview has no bounds to be outside of**: `PreviewSurface` is a sizing hint rather than a viewport — `surfaces::preview` gives the bar 940 × its thickness on purpose — and entries stack their variants well past it. Measured, the check calls every such gallery a fault. Asking it needs real surfaces, which a sweep over previews does not have.
 
 #![cfg(test)]
 
@@ -14,7 +14,8 @@ use std::sync::Arc;
 
 use telar::{
     AvailableSpace, ComponentList, Container, DrawCommand, LayoutError, LayoutItem, LayoutStyle,
-    Paint, PreviewSurface, Rect, compute_layout, new_container, reset_layout_runtime, set_theme,
+    Paint, Point, PreviewSurface, Rect, Transform, compute_layout, new_container,
+    reset_layout_runtime, set_theme,
 };
 
 use config::{BarConfig, Config, Edge, ModuleEntry, Shape};
@@ -210,8 +211,8 @@ fn everything() -> Vec<Subject> {
     subjects
 }
 
-/// What the subject put on screen, in the coordinates its own draw commands carry.
-fn measure(subject: &Subject) -> Result<Vec<DrawCommand>, LayoutError> {
+/// What the subject put on screen, in the coordinates its own draw commands carry, and the input region the same tree claims. Both are read before the tree is dropped, because dropping it withdraws every claim in it.
+fn measure(subject: &Subject) -> Result<Measured, LayoutError> {
     let (width, height) = subject
         .surface
         .map(|surface| (surface.width, surface.height))
@@ -226,12 +227,14 @@ fn measure(subject: &Subject) -> Result<Vec<DrawCommand>, LayoutError> {
         AvailableSpace::Definite(width),
         AvailableSpace::Definite(height),
     )?;
-    Ok(tree.commands().to_vec())
+    Ok((tree.commands().to_vec(), telar::interactive_rects()))
 }
 
 /// The **layout box** a command is answerable for, and whether it has any content to put there — an empty `Text` shapes to nothing and is the one zero-area draw that is not a fault. `Line` and `Path` carry artwork rather than a box, and the matrix and layer markers cover nothing of their own.
 ///
 /// Deliberately narrower than [`paints`]: what this returns is measured against [`COLLAPSED`], and only a box the layout produced can be said to have collapsed. An icon's own geometry is the artwork's business — a signal-strength glyph draws its bars as filled slivers a third of a pixel wide, and there is nothing wrong with that.
+///
+/// The rect is the command's own, in whichever space it was emitted in, and that is sound here because a size is the same in both: a leaf's box is translated into place, never resized. Anything asking *where* a rect is has to put it through [`under_transform`] first.
 fn painted_rect(command: &DrawCommand) -> Option<Rect> {
     match command {
         DrawCommand::Rect { rect, .. } | DrawCommand::Image { rect, .. } => Some(*rect),
@@ -258,10 +261,15 @@ fn paints(command: &DrawCommand) -> bool {
 /// The guard lives here rather than in each test so a sweep added later inherits it. Poisoning is ignored on purpose: a panicking test leaves the world half-set, and the next sweep re-seeds it from scratch before it measures anything.
 static WORLD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-type Each<'a> = dyn FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>) + 'a;
+/// What one combination is measured as: what it drew, and what of it the window claims for the pointer.
+type Measured = (Vec<DrawCommand>, Vec<Rect>);
+
+type Each<'a> = dyn FnMut(&Subject, Edge, Shape, Result<Measured, LayoutError>) + 'a;
 
 fn sweep(mut each: impl FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
-    sweep_over(everything, &|_| {}, &mut each);
+    sweep_over(everything, &|_| {}, &mut |subject, edge, mode, measured| {
+        each(subject, edge, mode, measured.map(|(commands, _)| commands))
+    });
 }
 
 /// [`sweep`] over a starter config that `edit` has changed first.
@@ -269,7 +277,14 @@ fn sweep_with(
     edit: &dyn Fn(&mut Config),
     mut each: impl FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>),
 ) {
-    sweep_over(everything, edit, &mut each);
+    sweep_over(everything, edit, &mut |subject, edge, mode, measured| {
+        each(subject, edge, mode, measured.map(|(commands, _)| commands))
+    });
+}
+
+/// [`sweep`] handed the claimed region as well as the draw commands.
+fn sweep_claimed(mut each: impl FnMut(&Subject, Edge, Shape, Result<Measured, LayoutError>)) {
+    sweep_over(everything, &|_| {}, &mut each);
 }
 
 fn sweep_over(subjects: fn() -> Vec<Subject>, edit: &dyn Fn(&mut Config), each: &mut Each) {
@@ -445,6 +460,150 @@ fn an_unknown_module_holds_a_chips_place_on_every_edge_and_shape() {
         wrong.is_empty(),
         "an unknown module did not hold a chip's place:\n  {}",
         wrong.join("\n  ")
+    );
+}
+
+/// Sub-pixel slack, for the same reason [`COLLAPSED`] has some: layout lands a fraction under a whole pixel routinely, and the question asked is whether a rect is claimed, not whether the arithmetic is exact.
+const SLACK: f32 = 0.5;
+
+/// Every command paired with the transform it is drawn under, so a rect can be read in the surface's own coordinates.
+///
+/// **A command list mixes two spaces, and nothing on a command says which it is in.** A `StyledContainer` paints at its laid-out rect, which is already the surface's. Every leaf is emitted at a zero origin inside a `PushMatrix` carrying its position (`at_layout_position`), and so is whatever a `Canvas` closure draws — `workspaces` emits its active-workspace pill relative to the row it sits in. Reading the second kind as if it were the first is how a check on drawn geometry passes on a rect that is nowhere near where it claims to be, which is what this file did until the fold existed.
+///
+/// Composed the way the renderer composes it (`renderer-core`'s `DrawState::push_matrix`): a local point goes through the innermost matrix first and out through the chain above it. Handing back the pair rather than a rect keeps it general — a caller asking where a command *is* has everything it needs, including the one this file still cannot ask.
+fn under_transform(commands: &[DrawCommand]) -> Vec<(&DrawCommand, Transform)> {
+    let mut stack = vec![Transform::IDENTITY];
+    let mut placed = Vec::with_capacity(commands.len());
+    for command in commands {
+        let at = *stack.last().expect("the base transform is never popped");
+        match command {
+            DrawCommand::PushMatrix { matrix } => {
+                stack.push(Transform::from_array(*matrix).then(at))
+            }
+            DrawCommand::PopMatrix => {
+                if stack.len() > 1 {
+                    stack.pop();
+                }
+            }
+            _ => placed.push((command, at)),
+        }
+    }
+    placed
+}
+
+/// `rect` in the surface's coordinates, as the box containing it once drawn under `at`.
+///
+/// Measured from the corners, because a transform that turns a rect leaves no rect behind. Nothing in this tree rotates, and a bound that contains the ink is the safe way to be wrong if anything ever does: it over-states what has to be claimed, so the check fails loudly rather than passing quietly.
+fn in_surface_space(rect: Rect, at: Transform) -> Rect {
+    let (right, bottom) = (rect.x + rect.width, rect.y + rect.height);
+    let corners = [
+        at.apply(Point::new(rect.x, rect.y)),
+        at.apply(Point::new(right, rect.y)),
+        at.apply(Point::new(rect.x, bottom)),
+        at.apply(Point::new(right, bottom)),
+    ];
+    let span = |of: fn(&Point) -> f32| {
+        let low = corners.iter().map(of).fold(f32::INFINITY, f32::min);
+        let high = corners.iter().map(of).fold(f32::NEG_INFINITY, f32::max);
+        (low, high - low)
+    };
+    let ((x, width), (y, height)) = (span(|p| p.x), span(|p| p.y));
+    Rect::new(x, y, width, height)
+}
+
+/// The rect a command puts visible ink in, in the surface's own coordinates, if it puts any.
+///
+/// Narrower than [`painted_rect`] by what is not ink: a viewport, and a box drawn in a colour with no alpha — a filler chip holds a place on the bar and paints nothing, and the air it holds belongs to whatever is under the window. Wider by what [`under_transform`] made comparable: a label and a glyph are leaf-local, so until their transform was folded in there was no honest way to measure them against anything.
+fn inked_rect(command: &DrawCommand, at: Transform) -> Option<Rect> {
+    let local = match command {
+        DrawCommand::Rect { rect, style } => {
+            let filled = match style.fill {
+                Some(Paint::Solid(color)) => color.a > 0.0,
+                Some(Paint::Gradient(_)) => true,
+                None => false,
+            };
+            (filled || style.border.is_some()).then_some(*rect)
+        }
+        DrawCommand::Image { rect, .. } => Some(*rect),
+        DrawCommand::Text { rect, text, .. } => (!text.is_empty()).then_some(*rect),
+        DrawCommand::Path { data, .. } => data.bounds(),
+        _ => None,
+    }?;
+    Some(in_surface_space(local, at))
+}
+
+/// What of `rect` no claim in `region` covers — the way the compositor means it, so a rect spanning two adjoining claims is covered by neither alone and by both together.
+fn uncovered(rect: Rect, region: &[Rect]) -> Vec<Rect> {
+    let mut left = vec![rect];
+    for claim in region {
+        left = left
+            .into_iter()
+            .flat_map(|piece| subtract(piece, *claim))
+            .collect();
+        if left.is_empty() {
+            break;
+        }
+    }
+    left.retain(|piece| piece.width >= SLACK && piece.height >= SLACK);
+    left
+}
+
+/// `from` with `hole` cut out of it, as the up-to-four rectangles that are left.
+fn subtract(from: Rect, hole: Rect) -> Vec<Rect> {
+    let Some(cut) = from.intersect(hole) else {
+        return vec![from];
+    };
+    let (right, bottom) = (from.x + from.width, from.y + from.height);
+    let (cut_right, cut_bottom) = (cut.x + cut.width, cut.y + cut.height);
+    [
+        Rect::new(from.x, from.y, from.width, cut.y - from.y),
+        Rect::new(from.x, cut_bottom, from.width, bottom - cut_bottom),
+        Rect::new(from.x, cut.y, cut.x - from.x, cut.height),
+        Rect::new(cut_right, cut.y, right - cut_right, cut.height),
+    ]
+    .into_iter()
+    .filter(|piece| piece.width > 0.0 && piece.height > 0.0)
+    .collect()
+}
+
+/// **Every pixel a bar paints is a pixel the window claims.**
+///
+/// A layer window anchored to the whole output hands the compositor the union of the rects its chrome declared opaque, and everything outside that union belongs to the application underneath. A painted rect missing from it is therefore a hole in the bar: a press on the background between two chips, or on a section panel, goes through the shell and lands in whatever is behind it. That is invisible on screen and only shows when somebody clicks.
+///
+/// The converse is deliberately not asserted. A region is made of rectangles, so a chip with rounded corners claims the corners too, and the bar under a frame claims a strip the ring next to it painted.
+///
+/// Only the part of a rect that is *on* the bar is asked about, the same allowance [`an_unknown_module_holds_a_chips_place_on_every_edge_and_shape`] makes: a chip at the very end of a zone overhangs it by the pixel its fractional width rounds to, and a sliver past the edge of the surface is a sliver nobody can click.
+#[test]
+fn every_painted_rect_of_a_bar_is_claimed_for_the_input_region() {
+    let mut holes = Vec::new();
+    sweep_claimed(|entry, edge, mode, measured| {
+        if entry.component_name != "bar" {
+            return;
+        }
+        let Ok((commands, region)) = measured else {
+            return;
+        };
+        let surface = entry.surface.expect("the bar preview declares its surface");
+        let bar = Rect::new(0.0, 0.0, surface.width, surface.height);
+        let on_bar = under_transform(&commands)
+            .into_iter()
+            .filter_map(|(command, at)| inked_rect(command, at))
+            .filter_map(|rect| rect.intersect(bar));
+        for rect in on_bar {
+            holes.extend(uncovered(rect, &region).into_iter().map(|hole| {
+                format!(
+                    "{edge:?}/{mode:?} — {}x{} at {},{}",
+                    hole.width, hole.height, hole.x, hole.y
+                )
+            }));
+        }
+    });
+    assert!(
+        holes.is_empty(),
+        "{} painted piece(s) of a bar are outside the region the window claims, so a press on them reaches \
+         the application under the shell:\n  {}",
+        holes.len(),
+        holes.join("\n  ")
     );
 }
 

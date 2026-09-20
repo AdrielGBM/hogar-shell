@@ -101,7 +101,7 @@ fn placeholder_chip(
     )
 }
 
-/// Takes no press, unlike the chip: it may stand where a `ReadOnly` representation was promised — on the lock screen, over the desktop — and a placeholder must not be the one thing there that takes input.
+/// Takes no press, unlike the chip: it may stand where a `ReadOnly` representation was promised — on the lock screen, over the desktop — and a placeholder must not be the one thing there that *acts*. It still claims its rect, because it is painted: a press on it is the shell's rather than the window's underneath, it simply does nothing.
 fn placeholder_box(
     id: &str,
     reason: Option<&str>,
@@ -143,11 +143,10 @@ fn placeholder_box(
     };
     let radius = host.shape.radius;
     let fill = fill(theme);
-    Ok(Box::new(StyledContainer::new(
-        style,
-        move |_| RectStyle::filled(fill, radius),
-        lines,
-    )?))
+    Ok(Box::new(crate::layout::painted_chrome(
+        StyledContainer::new(style, move |_| RectStyle::filled(fill, radius), lines)?,
+        fill,
+    )))
 }
 
 #[cfg(test)]

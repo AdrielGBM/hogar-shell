@@ -231,6 +231,35 @@ impl Host {
         }
     }
 
+    /// A representation placed inside an area of the layout, with its box and its shape already decided.
+    ///
+    /// [`Host::chip`] answers the same question by reading `config.bars.get(edge).size` and `config.shape_for(edge)`, which only works while a bar's thickness and shape are config keys addressed by edge. An area carries both itself, and several areas can share an edge, so the caller passes what it resolved instead of naming an edge for this to look up. `config` stays, because it is what `host.options()` and every behaviour key are read from.
+    #[allow(clippy::too_many_arguments)]
+    pub fn placed(
+        instance: InstanceId,
+        config: Arc<Config>,
+        representation: Representation,
+        extent: Size,
+        axis: Option<Edge>,
+        shape: ResolvedShape,
+        accent: Color,
+        foreground: Color,
+        output: Option<String>,
+    ) -> Self {
+        Self {
+            instance,
+            representation,
+            extent,
+            axis,
+            shape,
+            accent,
+            foreground,
+            output,
+            audience: Audience::Owner,
+            config,
+        }
+    }
+
     /// A representation that fills a surface of its own — a panel, a popout card — `extent` across, on the surface `env` describes.
     pub fn on_surface(
         instance: InstanceId,

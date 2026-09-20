@@ -10,6 +10,10 @@ use config::geometry::{InnerEdges, frame_path};
 use telar::WindowRoot;
 
 /// Per-output frame: full-screen transparent surface drawing a continuous even-odd ring around content.
+///
+/// **It claims nothing of its own, and does not need to.** A ring is one even-odd path, so an input claim made here would be the whole screen with no hole in the middle — a region is made of rectangles and the ring is not one. The strips it paints are exactly the ones the four bars occupy, which is why a bar paints no background under a frame, so each bar claims the strip the ring drew on it (`bar::strip_fill`) and the ring is covered edge to edge. What is left over is the four nubs the rounded inner corners put past the strips, each a fraction of the corner radius squared.
+///
+/// Once the shell draws one window per layer, the ring stops being a surface and becomes decoration inside the bars' own tree, which is where the claim already lives.
 pub struct FrameApp {
     pub config: config::LiveConfig,
 }

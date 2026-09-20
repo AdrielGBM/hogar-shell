@@ -8,7 +8,9 @@ use std::rc::Rc;
 
 /// The base container every simple module sits in: a rounded, pressable box with hover/press feedback. `Filled` overrides the resting background with a solid accent.
 ///
-/// Every handler is optional and forwarded as one: a chip with nothing to do must stay transparent to the pointer, and a no-op stand-in would report the event handled instead.
+/// Every handler is optional and forwarded as one, so a chip with nothing to do answers nothing rather than answering with a no-op that reports the release handled.
+///
+/// The box claims its rect whatever it carries. A chip is painted chrome — its own fill in `chips` mode, and the bar or section panel it blends into in the other two — and a window's input region is the union of what it drew, not of where it happens to listen; so the pixels under a chip belong to the shell even where no handler sits on them.
 pub struct Props {
     pub variant: Variant = Variant::Default,
     /// The resting background: transparent when blending into the bar, the surface token as a free-standing chip.
@@ -79,7 +81,7 @@ let settle = drag.map(|drag| {
 
 [view]
 // Both halves of the drag sit on the pressable box itself, not on a wrapper: a child hit-tests first, so a drag armed outside it would never see the press.
-row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shrink:shrink min_width:floor fill:base radius:radius hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_drag:arm on_drag_end:settle
+row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shrink:shrink min_width:floor fill:base radius:radius input_opaque hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_drag:arm on_drag_end:settle
     children
 
 [preview "Module chip" fixture:crate::preview::bar_chip]

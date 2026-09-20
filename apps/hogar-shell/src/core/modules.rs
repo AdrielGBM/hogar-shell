@@ -781,7 +781,7 @@ mod tests {
 
     use config::{Config, Edge};
     use telar::{LayoutItem, reset_layout_runtime, set_theme};
-    use ui::descriptor::input_targets;
+    use ui::descriptor::input_answer;
     use ui::host::{Audience, InstanceId, Representation, Size};
 
     use super::*;
@@ -824,11 +824,11 @@ mod tests {
         }
     }
 
-    /// Builds one representation on a fresh layout runtime and lays it out in its box, answering where it takes the pointer.
+    /// Builds one representation on a fresh layout runtime and lays it out in its box, answering where — if anywhere — it acts on the pointer.
     fn built(
         module: &ModuleDescriptor,
         representation: Representation,
-    ) -> Result<Vec<telar::Rect>, String> {
+    ) -> Result<Option<(f32, f32)>, String> {
         let config = Arc::new(Config::starter());
         reset_layout_runtime();
         set_theme(config.resolve_theme());
@@ -842,7 +842,7 @@ mod tests {
                 .ok_or_else(|| "declared but not built".to_string())?
                 .map_err(|e| e.to_string())?;
             let Size { width, height } = extent(&config, representation);
-            input_targets(item, width, height).map_err(|e| e.to_string())
+            input_answer(item, width, height).map_err(|e| e.to_string())
         })();
         drop(scope);
         telar::dispose_owner(owner);
@@ -868,9 +868,9 @@ mod tests {
         );
     }
 
-    /// `ReadOnly` is what lets a representation be placed where no input may reach it — the lock screen — so it is checked against what the build actually registers rather than trusted: any press, drag, wheel or hover target in its tree fails it.
+    /// `ReadOnly` is what lets a representation be placed where no input may reach it — the lock screen — so it is checked against what the build actually does rather than trusted: any press, drag, wheel or hover target in its tree fails it.
     #[test]
-    fn a_read_only_representation_registers_no_input_target() {
+    fn a_read_only_representation_answers_no_input() {
         telar::set_locale("en");
         let mut interactive = Vec::new();
         for module in MODULES {
@@ -879,9 +879,9 @@ mod tests {
                     continue;
                 }
                 match built(module, representation) {
-                    Ok(targets) if targets.is_empty() => {}
-                    Ok(targets) => interactive.push(format!(
-                        "{}::{representation:?} takes input at {targets:?}",
+                    Ok(None) => {}
+                    Ok(Some((x, y))) => interactive.push(format!(
+                        "{}::{representation:?} answers the pointer at {x}x{y}",
                         module.id
                     )),
                     Err(e) => interactive.push(format!("{}::{representation:?} — {e}", module.id)),

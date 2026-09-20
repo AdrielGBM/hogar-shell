@@ -10,7 +10,7 @@ let rad = content_radius();
 // The box below fills with `panel_fill()` rather than the `surface` token: it is that token at the configured `[theme] opacity`, so a compositor `layer_rule = blur, ^hogar-shell` has something to show through.
 
 [view]
-box width:dw pad:panel_pad() fill:panel_fill() radius:rad
+box width:dw pad:panel_pad() fill:panel_fill() radius:rad input_opaque
     scroll width:100% height:dmh keep:"drawer.body"
         panel host:host
 

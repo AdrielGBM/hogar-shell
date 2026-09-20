@@ -10,13 +10,14 @@ repository.workspace = true
 [dependencies]
 chrono = { workspace = true }
 config = { workspace = true }
+layout = { workspace = true }
 platform-wayland = { workspace = true }
 services = { workspace = true }
 telar = { workspace = true, features = ["async-assets", "previews"] }
+toml = { workspace = true }
 tracing = { workspace = true }
 ui = { workspace = true }
 util = { workspace = true }
 
 [dev-dependencies]
 platform-headless = { workspace = true }
-toml = { workspace = true }

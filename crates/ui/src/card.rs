@@ -311,7 +311,10 @@ fn frame(
         Density::Widget => style.height(SizeDimension::Percent(1.0)),
         Density::Compact | Density::Page => style,
     };
-    let card = StyledContainer::new(style, move |_| RectStyle::filled(fill, radius), children)?;
+    let card = crate::layout::painted_chrome(
+        StyledContainer::new(style, move |_| RectStyle::filled(fill, radius), children)?,
+        fill,
+    );
     Ok(match frame.on_hover {
         Some(hovered) => Box::new(card.on_hover(move |inside| hovered(inside))),
         None => Box::new(card),

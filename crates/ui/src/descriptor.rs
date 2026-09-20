@@ -4,8 +4,9 @@ use std::cell::Cell;
 
 use platform_wayland::KeyboardMode;
 use telar::{
-    AvailableSpace, Children, Container, ErrorBoundary, LayoutError, LayoutItem, LayoutStyle, Rect,
-    SizeDimension, compute_layout, interactive_rects,
+    AvailableSpace, Children, Component, Container, ErrorBoundary, Event, EventResult, LayoutError,
+    LayoutItem, LayoutStyle, PointerButton, PointerSource, ScrollDelta, SizeDimension,
+    compute_layout,
 };
 
 use config::ModuleOptions;
@@ -387,13 +388,20 @@ pub fn panel(props: PanelProps, _children: Children) -> Built {
     build_panel(&props.host)
 }
 
-/// Every rect a tree registered a press, drag, wheel or hover target on once laid out in a `width` × `height` box: the observable behind [`Input::ReadOnly`], read from what the compositor's input region is built from. Everything registered on the current layout runtime counts, so the caller resets it first.
-pub fn input_targets(
+/// How finely [`input_answer`] samples the box it probes. Finer than anything a reading could plausibly put a control on, and finer than a finger could aim at.
+const PROBE_STEP: f32 = 8.0;
+
+/// Where a tree laid out in a `width` × `height` box first *answers* the pointer — a press, a drag, a wheel notch or a hover — or `None` when nothing in it does. The observable behind [`Input::ReadOnly`], which is the promise that a reading never acts. Everything built on the current layout runtime counts, so the caller resets it first.
+///
+/// Asked by dispatching events rather than by reading the window's input region, which can no longer say it: the region is the union of the rects the shell's chrome *drew* ([`crate::layout::painted_chrome`]), so a card's own background claims every rect a handler inside it would have contributed and reports one box whether the card acts or not. Whether anything in it answers is a different question, and only the events put it.
+///
+/// Each point is probed cold — the pointer is taken off the tree first, because a hover is reported when it *changes* — and a press is followed by its release, because a tap fires on the release. It stops at the first answer, so a representation that does act runs its handler once rather than once per sample.
+pub fn input_answer(
     item: Box<dyn LayoutItem>,
     width: f32,
     height: f32,
-) -> Result<Vec<Rect>, LayoutError> {
-    let page = Container::new(
+) -> Result<Option<(f32, f32)>, LayoutError> {
+    let mut page = Container::new(
         LayoutStyle::new().flex_column().width(width).height(height),
         vec![item],
     )?;
@@ -402,9 +410,53 @@ pub fn input_targets(
         AvailableSpace::Definite(width),
         AvailableSpace::Definite(height),
     )?;
-    let targets = interactive_rects();
-    drop(page);
-    Ok(targets)
+    let mut answer = None;
+    let mut y = 0.0;
+    while y < height && answer.is_none() {
+        let mut x = 0.0;
+        while x < width {
+            if answers_at(&mut page, x, y) {
+                answer = Some((x, y));
+                break;
+            }
+            x += PROBE_STEP;
+        }
+        y += PROBE_STEP;
+    }
+    Ok(answer)
+}
+
+fn answers_at(page: &mut Container, x: f32, y: f32) -> bool {
+    let moved = |x: f64, y: f64| Event::PointerMoved {
+        x,
+        y,
+        source: PointerSource::Mouse,
+    };
+    let button = |x: f64, y: f64, pressed: bool| match pressed {
+        true => Event::PointerPressed {
+            x,
+            y,
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        },
+        false => Event::PointerReleased {
+            x,
+            y,
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        },
+    };
+    let (x, y) = (f64::from(x), f64::from(y));
+    page.on_event(&moved(-1.0, -1.0));
+    let hovered = page.on_event(&moved(x, y));
+    let scrolled = page.on_event(&Event::Scrolled {
+        delta: ScrollDelta::Lines { x: 0.0, y: -1.0 },
+        x,
+        y,
+    });
+    page.on_event(&button(x, y, true));
+    let tapped = page.on_event(&button(x, y, false));
+    [hovered, scrolled, tapped].contains(&EventResult::Handled)
 }
 
 #[cfg(test)]
@@ -482,29 +534,44 @@ mod tests {
         )
     }
 
-    fn targets_of(build: Build) -> Vec<Rect> {
+    fn answer_of(build: Build) -> Option<(f32, f32)> {
         reset_layout_runtime();
         let _scope = telar::owner_scope();
         let item = chip_host().build(build).expect("the probe builds");
-        input_targets(item, 200.0, 40.0).expect("the probe lays out")
+        input_answer(item, 200.0, 40.0).expect("the probe lays out")
     }
 
     /// The check a `ReadOnly` declaration is held to has to be able to fail.
     #[test]
-    fn every_kind_of_input_target_is_observed_and_a_reading_registers_none() {
-        assert!(targets_of(reading).is_empty(), "a bare box answers nothing");
+    fn every_kind_of_input_target_is_observed_and_a_reading_answers_nothing() {
+        assert!(answer_of(reading).is_none(), "a bare box answers nothing");
         for (kind, build) in [
             ("press", pressable as Build),
             ("drag", draggable),
             ("scroll", scrollable),
             ("hover", hoverable),
         ] {
-            assert_eq!(
-                targets_of(build).len(),
-                1,
+            assert!(
+                answer_of(build).is_some(),
                 "a {kind} target went unobserved, so a ReadOnly representation carrying one would pass"
             );
         }
+    }
+
+    /// The reason the observable changed: a painted box claims the pointer over itself without answering anything, and a reading drawn on one is still a reading.
+    #[test]
+    fn chrome_that_claims_its_rect_is_not_an_input_target() {
+        fn painted(_host: &Host) -> Built {
+            Ok(Box::new(crate::layout::painted_chrome(
+                StyledContainer::new(
+                    LayoutStyle::new().width(40.0).height(20.0),
+                    |_| RectStyle::filled(NordTheme::new().base, 0.0),
+                    vec![],
+                )?,
+                NordTheme::new().base,
+            )))
+        }
+        assert!(answer_of(painted).is_none());
     }
 
     fn probe(representations: Representations) -> ModuleDescriptor {
