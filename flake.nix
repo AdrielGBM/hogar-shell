@@ -3,8 +3,14 @@
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
 
+  # The transpiler has to be the one that matches the library `[patch.crates-io]` points at (DEC-10), so it is built from the same checkout rather than fetched from crates.io. A CLI older than the library does not reject an attribute it has never heard of — it writes `compile_error!` into `.telar/`, so the tree stops compiling at a file nobody edited. `git+file` rather than `path` because a path input copies the working tree, and that tree carries a 27 GB `target/`; the cost is that only what is committed in telar is seen. Comes out with the patch when telar is released.
+  inputs.telar = {
+    url = "git+file:///home/adrielgbm/projects/code/telar";
+    flake = false;
+  };
+
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, telar }:
     let
       systems = [
         "x86_64-linux"
@@ -14,11 +20,17 @@
     in
     {
       overlays.default = final: _prev: {
-        hogar-shell = final.callPackage ./nix/package.nix { src = self; };
+        hogar-shell = final.callPackage ./nix/package.nix {
+          src = self;
+          telarSrc = telar;
+        };
       };
 
       packages = forAllSystems (system: rec {
-        hogar-shell = nixpkgs.legacyPackages.${system}.callPackage ./nix/package.nix { src = self; };
+        hogar-shell = nixpkgs.legacyPackages.${system}.callPackage ./nix/package.nix {
+          src = self;
+          telarSrc = telar;
+        };
         default = hogar-shell;
       });
 

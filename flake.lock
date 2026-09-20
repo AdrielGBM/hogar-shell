@@ -18,7 +18,24 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "telar": "telar"
+      }
+    },
+    "telar": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789854772,
+        "narHash": "sha256-TMFgqRM/eB+K6OUfVqQc/EeE6JLAcRJWajuFls2oZSE=",
+        "ref": "refs/heads/dev",
+        "rev": "e3a20b2c8e6eb6a17aad6b5e000f081a77e6c5c0",
+        "revCount": 936,
+        "type": "git",
+        "url": "file:///home/adrielgbm/projects/code/telar"
+      },
+      "original": {
+        "type": "git",
+        "url": "file:///home/adrielgbm/projects/code/telar"
       }
     }
   },

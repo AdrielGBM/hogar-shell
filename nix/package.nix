@@ -1,7 +1,6 @@
 {
   lib,
   rustPlatform,
-  fetchCrate,
   installShellFiles,
   pkg-config,
   makeWrapper,
@@ -14,21 +13,31 @@
   wf-recorder,
   xdg-utils,
   src,
+  telarSrc,
 }:
 
 let
-  # rustc no longer expands a `.rsx`, so nothing builds until the CLI has transpiled every package into `.telar/`. Its version is read from the manifest because the CLI refuses a tree whose `telar` it does not match.
-  cargo-telar = rustPlatform.buildRustPackage (final: {
+  # rustc no longer expands a `.rsx`, so nothing builds until the CLI has transpiled every package into `.telar/`.
+  #
+  # Built from the same checkout `[patch.crates-io]` points the library at (DEC-10), not from the published crate. The two have to move together: a CLI older than the library does not reject an attribute it has never heard of, it writes `compile_error!` into `.telar/` — so the tree stops compiling at a file nobody edited, and the real cause is a version mismatch in a tool. That happened once with `input_opaque`. This goes back to `fetchCrate` when telar is released and the patch comes out.
+  cargo-telar = rustPlatform.buildRustPackage {
     pname = "cargo-telar";
     version = (lib.importTOML ../Cargo.toml).workspace.dependencies.telar.version;
 
-    src = fetchCrate {
-      inherit (final) pname version;
-      hash = "sha256-K37wNyYDe9Om2PITO3WuSmFErYK/RjLk5pH+1DrWps8=";
+    src = telarSrc;
+    cargoLock = {
+      lockFile = "${telarSrc}/Cargo.lock";
+      # The transpiler parses Rust with rust-analyzer's own front end, which telar takes from git rather than crates.io, so vendoring it needs the tree's hash stated here. One entry covers every crate from that repository, since they share a revision.
+      outputHashes = {
+        "base-db-0.0.0" = "sha256-cq+wrv+Zadl1NiJIWxYKHpcXfUQXDKBYa/7eq0JWFZk=";
+      };
     };
-
-    cargoHash = "sha256-XxV2jUq8tavu2GP2B8B6O7pzUjE3spD6zyGoKzL/G04=";
-  });
+    cargoBuildFlags = [
+      "-p"
+      "cargo-telar"
+    ];
+    doCheck = false;
+  };
 in
 rustPlatform.buildRustPackage {
   pname = "hogar-shell";
