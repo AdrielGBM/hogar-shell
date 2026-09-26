@@ -2570,6 +2570,7 @@ dependencies = [
  "telar-reactive-local",
  "telar-semantics-core",
  "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]
