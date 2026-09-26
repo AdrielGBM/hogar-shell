@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/doc-scanner",
     "crates/platform-wayland",
     "crates/util",
     "crates/config",
@@ -15,6 +16,7 @@ members = [
 ]
 # Every member except the benchmark, a second binary, so a bare `cargo run` (and `cargo telar test`, which runs one) still means the shell; `--workspace` includes it. A new crate goes in both lists.
 default-members = [
+    "crates/doc-scanner",
     "crates/platform-wayland",
     "crates/util",
     "crates/config",
@@ -36,6 +38,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/AdrielGBM/hogar-shell"
 
 [workspace.dependencies]
+doc-scanner = { package = "hogar-shell-doc-scanner", path = "crates/doc-scanner", version = "0.1.0" }
 platform-wayland = { path = "crates/platform-wayland" }
 util = { package = "hogar-shell-util", path = "crates/util", version = "0.1.0" }
 config = { package = "hogar-shell-config", path = "crates/config", version = "0.1.0" }

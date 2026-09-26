@@ -1,0 +1,10 @@
+[package]
+name = "hogar-shell-doc-scanner"
+description = "Lifts the doc comments off this workspace's own source into tables a generated schema annotates from."
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

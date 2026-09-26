@@ -930,6 +930,7 @@ name = "hogar-shell-config"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hogar-shell-doc-scanner",
  "hogar-shell-util",
  "image",
  "platform-wayland",
@@ -940,6 +941,10 @@ dependencies = [
  "toml_edit",
  "tracing",
 ]
+
+[[package]]
+name = "hogar-shell-doc-scanner"
+version = "0.1.0"
 
 [[package]]
 name = "hogar-shell-layout"
