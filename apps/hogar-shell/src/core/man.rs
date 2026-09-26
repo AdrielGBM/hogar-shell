@@ -24,7 +24,10 @@ pub const FORMS: &[(&str, &str)] = &[
     ("toggle <module>", "shorthand for `panel toggle <module>`"),
     ("launcher", "shorthand for `launcher toggle`"),
     ("--list", "list every command the shell answers"),
-    ("config schema [name]", "print the annotated default config"),
+    (
+        "config schema [name|layout]",
+        "print the annotated defaults, of one config section or of a layout",
+    ),
     (
         "config check",
         "report what the config asks for that the shell cannot do",
@@ -275,8 +278,46 @@ pub(crate) fn config_page() -> Result<String, String> {
     for table in &config::schema::outline(None)? {
         render_table(table, &mut out);
     }
+    out.push_str(&layout_section());
     out.push_str(".SH SEE ALSO\n.BR hogar-shell (1)\n");
     Ok(out)
+}
+
+/// The layout file, walked out of the same vocabulary `config schema layout` prints.
+///
+/// In `hogar-shell(5)` beside the config rather than in a page of its own: they are the two files a user edits, one for how things behave and one for where they are, and a reader who has found the first has found the second.
+fn layout_section() -> String {
+    let mut out = String::from(
+        ".SH LAYOUT\n\
+         .I ~/.config/hogar-shell/layouts/<name>.toml\n\
+         .PP\n\
+         Where everything the shell draws is written down: which areas are on which layer of which output, what\n\
+         is inside them, and what each placed module is. One file per layout;\n\
+         .B hogar-shell layout use <name>\n\
+         chooses which one is drawn, and\n\
+         .B hogar-shell config schema layout\n\
+         prints this same reference as a complete, valid layout file.\n\
+         .PP\n\
+         A layout is written at four levels \\(em the built-in default, an\n\
+         .B extends\n\
+         parent, an output rule and a workspace rule \\(em and they are merged by\n\
+         .BR id ,\n\
+         so a monitor rule says only what it changes.\n",
+    );
+    for item in layout::schema::vocabulary() {
+        let _ = writeln!(out, ".SS {}", escape(item.name));
+        if let Some(doc) = item.doc {
+            out.push_str(&prose(doc));
+        }
+        for key in item.keys {
+            let _ = writeln!(out, ".TP\n.B {}", escape(key.name));
+            match key.doc {
+                Some(doc) => out.push_str(&prose(doc)),
+                None => out.push_str("No explanation of its own.\n"),
+            }
+        }
+    }
+    out
 }
 
 /// One table and everything under it. Sub-tables become headings of their own rather than nesting, which is what the file itself does: `[theme.scale]` is a header a reader types, not an indent.
@@ -404,6 +445,43 @@ mod tests {
             page.contains(".SS [[idle.stages]]\n"),
             "a list of tables too"
         );
+    }
+
+    /// The layout file is the other half of what a user edits, so every table it can hold reaches the same page — and reaches it out of the model's own doc comments, which is what makes the section impossible to forget to update.
+    #[test]
+    fn every_layout_table_and_key_reaches_the_manual() {
+        let page = config_page().expect("the page generates");
+        assert!(page.contains(".SH LAYOUT\n"), "the section itself");
+        for item in layout::schema::vocabulary() {
+            assert!(
+                page.contains(&format!(".SS {}\n", escape(item.name))),
+                "'{}' is missing from the manual",
+                item.name
+            );
+            for key in item.keys {
+                assert!(
+                    page.contains(&format!(".B {}\n", escape(key.name))),
+                    "'{}.{}' is missing from the manual",
+                    item.name,
+                    key.name
+                );
+            }
+        }
+    }
+
+    /// Every IPC target reaches the command page, and `layout` is the one whose verbs change what is on screen — a target missing from the manual is a command nobody outside this repository can find.
+    #[test]
+    fn the_layout_target_and_its_verbs_reach_the_manual() {
+        let page = commands_page();
+        assert!(page.contains(".SS layout\n"));
+        for verb in [
+            "list", "show", "check", "use", "undo", "redo", "add", "remove", "move", "set", "reset",
+        ] {
+            assert!(
+                page.contains(&format!("\\fB{verb}\\fR")),
+                "`layout {verb}` is missing from the manual"
+            );
+        }
     }
 
     /// Roff's live characters, in text that comes from doc comments nobody wrote for a manual.

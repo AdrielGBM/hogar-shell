@@ -951,6 +951,7 @@ name = "hogar-shell-layout"
 version = "0.1.0"
 dependencies = [
  "hogar-shell-config",
+ "hogar-shell-doc-scanner",
  "hogar-shell-util",
  "serde",
  "telar",

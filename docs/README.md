@@ -43,7 +43,8 @@ an IPC target from `apps/hogar-shell/src/core/commands/` — and a test fails if
 Generated from the build, rewritten by `UPDATE_DOCS=1 cargo test -p hogar-shell --lib docs`:
 
 - [Commands](reference/commands.md) — the whole IPC table.
-- [Configuration](reference/config.md) — every section and key.
+- [Configuration](reference/config.md) — every section and key of `config.toml`.
+- [Layout](reference/layout.md) — every table a layout file can hold.
 - [Dependencies](reference/dependencies.md) — every external dependency and what its absence costs.
 - [Wayland protocols](reference/protocols.md) — what the backend speaks.
 

@@ -71,6 +71,7 @@ id_type!(
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Layout {
+    /// The name everything addresses this layout by — `layout use`, `extends`, the last-good copy. It comes from the file name, so writing something else here changes nothing.
     pub id: LayoutId,
     /// What the user sees in the layout list. Falls back to `id` when empty.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -338,10 +339,11 @@ impl Layer {
 
 /// A region of a layer that holds instances and has a geometry of its own.
 ///
-/// Unknown keys are kept in `unknown` rather than refused outright, because the geometry is flattened into this table and serde cannot both flatten and reject. Keeping them means validation can still say `thikness is not a key of a bar area`, which is what a typo needs, instead of the key being silently dropped.
+/// Its geometry is written *in this table*, beside the keys below: `kind` says which kind of region it is and the keys that kind has follow it. A key no kind of area has is reported with its line and column rather than ignored — see `layout check`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Area {
+    /// What a rule, a command or another level of the same layout addresses this area by. Unique within its layer.
     pub id: AreaId,
     /// What kind of region this is. Required the first time the area is named; absent when a later level only adjusts one that already exists.
     #[serde(flatten)]
@@ -371,6 +373,7 @@ pub struct Area {
 pub enum AreaKind {
     /// A strip along one edge: today's bar.
     Bar {
+        /// Which edge of the output the strip hugs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         edge: Option<Edge>,
         /// How thick the strip is, across the edge.
@@ -391,8 +394,10 @@ pub enum AreaKind {
     Grid {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
+        /// How big one cell is, in logical pixels. A widget covers whole cells, so this is what decides how big every widget on this grid is.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<f32>,
+        /// The space between two cells.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         gap: Option<f32>,
         /// Where the cells sit inside `rect` when they do not fill it. A grid of one widget is the common case, and without this it could only ever sit in the corner its origin is at.
@@ -403,6 +408,7 @@ pub enum AreaKind {
     Stack {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<Anchor>,
+        /// How wide a card in this column is, in logical pixels.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<f32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -415,8 +421,10 @@ pub enum AreaKind {
     WallpaperRegion {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
+        /// A path to the picture this region shows. Left out, it shows whatever `[background]` is set to — so changing the desktop's picture stays a `[background]` edit and a `hogar-shell wallpaper set` rather than a layout edit.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
+        /// How the picture is fitted to the region.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fit: Option<Fit>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -426,6 +434,7 @@ pub enum AreaKind {
     Texture {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
+        /// A path to the image to paint. Exactly one of this and `gradient` is drawn; an area that names both is reported.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -434,13 +443,16 @@ pub enum AreaKind {
         tile: Option<Tile>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         blend: Option<Blend>,
+        /// How opaque the paint is, from 0 to 1.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opacity: Option<f32>,
     },
     /// A strip that hugs an edge and sizes itself to its contents, like today's visualiser.
     Dock {
+        /// Which edge of the output the strip hugs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         edge: Option<Edge>,
+        /// How deep the strip is, across the edge.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thickness: Option<f32>,
     },
@@ -590,9 +602,11 @@ pub enum StackOutputPolicy {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Route {
+    /// Which kind of card this route accepts. Absent accepts every kind.
     pub kind: Option<CardKind>,
     /// The application id a notification came from.
     pub app: Option<String>,
+    /// How insistent a notification has to be to land here.
     pub urgency: Option<Urgency>,
 }
 
@@ -649,6 +663,7 @@ pub struct Gradient {
     pub stops: Vec<GradientStop>,
 }
 
+/// One colour of a gradient, and where along it that colour sits.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GradientStop {
@@ -692,8 +707,11 @@ pub enum Blend {
 pub struct AreaStyle {
     /// A theme token name or a hex colour.
     pub fill: Option<String>,
+    /// How far the corners are rounded, in logical pixels.
     pub radius: Option<f32>,
+    /// How opaque the area is drawn, from 0 to 1.
     pub opacity: Option<f32>,
+    /// How far the area holds its contents off its own edges.
     pub padding: Option<f32>,
     pub backdrop: Option<Backdrop>,
 }
@@ -722,9 +740,13 @@ pub enum Backdrop {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BarShape {
+    /// Whether the bar is one surface, three sections or a chip per module: `bar`, `sections` or `chips`.
     pub mode: Option<Shape>,
+    /// How far the bar floats from its edge and from the screen's sides.
     pub gap: Option<f32>,
+    /// The space between two modules on it.
     pub spacing: Option<f32>,
+    /// How far its corners are rounded.
     pub radius: Option<f32>,
 }
 
@@ -757,7 +779,9 @@ impl Default for AutoHide {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PromptStyle {
+    /// A theme token name or a hex colour for the card behind the field.
     pub fill: Option<String>,
+    /// How far its corners are rounded.
     pub radius: Option<f32>,
     /// Kept at or above 0.9 by validation: a prompt faded into its background is a lockout.
     pub opacity: Option<f32>,
@@ -773,7 +797,9 @@ impl PromptStyle {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Group {
+    /// What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`.
     pub id: GroupId,
+    /// Where in its area the group sits. `place` says which way, and the keys that way needs follow it.
     #[serde(flatten)]
     pub kind: Option<GroupKind>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -791,10 +817,14 @@ pub enum GroupKind {
     Zone { zone: Zone },
     /// An explicit cell in a grid, which is what keeps a widget where it was put instead of reflowing it.
     Cell {
+        /// Which column of the grid the group starts at, counting from 0.
         col: u32,
+        /// Which row it starts at.
         row: u32,
+        /// How many columns it covers. A span of one is what a cell already is, so it is left out of a written layout.
         #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
         col_span: u32,
+        /// How many rows it covers.
         #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
         row_span: u32,
     },
@@ -824,9 +854,11 @@ pub enum Zone {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Instance {
+    /// What IPC, a rule and another level of the same layout address this placed module by. Unique across the whole layout, readable, and never reused — `clock`, then `clock-2`.
     pub id: InstanceId,
     /// The module descriptor this instance shows. Required the first time the instance is named.
     pub module: Option<String>,
+    /// How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`.
     pub representation: Option<Representation>,
     /// Option overrides for this instance alone, on top of the module's global defaults.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]

@@ -5,7 +5,6 @@ pub use crate::core::commands::describe as ipc_describe;
 pub use crate::core::commands::dispatch_locally;
 pub use crate::core::ipc::call as ipc_call;
 pub use crate::core::man::FORMS as USAGE_FORMS;
-pub use config::schema::render as config_schema;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -106,6 +105,16 @@ fn seed_preview_world() {
     telar::set_theme(config.resolve_theme());
     config::set_config(config);
     install_hooks();
+}
+
+/// What `hogar-shell config schema [name]` prints: the annotated defaults of one config section, of all of them, or — for the one name that is not a config section — of a layout file.
+///
+/// `layout` sits here rather than under a verb of its own because it is the same question about the other file the user edits, and because `config schema > config.toml` has a counterpart that has to be as easy to find: `config schema layout > layouts/mine.toml`.
+pub fn config_schema(section: Option<&str>) -> Result<String, String> {
+    match section {
+        Some("layout") => layout::schema::render(),
+        named => config::schema::render(named),
+    }
 }
 
 /// Which layouts a run starts from.

@@ -100,6 +100,40 @@ fn config_page() -> Result<String, String> {
     Ok(out)
 }
 
+/// `docs/reference/layout.md`: every table a layout file can hold, walked out of the same vocabulary `config schema layout` prints.
+fn layout_page() -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{GENERATED}\n\n\
+         # Layout reference\n\n\
+         Every table a layout file can hold, as of this build. A layout lives in\n\
+         `~/.config/hogar-shell/layouts/<name>.toml` — one file per layout — and\n\
+         `hogar-shell layout use <name>` chooses which one the shell draws.\n\n\
+         `hogar-shell config schema layout` prints the same vocabulary as a complete, valid layout file, and\n\
+         `hogar-shell layout check <name>` reports what is wrong with one without applying it.\n\n\
+         A layout is written at four levels — the built-in default, an `extends` parent, an output rule and a\n\
+         workspace rule — and they are merged **by id**, so a monitor rule says only what it changes.\n"
+    );
+    for item in layout::schema::vocabulary() {
+        let _ = writeln!(out, "## `{}`\n", item.name);
+        if let Some(doc) = item.doc {
+            let _ = writeln!(out, "{doc}\n");
+        }
+        let _ = writeln!(out, "| Key | What it is |\n| --- | --- |");
+        for key in item.keys {
+            let _ = writeln!(
+                out,
+                "| `{}` | {} |",
+                key.name,
+                cell(key.doc.unwrap_or_default())
+            );
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// One table and everything under it. A sub-table becomes a heading of its own rather than an indent, which is what the file itself does: `[theme.scale]` is a header a reader types.
 fn render_table(table: &Table, depth: usize, out: &mut String) {
     let _ = writeln!(out, "{} `[{}]`\n", "#".repeat(depth), table.path);
@@ -413,6 +447,7 @@ fn generated() -> Vec<(&'static str, String)> {
             "reference/config.md",
             config_page().expect("the config reference generates"),
         ),
+        ("reference/layout.md", layout_page()),
         ("reference/dependencies.md", dependencies_page()),
         ("features/README.md", feature_index(&feature_pages())),
     ]

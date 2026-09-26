@@ -17,7 +17,8 @@ const SAFE_LAYOUT: &str = "--safe-layout";
 fn usage() -> String {
     let mut out = String::from("hogar-shell — a Wayland shell for Hyprland\n\nUsage:\n");
     for (form, help) in hogar_shell::USAGE_FORMS {
-        out.push_str(format!("  hogar-shell {form:22}{help}").trim_end());
+        // The space after the padding rather than inside it: a form wider than the column would otherwise run into its own explanation.
+        out.push_str(format!("  hogar-shell {form:22} {help}").trim_end());
         out.push('\n');
     }
     out.push_str(EXAMPLES);
