@@ -2470,6 +2470,7 @@ dependencies = [
  "telar-motion-core",
  "telar-platform-core",
  "telar-platform-headless",
+ "telar-preferences-core",
  "telar-reactive-core",
  "telar-renderer-assets",
  "telar-renderer-core",
@@ -2548,6 +2549,7 @@ name = "telar-motion-core"
 version = "0.2.1"
 dependencies = [
  "telar-geometry-core",
+ "telar-preferences-core",
  "telar-reactive-core",
  "web-time",
 ]
@@ -2569,6 +2571,14 @@ version = "0.2.1"
 dependencies = [
  "raw-window-handle",
  "telar-platform-core",
+]
+
+[[package]]
+name = "telar-preferences-core"
+version = "0.2.1"
+dependencies = [
+ "telar-platform-core",
+ "telar-reactive-core",
 ]
 
 [[package]]
@@ -2691,6 +2701,7 @@ dependencies = [
  "telar-renderer-cache",
  "telar-renderer-core",
  "tiny-skia",
+ "tracing",
 ]
 
 [[package]]
@@ -2713,6 +2724,7 @@ name = "telar-theme-core"
 version = "0.2.1"
 dependencies = [
  "telar-geometry-core",
+ "telar-preferences-core",
  "telar-reactive-core",
  "telar-renderer-core",
 ]

@@ -277,13 +277,19 @@ impl Config {
         paths::expand_tilde(Path::new(configured))
     }
 
-    /// The effective UI language (BCP-47 tag): the `[general] language` override, else the OS locale, else English. Each surface applies it via `telar::set_locale` when it builds.
+    /// The effective UI language (BCP-47 tag): the `[general] language` override, else the shipped locale that best matches the environment's, else the catalog's default. Each surface applies it via `telar::set_locale` when it builds.
     pub fn language(&self) -> String {
         let configured = self.general.language.trim();
         if !configured.is_empty() {
             return configured.to_string();
         }
-        telar::detect_system_locale().unwrap_or_else(|| "en".to_string())
+        let catalog = &crate::__rsx_i18n::CATALOG;
+        telar::negotiate_locale(
+            &telar::system_locales_from_env(),
+            catalog.locales,
+            catalog.default_locale,
+        )
+        .to_string()
     }
 
     /// The container variant for a module id, `Default` when it has no `[modules.<id>]` override.
