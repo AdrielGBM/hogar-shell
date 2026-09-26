@@ -561,14 +561,64 @@ fn install_hooks() {
     );
     services::lock::set_session_opener(|screen| {
         let config = config::config();
+        // Resolved once, here, as the lock is taken: every surface of this session — the ones created now and any monitor plugged in while the screen is covered — builds from this one snapshot, so a layout edit made while locked applies at the next lock rather than under a user who is typing a password (TA-8).
+        //
+        // Not resolved at all for a lock that asked for the minimal screen, which is a lock taken back after a crash: nothing would read the answer, and working one out would report a fallback to the user for a screen they were never going to get.
+        let lock = match screen {
+            services::lock::Screen::Minimal => None,
+            services::lock::Screen::Configured => lock_layer().map(Arc::new),
+        };
         platform_wayland::lock_session(move |output| modules::lock::LockApp {
             config: config.clone(),
             output,
             screen,
+            lock: lock.clone(),
         })
     });
     ui::module::set_panel_opener(surfaces::panel::open_panel);
     ui::descriptor::install(crate::core::modules::MODULES);
+}
+
+/// The lock layer the session is about to be covered with, or `None` for the minimal lock.
+///
+/// Three things have to hold before a lock screen is drawn from a layout, and any one of them failing is the minimal lock rather than a half-drawn one: the store has to be there, the layout has to validate — every instance a reading, no action bound, a prompt that cannot be hidden or covered — and it has to resolve for every screen with a prompt on it. Checked here, once, because after `take()` the compositor is already showing whatever this returns and a message is no use to whoever is standing at it: the reason is held and said as a toast once the session is unlocked (`services::lock::fell_back`).
+fn lock_layer() -> Option<modules::lock::LockLayout> {
+    let Some(built) = crate::core::layouts::read(|store| {
+        let mut report =
+            layout::validate_lock(store.active(), &crate::core::commands::layout::catalogue());
+        let outputs = platform_wayland::outputs();
+        let names: Vec<Option<&str>> = match outputs.is_empty() {
+            true => vec![None],
+            false => outputs.iter().map(|out| out.name.as_deref()).collect(),
+        };
+        for output in names {
+            let (resolved, resolving) = layout::resolve(
+                store.active(),
+                store.all(),
+                output.unwrap_or(layout::NOMINAL_OUTPUT),
+                None,
+            );
+            report.merge(resolving);
+            report.merge(layout::validate_resolved(
+                &resolved,
+                &store.path_of(store.active_id()).display().to_string(),
+            ));
+        }
+        match report.errors.is_empty() {
+            true => Ok(modules::lock::LockLayout::of(store.active(), store.all())),
+            false => Err(report.summary()),
+        }
+    }) else {
+        services::lock::fell_back("there is no layout store to draw the lock screen from");
+        return None;
+    };
+    match built {
+        Ok(lock) => Some(lock),
+        Err(why) => {
+            services::lock::fell_back(why);
+            None
+        }
+    }
 }
 
 /// Everything a config change affects outside the surfaces themselves: the UI language, the process-wide font, the icon store, and the context that code reached from outside a surface resolves against.
@@ -951,5 +1001,132 @@ mod i18n_tests {
         assert_eq!(telar::t!("config.error_title"), "Configuration not applied");
         telar::set_locale("es");
         assert_eq!(telar::t!("config.error_title"), "Configuración no aplicada");
+    }
+}
+
+#[cfg(test)]
+mod lock_layer_tests {
+    use super::*;
+
+    /// A store holding one layout whose lock layer is `lock`, installed as the one the shell owns.
+    fn shell_locked_with(name: &str, lock: &str) -> Arc<Config> {
+        ui::descriptor::install(crate::core::modules::MODULES);
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join(format!("lock-layer-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a layouts directory");
+        std::fs::write(dir.join("mine.toml"), lock).expect("a layout to lock with");
+
+        let (mut store, report) = LayoutStore::load(&dir);
+        assert!(report.is_clean(), "{}", report.render());
+        store
+            .use_layout(&layout::LayoutId::new("mine"))
+            .expect("the store holds it");
+        crate::core::layouts::install(Rc::new(RefCell::new(store)), Rc::new(|| {}));
+        let config = Arc::new(Config::starter());
+        config::set_config(Arc::clone(&config));
+        config
+    }
+
+    const PROMPT: &str = r#"
+        id = "mine"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.lock.areas]]
+        id = "prompt"
+        kind = "prompt"
+    "#;
+
+    /// **Every way a lock layer can be wrong is the minimal lock**, decided before the compositor is asked for the lock rather than discovered by a screen that is already covering it.
+    ///
+    /// Each of these is a layout that parses and resolves: what is wrong with it is a rule about the lock layer, and the rules are load-bearing — a control on a screen anyone can touch, a gesture that runs a command from behind a password prompt, a prompt an expression could hide, a layer with no prompt at all. A half-corrected lock screen is worse than a plain one (TA-8), so none of them is patched up.
+    #[test]
+    fn a_lock_layer_that_breaks_a_rule_is_refused_and_says_why() {
+        let faults = [
+            (
+                "no-prompt",
+                "[[outputs.layers.lock.areas]]\nid = \"grid\"\nkind = \"grid\"",
+            ),
+            (
+                "a-control",
+                "[[outputs.layers.lock.areas]]\nid = \"prompt\"\nkind = \"prompt\"\n\
+                 [[outputs.layers.lock.areas]]\nid = \"grid\"\nkind = \"grid\"\n\
+                 [[outputs.layers.lock.areas.groups]]\nid = \"cell\"\nplace = \"cell\"\ncol = 0\nrow = 0\n\
+                 [[outputs.layers.lock.areas.groups.children]]\nid = \"t\"\nmodule = \"tray\"",
+            ),
+            (
+                "an-action",
+                "[[outputs.layers.lock.areas]]\nid = \"prompt\"\nkind = \"prompt\"\n\
+                 [[outputs.layers.lock.areas]]\nid = \"grid\"\nkind = \"grid\"\n\
+                 [[outputs.layers.lock.areas.groups]]\nid = \"cell\"\nplace = \"cell\"\ncol = 0\nrow = 0\n\
+                 [[outputs.layers.lock.areas.groups.children]]\nid = \"c\"\nmodule = \"clock\"\nrepresentation = \"widget_m\"\n\
+                 [outputs.layers.lock.areas.groups.children.actions]\npress = [\"lock off\"]",
+            ),
+            (
+                "a-hideable-prompt",
+                "[[outputs.layers.lock.areas]]\nid = \"prompt\"\nkind = \"prompt\"\nvisible = \"gaming\"",
+            ),
+            (
+                "a-covered-prompt",
+                "[[outputs.layers.lock.areas]]\nid = \"prompt\"\nkind = \"prompt\"\n\
+                 [[outputs.layers.lock.areas]]\nid = \"over\"\nkind = \"grid\"",
+            ),
+        ];
+
+        for (name, lock) in faults {
+            shell_locked_with(
+                name,
+                &format!("id = \"mine\"\n[[outputs]]\nmatch = \"*\"\n{lock}\n"),
+            );
+            let _ = services::lock::take_fallback();
+            assert!(
+                lock_layer().is_none(),
+                "`{name}` should not be drawn on a locked screen"
+            );
+            assert!(
+                services::lock::take_fallback().is_some(),
+                "`{name}` was refused without saying why, so nothing would be said after unlocking"
+            );
+        }
+    }
+
+    /// A mistake somewhere else in the layout is not the lock layer's problem: a bar naming a module this build does not have costs the user that chip, not the lock screen they configured.
+    #[test]
+    fn a_broken_bar_does_not_cost_the_lock_screen() {
+        shell_locked_with(
+            "broken-bar",
+            &format!(
+                "{PROMPT}\n[[outputs.layers.top.areas]]\nid = \"bar\"\nkind = \"bar\"\nedge = \"top\"\nthickness = 32\n\
+                 [[outputs.layers.top.areas.groups]]\nid = \"start\"\nplace = \"zone\"\nzone = \"start\"\n\
+                 [[outputs.layers.top.areas.groups.children]]\nid = \"typo\"\nmodule = \"clokc\"\n"
+            ),
+        );
+        let _ = services::lock::take_fallback();
+        assert!(lock_layer().is_some());
+        assert!(services::lock::take_fallback().is_none());
+    }
+
+    /// And a layer that breaks none of them is drawn, or the check above would pass by refusing everything.
+    #[test]
+    fn a_lock_layer_that_breaks_no_rule_is_what_the_session_is_covered_with() {
+        let config = shell_locked_with("good", PROMPT);
+        let _ = services::lock::take_fallback();
+        let lock = lock_layer().expect("a prompt alone is a lock layer");
+        assert!(
+            services::lock::take_fallback().is_none(),
+            "and nothing to say about it afterwards"
+        );
+
+        telar::reset_layout_runtime();
+        telar::set_locale("en");
+        let app = modules::lock::LockApp {
+            config: Some(config),
+            output: None,
+            screen: services::lock::Screen::Configured,
+            lock: Some(Arc::new(lock)),
+        };
+        // Built rather than only resolved: what the acceptance asks is that the session ends up covered by something with a field in it.
+        let _ = app.root();
     }
 }

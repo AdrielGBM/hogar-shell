@@ -838,6 +838,7 @@ mod tests {
                 output: None,
                 bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
                 reserved: reserved_of(&config),
+                audience: ui::host::Audience::Owner,
             },
             modules,
         )
@@ -874,6 +875,7 @@ mod tests {
             output: None,
             bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
             reserved: reserved_of(&config),
+            audience: ui::host::Audience::Owner,
         };
         let gap = bar_shape(&config, shape).gap as f32;
         let run = run_of(edge, surround.bounds, surround.reserved, gap);

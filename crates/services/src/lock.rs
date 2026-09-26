@@ -125,6 +125,28 @@ pub fn is_locked() -> bool {
     STATE.get().locked
 }
 
+/// Why the lock screen fell back to the built-in one, held until the session is unlocked.
+///
+/// A layout that did not resolve is news for the person at the keyboard once they are back in, not for whoever is standing in front of a password prompt — and the locked screen is the one surface where an extra line nobody asked for is a hole in what the lock promises. So the reason waits here and the toast is raised when the lock ends ([`crate::toaster`], `ToastEvent::LockFallback`).
+static FALLBACK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Records why the configured lock screen could not be drawn. Called by whoever mounts the screen, at the moment it decides.
+pub fn fell_back(why: impl Into<String>) {
+    let why = why.into();
+    tracing::warn!("the lock layer could not be drawn, so the minimal lock is up: {why}");
+    if let Ok(mut fallback) = FALLBACK.lock() {
+        *fallback = Some(why);
+    }
+}
+
+/// The reason the last lock fell back, taken once so it is said once.
+pub fn take_fallback() -> Option<String> {
+    FALLBACK
+        .lock()
+        .ok()
+        .and_then(|mut fallback| fallback.take())
+}
+
 /// Asks for the session to be locked. Idempotent; the performer does the work on the driver thread.
 pub fn lock() {
     if STATE.get().wanted {

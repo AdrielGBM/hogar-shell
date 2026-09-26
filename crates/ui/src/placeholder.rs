@@ -38,6 +38,26 @@ pub fn open_settings() {
     open_panel(FIXED_IN);
 }
 
+/// How big the glyph a locked screen stands in with is drawn. Large enough to read as deliberate rather than as a speck, small enough not to be the thing the eye goes to on a screen whose point is a password field.
+const NEUTRAL_GLYPH: f32 = 24.0;
+
+/// What stands where a locked screen cannot draw what the layout asked for: the glyph on the error colour, and nothing else.
+///
+/// No id and no reason, unlike [`placeholder`]. Both would be a line about the shell's internals in front of whoever happens to be standing at the screen, and neither is any use to them — what went wrong is in the report, which the user who can do something about it reads once they are back in (TA-8). It takes no press either, for the same reason the box below does not: on that layer nothing may act.
+pub fn neutral(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let ink = ink(theme);
+    let fill = fill(theme);
+    let glyph = icon_view(|| GLYPH.to_string(), move || ink, NEUTRAL_GLYPH)?;
+    Ok(Box::new(StyledContainer::new(
+        LayoutStyle::new()
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .padding_all(space::md()),
+        move |_| RectStyle::filled(fill, space::md()),
+        vec![glyph],
+    )?))
+}
+
 /// What stands in for `id` as `host.representation`: a chip on a bar, and elsewhere a box saying which id, and `reason` when there is one.
 pub fn placeholder(
     id: &str,

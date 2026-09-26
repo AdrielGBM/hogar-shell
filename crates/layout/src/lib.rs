@@ -16,4 +16,6 @@ pub use crate::resolve::{
 pub use crate::store::{
     BUILT_IN, LayoutStore, SETTLE, StoreError, Transaction, running, set_running,
 };
-pub use crate::validate::{Catalogue, check_unknown_keys, validate, validate_resolved};
+pub use crate::validate::{
+    Catalogue, check_unknown_keys, validate, validate_lock, validate_resolved,
+};

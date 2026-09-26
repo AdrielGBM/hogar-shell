@@ -1,11 +1,15 @@
-//! The lock screen: one surface per monitor, and the only thing on it that matters is the password field.
+//! The lock screen: the layout's `lock` layer, on one `ext-session-lock-v1` surface per monitor.
 //!
-//! Two things shape every decision here. The surface is a `ext-session-lock-v1` surface, so it covers the whole output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but authenticating. And that way out has to survive everything else on the screen failing: a screen that cannot be built mounts the minimal lock, the password field alone, instead of taking the process down while the compositor keeps the session locked. A lock taken back after the shell died mounts the minimal lock from the start, since whatever killed it may be in the configured screen.
+//! Three things shape every decision here. The surface covers the whole output and the compositor gives it the keyboard — there is no scrim, no dismiss, no way out but authenticating. That way out has to survive everything else on the screen failing, so the prompt is built first, from code that depends on nothing but [`LockState`], the theme and i18n, and a screen that cannot be built at all mounts the minimal lock instead of taking the process down while the compositor keeps the session locked. And what is on the screen besides the prompt is **the layout's**, drawn through the same area builders the desktop's layers use ([`surfaces::area`]) rather than a second set that could disagree with them.
 //!
-//! Everything it shows is a subscription to [`lock::LockState`], which is written from a worker thread. The screen never authenticates; it collects a password and hands it over.
+//! **Readings, never controls** (TA-8). Every area but the prompt is [`inert`](telar::StyledContainer::inert), so no pointer or key event reaches it whatever it was built from; every instance is built for [`Audience::Anyone`], so a field its module declares private on a locked screen draws as empty rather than as itself; and a representation that answers the pointer is drawn as a neutral placeholder, which is the last of three lines — validation refuses one on load and `layout add` refuses to place one.
+//!
+//! **The layer is frozen when the lock is taken** ([`LockLayout`]). A layout edit made while the screen is covered applies at the next lock, so the tree a user is typing a password into cannot change under them, and a monitor plugged in mid-lock is covered with what the others show.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use ui::scale::{corner, space};
+
+use ui::scale::space;
 
 use telar::{
     AlignItems, App, Color, Component, Container, Input, JustifyContent, LayoutError, LayoutItem,
@@ -13,13 +17,47 @@ use telar::{
     reset_layout_runtime, set_theme, signal, use_theme,
 };
 
+use config::Config;
 use config::theme::{FontRole, NordTheme};
-use config::{Config, SurfaceEnv, set_surface_env};
+use layout::{
+    LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, PromptStyle, Rect, Resolved, ResolvedArea,
+    ResolvedAreaKind,
+};
 use services::lock::{self, LockState, Method, Screen};
+use surfaces::area::Surround;
+use surfaces::layer_window::Reserved;
 use telar::WindowRoot;
+use ui::host::Audience;
+use util::report::Report;
 
-const AVATAR: f32 = 96.0;
 const CARD_WIDTH: f32 = 380.0;
+
+/// The lock layer as it stood when the lock was taken, and what it takes to resolve it for one output.
+///
+/// The layout is carried rather than a resolved arrangement per output, because an output that arrives while the screen is locked has to be covered with the same content as the rest, and only the layout can answer for a monitor nobody had seen yet. Carrying it is also what freezes it: resolution is pure, so resolving the same snapshot again gives the same answer however long the session has been locked and whatever has been edited since.
+pub struct LockLayout {
+    layout: Layout,
+    known: BTreeMap<LayoutId, Layout>,
+}
+
+impl LockLayout {
+    pub fn of(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Self {
+        Self {
+            layout: layout.clone(),
+            known: known.clone(),
+        }
+    }
+
+    /// The lock layer for one output, and whatever could not be resolved.
+    pub fn resolve(&self, output: Option<&str>) -> (Resolved, Report) {
+        layout::resolve(
+            &self.layout,
+            &self.known,
+            output.unwrap_or(NOMINAL_OUTPUT),
+            None,
+        )
+    }
+}
 
 /// One monitor's lock surface. Built by the platform crate's lock session, once per output and again for any monitor connected while the screen is locked.
 pub struct LockApp {
@@ -28,6 +66,8 @@ pub struct LockApp {
     pub output: Option<String>,
     /// Which screen the lock service asked for. [`Screen::Minimal`] never builds the configured screen at all, rather than falling back from it: none of that screen's code runs, so none of it can fail a second time.
     pub screen: Screen,
+    /// The lock layer the session was taken with, or `None` where it could not be resolved or validated — which is the minimal lock, whatever [`Screen`] asked for.
+    pub lock: Option<Arc<LockLayout>>,
 }
 
 impl App for LockApp {
@@ -39,16 +79,16 @@ impl App for LockApp {
             .unwrap_or_else(|| Arc::new(Config::default()));
         set_theme(config.resolve_theme());
         services::locale::attach(config.language());
-        if self.screen == Screen::Minimal {
+        let Some(lock) = self
+            .lock
+            .clone()
+            .filter(|_| self.screen == Screen::Configured)
+        else {
             return mount(minimal_screen);
-        }
-        // Not a `PanelSurface` — the compositor's lock session mounts this, and it is the one surface that must never be translucent — but its content reads settings the same way every panel does, so it installs the same environment by hand.
-        set_surface_env(SurfaceEnv::for_edge(
-            Arc::clone(&config),
-            ui::panel::drawn_edge(&config),
-            self.output.clone(),
-        ));
-        mount(|| screen(&config))
+        };
+        let output = self.output.clone();
+        let size = output_size(self.output.as_deref());
+        mount(move || screen(&config, &lock, output.as_deref(), size))
     }
 
     fn clear_color(&self) -> Option<Color> {
@@ -66,9 +106,13 @@ impl App for LockApp {
     }
 }
 
-/// The lock screen as the session opener mounts it, for [`crate::preview`] — over the starter config, since a preview has no session to read one from.
+/// The screen a preview of the lock stands on. A lock surface is a whole output, so a preview of one is an output too — at the size the preview page can show rather than at a monitor's, since every area on it places itself as a fraction of the screen it is on.
+pub(crate) const PREVIEW_SCREEN: (f32, f32) = (960.0, 600.0);
+
+/// The lock screen as the session opener mounts it, for [`crate::preview`] — over the starter config and the layout the shell ships, since a preview has no session to read either from.
 pub(crate) fn screen_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    screen(&Arc::new(Config::starter()))
+    let lock = LockLayout::of(&layout::built_in(), &BTreeMap::new());
+    screen(&Arc::new(Config::starter()), &lock, None, PREVIEW_SCREEN)
 }
 
 fn mount(screen: impl FnOnce() -> Result<Box<dyn LayoutItem>, LayoutError>) -> Box<dyn Component> {
@@ -87,25 +131,145 @@ fn mount(screen: impl FnOnce() -> Result<Box<dyn LayoutItem>, LayoutError>) -> B
     }
 }
 
-/// The whole surface: a centred card over the background.
-fn screen(config: &Arc<Config>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+/// The whole surface: every area of the lock layer, each placing itself in the output's own coordinate space.
+///
+/// **The prompt is built before anything else**, so a reading that fails cannot take the field with it — and if the prompt itself cannot be built the screen fails whole, which [`mount`] answers with the minimal lock. It is then put back at its own place in the stack, which validation has already made the top one.
+fn screen(
+    config: &Arc<Config>,
+    lock: &LockLayout,
+    output: Option<&str>,
+    size: (f32, f32),
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let mut column: Vec<Box<dyn LayoutItem>> = Vec::new();
-    column.push(clock(config, theme)?);
-    let crate::user::Identity { face, name } =
-        crate::user::identity(&config.dashboard, AVATAR, theme)?;
-    if config.lock.show_avatar {
-        column.push(face);
+    let (resolved, report) = lock.resolve(output);
+    if !report.is_clean() {
+        tracing::warn!(
+            "the lock layer did not fully resolve on {}:\n{}",
+            output.unwrap_or("this output"),
+            report.render()
+        );
     }
-    column.push(centred(name)?);
-    column.extend(prompt(theme)?);
-    column.extend(crate::lock::content::extras(config, theme)?);
-    card(column, theme)
+    let layer = resolved
+        .layer(LayerKind::Lock)
+        .ok_or_else(|| LayoutError::Engine("the lock layer resolved to nothing".to_string()))?;
+
+    let surround = Surround {
+        config,
+        theme,
+        output,
+        bounds: telar::Rect::new(0.0, 0.0, size.0, size.1),
+        // Nothing reserves while the screen is locked: there are no windows to keep out of an edge, and a lock surface has no exclusive zone to ask for (TA-8).
+        reserved: Reserved::default(),
+        audience: Audience::Anyone,
+    };
+
+    let mut nodes: Vec<Option<Box<dyn LayoutItem>>> =
+        (0..layer.areas.len()).map(|_| None).collect();
+    let prompt_at = layer
+        .areas
+        .iter()
+        .position(|area| matches!(area.kind, ResolvedAreaKind::Prompt { .. }));
+    if let Some(at) = prompt_at
+        && let ResolvedAreaKind::Prompt { rect, style } = &layer.areas[at].kind
+    {
+        nodes[at] = Some(prompt_area(*rect, style, surround)?);
+    }
+    for (at, area) in layer.areas.iter().enumerate() {
+        if Some(at) == prompt_at {
+            continue;
+        }
+        nodes[at] = Some(reading_area(area, surround)?);
+    }
+
+    Ok(Box::new(Container::new(
+        whole_surface(),
+        nodes.into_iter().flatten().collect(),
+    )?))
 }
 
+/// One area of readings: built the way the desktop's layers build the same kinds, and then made inert.
+///
+/// Inert rather than merely unwired: a reading that registered a target despite its module declaring none — a card's own chrome, a placeholder, a scroll area — would otherwise take a press on a screen where nothing may be pressed. The gate is read on every event and every region query, so nothing inside can act however it was built (F-5.4).
+///
+/// The box it goes in is the whole surface, because the area inside positions itself absolutely against it; a wrapper the size of its content would move the area it wraps.
+fn reading_area(
+    area: &ResolvedArea,
+    surround: Surround,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let theme = surround.theme;
+    let id = area.id.to_string();
+    // The boundary outlives this call — it catches a failure in what the build registered as well as in the build itself — so what the area is built against is owned by the closure rather than borrowed from here.
+    let config = Arc::clone(surround.config);
+    let output = surround.output.map(str::to_string);
+    let bounds = surround.bounds;
+    let built = telar::ErrorBoundary::with_style(
+        whole_surface(),
+        {
+            let area = area.clone();
+            move || {
+                let surround = Surround {
+                    config: &config,
+                    theme,
+                    output: output.as_deref(),
+                    bounds,
+                    reserved: Reserved::default(),
+                    audience: Audience::Anyone,
+                };
+                match surfaces::area::build(&area, surround) {
+                    Some(built) => built,
+                    None => Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?)),
+                }
+            }
+        },
+        move |failure| {
+            // The reason stays in the log and the report: a message about the shell's internals in front of whoever is standing at the screen is not a thing the lock promised (TA-8).
+            tracing::error!("the lock area '{id}' failed to build: {failure}");
+            ui::placeholder::neutral(theme)
+        },
+    )?;
+    Ok(Box::new(
+        StyledContainer::new(
+            whole_surface(),
+            |_| RectStyle::filled(Color::TRANSPARENT, 0.0),
+            vec![Box::new(built) as Box<dyn LayoutItem>],
+        )?
+        .inert(|| true),
+    ))
+}
+
+/// The one area that answers: the password field, the line under it, and what else this machine can be unlocked with.
+fn prompt_area(
+    rect: Rect,
+    style: &PromptStyle,
+    surround: Surround,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let theme = surround.theme;
+    let mut column = prompt(theme)?;
+    column.extend(biometric_hint(surround.config, theme)?);
+    let card = card(column, theme, style)?;
+    let at = surfaces::area::within(rect, surround.bounds);
+    Ok(Box::new(Container::new(
+        surfaces::area::at(at)
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER),
+        vec![card],
+    )?))
+}
+
+/// The minimal lock: the prompt alone, centred, on the surface's own background.
+///
+/// Built from code rather than from a layout, and depending on nothing but [`LockState`], the theme and i18n. It is what a lock taken back after a crash mounts, and what every failure below falls back to (TA-8).
 pub(crate) fn minimal_screen() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    card(prompt(theme)?, theme)
+    let card = card(prompt(theme)?, theme, &PromptStyle::default())?;
+    Ok(Box::new(Container::new(
+        whole_surface()
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER),
+        vec![card],
+    )?))
 }
 
 fn prompt(theme: NordTheme) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
@@ -117,78 +281,80 @@ fn prompt(theme: NordTheme) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
     ])
 }
 
+/// What else this machine can be unlocked with, under the field. Nothing at all where the password is the only way in, which is most machines — a line saying so would be an explanation of an absence.
+fn biometric_hint(
+    config: &Arc<Config>,
+    theme: NordTheme,
+) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
+    let methods: Vec<String> = offered_methods(config)
+        .into_iter()
+        .map(|method| match method {
+            Method::Fingerprint => telar::t!("lock.by_fingerprint"),
+            Method::Face => telar::t!("lock.by_face"),
+            Method::Password => telar::t!("lock.by_password"),
+        })
+        .collect();
+    if methods.is_empty() {
+        return Ok(Vec::new());
+    }
+    let line = telar::t!("lock.also_unlocks_with", methods = methods.join(", "));
+    Ok(vec![centred(box_item(Text::new(
+        move || line.clone(),
+        LayoutStyle::new(),
+        move || theme.text_style(FontRole::Caption, theme.subtle),
+    )?))?])
+}
+
 fn card(
     column: Vec<Box<dyn LayoutItem>>,
     theme: NordTheme,
+    style: &PromptStyle,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let card = StyledContainer::new(
+    let fill = style
+        .fill
+        .as_deref()
+        .map(|token| Color::from_hex(token).unwrap_or_else(|| theme.token(token)))
+        .unwrap_or(theme.surface);
+    // Validation keeps this at or above 0.9, so a prompt cannot be faded into its own background; a hand-edited file that got past it is clamped here rather than drawn as written.
+    let fill = fill.with_alpha(style.opacity.unwrap_or(1.0).clamp(0.9, 1.0));
+    let radius = style.radius.unwrap_or_else(rounding);
+    Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
             .align_items(AlignItems::CENTER)
             .gap(space::xl())
             .width(CARD_WIDTH)
             .padding_all(space::xxl()),
-        move |_| RectStyle::filled(theme.surface, card_radius()),
+        move |_| RectStyle::filled(fill, radius),
         column,
-    )?;
-
-    Ok(Box::new(Container::new(
-        LayoutStyle::new()
-            .flex_column()
-            .align_items(AlignItems::CENTER)
-            .justify_content(JustifyContent::CENTER)
-            .width(SizeDimension::Percent(1.0))
-            .height(SizeDimension::Percent(1.0)),
-        vec![Box::new(card)],
     )?))
 }
 
-/// The card rounds like the shell's panels do, so the lock screen belongs to the same set as the drawers rather than being the one surface with its own corner.
-fn card_radius() -> f32 {
+/// The corner every box on this screen rounds by, so the lock screen belongs to the same set as the drawers rather than being the one surface with its own.
+///
+/// Read from the config here rather than through [`ui::scale`], whose base is the surface environment a lock surface deliberately does not install (D-35): without one that scale answers zero, and a square password field is not a decision anybody made. The area-scoped context that replaces the environment arrives with D-39.
+fn rounding() -> f32 {
     config::config()
         .map(|c| c.panel_radius(config::Edge::Top))
         .unwrap_or(16.0)
 }
 
-/// The time, large, at the top of the card — the one thing on a lock screen a glance is usually after.
-///
-/// Formatted from the same `[clock]` keys the bar chip reads, so a user who set a 12-hour clock or their own pattern does not meet a different one here.
-fn clock(config: &Config, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let clock = config.clock.clone();
-    let time_format = clock.time_format().to_string();
-    let date_format = clock.date_format.clone();
-    let render = move |now: &services::clock::Now| {
-        (
-            now.format(&time_format).to_string(),
-            now.format(&date_format).to_string(),
-        )
-    };
-    let parts = signal(render(&chrono::Local::now()));
-    platform_wayland::watch(
-        services::clock::subscribe,
-        move |now: services::clock::Now| parts.set(render(&now)),
-    );
-    let time = parts.read_only();
-    let date = parts.read_only();
+/// The whole of whatever box it is in, which for a lock surface is the whole output.
+fn whole_surface() -> LayoutStyle {
+    LayoutStyle::new()
+        .width(SizeDimension::Percent(1.0))
+        .height(SizeDimension::Percent(1.0))
+}
 
-    let hhmm = Text::new(
-        move || time.get().0,
-        LayoutStyle::new(),
-        move || {
-            theme
-                .text_style(FontRole::Display, theme.text)
-                .with_font_weight(600)
-        },
-    )?;
-    let day = Text::new(
-        move || date.get().1,
-        LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
-    )?;
-    Ok(Box::new(Container::new(
-        LayoutStyle::new().flex_column().gap(space::xs()),
-        vec![centred(box_item(hhmm))?, centred(box_item(day))?],
-    )?))
+/// How big the monitor a lock surface covers is, for the fractions a layout is written in. A screen the compositor has not measured yet falls back to a common size rather than laying every area out at nothing.
+fn output_size(output: Option<&str>) -> (f32, f32) {
+    platform_wayland::outputs()
+        .into_iter()
+        .find(|screen| screen.name.as_deref() == output || output.is_none())
+        .and_then(|screen| screen.logical_size)
+        .filter(|(width, height)| *width > 0 && *height > 0)
+        .map(|(width, height)| (width as f32, height as f32))
+        .unwrap_or((1920.0, 1080.0))
 }
 
 /// Centres one item across the card.
@@ -234,7 +400,7 @@ fn field(
     .placeholder(telar::t!("lock.password"))
     .on_submit(submit);
 
-    let rounded = corner::xl();
+    let rounded = rounding();
     let outline = state;
     Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
@@ -329,11 +495,457 @@ pub fn offered_methods(config: &Config) -> Vec<Method> {
     methods
 }
 
-pub mod content;
-
 #[cfg(test)]
 mod tests {
+    use telar::{
+        AvailableSpace, ComponentList, DrawCommand, Event, EventResult, Key, ModifiersState,
+        compute_layout, new_container,
+    };
+
+    use config::{LockConfig, NotificationDetail};
+    use layout::{
+        Anchor, Area, AreaId, AreaKind, Group, GroupId, GroupKind, Instance, InstanceId, Layer,
+        Layers, OutputMatch, OutputRule, Representation,
+    };
+    use ui::descriptor::{
+        FieldDef, Input, ModuleDescriptor, Privacy, Representations, SourceDef, WidgetDef,
+    };
+    use ui::host::{Host, WidgetSize};
+
     use super::*;
+
+    /// The size every test screen is laid out at, and the box a fractional rect in a test layout is a fraction of.
+    const SCREEN: (f32, f32) = (1920.0, 1080.0);
+
+    const SECRET: &str = "424242";
+    const PUBLIC: &str = "three waiting";
+
+    /// The three modules these tests place: a reading, a control, and a reading that cannot be built.
+    ///
+    /// Doubles rather than the shell's own table, because what has to be proven here is the *frame* — that the lock layer builds its instances for [`Audience::Anyone`], that a control on it is stood in for, and that a failure costs one area — and each of those needs a module that does exactly one thing. The real notifications reading's privacy is proven where it is written, over a seeded snapshot, which a headless frame cannot have: the daemon it reads is not running.
+    static PROBES: &[ModuleDescriptor] = &[
+        ModuleDescriptor {
+            id: "probe",
+            name: "Probe",
+            icon: "circle",
+            options: &[],
+            representations: Representations {
+                widget: Some(WidgetDef {
+                    sizes: &[WidgetSize::S, WidgetSize::M],
+                    build: probe,
+                    input: Input::ReadOnly,
+                }),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[SourceDef {
+                id: "probe",
+                fields: &[PROBE_PUBLIC, PROBE_PRIVATE, PROBE_ASKED],
+            }],
+        },
+        ModuleDescriptor {
+            id: "control",
+            name: "Control",
+            icon: "circle",
+            options: &[],
+            representations: Representations {
+                chip: Some(ui::descriptor::ChipDef::new(
+                    |_| {
+                        Ok(Box::new(telar::StyledContainer::new(
+                            LayoutStyle::new().width(40.0).height(40.0),
+                            |_| RectStyle::filled(Color::TRANSPARENT, 0.0),
+                            Vec::new(),
+                        )?) as Box<dyn LayoutItem>)
+                    },
+                    Input::Interactive,
+                )),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        },
+        ModuleDescriptor {
+            id: "broken",
+            name: "Broken",
+            icon: "circle",
+            options: &[],
+            representations: Representations {
+                widget: Some(WidgetDef {
+                    sizes: &[WidgetSize::M],
+                    build: |_| Err(LayoutError::Engine("injected".into())),
+                    input: Input::ReadOnly,
+                }),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        },
+        ModuleDescriptor {
+            id: "panicky",
+            name: "Panicky",
+            icon: "circle",
+            options: &[],
+            representations: Representations {
+                widget: Some(WidgetDef {
+                    sizes: &[WidgetSize::M],
+                    build: |_| panic!("injected"),
+                    input: Input::ReadOnly,
+                }),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        },
+    ];
+
+    const PROBE_PUBLIC: FieldDef = FieldDef {
+        name: "public",
+        privacy: Privacy::Public,
+    };
+    const PROBE_PRIVATE: FieldDef = FieldDef {
+        name: "private",
+        privacy: Privacy::Private,
+    };
+    /// The shape the notification applications and the media title have: private on a locked screen until `[lock]` says otherwise.
+    const PROBE_ASKED: FieldDef = FieldDef {
+        name: "asked",
+        privacy: Privacy::OnLock(|lock| lock.notification_detail == NotificationDetail::Apps),
+    };
+
+    fn probe(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        let theme = use_theme::<NordTheme>();
+        let lines = [
+            host.reveal(&PROBE_PUBLIC, PUBLIC.to_string()),
+            host.reveal(&PROBE_PRIVATE, SECRET.to_string()),
+            host.reveal(&PROBE_ASKED, format!("asked-{SECRET}")),
+        ];
+        let items = lines
+            .into_iter()
+            .map(|line| {
+                Text::new(
+                    move || line.clone(),
+                    LayoutStyle::new(),
+                    move || theme.text_style(FontRole::Body, theme.text),
+                )
+                .map(box_item)
+            })
+            .collect::<Result<Vec<_>, LayoutError>>()?;
+        Ok(Box::new(Container::new(
+            LayoutStyle::new().flex_column(),
+            items,
+        )?))
+    }
+
+    /// A lock layer holding `areas`, as a layout the snapshot can be built from.
+    fn locked_with(areas: Vec<Area>) -> LockLayout {
+        let layout = Layout {
+            id: LayoutId::new("test"),
+            name: "Test".into(),
+            extends: None,
+            outputs: vec![OutputRule {
+                matches: OutputMatch("*".into()),
+                layers: Layers {
+                    lock: Layer {
+                        areas,
+                        remove: Vec::new(),
+                    },
+                    ..Layers::default()
+                },
+                workspaces: Vec::new(),
+            }],
+        };
+        LockLayout::of(&layout, &BTreeMap::new())
+    }
+
+    fn prompt_area_of() -> Area {
+        Area {
+            id: AreaId::new("prompt"),
+            kind: Some(AreaKind::Prompt {
+                rect: None,
+                style: PromptStyle::default(),
+            }),
+            ..Area::default()
+        }
+    }
+
+    /// A grid of one instance of `module`, covering the top half of the screen so it cannot overlap a centred prompt.
+    fn readings(module: &str) -> Area {
+        Area {
+            id: AreaId::new("readings"),
+            kind: Some(AreaKind::Grid {
+                rect: Some(Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 0.3,
+                }),
+                cell: None,
+                gap: None,
+                anchor: Some(Anchor::TopLeft),
+            }),
+            groups: vec![Group {
+                id: GroupId::new("cell"),
+                kind: Some(GroupKind::Cell {
+                    col: 0,
+                    row: 0,
+                    col_span: 1,
+                    row_span: 1,
+                }),
+                children: vec![Instance {
+                    id: InstanceId::new("placed"),
+                    module: Some(module.to_string()),
+                    representation: Some(Representation::WidgetM),
+                    ..Instance::default()
+                }],
+                remove: Vec::new(),
+            }],
+            ..Area::default()
+        }
+    }
+
+    /// Every area kind that holds instances, each holding a control, for the one question this set exists to answer: does anything on this layer take input.
+    fn one_of_every_kind() -> Vec<Area> {
+        let with = |id: &str, kind: AreaKind, group: GroupKind| Area {
+            id: AreaId::new(id),
+            kind: Some(kind),
+            groups: vec![Group {
+                id: GroupId::new("in"),
+                kind: Some(group),
+                children: vec![Instance {
+                    id: InstanceId::new(format!("{id}-control")),
+                    module: Some("control".to_string()),
+                    representation: Some(Representation::Chip),
+                    ..Instance::default()
+                }],
+                remove: Vec::new(),
+            }],
+            ..Area::default()
+        };
+        let zone = GroupKind::Zone {
+            zone: layout::Zone::Start,
+        };
+        vec![
+            with(
+                "bar",
+                AreaKind::Bar {
+                    edge: Some(config::Edge::Top),
+                    thickness: Some(40.0),
+                    length: None,
+                    offset: None,
+                    shape: layout::BarShape::default(),
+                    autohide: None,
+                },
+                zone,
+            ),
+            with(
+                "dock",
+                AreaKind::Dock {
+                    edge: Some(config::Edge::Bottom),
+                    thickness: Some(40.0),
+                },
+                zone,
+            ),
+            with("free", AreaKind::Free { rect: None }, zone),
+            readings("control"),
+        ]
+    }
+
+    fn config_with(lock: LockConfig) -> Arc<Config> {
+        Arc::new(Config {
+            lock,
+            ..Config::starter()
+        })
+    }
+
+    /// Lays a lock screen out at screen size and answers with everything it draws.
+    fn drawn(lock: &LockLayout, config: &Arc<Config>) -> Vec<DrawCommand> {
+        telar::reset_layout_runtime();
+        telar::set_locale("en");
+        telar::set_theme(config.resolve_theme());
+        let item = screen(config, lock, Some("DP-1"), SCREEN).expect("the lock screen builds");
+        let page = || {
+            LayoutStyle::new()
+                .flex_column()
+                .width(SCREEN.0)
+                .height(SCREEN.1)
+        };
+        let root = new_container(page(), &[item.layout_node()]).expect("a root");
+        let tree = ComponentList::new(Container::new(page(), vec![item]).expect("a page"));
+        compute_layout(
+            root,
+            AvailableSpace::Definite(SCREEN.0),
+            AvailableSpace::Definite(SCREEN.1),
+        )
+        .expect("the lock screen lays out");
+        tree.commands().clone()
+    }
+
+    fn text_of(commands: &[DrawCommand]) -> Vec<String> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::Text { text, .. } => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether anything in this lock screen takes a typed character.
+    fn typed(lock: &LockLayout, config: &Arc<Config>) -> EventResult {
+        telar::reset_layout_runtime();
+        telar::set_locale("en");
+        telar::set_theme(config.resolve_theme());
+        let item = screen(config, lock, Some("DP-1"), SCREEN).expect("the lock screen builds");
+        let mut page = Container::new(
+            LayoutStyle::new()
+                .flex_column()
+                .width(SCREEN.0)
+                .height(SCREEN.1),
+            vec![item],
+        )
+        .expect("a page");
+        compute_layout(
+            page.layout_node(),
+            AvailableSpace::Definite(SCREEN.0),
+            AvailableSpace::Definite(SCREEN.1),
+        )
+        .expect("the lock screen lays out");
+        page.on_event(&Event::KeyPressed {
+            key: Key::Char('x'),
+            modifiers: ModifiersState::default(),
+        })
+    }
+
+    /// Where, if anywhere, something in this lock screen answers the pointer.
+    fn answer(lock: &LockLayout, config: &Arc<Config>) -> Option<(f32, f32)> {
+        telar::reset_layout_runtime();
+        telar::set_locale("en");
+        telar::set_theme(config.resolve_theme());
+        let item = screen(config, lock, Some("DP-1"), SCREEN).expect("the lock screen builds");
+        ui::descriptor::input_answer(item, SCREEN.0, SCREEN.1).expect("it lays out")
+    }
+
+    /// **Nothing on the lock layer but the prompt may act.** Every area is built behind an inert gate, which is read on every event and every region query — so a control that reached the layer despite validation and `layout add` refusing it still cannot be pressed, scrolled or hovered (TA-8).
+    #[test]
+    fn no_area_but_the_prompt_answers_the_pointer() {
+        ui::descriptor::install(PROBES);
+        let config = config_with(LockConfig::default());
+        assert_eq!(
+            answer(&locked_with(one_of_every_kind()), &config),
+            None,
+            "a bar, a dock, a free rectangle and a grid, each with a control in it, and not one of them answers"
+        );
+    }
+
+    /// The keyboard half, and the other half of the check above: a typed character reaches the prompt and reaches nothing else, so neither statement is about a screen that simply drew nothing.
+    ///
+    /// The prompt is what the keyboard is *for* here — the compositor hands a lock surface the keyboard and the field autofocuses — which is also why it is the one of the two that a pointer probe cannot show: the field is a key target, not a press target.
+    #[test]
+    fn a_typed_character_reaches_the_prompt_and_nothing_else() {
+        ui::descriptor::install(PROBES);
+        let config = config_with(LockConfig::default());
+        assert_eq!(
+            typed(&locked_with(vec![prompt_area_of()]), &config),
+            EventResult::Handled,
+            "the field a password is typed into has to take a keystroke"
+        );
+        assert_eq!(
+            typed(&locked_with(one_of_every_kind()), &config),
+            EventResult::Ignored,
+            "and a layer of readings takes none, however they were built"
+        );
+    }
+
+    /// A control hand-edited onto the lock layer is drawn as a placeholder rather than built. The error fill is what says so: a reading draws none.
+    #[test]
+    fn a_control_on_the_lock_layer_is_drawn_as_a_placeholder() {
+        ui::descriptor::install(PROBES);
+        let config = config_with(LockConfig::default());
+        let error = config.resolve_theme().error;
+        let stood_in = |areas: Vec<Area>| {
+            drawn(&locked_with(areas), &config).iter().any(
+                |command| matches!(command, DrawCommand::Rect { style, .. } if style.fill == Some(telar::Paint::Solid(error))),
+            )
+        };
+        assert!(
+            stood_in(vec![readings("control")]),
+            "a representation that answers the pointer is stood in for"
+        );
+        assert!(
+            !stood_in(vec![readings("probe")]),
+            "and a reading is built, not stood in for"
+        );
+    }
+
+    /// A reading on this layer is built for whoever is in front of the screen, so a field its module declares private draws as nothing — and one `[lock]` decides draws according to what the user asked for.
+    #[test]
+    fn a_reading_on_the_lock_layer_cannot_draw_a_private_field() {
+        ui::descriptor::install(PROBES);
+        for detail in [NotificationDetail::Count, NotificationDetail::Apps] {
+            let config = config_with(LockConfig {
+                notification_detail: detail,
+                ..LockConfig::default()
+            });
+            let shown = text_of(&drawn(&locked_with(vec![readings("probe")]), &config));
+            assert!(
+                shown.iter().any(|text| text.contains(PUBLIC)),
+                "{detail:?} drew no reading at all, so this proves nothing: {shown:?}"
+            );
+            assert!(
+                !shown.iter().any(|text| text == SECRET),
+                "{detail:?} drew a private field on a locked screen: {shown:?}"
+            );
+            assert_eq!(
+                shown.iter().any(|text| text.contains("asked-")),
+                detail == NotificationDetail::Apps,
+                "{detail:?} disagreed with what `[lock]` asks for: {shown:?}"
+            );
+        }
+    }
+
+    /// A reading that cannot be built costs its own area and nothing else — least of all the prompt, which is why it is built first and outside every boundary.
+    ///
+    /// A panic as well as an error, because the boundary is what makes the two the same news: a reading that panics inside a locked session would otherwise take the process with it, and the compositor would keep the screen covered with nothing on it (T-1.14).
+    #[test]
+    fn a_reading_that_fails_to_build_leaves_the_prompt_standing() {
+        ui::descriptor::install(PROBES);
+        let config = config_with(LockConfig::default());
+        for module in ["broken", "panicky"] {
+            let shown = text_of(&drawn(
+                &locked_with(vec![readings(module), prompt_area_of()]),
+                &config,
+            ));
+            assert!(
+                shown.iter().any(|text| text == &telar::t!("lock.password")),
+                "`{module}` took the field with it: {shown:?}"
+            );
+        }
+    }
+
+    /// A lock the shell has no layout for is the minimal lock, and so is one taken back after a crash: both mount a field, which is the one thing a covered screen cannot be without.
+    ///
+    /// The app decides *which* of the two a session gets — resolving and validating the layer at `take()`, and falling back where either fails — and proves that where it decides it. What is proven here is that both answers leave a way in.
+    #[test]
+    fn a_lock_with_no_layout_mounts_the_minimal_lock() {
+        let config = config_with(LockConfig::default());
+        for screen in [Screen::Configured, Screen::Minimal] {
+            let app = LockApp {
+                config: Some(Arc::clone(&config)),
+                output: None,
+                screen,
+                lock: None,
+            };
+            telar::reset_layout_runtime();
+            telar::set_locale("en");
+            let mounted = app.root();
+            let tree = ComponentList::new(mounted);
+            let shown: Vec<String> = text_of(&tree.commands().clone());
+            assert!(
+                shown.iter().any(|text| text == &telar::t!("lock.password")),
+                "{screen:?} mounted no field: {shown:?}"
+            );
+        }
+    }
 
     #[test]
     fn a_password_is_never_left_in_the_field_after_it_is_submitted() {
@@ -345,13 +957,6 @@ mod tests {
             ..LockState::default()
         });
         assert!(field(state.read_only(), NordTheme::new()).is_ok());
-    }
-
-    #[test]
-    fn the_screen_builds_on_a_default_config() {
-        telar::reset_layout_runtime();
-        telar::set_theme(NordTheme::new());
-        assert!(screen(&Arc::new(Config::default())).is_ok());
     }
 
     #[test]

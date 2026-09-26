@@ -15,8 +15,8 @@ use telar::{
 use config::fingerprint::{Fingerprint, Stamp};
 use config::theme::{FontRole, NordTheme};
 use config::{
-    Align, Capitalize, Config, Edge, FullscreenPopups, MediaScroll, OpenMode, Saved, Shape,
-    TemperatureUnit, Variant,
+    Align, Capitalize, Config, Edge, FullscreenPopups, MediaDetail, MediaScroll,
+    NotificationDetail, OpenMode, Saved, Shape, TemperatureUnit, Variant,
 };
 
 use crate::panel::MODULE;
@@ -28,6 +28,8 @@ pub(crate) const LANGUAGES: &[&str] = &["en", "es"];
 pub(crate) const MEDIA_SCROLLS: &[&str] = &["volume", "track", "seek", "none"];
 pub(crate) const CAPITALIZATIONS: &[&str] = &["none", "upper", "lower", "title"];
 pub(crate) const TEMPERATURE_UNITS: &[&str] = &["celsius", "fahrenheit"];
+pub(crate) const NOTIFICATION_DETAILS: &[&str] = &["count", "apps"];
+pub(crate) const MEDIA_DETAILS: &[&str] = &["title", "state"];
 pub(crate) const WEEKDAYS: &[&str] = &["monday", "sunday", "saturday"];
 pub(crate) const FULLSCREEN_POPUPS: &[&str] = &["on", "off", "never"];
 pub(crate) const MODES: &[&str] = &["auto", "dark", "light"];
@@ -629,6 +631,32 @@ pub(crate) fn media_scroll_str(scroll: MediaScroll) -> &'static str {
         MediaScroll::None => "none",
     }
 }
+pub(crate) fn notification_detail_str(detail: NotificationDetail) -> &'static str {
+    match detail {
+        NotificationDetail::Count => "count",
+        NotificationDetail::Apps => "apps",
+    }
+}
+pub(crate) fn parse_notification_detail(raw: &str) -> NotificationDetail {
+    match raw {
+        "apps" => NotificationDetail::Apps,
+        _ => NotificationDetail::Count,
+    }
+}
+
+pub(crate) fn media_detail_str(detail: MediaDetail) -> &'static str {
+    match detail {
+        MediaDetail::Title => "title",
+        MediaDetail::State => "state",
+    }
+}
+pub(crate) fn parse_media_detail(raw: &str) -> MediaDetail {
+    match raw {
+        "state" => MediaDetail::State,
+        _ => MediaDetail::Title,
+    }
+}
+
 pub(crate) fn parse_media_scroll(raw: &str) -> MediaScroll {
     match raw {
         "track" => MediaScroll::Track,

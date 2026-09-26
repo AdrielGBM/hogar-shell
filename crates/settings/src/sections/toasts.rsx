@@ -1,10 +1,8 @@
 [logic]
-use crate::form_section::{form_section, FormSectionProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
-use crate::save_row::{save_row, SaveRowProps};
-use crate::form::{
-    persist, source,
-};
+use crate::form::{persist, source};
+use crate::form_section::{FormSectionProps, form_section};
+use crate::save_row::{SaveRowProps, save_row};
+use crate::toggle_row::{ToggleRowProps, toggle_row};
 use ::config::theme::FontRole;
 use ::config::{ToastEvents, ToastsConfig};
 
@@ -26,6 +24,7 @@ let vpn = signal(events.vpn);
 let now_playing = signal(events.now_playing);
 let screenshot = signal(events.screenshot);
 let recording = signal(events.recording);
+let lock_fallback = signal(events.lock_fallback);
 
 let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let enabled = enabled.clone();
@@ -47,6 +46,7 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
         screenshot.clone(),
         recording.clone(),
     );
+    let lock_fallback = lock_fallback.clone();
     move || {
         let value = ToastsConfig {
             enabled: enabled.peek(),
@@ -64,6 +64,7 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
                 now_playing: now_playing.peek(),
                 screenshot: screenshot.peek(),
                 recording: recording.peek(),
+                lock_fallback: lock_fallback.peek(),
             },
         };
         persist(&path, "toasts", &value);
@@ -86,4 +87,5 @@ form_section title:(Reactive::of(|| telar::t!("settings.section.toasts")))
     toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_now_playing"))) value:$now_playing
     toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_screenshot"))) value:$screenshot
     toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_recording"))) value:$recording
+    toggle_row label:(Reactive::of(|| telar::t!("settings.field.event_lock_fallback"))) value:$lock_fallback
     save_row label:(Reactive::of(|| telar::t!("settings.save.toasts"))) on_press:save

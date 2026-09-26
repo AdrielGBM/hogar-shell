@@ -26,12 +26,33 @@ hogar-shell lock status     # locked? and can this machine lock at all?
 
 ## What is on it
 
-The password field, the avatar and the clock are drawn only on the monitor the pointer or the compositor
-focused; the rest stay a plain background. Optional readings — media, notifications, resources, weather — are
-switched by `[lock]` keys.
+**The layout's `lock` layer**, on every monitor. It holds areas, groups and placed module instances like any
+other layer, and it is edited the same way — by hand in `~/.config/hogar-shell/layouts/<name>.toml`, or with
+`hogar-shell layout add … lock-readings`. What ships is the clock, who is signed in, what is playing and how
+many notifications are waiting.
 
-**Every row on the lock screen is a reading, never a control.** A control on a lock screen reaches into another
-application, which is the one thing a lock exists to prevent.
+The **prompt** is the one area that is not the layout's to remove. Exactly one exists per output, it can be
+moved and styled but never hidden, and a layout that has no prompt — or one an expression could hide, or one
+another area is stacked over — is refused whole: the built-in **minimal lock** goes up instead, and a toast says
+so once you are back in. A half-corrected lock screen is worse than a plain one.
+
+**Every area on the lock screen is a reading, never a control.** A control reaches into another application,
+which is the one thing a lock exists to prevent. Three things enforce it, and each one is the last line for the
+one before it:
+
+- only a representation a module declares read-only may be placed there — validation refuses the rest on load,
+  and `hogar-shell layout add` refuses to place one;
+- every area but the prompt is *inert*: no pointer or key event reaches it, whatever it was built from;
+- an instance that got past both is drawn as a placeholder rather than built.
+
+**A reading draws less than it would on your desktop.** Each field a module exposes says whether anyone in the
+room may read it: a notification's summary and body never appear at any setting, and two keys decide the rest —
+`[lock] notification_detail` (`count`, the default, or `apps`) and `[lock] media_detail` (`title`, the default,
+or `state`). What is *placed* on the layer is the layout's decision; how much of it a stranger may read is this
+one.
+
+A reading that fails to build costs its own area and nothing else. The prompt is built first, from code that
+depends only on the lock state, the theme and the translations, so nothing else on the screen can take it away.
 
 The screen never authenticates. It collects a password and hands it over.
 
@@ -69,10 +90,13 @@ the bus without a reader, and `howdy` is a command that is not installed.
 ## Configuring
 
 `[lock]` — `pam_service`, `pam_library`, `max_tries`, `lockout_seconds`, `trigger_on_wake`,
-`lock_before_sleep`, `show_avatar`, `show_media`, `show_notifications`, `show_resources`, `show_weather`,
-`hide_notifs`, plus the biometric keys above.
+`lock_before_sleep`, `notification_detail`, `media_detail`, plus the biometric keys above.
 
 `pam_library` names a path on a distribution that puts libpam outside the loader's search path.
+
+**What the screen shows is not here.** That is the layout's `lock` layer, in
+`~/.config/hogar-shell/layouts/<name>.toml`, and these two keys only bound how much each reading there may
+reveal.
 
 ## What it needs
 

@@ -9,7 +9,7 @@ use telar::{
     compute_layout,
 };
 
-use config::ModuleOptions;
+use config::{LockConfig, ModuleOptions};
 
 use crate::card::{Card, Density};
 use crate::host::{Host, Representation, WidgetSize};
@@ -48,20 +48,37 @@ pub struct ActionDef {
 }
 
 /// Whether a reading may be shown where anyone can read it — the lock screen — or only to the signed-in user.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// A field's answer is not always fixed. Which applications the waiting notifications came from is private on a screen anyone can read, unless the user has said that much is fine; what is playing is public until they say it is not. So the third case takes the question to `[lock]`, which is where that decision is written down, rather than leaving each reading to read the config and reach its own conclusion about it.
+///
+/// **Deliberately not comparable.** Two `OnLock` fields asking different questions of `[lock]` would compare equal, since all an equality could look at is the address of the predicate — so the question to ask of a privacy is [`Privacy::allows_anyone`] and the way to name one is `matches!`.
+#[derive(Clone, Copy, Debug)]
 pub enum Privacy {
     Public,
     Private,
+    /// Public on a locked screen only while `[lock]` allows this much detail.
+    OnLock(fn(&LockConfig) -> bool),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl Privacy {
+    /// Whether a field this private may be drawn where anyone in the room can read it.
+    pub fn allows_anyone(self, lock: &LockConfig) -> bool {
+        match self {
+            Privacy::Public => true,
+            Privacy::Private => false,
+            Privacy::OnLock(allowed) => allowed(lock),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct FieldDef {
     pub name: &'static str,
     pub privacy: Privacy,
 }
 
 /// A typed reading the module exposes. Declared only: nothing produces one yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct SourceDef {
     pub id: &'static str,
     pub fields: &'static [FieldDef],

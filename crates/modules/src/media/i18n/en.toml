@@ -1,0 +1,5 @@
+[media]
+title = "Media"
+playing = "Playing"
+paused = "Paused"
+stopped = "Nothing playing"

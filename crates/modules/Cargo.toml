@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 chrono = { workspace = true }
 config = { workspace = true }
+layout = { workspace = true }
 platform-wayland = { workspace = true }
 serde = { workspace = true }
 services = { workspace = true }

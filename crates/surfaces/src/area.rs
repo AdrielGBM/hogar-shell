@@ -26,7 +26,7 @@ use layout::{
 };
 use services::wallpaper;
 use ui::descriptor::Built;
-use ui::host::{Footprint, Host, InstanceId, Representation, Size, WidgetSize};
+use ui::host::{Audience, Footprint, Host, InstanceId, Representation, Size, WidgetSize};
 use ui::layout::{align_items, fill, justify};
 
 /// What an area's contents are built against beyond the area itself: the [`AreaContext`] the window hands down, minus what only the host acts on.
@@ -39,6 +39,8 @@ pub struct Surround<'a> {
     pub bounds: telar::Rect,
     /// What the output's reserving areas take off each edge. A bar running [`Extent::Fill`] is as long as the edges beside it leave it, and those edges are on layers this window cannot see.
     pub reserved: Reserved,
+    /// Who is in front of this screen. Everything the shell draws while the session is unlocked is the signed-in user's; the lock layer is built for [`Audience::Anyone`], and what that changes is both what a reading may say — a private field draws empty — and what may be built at all: a representation that answers the pointer is drawn as a placeholder there, whatever the file said.
+    pub audience: Audience,
 }
 
 impl<'a> Surround<'a> {
@@ -49,6 +51,8 @@ impl<'a> Surround<'a> {
             output: context.output,
             bounds: context.bounds,
             reserved: context.reserved,
+            // A session layer is the signed-in user's by construction: the compositor draws it only while the screen is not locked.
+            audience: Audience::Owner,
         }
     }
 }
@@ -505,7 +509,7 @@ fn region(rect: Rect, surround: Surround) -> LayoutStyle {
 }
 
 /// Where `rect` lands, as a fraction of `bounds`, in the window's own coordinate space.
-pub(crate) fn within(rect: Rect, bounds: telar::Rect) -> telar::Rect {
+pub fn within(rect: Rect, bounds: telar::Rect) -> telar::Rect {
     telar::Rect::new(
         bounds.x + rect.x * bounds.width,
         bounds.y + rect.y * bounds.height,
@@ -515,7 +519,7 @@ pub(crate) fn within(rect: Rect, bounds: telar::Rect) -> telar::Rect {
 }
 
 /// An absolute box at exactly `rect`, which is how every area is placed: one window is the whole output, so an area positions itself in it rather than being flowed with its neighbours.
-pub(crate) fn at(rect: telar::Rect) -> LayoutStyle {
+pub fn at(rect: telar::Rect) -> LayoutStyle {
     pixels(rect)
 }
 
@@ -671,8 +675,22 @@ fn place(
         surround.theme.accent,
         surround.theme.text,
         surround.output.map(str::to_string),
-    );
+    )
+    .shown_to(surround.audience);
+    // The last of three lines on "readings only, never controls" (TA-8): validation refuses a representation that acts on the lock layer, `layout add` refuses to place one, and a file that was hand-edited past both is drawn as a placeholder rather than built. Placed here because this is the one point every lock instance goes through, whatever kind of area holds it.
+    if surround.audience == Audience::Anyone && !reads_only(instance) {
+        return ui::placeholder::neutral(surround.theme);
+    }
     ui::descriptor::place(&instance.module, &host, style)
+}
+
+/// Whether the module's own build of this representation registers nothing that answers the pointer.
+///
+/// A module the installed table does not have answers `false`, which is the safe way round: a screen anyone can touch draws a placeholder rather than whatever an unknown id turns out to build.
+fn reads_only(instance: &ResolvedInstance) -> bool {
+    ui::descriptor::find(&instance.module)
+        .and_then(|found| found.input(representation(instance.representation)))
+        .is_some_and(|input| input == ui::descriptor::Input::ReadOnly)
 }
 
 /// The representation a host is built for, from the one the layout named.
@@ -939,6 +957,7 @@ mod tests {
             output: None,
             bounds: telar::Rect::new(0.0, 0.0, PAGE.0, PAGE.1),
             reserved: Reserved::default(),
+            audience: Audience::Owner,
         }
     }
 

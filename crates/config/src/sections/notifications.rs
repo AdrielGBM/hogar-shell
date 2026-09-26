@@ -167,6 +167,8 @@ pub struct ToastEvents {
     pub now_playing: bool,
     pub screenshot: bool,
     pub recording: bool,
+    /// That the lock screen fell back to the built-in one because the layout could not be drawn, said once the session is unlocked and there is somebody to read it.
+    pub lock_fallback: bool,
 }
 
 impl Default for ToastEvents {
@@ -184,6 +186,7 @@ impl Default for ToastEvents {
             now_playing: false,
             screenshot: false,
             recording: true,
+            lock_fallback: true,
         }
     }
 }
@@ -225,6 +228,7 @@ impl ToastsConfig {
                 Event::NowPlaying => self.events.now_playing,
                 Event::Screenshot => self.events.screenshot,
                 Event::Recording => self.events.recording,
+                Event::LockFallback => self.events.lock_fallback,
             }
     }
 }

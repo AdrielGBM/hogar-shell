@@ -79,6 +79,7 @@ fn area_preview(
         output: None,
         bounds: Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1),
         reserved: Reserved::of(&resolved, &config),
+        audience: ui::host::Audience::Owner,
     };
     crate::area::build(&area, surround)
         .unwrap_or_else(|| Err(LayoutError::Engine("nothing draws that area yet".into())))
@@ -125,6 +126,7 @@ pub fn bar_strip() -> Option<Rect> {
             output: None,
             bounds: Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1),
             reserved: Reserved::of(&resolved, &config),
+            audience: ui::host::Audience::Owner,
         },
     ))
 }

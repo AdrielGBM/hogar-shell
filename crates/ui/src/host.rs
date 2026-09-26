@@ -9,7 +9,7 @@ use telar::{Color, LayoutError};
 
 use config::{Config, Edge, ModuleOptions, ResolvedShape, SurfaceEnv};
 
-use crate::descriptor::{FieldDef, Privacy};
+use crate::descriptor::FieldDef;
 
 /// Which placed instance of a module is being built.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -309,9 +309,9 @@ impl Host {
         self
     }
 
-    /// Whether this build may draw `field`: any field for the owner, only a public one for anyone else.
+    /// Whether this build may draw `field`: any field for the owner, and for anyone else only one the field itself says they may see.
     pub fn may_show(&self, field: &FieldDef) -> bool {
-        self.audience == Audience::Owner || field.privacy == Privacy::Public
+        self.audience == Audience::Owner || field.privacy.allows_anyone(&self.config.lock)
     }
 
     /// `value` when this build may draw `field`, else the field's typed empty value. The one path a reading takes to a private field, so what it draws for [`Audience::Anyone`] cannot hold one.
@@ -384,6 +384,7 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::descriptor::Privacy;
 
     fn chip(edge: Edge, thickness: u32) -> Host {
         let mut config: Config =
@@ -488,6 +489,35 @@ mod tests {
         assert_eq!(anyone.reveal(&secret, "hi".to_string()), "");
         assert!(!anyone.may_show(&secret));
         assert_eq!(anyone.reveal(&count, 3), 3);
+    }
+
+    /// A field whose privacy is a question about `[lock]` is answered from the config the build is under, so the same reading draws one thing for a user who asked for the detail and another for a user who did not.
+    #[test]
+    fn a_field_the_lock_config_decides_follows_that_config() {
+        let asked = FieldDef {
+            name: "apps",
+            privacy: Privacy::OnLock(|lock| {
+                lock.notification_detail == config::NotificationDetail::Apps
+            }),
+        };
+        let anyone = chip(Edge::Top, 32).shown_to(Audience::Anyone);
+        assert_eq!(
+            anyone.reveal(&asked, "Bank".to_string()),
+            "",
+            "the count alone is the default"
+        );
+
+        let mut told = anyone.clone();
+        let mut config = (**told.config()).clone();
+        config.lock.notification_detail = config::NotificationDetail::Apps;
+        told.config = Arc::new(config);
+        assert_eq!(told.reveal(&asked, "Bank".to_string()), "Bank");
+        assert_eq!(
+            told.shown_to(Audience::Owner)
+                .reveal(&asked, "Bank".to_string()),
+            "Bank",
+            "and the signed-in user sees it either way"
+        );
     }
 
     static COUNTS: InstanceStore<u32> = InstanceStore::new(|| 0);

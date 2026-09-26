@@ -363,15 +363,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             action("previous", "media previous"),
             action("stop", "media stop"),
         ],
-        sources: &[SourceDef {
-            id: "media",
-            fields: &[
-                public("title"),
-                public("artist"),
-                public("art"),
-                public("playing"),
-            ],
-        }],
+        sources: &[modules::media::SOURCE],
     },
     ModuleDescriptor {
         id: "memory",
@@ -1029,6 +1021,7 @@ mod tests {
                 output: None,
                 bounds: telar::Rect::new(0.0, 0.0, 1920.0, 1080.0),
                 reserved: surfaces::layer_window::Reserved::default(),
+                audience: Audience::Owner,
             };
             for area in [
                 desktop_grid(anchor, "clock"),
@@ -1205,9 +1198,9 @@ mod tests {
         }
     }
 
-    /// Notification text is the one reading that must never reach a screen anyone can read.
+    /// Notification text is the one reading that must never reach a screen anyone can read, whatever `[lock]` asks for; which applications are waiting is the user's to allow, and how many is public either way.
     #[test]
-    fn notification_text_is_private_and_its_count_and_apps_are_public() {
+    fn notification_text_is_private_at_every_setting_and_its_apps_are_the_user_s_to_allow() {
         let fields: Vec<FieldDef> = descriptor("notifications")
             .sources
             .iter()
@@ -1220,10 +1213,60 @@ mod tests {
                 .unwrap_or_else(|| panic!("no '{name}' field"))
                 .privacy
         };
-        assert_eq!(privacy("summary"), Privacy::Private);
-        assert_eq!(privacy("body"), Privacy::Private);
-        assert_eq!(privacy("count"), Privacy::Public);
-        assert_eq!(privacy("apps"), Privacy::Public);
+        for detail in [
+            config::NotificationDetail::Count,
+            config::NotificationDetail::Apps,
+        ] {
+            let lock = config::LockConfig {
+                notification_detail: detail,
+                ..config::LockConfig::default()
+            };
+            assert!(!privacy("summary").allows_anyone(&lock), "{detail:?}");
+            assert!(!privacy("body").allows_anyone(&lock), "{detail:?}");
+            assert!(privacy("count").allows_anyone(&lock), "{detail:?}");
+            assert_eq!(
+                privacy("apps").allows_anyone(&lock),
+                detail == config::NotificationDetail::Apps,
+                "{detail:?}"
+            );
+        }
+    }
+
+    /// What is playing is named on a locked screen by default, as it has been since before the lock was a layer, and reduces to playing-or-paused where the user asks for that.
+    #[test]
+    fn what_is_playing_is_named_only_under_the_media_detail_the_user_chose() {
+        let fields: Vec<FieldDef> = descriptor("media")
+            .sources
+            .iter()
+            .flat_map(|source| source.fields.iter().copied())
+            .collect();
+        let privacy = |name: &str| {
+            fields
+                .iter()
+                .find(|field| field.name == name)
+                .unwrap_or_else(|| panic!("no '{name}' field"))
+                .privacy
+        };
+        for (detail, named) in [
+            (config::MediaDetail::Title, true),
+            (config::MediaDetail::State, false),
+        ] {
+            let lock = config::LockConfig {
+                media_detail: detail,
+                ..config::LockConfig::default()
+            };
+            for field in ["title", "artist", "art"] {
+                assert_eq!(
+                    privacy(field).allows_anyone(&lock),
+                    named,
+                    "{field} under {detail:?}"
+                );
+            }
+            assert!(
+                privacy("playing").allows_anyone(&lock),
+                "a pause symbol names nothing, so it is public either way"
+            );
+        }
     }
 
     #[test]

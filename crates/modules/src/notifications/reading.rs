@@ -2,6 +2,7 @@
 
 use telar::{LayoutError, LayoutItem, ReactiveList, RwSignal, signal};
 
+use config::NotificationDetail;
 use config::theme::{FontRole, NordTheme};
 use services::notifications::{self, SharedSnapshot, Snapshot};
 use ui::card::{Card, Density};
@@ -14,9 +15,10 @@ pub const COUNT: FieldDef = FieldDef {
     name: "count",
     privacy: Privacy::Public,
 };
+/// Who a waiting notification came from is public on a locked screen only where `[lock] notification_detail` says so: an application name is often the message — a bank, a dating app, a clinic — so it is the user's call rather than the shell's.
 pub const APPS: FieldDef = FieldDef {
     name: "apps",
-    privacy: Privacy::Public,
+    privacy: Privacy::OnLock(|lock| lock.notification_detail == NotificationDetail::Apps),
 };
 pub const SUMMARY: FieldDef = FieldDef {
     name: "summary",
@@ -182,8 +184,15 @@ mod tests {
     }
 
     fn host(size: WidgetSize, audience: Audience) -> Host {
+        detailed(size, audience, NotificationDetail::default())
+    }
+
+    /// A host whose `[lock] notification_detail` is the one named, which is what decides whether the application names are drawn on a screen anyone can read.
+    fn detailed(size: WidgetSize, audience: Audience, detail: NotificationDetail) -> Host {
+        let mut config = config::Config::starter();
+        config.lock.notification_detail = detail;
         ui::preview::host_on(
-            Arc::new(config::Config::starter()),
+            Arc::new(config),
             "notifications",
             Representation::Widget(size),
             size.extent(),
@@ -193,12 +202,20 @@ mod tests {
 
     /// Every string the reading puts on screen, laid out in its footprint.
     fn drawn_text(size: WidgetSize, audience: Audience) -> Vec<String> {
+        drawn_under(size, audience, NotificationDetail::default())
+    }
+
+    fn drawn_under(
+        size: WidgetSize,
+        audience: Audience,
+        detail: NotificationDetail,
+    ) -> Vec<String> {
         telar::reset_layout_runtime();
         telar::set_locale("en");
         telar::set_theme(NordTheme::new());
         let scope = telar::owner_scope();
         let owner = scope.id();
-        let host = host(size, audience);
+        let host = detailed(size, audience, detail);
         let item = host
             .build(|host| reading(host, signal(Some(waiting()))))
             .expect("the reading builds");
@@ -230,20 +247,28 @@ mod tests {
         text
     }
 
+    /// What a notification says never reaches a screen anyone can read, under either setting of `[lock] notification_detail` — and under the default the applications do not either, since an application name is often the whole message.
     #[test]
-    fn a_reading_for_anyone_draws_who_is_waiting_and_never_what_they_said() {
-        for size in WidgetSize::ALL {
-            let shown = drawn_text(size, Audience::Anyone);
-            assert!(
-                !shown
-                    .iter()
-                    .any(|text| text.contains(SECRET_SUMMARY) || text.contains(SECRET_BODY)),
-                "{size:?} drew private text on a screen anyone can read: {shown:?}"
-            );
-            assert!(
-                shown.iter().any(|text| text.contains("Signal")),
-                "{size:?} lost the public app names: {shown:?}"
-            );
+    fn a_reading_for_anyone_never_draws_what_was_said_whatever_detail_is_asked_for() {
+        for detail in [NotificationDetail::Count, NotificationDetail::Apps] {
+            for size in WidgetSize::ALL {
+                let shown = drawn_under(size, Audience::Anyone, detail);
+                assert!(
+                    !shown
+                        .iter()
+                        .any(|text| text.contains(SECRET_SUMMARY) || text.contains(SECRET_BODY)),
+                    "{size:?} under {detail:?} drew private text on a screen anyone can read: {shown:?}"
+                );
+                assert_eq!(
+                    shown.iter().any(|text| text.contains("Signal")),
+                    detail == NotificationDetail::Apps,
+                    "{size:?} under {detail:?} drew the application names: {shown:?}"
+                );
+                assert!(
+                    shown.iter().any(|text| text.contains('3')),
+                    "{size:?} under {detail:?} lost the count, which is public either way: {shown:?}"
+                );
+            }
         }
     }
 

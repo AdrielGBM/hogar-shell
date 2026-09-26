@@ -27,13 +27,34 @@ pub struct LockConfig {
     pub trigger_on_wake: bool,
     /// Lock before the machine suspends, so the screen is already covered when it wakes.
     pub lock_before_sleep: bool,
-    pub show_avatar: bool,
-    pub show_media: bool,
-    pub show_weather: bool,
-    pub show_resources: bool,
-    pub show_notifications: bool,
-    /// Start with the notification dock collapsed — the lock screen is the one surface where a stranger can read what arrived without unlocking.
-    pub hide_notifs: bool,
+    /// How much of a waiting notification a locked screen may show. The summary and the body are never shown at any setting: a lock screen is read by whoever is in the room.
+    pub notification_detail: NotificationDetail,
+    /// How much of what is playing a locked screen may show.
+    pub media_detail: MediaDetail,
+}
+
+/// What a locked screen says about the notifications waiting behind it.
+///
+/// Which readings are on the lock screen is the layout's business; this is how much each of them may reveal. The summary and the body of a notification are private at every setting, because a preview is the one thing on that screen that leaks what the lock was there to protect.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationDetail {
+    /// How many are waiting, and nothing about which they are.
+    #[default]
+    Count,
+    /// The count and the applications they came from.
+    Apps,
+}
+
+/// What a locked screen says about what is playing.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaDetail {
+    /// The track, the artist and the cover — what the shell has shown on a locked screen since before it had a layout.
+    #[default]
+    Title,
+    /// Playing or paused, and nothing that names what.
+    State,
 }
 
 impl Default for LockConfig {
@@ -49,13 +70,9 @@ impl Default for LockConfig {
             max_howdy_tries: 3,
             trigger_on_wake: false,
             lock_before_sleep: true,
-            show_avatar: true,
-            show_media: true,
-            show_weather: false,
-            show_resources: false,
-            show_notifications: true,
-            // Bodies hidden by default: the count and the app are enough to know something arrived.
-            hide_notifs: true,
+            // The count alone by default: knowing that something arrived is worth the glance, and knowing from whom is not worth a stranger learning it.
+            notification_detail: NotificationDetail::Count,
+            media_detail: MediaDetail::Title,
         }
     }
 }

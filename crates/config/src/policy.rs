@@ -26,10 +26,12 @@ pub enum ToastEvent {
     NowPlaying,
     Screenshot,
     Recording,
+    /// The lock screen could not draw what the layout says and fell back to the built-in one.
+    LockFallback,
 }
 
 impl ToastEvent {
-    pub const ALL: [ToastEvent; 12] = [
+    pub const ALL: [ToastEvent; 13] = [
         ToastEvent::ConfigLoaded,
         ToastEvent::Charging,
         ToastEvent::GameMode,
@@ -42,6 +44,7 @@ impl ToastEvent {
         ToastEvent::NowPlaying,
         ToastEvent::Screenshot,
         ToastEvent::Recording,
+        ToastEvent::LockFallback,
     ];
 
     pub fn id(self) -> &'static str {
@@ -58,6 +61,7 @@ impl ToastEvent {
             ToastEvent::NowPlaying => "now_playing",
             ToastEvent::Screenshot => "screenshot",
             ToastEvent::Recording => "recording",
+            ToastEvent::LockFallback => "lock_fallback",
         }
     }
 

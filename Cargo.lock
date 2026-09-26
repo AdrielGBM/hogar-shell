@@ -965,6 +965,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "hogar-shell-config",
+ "hogar-shell-layout",
  "hogar-shell-services",
  "hogar-shell-surfaces",
  "hogar-shell-ui",

@@ -1,0 +1,5 @@
+[media]
+title = "Multimedia"
+playing = "Reproduciendo"
+paused = "En pausa"
+stopped = "Nada suena"

@@ -44,7 +44,8 @@ saying so rather than an empty one.
 
 ## Where it shows
 
-The [dashboard](../modules/dashboard.md)'s weather page, and — with `[lock] show_weather` — the lock screen.
+The [dashboard](../modules/dashboard.md)'s weather page, and the lock screen or the desktop wherever a layout
+places this module's widget.
 
 ## Related
 

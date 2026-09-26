@@ -27,7 +27,7 @@ type Wanted = (&'static str, bool, fn() -> Option<WatchToken>);
 /// Reconciles the installed watchers with the ones the config asks for. Called from the startup path and again on every reload, so turning an event on gets it without restarting the shell — and turning one off gives back the service behind it.
 pub fn watch_events(config: &Config) {
     let events = &config.toasts;
-    let wanted: [Wanted; 8] = [
+    let wanted: [Wanted; 9] = [
         ("charging", events.events.charging, charging),
         ("game_mode", events.events.game_mode, game_mode),
         ("dnd", events.events.dnd, dnd),
@@ -40,6 +40,7 @@ pub fn watch_events(config: &Config) {
         ("kb_layout", events.events.kb_layout, keyboard_layout),
         ("vpn", events.events.vpn, vpn),
         ("now_playing", events.events.now_playing, now_playing),
+        ("lock_fallback", events.events.lock_fallback, lock_fell_back),
     ];
     for (id, asked_for, install) in wanted {
         let asked_for = asked_for && events.enabled;
@@ -133,6 +134,26 @@ fn dnd() -> Option<WatchToken> {
             telar::t!("toast.dnd"),
             on_off(snapshot.dnd),
         );
+    })
+}
+
+/// That the lock screen could not draw what the layout says, said once the session is unlocked.
+///
+/// The one watcher here that does not compare against what it last saw: the reason is taken rather than read, so it is said exactly once however many state changes follow it. And it waits for the lock to end — a message about a layout that did not resolve is no use to somebody standing at a password prompt, and on the locked screen it would be one more thing the lock did not promise.
+fn lock_fell_back() -> Option<WatchToken> {
+    use services::lock::{self, LockState};
+    watch(lock::subscribe, move |state: LockState| {
+        if state.wanted || state.locked {
+            return;
+        }
+        if let Some(why) = lock::take_fallback() {
+            toaster::post(
+                Event::LockFallback,
+                "lock",
+                telar::t!("toast.lock_fallback"),
+                why,
+            );
+        }
     })
 }
 

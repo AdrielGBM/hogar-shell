@@ -34,7 +34,8 @@ card, the one place that takes that input.
 ## Configuring
 
 The picture is `[dashboard] avatar`, or the first of `~/.face`, `~/.face.icon` and the AccountsService icon
-when that is empty. `[lock] show_avatar` decides whether the lock screen shows it.
+when that is empty. Whether the lock screen shows it is a question of whether a layout places this module on
+the `lock` layer.
 
 ## What it needs
 

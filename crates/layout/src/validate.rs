@@ -52,6 +52,26 @@ pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
     report
 }
 
+/// Everything wrong with a layout's **lock layer alone**.
+///
+/// For the one caller that must not hear about a bar: the session opener decides between the layout's lock screen and the built-in minimal one, and a mistyped desktop widget is no reason to take away a lock screen the user configured. Every check it runs is one [`validate`] runs too — this is the same set narrowed to one layer, not a second opinion about it.
+pub fn validate_lock(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
+    let mut report = Report::default();
+    let file = format!("layouts/{}.toml", layout.id);
+    for rule in &layout.outputs {
+        let at = format!("outputs.{}", rule.matches.0);
+        let alone = Layers {
+            lock: rule.layers.lock.clone(),
+            ..Layers::default()
+        };
+        check_lock_layer(&rule.layers.lock, &at, &file, catalogue, &mut report);
+        check_modules(&alone, &at, &file, catalogue, &mut report);
+        check_actions(&alone, &at, &file, catalogue, &mut report);
+        check_gradients(&alone, &at, &file, &mut report);
+    }
+    report
+}
+
 /// Everything wrong with one output's resolved arrangement. The lock layer's prompt lives here rather than in [`validate`] because "exactly one per output" is only answerable once an output is known.
 pub fn validate_resolved(resolved: &Resolved, file: &str) -> Report {
     let mut report = Report::default();

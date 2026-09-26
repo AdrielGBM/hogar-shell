@@ -1,5 +1,33 @@
-use config::{MediaConfig, MediaScroll};
+use config::{MediaConfig, MediaDetail, MediaScroll};
 use services::mpris::{self, Playback, Player};
+use ui::descriptor::{FieldDef, Privacy, SourceDef};
+
+/// What is playing, as fields a reading may draw. The three that name it are public on a locked screen only while `[lock] media_detail` says so — a track title is a taste, a podcast title can be a good deal more than that — and whether anything is playing at all is public either way, because a pause symbol tells nobody anything.
+pub const TITLE: FieldDef = FieldDef {
+    name: "title",
+    privacy: Privacy::OnLock(named_on_lock),
+};
+pub const ARTIST: FieldDef = FieldDef {
+    name: "artist",
+    privacy: Privacy::OnLock(named_on_lock),
+};
+pub const ART: FieldDef = FieldDef {
+    name: "art",
+    privacy: Privacy::OnLock(named_on_lock),
+};
+pub const PLAYING: FieldDef = FieldDef {
+    name: "playing",
+    privacy: Privacy::Public,
+};
+
+pub const SOURCE: SourceDef = SourceDef {
+    id: "media",
+    fields: &[TITLE, ARTIST, ART, PLAYING],
+};
+
+fn named_on_lock(lock: &config::LockConfig) -> bool {
+    lock.media_detail == MediaDetail::Title
+}
 
 /// The glyph for a player's transport state. Stopped and absent look the same on purpose: a chip that shows a pause symbol for a player that isn't running would invite a click that does nothing.
 pub fn glyph(player: &Player) -> &'static str {

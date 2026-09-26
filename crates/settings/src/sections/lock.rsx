@@ -1,14 +1,18 @@
 [logic]
-use crate::form_section::{form_section, FormSectionProps};
-use crate::text_row::{text_row, TextRowProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
-use crate::save_row::{save_row, SaveRowProps};
-use crate::form::{parse_i32, persist, source};
+use crate::enum_row::{EnumRowProps, enum_row};
+use crate::form::{
+    MEDIA_DETAILS, NOTIFICATION_DETAILS, media_detail_str, notification_detail_str, parse_i32,
+    parse_media_detail, parse_notification_detail, persist, source,
+};
+use crate::form_section::{FormSectionProps, form_section};
+use crate::save_row::{SaveRowProps, save_row};
+use crate::text_row::{TextRowProps, text_row};
+use crate::toggle_row::{ToggleRowProps, toggle_row};
 use ::config::LockConfig;
 
 let (config, path) = source();
 let l = &config.lock;
-// The keys not on the form — the library path, the biometric budgets, the weather and resource rows — are carried through unchanged, so saving here never quietly drops a setting the panel has no row for.
+// The keys not on the form — the library path and the biometric budgets — are carried through unchanged, so saving here never quietly drops a setting the panel has no row for. What the lock screen *shows* is not here at all any more: that is the layout's `lock` layer, and these two rows are only how much each reading there may reveal.
 let base = l.clone();
 let pam_service = signal(l.pam_service.clone());
 let max_tries = signal(l.max_tries.to_string());
@@ -16,10 +20,8 @@ let lockout_seconds = signal(l.lockout_seconds.to_string());
 let lock_before_sleep = signal(l.lock_before_sleep);
 let fingerprint = signal(l.fingerprint);
 let howdy_command = signal(l.howdy_command.clone());
-let show_avatar = signal(l.show_avatar);
-let show_media = signal(l.show_media);
-let show_notifications = signal(l.show_notifications);
-let hide_notifs = signal(l.hide_notifs);
+let notification_detail = signal(notification_detail_str(l.notification_detail).to_string());
+let media_detail = signal(media_detail_str(l.media_detail).to_string());
 
 let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (pam_service, max_tries, lockout_seconds) = (
@@ -32,12 +34,8 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
         fingerprint.clone(),
         howdy_command.clone(),
     );
-    let (show_avatar, show_media, show_notifications, hide_notifs) = (
-        show_avatar.clone(),
-        show_media.clone(),
-        show_notifications.clone(),
-        hide_notifs.clone(),
-    );
+    let (notification_detail, media_detail) =
+        (notification_detail.clone(), media_detail.clone());
     move || {
         let value = LockConfig {
             pam_service: pam_service.peek().trim().to_string(),
@@ -47,10 +45,8 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
             lock_before_sleep: lock_before_sleep.peek(),
             fingerprint: fingerprint.peek(),
             howdy_command: howdy_command.peek().trim().to_string(),
-            show_avatar: show_avatar.peek(),
-            show_media: show_media.peek(),
-            show_notifications: show_notifications.peek(),
-            hide_notifs: hide_notifs.peek(),
+            notification_detail: parse_notification_detail(&notification_detail.peek()),
+            media_detail: parse_media_detail(&media_detail.peek()),
             ..base.clone()
         };
         persist(&path, "lock", &value);
@@ -65,8 +61,6 @@ form_section title:(Reactive::of(|| telar::t!("settings.section.lock")))
     toggle_row label:(Reactive::of(|| telar::t!("settings.field.lock_before_sleep"))) value:$lock_before_sleep
     toggle_row label:(Reactive::of(|| telar::t!("settings.field.fingerprint"))) value:$fingerprint
     text_row label:(Reactive::of(|| telar::t!("settings.field.howdy_command"))) value:$howdy_command placeholder:"howdy compare"
-    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_avatar"))) value:$show_avatar
-    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_media"))) value:$show_media
-    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_notifications"))) value:$show_notifications
-    toggle_row label:(Reactive::of(|| telar::t!("settings.field.hide_notifs"))) value:$hide_notifs
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.notification_detail"))) value:$notification_detail options:NOTIFICATION_DETAILS
+    enum_row label:(Reactive::of(|| telar::t!("settings.field.media_detail"))) value:$media_detail options:MEDIA_DETAILS
     save_row label:(Reactive::of(|| telar::t!("settings.save.lock"))) on_press:save
