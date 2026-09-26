@@ -1588,39 +1588,4 @@ center = ["clock"]
             "empty edge becomes an inactive strip under frame"
         );
     }
-
-    #[test]
-    fn only_a_vertical_bar_runs_into_the_strips_beside_it() {
-        let cornered: Config =
-            toml::from_str("[bars.top]\ncenter=[\"clock\"]\n[bars.left]\nstart=[\"workspaces\"]\n")
-                .unwrap();
-        assert_eq!(
-            bar_ends_abut(&cornered, Edge::Left),
-            (true, false),
-            "a left bar meets the top bar above it and the bare screen below"
-        );
-        assert_eq!(
-            bar_ends_abut(&cornered, Edge::Top),
-            (false, false),
-            "a horizontal bar spans its whole edge, so both its ends are the screen's"
-        );
-
-        let hiding: Config = toml::from_str(
-            "[bars.top]\ncenter=[\"clock\"]\npersistent=false\n[bars.left]\nstart=[\"workspaces\"]\n",
-        )
-        .unwrap();
-        assert_eq!(
-            bar_ends_abut(&hiding, Edge::Left),
-            (false, false),
-            "an auto-hidden top bar reserves nothing, so the left bar runs up to the screen's edge"
-        );
-
-        let framed: Config =
-            toml::from_str("[shape]\nframe=true\n[bars.left]\nstart=[\"workspaces\"]\n").unwrap();
-        assert_eq!(
-            bar_ends_abut(&framed, Edge::Right),
-            (true, true),
-            "under a frame every edge carries a strip, even an empty one"
-        );
-    }
 }

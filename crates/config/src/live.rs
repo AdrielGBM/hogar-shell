@@ -154,35 +154,3 @@ pub fn set_surface_env(env: SurfaceEnv) {
 pub fn surface_env() -> Option<SurfaceEnv> {
     util::state::context::<SurfaceEnv>()
 }
-
-/// The margin `edge`'s bar sits at while it is on screen, as `(top, right, bottom, left)`: its own outer gap on the edge it hangs off, plus — for a vertical bar — the insets that keep it clear of a perpendicular one.
-///
-/// Shared rather than derived per caller because an auto-hiding bar needs the same answer from the other side: the surface is created at its *hidden* margin and animates back to this one, and the two deriving the gap separately is how a revealed bar ends up a few pixels off the position it was configured for.
-pub fn bar_margin_for(config: &Config, edge: Edge) -> (i32, i32, i32, i32) {
-    let gap = config.edge_gap(edge) as i32;
-    let top_inset = perpendicular_inset(config, Edge::Top, gap);
-    let bottom_inset = perpendicular_inset(config, Edge::Bottom, gap);
-    match edge {
-        Edge::Top => (gap, gap, 0, gap),
-        Edge::Bottom => (0, gap, gap, gap),
-        Edge::Left => (top_inset, 0, bottom_inset, gap),
-        Edge::Right => (top_inset, gap, bottom_inset, 0),
-    }
-}
-
-/// Only a vertical bar's ends can run into another strip: a horizontal bar spans its whole edge and ends at the screen.
-pub fn bar_ends_abut(config: &Config, edge: Edge) -> (bool, bool) {
-    if edge.is_horizontal() {
-        return (false, false);
-    }
-    let abuts = |perp| config.edge_reserved(perp) > 0;
-    (abuts(Edge::Top), abuts(Edge::Bottom))
-}
-
-/// A vertical bar stops short of a horizontal one: by that bar's reserved strip when it has one, and by its own gap when it does not, so the two never overlap at the corner.
-fn perpendicular_inset(config: &Config, perp: Edge, own_gap: i32) -> i32 {
-    match config.edge_reserved(perp) {
-        0 => own_gap,
-        reserved => reserved as i32,
-    }
-}

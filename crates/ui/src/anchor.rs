@@ -29,23 +29,24 @@ fn output_size(env: &SurfaceEnv) -> (f32, f32) {
 ///
 /// A horizontal bar centres the surface on its chip, which is what a menu hanging under an icon should do. A vertical one lines the surface's top up with the chip's instead: `span` there is the surface's *height*, which is content-derived for a menu and therefore often unknown, and a centre that cannot be computed is worse than an edge that can.
 ///
-/// Two conversions stand between the chip and that margin, and leaving either out puts the surface off screen. The chip's rect is relative to the bar surface, which sits at its own gap off the screen edge. The margin is relative to the *usable* area, because this surface asks for no exclusive zone of its own and so is placed inside everyone else's — the perpendicular bars and, under `[shape] frame`, the ring. Clamping against the whole output instead is what pushed the popout on a bar's last chip past the far edge of the screen.
+/// One conversion stands between the chip and that margin, and leaving it out puts the surface off screen. The chip's rect is in the window's coordinates, which are the whole output's (TA-1); the margin is relative to the *usable* area, because this surface asks for no exclusive zone of its own and so is placed inside everyone else's — the perpendicular bars and, under `[shape] frame`, the ring. Clamping against the whole output instead is what pushed the popout on a bar's last chip past the far edge of the screen.
+///
+/// There used to be a second conversion, for a chip rect measured against the bar's own surface, which sat at its own gap off the screen edge. One window per layer took that surface away and with it the correction; the two terms happened to cancel wherever a bar's margin equalled what the edge beside it reserved, which is every arrangement with no gap (F-10.31).
 fn along(env: &SurfaceEnv, chip: Rect, span: Option<f32>) -> f32 {
     let config = &env.config;
     let gap = config.panel_gap(env.edge) as f32;
     let span = span.unwrap_or_default();
     let (width, height) = output_size(env);
-    let (bar_top, _, _, bar_left) = config::bar_margin_for(config, env.edge);
-    let (start, extent, lead, trail, off_screen_edge) = if env.edge.is_vertical() {
-        (chip.y, height, Edge::Top, Edge::Bottom, bar_top as f32)
+    let (start, extent, lead, trail) = if env.edge.is_vertical() {
+        (chip.y, height, Edge::Top, Edge::Bottom)
     } else {
         let centred = chip.x + chip.width / 2.0 - span / 2.0;
-        (centred, width, Edge::Left, Edge::Right, bar_left as f32)
+        (centred, width, Edge::Left, Edge::Right)
     };
     let leading = config.edge_reserved(lead) as f32;
     let usable = (extent - leading - config.edge_reserved(trail) as f32).max(0.0);
     let far = (usable - span - gap).max(gap);
-    (start + off_screen_edge - leading).clamp(gap, far)
+    (start - leading).clamp(gap, far)
 }
 
 /// The margin `(top, right, bottom, left)` for a surface hanging `off_bar` px off the bar and lined up with `chip` along it. `span` is the surface's own extent along the bar, when it is known — without it the surface can still be positioned, only not kept clear of the far end.
@@ -156,12 +157,20 @@ mod tests {
         assert_eq!(top, 0, "an upward surface is pinned from the bottom only");
     }
 
+    /// A chip's rect is in the window's coordinates, which are the whole output's, and the margin is measured against the usable area — so lining the two up is a subtraction of whatever the edge above reserved.
+    ///
+    /// The starter config has a 34 px top bar, and a left bar starts below it, so a chip 300 px down the screen is 266 px down the area a surface is placed in. The two used to cancel: the chip rect was measured against the bar's own surface, which the shell then offset by the same 34 (F-10.31).
     #[test]
     fn a_vertical_bar_puts_its_surface_beside_itself() {
         let env = env(Edge::Left);
+        let above = env.config.edge_reserved(Edge::Top) as i32;
         let (top, _, _, left) = chip_margin(&env, chip(0.0, 300.0), 12.0, None);
         assert_eq!(left, 12, "the surface clears the bar's width");
-        assert_eq!(top, 300, "and lines up with the chip it belongs to");
+        assert_eq!(
+            top,
+            300 - above,
+            "and lines up with the chip it belongs to, in the box it is placed in"
+        );
     }
 
     #[test]
