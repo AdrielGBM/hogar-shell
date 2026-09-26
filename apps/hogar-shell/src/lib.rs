@@ -1017,6 +1017,17 @@ mod i18n_tests {
 mod lock_layer_tests {
     use super::*;
 
+    /// Held for the length of every test below.
+    ///
+    /// The reason a lock fell back is one per process — it has to be, since the toast that says it is raised from wherever the lock ends — so two of these running at once would each take the other's. Observed rather than reasoned about: the pair failed together, one for a reason it had not recorded and one for a reason it had not expected.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn alone() -> std::sync::MutexGuard<'static, ()> {
+        ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// A store holding one layout whose lock layer is `lock`, installed as the one the shell owns.
     fn shell_locked_with(name: &str, lock: &str) -> Arc<Config> {
         ui::descriptor::install(crate::core::modules::MODULES);
@@ -1052,6 +1063,7 @@ mod lock_layer_tests {
     /// Each of these is a layout that parses and resolves: what is wrong with it is a rule about the lock layer, and the rules are load-bearing — a control on a screen anyone can touch, a gesture that runs a command from behind a password prompt, a prompt an expression could hide, a layer with no prompt at all. A half-corrected lock screen is worse than a plain one (TA-8), so none of them is patched up.
     #[test]
     fn a_lock_layer_that_breaks_a_rule_is_refused_and_says_why() {
+        let _alone = alone();
         let faults = [
             (
                 "no-prompt",
@@ -1103,6 +1115,7 @@ mod lock_layer_tests {
     /// A mistake somewhere else in the layout is not the lock layer's problem: a bar naming a module this build does not have costs the user that chip, not the lock screen they configured.
     #[test]
     fn a_broken_bar_does_not_cost_the_lock_screen() {
+        let _alone = alone();
         shell_locked_with(
             "broken-bar",
             &format!(
@@ -1119,6 +1132,7 @@ mod lock_layer_tests {
     /// And a layer that breaks none of them is drawn, or the check above would pass by refusing everything.
     #[test]
     fn a_lock_layer_that_breaks_no_rule_is_what_the_session_is_covered_with() {
+        let _alone = alone();
         let config = shell_locked_with("good", PROMPT);
         let _ = services::lock::take_fallback();
         let lock = lock_layer().expect("a prompt alone is a lock layer");
