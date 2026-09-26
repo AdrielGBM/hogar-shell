@@ -9,6 +9,7 @@
 //! - `config.toml`, read by `Config::load` — which writes the starter config in its place when it is missing.
 //! - `tokens.toml` beside it, read by `Config::load` through `TokenOverrides::load`. A missing or unreadable one is the same as none.
 //! - `monitors/<output>/config.toml`, read by `Config::for_output` for each screen the reconcile plans, and merged over `config.toml` for that screen.
+//! - `layouts/*.toml`, read by `layout::LayoutStore::load` — where everything the shell draws is written down. They are not config, and the reload path treats them apart: what a layout edit needs is the store read again, not the config. They are fingerprinted here all the same, because there is one watcher and a second one polling a second set of files would be two answers to "did anything change".
 //!
 //! Nothing else a load produces comes from a file: no section deserializes from one or defaults to one, and what the config names — the `[paths]` directories, the palette cache — is read by whatever uses it, after the load. A wallpaper-derived palette is not a config input at all; it reaches the shell as a reload somebody asked for, [`Reload::Always`].
 
@@ -56,6 +57,11 @@ impl Fingerprint {
                 files.push((file, held));
             }
         }
+        for file in layout_files(config_path) {
+            if let held @ Held::Bytes(_) = held(&file) {
+                files.push((file, held));
+            }
+        }
         Self(files)
     }
 
@@ -65,6 +71,23 @@ impl Fingerprint {
             .first()
             .is_some_and(|(_, held)| *held != Held::Missing)
     }
+}
+
+/// Every layout file beside `config_path`, sorted so two reads of an unchanged directory fingerprint alike.
+fn layout_files(config_path: &Path) -> Vec<PathBuf> {
+    let Some(dir) = config_path.parent().map(|dir| dir.join("layouts")) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|it| it.to_str()) == Some("toml"))
+        .collect();
+    files.sort();
+    files
 }
 
 fn held(path: &Path) -> Held {

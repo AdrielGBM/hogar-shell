@@ -12,5 +12,7 @@ pub use crate::resolve::{
     ActiveWorkspace, Paint, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedGroup,
     ResolvedInstance, ResolvedLayer, resolve,
 };
-pub use crate::store::{BUILT_IN, LayoutStore, SETTLE, StoreError, Transaction};
+pub use crate::store::{
+    BUILT_IN, LayoutStore, SETTLE, StoreError, Transaction, running, set_running,
+};
 pub use crate::validate::{Catalogue, check_unknown_keys, validate, validate_resolved};

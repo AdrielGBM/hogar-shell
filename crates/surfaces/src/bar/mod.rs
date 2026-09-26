@@ -1,7 +1,5 @@
-mod app;
 mod autohide;
 
-pub use app::BarApp;
 pub use autohide::{AutoHide, RevealMargins};
 
 use std::rc::Rc;
@@ -9,9 +7,11 @@ use std::sync::Arc;
 
 use telar::{
     AlignItems, Clip, ClippedItem, Color, Container, JustifyContent, LayoutError, LayoutItem,
-    LayoutStyle, RectStyle, SizeDimension, Slots, StyledContainer, track_layout,
+    LayoutStyle, RectStyle, Slots, StyledContainer, track_layout,
 };
 
+use crate::area::Surround;
+use crate::layer_window::Reserved;
 use config::theme::NordTheme;
 use config::{Config, Edge, ResolvedShape, Shape, Variant};
 use layout::{
@@ -25,28 +25,15 @@ use ui::module::{DragOpen, module_foreground, resting_fill};
 use ui::module_shell::{ModuleShellProps, module_shell};
 use ui::placeholder::placeholder;
 
-/// The bar the running config draws, for [`crate::preview`] — every chip the user put on it, in the zones and the shape they configured, against the module table the app installed.
-pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let env = ui::preview::bar_surface();
-    let theme = env.config.resolve_theme();
-    build_bar(
-        &env.config,
-        &app::bar_area(&env.config, env.edge),
-        env.output.as_deref(),
-        ui::descriptor::installed(),
-        theme,
-    )
-}
-
 /// Builds the content tree for `area`, branching on its resolved `mode` (bar/sections/chips); visual properties come from gap/spacing/radius, not mode.
 ///
-/// Everything that says where the bar's parts go comes off the area: the edge it hangs off, how thick it is, how far it runs and the zones it holds. `config` stays for what is behaviour rather than arrangement — `[popouts] enabled`, `[panels] drag_threshold`, `[theme] opacity` and `[shape] frame` — and for the global `[shape]` and `[modules.<id>]` defaults the area's and the instance's own overrides are laid over.
+/// Everything that says where the bar's parts go comes off the area and off what surrounds it on the output: the edge it hangs off, how thick it is, how far it runs and the zones it holds. `surround.config` stays for what is behaviour rather than arrangement — `[popouts] enabled`, `[panels] drag_threshold`, `[theme] opacity` and `[shape] frame` — and for the global `[shape]` and `[modules.<id>]` defaults the area's and the instance's own overrides are laid over.
+///
+/// The node places itself. One window is the whole output, so the bar is an absolute box at the strip it occupies rather than a child that fills its parent: without that the three zones would divide the screen instead of the strip.
 pub fn build_bar(
-    config: &Arc<Config>,
     area: &ResolvedArea,
-    output: Option<&str>,
+    surround: Surround,
     modules: &[ModuleDescriptor],
-    theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let &ResolvedAreaKind::Bar {
         edge,
@@ -63,21 +50,117 @@ pub fn build_bar(
             area.kind.name()
         )));
     };
+    let config = surround.config;
     let shape = bar_shape(config, shape);
+    let run = run_of(edge, surround.bounds, surround.reserved, shape.gap as f32);
     let zones = zones_of(&area.groups);
     let chrome = Chrome {
         config,
         edge,
         thickness,
         shape,
-        abut: ends_abut(config, edge, length, offset),
-        theme,
-        output,
+        abut: ends_abut(length, offset, run),
+        theme: surround.theme,
+        output: surround.output,
+        strip: strip_of(edge, thickness, length, offset, run, surround),
     };
     match shape.mode {
         Shape::Bar => build_whole_bar(&chrome, &zones, modules),
         Shape::Sections => build_units(&chrome, &zones, modules, Granularity::Section),
         Shape::Chips => build_units(&chrome, &zones, modules, Granularity::Chip),
+    }
+}
+
+/// Where `area` lands on the output `surround` describes. `None` for an area that is not a bar.
+///
+/// The one answer [`build_bar`] places itself by, exposed for whatever has to know where a bar ended up without building it — a sweep measuring what it painted, for one.
+pub fn strip_of_area(area: &ResolvedArea, surround: Surround) -> telar::Rect {
+    let ResolvedAreaKind::Bar {
+        edge,
+        thickness,
+        length,
+        offset,
+        shape,
+        ..
+    } = area.kind
+    else {
+        return surround.bounds;
+    };
+    let gap = bar_shape(surround.config, shape).gap as f32;
+    let run = run_of(edge, surround.bounds, surround.reserved, gap);
+    strip_of(edge, thickness, length, offset, run, surround)
+}
+
+/// The stretch of its edge a bar has to place itself along: where it starts and how long it is, in the window's own coordinates.
+///
+/// A horizontal bar owns its corners, so it runs the whole edge less its own gap at each end; a vertical one stops where the bar above or below it has already reserved, and falls back to its own gap where neither has. That is the corner rule the shell has always drawn by ([`config::Config::corner_owner`]), said once here instead of once per caller.
+fn run_of(edge: Edge, bounds: telar::Rect, reserved: Reserved, gap: f32) -> Run {
+    if edge.is_horizontal() {
+        return Run {
+            start: bounds.x + gap,
+            length: (bounds.width - 2.0 * gap).max(0.0),
+            abut: (false, false),
+        };
+    }
+    let clear = |taken: f32| if taken > 0.0 { taken } else { gap };
+    let (head, foot) = (clear(reserved.top), clear(reserved.bottom));
+    Run {
+        start: bounds.y + head,
+        length: (bounds.height - head - foot).max(0.0),
+        abut: (reserved.top > 0.0, reserved.bottom > 0.0),
+    }
+}
+
+/// The stretch of an edge a bar places itself along, and which of its ends run into something already there.
+#[derive(Clone, Copy)]
+struct Run {
+    start: f32,
+    length: f32,
+    abut: (bool, bool),
+}
+
+/// Which of the bar's two ends run into something, and so are owed a chip's worth of air rather than reaching a free end.
+///
+/// A bar that says where it starts and how far it runs has both ends where the layout put them, in the middle of its edge, with nothing there to keep clear of. [`Extent::Fill`] at offset zero is the one case where the ends are wherever the neighbouring edges left them, which is what [`run_of`] answered.
+fn ends_abut(length: Extent, offset: f32, run: Run) -> (bool, bool) {
+    if length != Extent::Fill || offset != 0.0 {
+        return (false, false);
+    }
+    run.abut
+}
+
+/// The strip the bar occupies on the output: `thickness` across its edge at the area's own gap from it, and `length` of the run at `offset` along it.
+fn strip_of(
+    edge: Edge,
+    thickness: f32,
+    length: Extent,
+    offset: f32,
+    run: Run,
+    surround: Surround,
+) -> telar::Rect {
+    let gap = surround.config.edge_gap(edge) as f32;
+    let bounds = surround.bounds;
+    let along = match length {
+        Extent::Fill => run.length,
+        Extent::Px(px) => px.min(run.length),
+        Extent::Fraction(part) => run.length * part.clamp(0.0, 1.0),
+    };
+    let at = run.start + offset.clamp(0.0, (run.length - along).max(0.0));
+    match edge {
+        Edge::Top => telar::Rect::new(at, bounds.y + gap, along, thickness),
+        Edge::Bottom => telar::Rect::new(
+            at,
+            bounds.y + bounds.height - gap - thickness,
+            along,
+            thickness,
+        ),
+        Edge::Left => telar::Rect::new(bounds.x + gap, at, thickness, along),
+        Edge::Right => telar::Rect::new(
+            bounds.x + bounds.width - gap - thickness,
+            at,
+            thickness,
+            along,
+        ),
     }
 }
 
@@ -92,16 +175,6 @@ fn bar_shape(config: &Config, shape: BarShape) -> ResolvedShape {
         px(shape.spacing),
         px(shape.radius),
     )
-}
-
-/// Which of the bar's two ends run into something, and so are owed a chip's worth of air rather than reaching a free end.
-///
-/// A bar that says where it starts and how far it runs has both ends where the layout put them, in the middle of its edge, with nothing there to keep clear of. [`Extent::Fill`] is the one case the area cannot answer alone: it means *the whole edge minus whatever the adjacent edges took*, so its ends land against those strips where they exist and at the screen where they do not, and only the other areas on the output know which. Until this builder is handed them, that half is still answered from the edges `config.toml` reserves — the last thing here that reads a bar's position out of the config.
-fn ends_abut(config: &Config, edge: Edge, length: Extent, offset: f32) -> (bool, bool) {
-    if length != Extent::Fill || offset != 0.0 {
-        return (false, false);
-    }
-    config::bar_ends_abut(config, edge)
 }
 
 /// A bar's three zones, each the instances placed in it.
@@ -142,6 +215,8 @@ struct Chrome<'a> {
     abut: (bool, bool),
     theme: NordTheme,
     output: Option<&'a str>,
+    /// Where on the output the bar sits, which is what it places itself at.
+    strip: telar::Rect,
 }
 
 impl Chrome<'_> {
@@ -184,22 +259,38 @@ enum Granularity {
     Chip,
 }
 
-/// What a bar paints its own background with: the token at `[bars] opacity`, or nothing at all while a frame is up, because the frame draws the ring covering exactly these strips and two fills stacking is a darker band along every edge they share.
-fn bar_fill(config: &Config, token: Color) -> Color {
+/// What the bar paints over the strip it occupies — and so, by [`painted_chrome`], what it claims for the window's input region.
+///
+/// Under `[shape] frame` the bars *are* the ring: each one fills its own strip flat, whatever its mode, because that is what a continuous band around the screen is made of now that no surface draws one. Otherwise only `bar` mode has a background of its own: in `sections` and `chips` the bar between two chips is a hole, and a press there belongs to the window underneath rather than to the shell.
+fn strip_fill(config: &Config, mode: Shape, token: Color) -> Color {
+    if config.shape.frame || matches!(mode, Shape::Bar) {
+        return token.with_alpha(config.opacity());
+    }
+    Color::TRANSPARENT
+}
+
+/// What a section's panel or a resting chip paints. Nothing while a frame is up: the bar has already filled its strip flat, and a second fill over those pixels is a darker band along every edge the two share.
+fn inner_fill(config: &Config, token: Color) -> Color {
     if config.shape.frame {
         return Color::TRANSPARENT;
     }
     token.with_alpha(config.opacity())
 }
 
-/// What the strip a bar occupies ends up painted with, whoever paints it — and so what the bar claims for the window's input region.
+/// Cuts the bar off at its own strip.
 ///
-/// Its own background in `bar` mode; under `[shape] frame` the ring, which draws exactly these strips and is the reason [`bar_fill`] leaves them alone. In `sections` and `chips` mode without a frame nothing paints the strip: the bar between two chips is a hole, and a press there belongs to the window underneath rather than to the shell.
-fn strip_fill(config: &Config, mode: Shape, token: Color) -> Color {
-    if config.shape.frame || matches!(mode, Shape::Bar) {
-        return token.with_alpha(config.opacity());
+/// A chip is routinely a shade wider than the strip its zone was given — a padded box is narrower than the bar and a square chip is sized from the bar itself — and while a bar had a surface of its own, the surface cut that overhang off for nothing. With one window per layer there is no surface to cut it: the overhang lands on the desktop, drawn but claimed by nothing, so a press on it reaches the application underneath. The clip is at the bar's root rather than at a zone for exactly that reason: what a zone cuts is one run running into another, and what this cuts is the bar running off its own edge.
+fn strip_clipped(chrome: StyledContainer) -> Box<dyn LayoutItem> {
+    Box::new(ClippedItem::new(Box::new(chrome), Clip::both()))
+}
+
+/// How far a bar's own background is rounded. A ring made of rounded pills is four floating bars rather than a frame, so under `[shape] frame` the strip is square. Its rounded *inner* corners went with the surface that drew them: a concave corner at the junction of two strips lies inside neither, so no area can paint it (F-10.23).
+fn bar_radius(config: &Config, shape: ResolvedShape) -> f32 {
+    if config.shape.frame {
+        0.0
+    } else {
+        shape.radius
     }
-    Color::TRANSPARENT
 }
 
 fn build_whole_bar(
@@ -213,10 +304,10 @@ fn build_whole_bar(
         shape,
         abut,
         theme,
+        strip,
         ..
     } = *chrome;
-    // With a frame up, the ring it draws already fills the strip this bar sits in. Painting again on top is what made two translucent fills stack and darken along the edges the two share.
-    let base = bar_fill(config, theme.base);
+    let base = strip_fill(config, Shape::Bar, theme.base);
     let spacing = shape.spacing;
     // The whole bar already pads every side by `padding`, so an end that meets another bar is only owed the rest of a chip's worth of air.
     let ends = end_air(abut, (spacing - shape.padding()).max(0.0));
@@ -239,18 +330,16 @@ fn build_whole_bar(
             items,
         )?);
     }
-    let radius = shape.radius;
+    let radius = bar_radius(config, shape);
     let style = axis(
-        LayoutStyle::new()
-            .width(SizeDimension::Percent(1.0))
-            .height(SizeDimension::Percent(1.0))
+        crate::area::at(strip)
             .align_items(AlignItems::CENTER)
             .padding_all(shape.padding()),
         edge,
     );
-    Ok(Box::new(painted_chrome(
+    Ok(strip_clipped(painted_chrome(
         StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
-        strip_fill(config, Shape::Bar, theme.base),
+        base,
     )))
 }
 
@@ -266,11 +355,12 @@ fn build_units(
         shape,
         abut,
         theme,
+        strip,
         ..
     } = *chrome;
     let spacing = shape.spacing;
     // Section: modules share a per-zone surface panel (wrapped in `unit`); Chip: each module is its own free-standing pill, no `unit`.
-    let surface = bar_fill(config, theme.surface);
+    let surface = inner_fill(config, theme.surface);
     let (rest, shell_radius) = match granularity {
         Granularity::Section => (Color::TRANSPARENT, shape.chip_radius()),
         Granularity::Chip => (surface, shape.chip_radius()),
@@ -300,16 +390,14 @@ fn build_units(
     }
     // No gap between the zones here: there are only ever three of them, so the only two joins it could space are the two the sides already hold open with a margin of their own (see [`zone`]). Both applying left twice the air at exactly the place a side is cut — a hole where the rest of the bar has one chip's worth.
     let style = axis(
-        LayoutStyle::new()
-            .width(SizeDimension::Percent(1.0))
-            .height(SizeDimension::Percent(1.0))
-            .align_items(AlignItems::STRETCH),
+        crate::area::at(strip).align_items(AlignItems::STRETCH),
         edge,
     );
-    // A styled box rather than a plain one only so it can claim: under a frame the ring fills this strip and the claim on it has to live somewhere. It paints nothing either way, so without a frame the air around the chips stays the window's.
-    Ok(Box::new(painted_chrome(
-        StyledContainer::new(style, |_r| RectStyle::default(), slots)?,
-        strip_fill(config, shape.mode, theme.base),
+    let base = strip_fill(config, shape.mode, theme.base);
+    let radius = bar_radius(config, shape);
+    Ok(strip_clipped(painted_chrome(
+        StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
+        base,
     )))
 }
 
@@ -696,20 +784,136 @@ mod tests {
     use telar::{AvailableSpace, compute_layout, reset_layout_runtime, set_theme};
     use ui::descriptor::{CardDef, Input, Representations};
 
-    /// The bar `config` draws on `edge`, through the adapter every caller that still holds an edge goes by, so a test can keep describing a bar in `config.toml` while the builder reads an area.
+    /// The bar `config` draws on `edge`, on a screen exactly the size of the page the test lays it out on.
+    ///
+    /// A bar places itself on its output now, so a test has to say how big that output is or the strip lands somewhere the page cannot show. `page` is the same pair the test hands `compute_layout`, which is what keeps the two from drifting.
+    ///
+    /// The tests describe a bar in `config.toml` and the builder reads an area, so [`area_of`] stands between them. It goes with `[bars]` itself in T-3.4, and these tests then say what they mean in the layout model's own words.
     fn built(
         config: &Config,
         edge: Edge,
         modules: &[ModuleDescriptor],
+        page: (f32, f32),
     ) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let config = Arc::new(config.clone());
         build_bar(
-            &config,
-            &app::bar_area(&config, edge),
-            None,
+            &area_of(&config, edge),
+            Surround {
+                config: &config,
+                theme: NordTheme::new(),
+                output: None,
+                bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
+                reserved: reserved_of(&config),
+            },
             modules,
-            NordTheme::new(),
         )
+    }
+
+    /// What `config`'s own bars take off each edge, which is what a bar reads to know where its neighbours left it room.
+    fn reserved_of(config: &Config) -> Reserved {
+        let on = |edge| config.edge_reserved(edge) as f32;
+        Reserved {
+            top: on(Edge::Top),
+            right: on(Edge::Right),
+            bottom: on(Edge::Bottom),
+            left: on(Edge::Left),
+        }
+    }
+
+    /// Where on `page` the bar `config` describes for `edge` actually lands, for a test measuring the air at its ends.
+    fn strip(config: &Config, edge: Edge, page: (f32, f32)) -> telar::Rect {
+        let config = Arc::new(config.clone());
+        let area = area_of(&config, edge);
+        let ResolvedAreaKind::Bar {
+            thickness,
+            length,
+            offset,
+            shape,
+            ..
+        } = area.kind
+        else {
+            unreachable!("the helper builds a bar")
+        };
+        let surround = Surround {
+            config: &config,
+            theme: NordTheme::new(),
+            output: None,
+            bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
+            reserved: reserved_of(&config),
+        };
+        let gap = bar_shape(&config, shape).gap as f32;
+        let run = run_of(edge, surround.bounds, surround.reserved, gap);
+        strip_of(edge, thickness, length, offset, run, surround)
+    }
+
+    /// The area one edge's `[bars.<edge>]` section describes, corner sugar routed into the start and end zones as [`Config::corner_modules_for`] answers it.
+    fn area_of(config: &Config, edge: Edge) -> ResolvedArea {
+        let bar = config.bars.get(edge);
+        let (lead, trail) = config.corner_modules_for(edge);
+        let mut start: Vec<config::ModuleEntry> = Vec::new();
+        start.extend(lead.map(config::ModuleEntry::bare));
+        start.extend(bar.start.iter().cloned());
+        let mut end: Vec<config::ModuleEntry> = bar.end.clone();
+        end.extend(trail.map(config::ModuleEntry::bare));
+        ResolvedArea {
+            id: layout::AreaId::new(format!("bar-{}", edge.as_str())),
+            kind: ResolvedAreaKind::Bar {
+                edge,
+                thickness: bar.size as f32,
+                length: Extent::Fill,
+                offset: 0.0,
+                shape: BarShape {
+                    mode: bar.shape.mode,
+                    gap: bar.shape.gap.map(|px| px as f32),
+                    spacing: bar.shape.spacing.map(|px| px as f32),
+                    radius: bar.shape.radius.map(|px| px as f32),
+                },
+                autohide: (!bar.persistent).then(|| layout::AutoHide {
+                    peek: config.bar_peek(edge) as f32,
+                    on_hover: bar.show_on_hover,
+                }),
+            },
+            reserve: config.bar_is_persistent(edge),
+            above_fullscreen: false,
+            within: layout::Within::Output,
+            style: layout::AreaStyle::default(),
+            visible: None,
+            groups: vec![
+                zone_group("start", Zone::Start, &start),
+                zone_group("center", Zone::Center, &bar.center),
+                zone_group("end", Zone::End, &end),
+            ],
+        }
+    }
+
+    fn zone_group(id: &str, zone: Zone, entries: &[config::ModuleEntry]) -> ResolvedGroup {
+        ResolvedGroup {
+            id: layout::GroupId::new(id),
+            kind: GroupKind::Zone { zone },
+            children: entries.iter().map(placed).collect(),
+        }
+    }
+
+    /// One `[bars.<edge>]` entry as a placed instance: its `variant` and `accent` become instance options, which is where a chip's own look is read from now that an entry is not what the builder sees.
+    fn placed(entry: &config::ModuleEntry) -> ResolvedInstance {
+        let mut options = toml::Table::new();
+        if let Some(variant) = entry
+            .variant
+            .and_then(|variant| toml::Value::try_from(variant).ok())
+        {
+            options.insert("variant".into(), variant);
+        }
+        if let Some(accent) = &entry.accent {
+            options.insert("accent".into(), toml::Value::String(accent.clone()));
+        }
+        ResolvedInstance {
+            id: layout::InstanceId::new(&entry.id),
+            module: entry.id.clone(),
+            representation: layout::Representation::Chip,
+            options,
+            bindings: std::collections::BTreeMap::new(),
+            actions: std::collections::BTreeMap::new(),
+        }
     }
 
     /// A chip on a 32px bar along `edge`, dressed exactly as [`Chrome::host`] dresses one.
@@ -860,7 +1064,7 @@ mod tests {
         let config: config::Config =
             toml::from_str("[bars.top]\nsize=34\ncenter=[\"wanted\"]\n").unwrap();
 
-        built(&config, Edge::Top, &registry).expect("the bar builds");
+        built(&config, Edge::Top, &registry, (600.0, 34.0)).expect("the bar builds");
 
         assert_eq!(
             BUILT.with(|built| built.borrow().clone()),
@@ -968,12 +1172,12 @@ mod tests {
                     edge.as_str()
                 ))
                 .unwrap();
-                let bar = built(&cfg, edge, &registry()).expect("the bar builds");
                 let (w, h) = if edge.is_horizontal() {
                     (600.0, 32.0)
                 } else {
                     (32.0, 600.0)
                 };
+                let bar = built(&cfg, edge, &registry(), (w, h)).expect("the bar builds");
                 let page =
                     Container::new(axis(LayoutStyle::new(), edge).width(w).height(h), vec![bar])
                         .unwrap();
@@ -1084,8 +1288,8 @@ mod tests {
                 "[shape]\nmode=\"{mode}\"\n[bars.top]\nsize=32\ncenter=[\"probe\"]\n"
             ))
             .unwrap();
-            let surface = telar::Paint::Solid(bar_fill(&cfg, NordTheme::new().surface));
-            let bar = built(&cfg, Edge::Top, &registry).expect("the bar builds");
+            let surface = telar::Paint::Solid(inner_fill(&cfg, NordTheme::new().surface));
+            let bar = built(&cfg, Edge::Top, &registry, (400.0, 32.0)).expect("the bar builds");
             let page = Container::new(
                 LayoutStyle::new().flex_row().width(400.0).height(32.0),
                 vec![bar],
@@ -1140,7 +1344,7 @@ mod tests {
             let cfg: Config = toml::from_str(&toml).unwrap();
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let bar = built(&cfg, Edge::Top, &registry());
+            let bar = built(&cfg, Edge::Top, &registry(), (1920.0, 32.0));
             assert!(bar.is_ok(), "mode {mode} builds a tree");
         }
     }
@@ -1160,7 +1364,7 @@ mod tests {
                  [bars.top]\nsize=32\nstart=[\"{start}\"]\ncenter=[\"centred\"]\nend=[\"dummy\"]\n"
             ))
             .unwrap();
-            let bar = built(&cfg, Edge::Top, &registry()).expect("the bar builds");
+            let bar = built(&cfg, Edge::Top, &registry(), (BAR, 32.0)).expect("the bar builds");
             compute_layout(
                 bar.layout_node(),
                 AvailableSpace::Definite(BAR),
@@ -1296,6 +1500,7 @@ mod tests {
         const ABOVE: &str = "[bars.top]\nsize=30\ncenter=[\"dummy\"]\n";
         const BELOW: &str = "[bars.bottom]\nsize=30\ncenter=[\"dummy\"]\n";
 
+        // The chip's rect and the strip the bar landed on, both in the screen's own coordinates: a vertical bar stops where the bars above and below it left it, so its own middle is no longer the screen's.
         let probe = |mode: &str, neighbours: &str, zones: &str| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
@@ -1303,22 +1508,31 @@ mod tests {
                 "[shape]\nmode=\"{mode}\"\nspacing=8\n{neighbours}[bars.left]\nsize=32\n{zones}"
             ))
             .unwrap();
-            let bar = built(&cfg, Edge::Left, &registry()).expect("the bar builds");
+            let bar = built(&cfg, Edge::Left, &registry(), (32.0, LENGTH)).expect("the bar builds");
+            let page = Container::new(
+                LayoutStyle::new().flex_column().width(32.0).height(LENGTH),
+                vec![bar],
+            )
+            .expect("a screen to stand the bar on");
             compute_layout(
-                bar.layout_node(),
+                page.layout_node(),
                 AvailableSpace::Definite(32.0),
                 AvailableSpace::Definite(LENGTH),
             )
             .expect("the bar lays out");
-            CENTRED
+            let chip = CENTRED
                 .with(|c| *c.borrow())
                 .expect("the probe published its rect")
-                .get()
+                .get();
+            (chip, strip(&cfg, Edge::Left, (32.0, LENGTH)))
         };
         let air = |mode: &str, neighbours: &str| {
-            let first = probe(mode, neighbours, "start=[\"centred\"]\n");
-            let last = probe(mode, neighbours, "end=[\"centred\"]\n");
-            (first.y, LENGTH - (last.y + last.height))
+            let (first, strip) = probe(mode, neighbours, "start=[\"centred\"]\n");
+            let (last, _) = probe(mode, neighbours, "end=[\"centred\"]\n");
+            (
+                first.y - strip.y,
+                (strip.y + strip.height) - (last.y + last.height),
+            )
         };
 
         let boxed_in = format!("{ABOVE}{BELOW}");
@@ -1342,10 +1556,10 @@ mod tests {
                  off the screen's edges"
             );
 
-            let centre = probe(mode, ABOVE, "start=[\"dummy\"]\ncenter=[\"centred\"]\n");
+            let (centre, strip) = probe(mode, ABOVE, "start=[\"dummy\"]\ncenter=[\"centred\"]\n");
             assert_eq!(
                 centre.y + centre.height / 2.0,
-                LENGTH / 2.0,
+                strip.y + strip.height / 2.0,
                 "{mode}: air owed at the top end only moved the centre off the middle of the bar"
             );
         }
@@ -1364,7 +1578,7 @@ mod tests {
                  [bars.top]\nsize=32\nstart=[\"wide\",\"{module}\"]\ncenter=[\"dummy\"]\n"
             ))
             .unwrap();
-            let bar = built(&cfg, Edge::Top, &registry()).expect("the bar builds");
+            let bar = built(&cfg, Edge::Top, &registry(), (600.0, 32.0)).expect("the bar builds");
             compute_layout(
                 bar.layout_node(),
                 AvailableSpace::Definite(600.0),
@@ -1422,7 +1636,7 @@ mod tests {
              [bars.left]\nsize=32\nstart=[\"overrunner\"]\ncenter=[\"dummy\"]\n",
         )
         .unwrap();
-        let bar = built(&cfg, Edge::Left, &registry).expect("the bar builds");
+        let bar = built(&cfg, Edge::Left, &registry, (32.0, BAR)).expect("the bar builds");
         let page = Container::new(
             LayoutStyle::new().flex_column().width(32.0).height(BAR),
             vec![bar],
@@ -1484,7 +1698,7 @@ mod tests {
                  center=[\"centred\"]\nend=[\"wide\",\"wide\",\"wide\",\"wide\"]\n"
             ))
             .unwrap();
-            let bar = built(&cfg, Edge::Top, &registry()).expect("the bar builds");
+            let bar = built(&cfg, Edge::Top, &registry(), (BAR, 32.0)).expect("the bar builds");
             let page = Container::new(
                 LayoutStyle::new().flex_row().width(BAR).height(32.0),
                 vec![bar],
@@ -1542,7 +1756,7 @@ mod tests {
              [bars.top]\nsize=32\nstart=[\"wide\",\"wide\",\"wide\",\"wide\"]\ncenter=[\"dummy\"]\n",
         )
         .unwrap();
-        let bar = built(&cfg, Edge::Top, &registry()).expect("the bar builds");
+        let bar = built(&cfg, Edge::Top, &registry(), (BAR, 32.0)).expect("the bar builds");
         let page = Container::new(
             LayoutStyle::new().flex_row().width(BAR).height(32.0),
             vec![bar],
@@ -1597,7 +1811,7 @@ mod tests {
             .unwrap();
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let bar = built(&cfg, Edge::Top, &registry());
+            let bar = built(&cfg, Edge::Top, &registry(), (1920.0, 34.0));
             assert!(bar.is_ok(), "corner routing builds in mode {mode}");
         }
     }
@@ -1610,7 +1824,7 @@ mod tests {
         .unwrap();
         reset_layout_runtime();
         set_theme(NordTheme::new());
-        assert!(built(&cfg, Edge::Top, &registry()).is_ok());
+        assert!(built(&cfg, Edge::Top, &registry(), (1920.0, 34.0)).is_ok());
     }
 
     #[test]
@@ -1623,7 +1837,7 @@ mod tests {
             reset_layout_runtime();
             set_theme(NordTheme::new());
             assert!(
-                built(&cfg, Edge::Left, &registry()).is_ok(),
+                built(&cfg, Edge::Left, &registry(), (44.0, 1080.0)).is_ok(),
                 "vertical {mode} builds"
             );
         }

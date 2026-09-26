@@ -128,6 +128,19 @@ impl LayoutStore {
         (store, report)
     }
 
+    /// Reads the directory again, keeping the layout that is active if it is still there.
+    ///
+    /// For an edit that arrived from outside the shell — a layout file written by hand, or by `layout import-config`. The history goes with the files it described: an undo stack over operations on a layout somebody else has since rewritten would restore bytes that no longer mean what they meant. Nothing is lost by that today, because nothing in the shell writes a layout yet; once the mutating verbs do (T-3.7), a reload has to reconcile against uncommitted work rather than drop it.
+    pub fn reload(&mut self) -> Report {
+        let active = self.active.clone();
+        let (fresh, report) = Self::load(self.dir.clone());
+        *self = fresh;
+        if self.layouts.contains_key(&active) {
+            self.active = active;
+        }
+        report
+    }
+
     /// A store holding only the built-in layout, for `--safe-layout` and for a startup whose own layout failed fatally.
     pub fn safe(dir: impl Into<PathBuf>) -> Self {
         let mut layouts = BTreeMap::new();
@@ -318,4 +331,19 @@ fn read_layout(path: &Path, stem: &str) -> Result<Layout, String> {
     let mut layout: Layout = toml::from_str(&text).map_err(|why| why.to_string())?;
     layout.id = LayoutId::new(stem);
     Ok(layout)
+}
+
+/// The layout the shell is running, published so anything outside the reconcile — a preview, a sweep, a settings page — draws what the user is looking at rather than the shipped default.
+static RUNNING: std::sync::Mutex<Option<std::sync::Arc<Layout>>> = std::sync::Mutex::new(None);
+
+/// Publishes the active layout. Called by the pass that plans the screen, so a reader always has the one the windows were last built from.
+pub fn set_running(layout: std::sync::Arc<Layout>) {
+    if let Ok(mut running) = RUNNING.lock() {
+        *running = Some(layout);
+    }
+}
+
+/// The active layout, or `None` before the shell has planned a screen — a unit test, a CLI invocation, a preview on a machine with no shell running.
+pub fn running() -> Option<std::sync::Arc<Layout>> {
+    RUNNING.lock().ok().and_then(|running| running.clone())
 }

@@ -44,8 +44,34 @@ pub(crate) const LAYOUT: Target = Target {
             help: "report what is wrong with a layout, without applying it",
             run: |args| check(args.first().copied()),
         },
+        Command {
+            name: "use",
+            args: "<name>",
+            help: "draw this layout from now on",
+            run: |args| use_layout(args.first().copied()),
+        },
     ],
 };
+
+/// Makes `name` the layout the shell draws, and asks whatever is running to pick it up.
+///
+/// Which layout is active is machine state, not a config key (TA-2): it is a choice about this installation rather than a description of one. So this writes `state.json` and reloads, and the running shell reads the name back on the next pass — one direction, no second copy of the answer in the shell's memory to fall out of step.
+fn use_layout(name: Option<&str>) -> Result<String, String> {
+    let name = name.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
+        format!(
+            "say which layout to use — `hogar-shell layout list` names them\n{}",
+            list()
+        )
+    })?;
+    let (store, _) = LayoutStore::load(layouts_dir());
+    let id = LayoutId::new(name);
+    if store.get(&id).is_none() {
+        return Err(format!("there is no layout called `{name}`\n{}", list()));
+    }
+    services::state::update(|state| state.layout = Some(name.to_string()));
+    config::request_reload();
+    Ok(format!("drawing `{name}`"))
+}
 
 /// The layouts on disk, with the built-in one marked.
 ///

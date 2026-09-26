@@ -31,9 +31,26 @@ pub struct Resolved {
     pub workspace: Option<ActiveWorkspace>,
     /// Keyed by layer, and a `BTreeMap` so iteration is bottom-up, which is the order the windows stack in.
     pub layers: BTreeMap<LayerKind, ResolvedLayer>,
+    /// What each edge takes off the screen, in `Edge::ALL` order, settled before any workspace rule ran. Read through [`Resolved::reserved`].
+    reserved: [f32; 4],
 }
 
 impl Resolved {
+    /// An arrangement assembled directly rather than resolved from a layout — a lock snapshot, a preview, a test. What each edge reserves is derived from `layers`, because there are no workspace rules here to keep out of it.
+    pub fn of(
+        output: impl Into<String>,
+        layers: impl IntoIterator<Item = (LayerKind, ResolvedLayer)>,
+    ) -> Self {
+        let layers: BTreeMap<LayerKind, ResolvedLayer> = layers.into_iter().collect();
+        let reserved = reserved_edges(&layers);
+        Self {
+            output: output.into(),
+            workspace: None,
+            layers,
+            reserved,
+        }
+    }
+
     pub fn layer(&self, kind: LayerKind) -> Option<&ResolvedLayer> {
         self.layers.get(&kind)
     }
@@ -51,12 +68,11 @@ impl Resolved {
             .flat_map(|group| group.children.iter())
     }
 
-    /// How much each edge of this output reserves, which is what the reservation strips commit. It is derived from output-level areas only, so switching workspaces can never re-tile windows.
+    /// How deep `edge`'s reserving areas are, which is what its reservation strip commits.
+    ///
+    /// Derived from the output-level arrangement alone — the one every workspace on that screen shares — so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7). It is the areas' own depth; the air a floating bar sits in is `[shape] gap`, which only the config can answer.
     pub fn reserved(&self, edge: Edge) -> f32 {
-        self.areas()
-            .filter(|(_, area)| area.reserve)
-            .filter_map(|(_, area)| area.kind.reserving_thickness(edge))
-            .sum()
+        self.reserved[Edge::ALL.iter().position(|it| *it == edge).unwrap_or(0)]
     }
 }
 
@@ -214,6 +230,9 @@ pub fn resolve(
     let chain = chain_of(layout, known, &mut report);
 
     let mut layers = Layers::default();
+    // The same arrangement with every workspace rule left out, which is the only thing an exclusive zone may be derived from: a rule that could re-tile the user's windows would do it on every workspace switch (F-6.7). Kept beside rather than recomputed, because it is the same merge and two of them could drift.
+    let mut without_rules = Layers::default();
+    let mut ruled = false;
     for level in &chain {
         let mut rules: Vec<&OutputRule> = level
             .outputs
@@ -224,12 +243,14 @@ pub fn resolve(
 
         for rule in &rules {
             merge_layers(&mut layers, &rule.layers);
+            merge_layers(&mut without_rules, &rule.layers);
         }
         for rule in &rules {
             for workspace_rule in &rule.workspaces {
                 match matches_workspace(&workspace_rule.matches, workspace) {
                     WorkspaceVerdict::Matches => {
                         merge_session_layers(&mut layers, &workspace_rule.layers);
+                        ruled = true;
                     }
                     WorkspaceVerdict::Differs => {}
                     WorkspaceVerdict::Unanswerable(why) => report.warn(Finding::new(
@@ -245,21 +266,55 @@ pub fn resolve(
         }
     }
 
+    let answered = answer_layers(&layers, layout, &mut report);
+    // A workspace rule may only add, remove and restyle; what each edge takes off the screen is settled before any of them runs. Answering the rule-free arrangement a second time is the cost of that, and only where a rule actually matched — its own findings are the ones already reported, so they go to a report nobody reads.
+    let reserved = match ruled {
+        false => reserved_edges(&answered),
+        true => reserved_edges(&answer_layers(
+            &without_rules,
+            layout,
+            &mut Report::default(),
+        )),
+    };
+
     let resolved = Resolved {
         output: output.to_string(),
         workspace: workspace.cloned(),
-        layers: LayerKind::ALL
+        reserved,
+        layers: answered
             .into_iter()
-            .map(|kind| {
-                (
-                    kind,
-                    answer_layer(layer_of(&layers, kind), kind, layout, &mut report),
-                )
-            })
             .filter(|(_, layer)| !layer.areas.is_empty())
             .collect(),
     };
     (resolved, report)
+}
+
+fn answer_layers(
+    layers: &Layers,
+    layout: &Layout,
+    report: &mut Report,
+) -> BTreeMap<LayerKind, ResolvedLayer> {
+    LayerKind::ALL
+        .into_iter()
+        .map(|kind| {
+            (
+                kind,
+                answer_layer(layer_of(layers, kind), kind, layout, report),
+            )
+        })
+        .collect()
+}
+
+/// What each edge of the output is taken by, in `Edge::ALL` order.
+fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
+    Edge::ALL.map(|edge| {
+        layers
+            .values()
+            .flat_map(|layer| layer.areas.iter())
+            .filter(|area| area.reserve)
+            .filter_map(|area| area.kind.reserving_thickness(edge))
+            .sum()
+    })
 }
 
 fn layer_of(layers: &Layers, kind: LayerKind) -> &Layer {
@@ -498,9 +553,10 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
             source,
             fit,
             transition,
-        } => need(source.is_some(), "source").then(|| ResolvedAreaKind::WallpaperRegion {
+        } => Some(ResolvedAreaKind::WallpaperRegion {
             rect: rect.unwrap_or_default(),
-            source: source.clone().expect("checked"),
+            // A region with no source is not unfinished: it is what one says when it means "whatever `[background]` is set to", so changing the desktop picture stays a `[background]` edit and a `hogar-shell wallpaper set` rather than a layout edit.
+            source: source.clone().unwrap_or_default(),
             fit: fit.unwrap_or_default(),
             transition: transition.unwrap_or_default(),
         }),

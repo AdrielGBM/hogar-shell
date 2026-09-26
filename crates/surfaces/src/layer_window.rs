@@ -41,6 +41,8 @@ pub struct LayerPlan<'a> {
     /// The global config merged with this monitor's override, which is what the window's theme and every module's behaviour resolve against.
     pub config: &'a Arc<Config>,
     pub resolved: &'a Resolved,
+    /// What this output's reserving areas take off each edge. Planned once for the whole output, because the strips that commit it are planned from the same number and two derivations of it would be two answers to what a window may have.
+    pub reserved: Reserved,
     /// This monitor's logical size. Every window on it is the whole output, so it is also every window's size, and it is what turns a fractional rect into pixels.
     pub size: (f32, f32),
 }
@@ -57,12 +59,31 @@ pub struct Reserved {
 }
 
 impl Reserved {
-    pub fn of(resolved: &Resolved) -> Self {
+    /// What `resolved` takes off each edge of the output it describes.
+    ///
+    /// The config is here for the one part of the answer the model cannot give: a bar floats at `[shape] gap` from its edge, and a bar that floats reserves that air too, or a window would tile under it. The gap is a `[shape]` fallback as often as it is written on the area, so it is resolved where the config is rather than baked into a layout that would then stop following it.
+    pub fn of(resolved: &Resolved, config: &Config) -> Self {
+        let on = |edge: Edge| {
+            let depth = resolved.reserved(edge);
+            match depth > 0.0 {
+                true => depth + config.edge_gap(edge) as f32,
+                false => 0.0,
+            }
+        };
         Self {
-            top: resolved.reserved(Edge::Top),
-            right: resolved.reserved(Edge::Right),
-            bottom: resolved.reserved(Edge::Bottom),
-            left: resolved.reserved(Edge::Left),
+            top: on(Edge::Top),
+            right: on(Edge::Right),
+            bottom: on(Edge::Bottom),
+            left: on(Edge::Left),
+        }
+    }
+
+    pub fn on(&self, edge: Edge) -> f32 {
+        match edge {
+            Edge::Top => self.top,
+            Edge::Right => self.right,
+            Edge::Bottom => self.bottom,
+            Edge::Left => self.left,
         }
     }
 
@@ -224,7 +245,7 @@ impl LayerWindows {
         let demands = Rc::new(Demands::default());
         let screen = Rc::new(Cell::new(Screen {
             size: plan.size,
-            reserved: Reserved::of(plan.resolved),
+            reserved: plan.reserved,
         }));
         let surface = {
             let kind = key.layer;
@@ -291,7 +312,7 @@ impl Window {
         self.config.set(Arc::clone(plan.config));
         self.screen.set(Screen {
             size: plan.size,
-            reserved: Reserved::of(plan.resolved),
+            reserved: plan.reserved,
         });
         if content == Content::Rebuild {
             self.presence.rebuild();
@@ -808,16 +829,13 @@ mod tests {
             output: Some(SCREEN),
             config,
             resolved,
+            reserved: Reserved::of(resolved, config),
             size: (1920.0, 1080.0),
         }
     }
 
     fn resolved(layers: &[(LayerKind, ResolvedLayer)]) -> Resolved {
-        Resolved {
-            output: SCREEN.to_string(),
-            workspace: None,
-            layers: layers.iter().cloned().collect(),
-        }
+        Resolved::of(SCREEN, layers.iter().cloned())
     }
 
     fn layer(areas: Vec<ResolvedArea>) -> ResolvedLayer {
@@ -1060,10 +1078,10 @@ mod tests {
         let mut windows = host();
         windows.reconcile(&[plan(&config, &resolved)], Content::Rebuild);
 
-        let second = Resolved {
-            output: "HDMI-A-1".to_string(),
-            ..only_bars()
-        };
+        let second = Resolved::of(
+            "HDMI-A-1",
+            [(LayerKind::Top, layer(vec![bar("bar-top", &["clock"])]))],
+        );
         let done = windows.reconcile(
             &[
                 plan(&config, &resolved),
@@ -1071,6 +1089,7 @@ mod tests {
                     output: Some("HDMI-A-1"),
                     config: &config,
                     resolved: &second,
+                    reserved: Reserved::of(&second, &config),
                     size: (2560.0, 1440.0),
                 },
             ],
@@ -1184,7 +1203,7 @@ mod tests {
     /// This is the regression the field exists to prevent: a wallpaper belongs under the bar and measures against the whole output, while a clock at the bottom right means the bottom right of what the bar left. Measured against the output it would sit underneath one.
     #[test]
     fn the_host_insets_the_usable_box_by_what_the_reserving_areas_took() {
-        let reserved = Reserved::of(&only_bars());
+        let reserved = Reserved::of(&only_bars(), &config());
         assert_eq!(reserved.top, 34.0, "the top bar reserves its thickness");
         assert_eq!(
             (reserved.left, reserved.right, reserved.bottom),
@@ -1216,7 +1235,7 @@ mod tests {
             (LayerKind::Desktop, layer(vec![dock])),
         ]);
 
-        let reserved = Reserved::of(&both);
+        let reserved = Reserved::of(&both, &config());
         assert_eq!(reserved.top, 34.0);
         assert_eq!(
             reserved.left, 60.0,

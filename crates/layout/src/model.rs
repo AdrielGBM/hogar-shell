@@ -495,6 +495,9 @@ impl Rect {
     }
 }
 
+/// The output a layout is resolved against when no compositor named one — a session with one nameless screen, and every check that runs without a compositor. A `*` rule matches it and a rule naming a connector does not, which is the honest answer when there is no connector to name.
+pub const NOMINAL_OUTPUT: &str = "";
+
 /// One of the nine places a stack or a free area can be pinned to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -509,6 +512,21 @@ pub enum Anchor {
     Bottom,
     #[default]
     BottomRight,
+}
+
+impl Anchor {
+    /// All nine, reading order, which is what a sweep over every anchor walks.
+    pub const ALL: [Anchor; 9] = [
+        Anchor::TopLeft,
+        Anchor::Top,
+        Anchor::TopRight,
+        Anchor::Left,
+        Anchor::Center,
+        Anchor::Right,
+        Anchor::BottomLeft,
+        Anchor::Bottom,
+        Anchor::BottomRight,
+    ];
 }
 
 /// Which outputs a stack appears on.

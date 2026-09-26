@@ -16,6 +16,10 @@ pub fn layout() -> Layout {
         outputs: vec![OutputRule {
             matches: OutputMatch("*".into()),
             layers: Layers {
+                background: Layer {
+                    areas: vec![wallpaper()],
+                    remove: Vec::new(),
+                },
                 top: Layer {
                     areas: vec![top_bar()],
                     remove: Vec::new(),
@@ -28,6 +32,22 @@ pub fn layout() -> Layout {
             },
             workspaces: Vec::new(),
         }],
+    }
+}
+
+/// The desktop's picture: the whole output, showing whatever `[background]` is set to.
+///
+/// `source` is deliberately empty, which is what a region says when it means "the configured wallpaper" rather than one file — so changing the picture stays a `[background]` edit and a `hogar-shell wallpaper set`, not a layout edit.
+fn wallpaper() -> Area {
+    Area {
+        id: AreaId::new("background"),
+        kind: Some(AreaKind::WallpaperRegion {
+            rect: None,
+            source: None,
+            fit: None,
+            transition: None,
+        }),
+        ..Area::default()
     }
 }
 

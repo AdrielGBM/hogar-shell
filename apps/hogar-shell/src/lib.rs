@@ -18,7 +18,9 @@ use config::{Config, LoadError};
 use platform_wayland::LayerShellPlatform;
 use telar::{App, AppPathsProvider, run_multi_with_platform};
 
-use surfaces::reconcile::{Content, Surfaces};
+use layout::{ActiveWorkspace, LayoutStore};
+use surfaces::layer_window::Content;
+use surfaces::reconcile::Shell;
 
 /// How far into the user's machine a mode of the binary reaches. Until a mode opens its reach, every file resolves under a scratch root and every bus, daemon and compositor probe answers as if absent, which is what a test and a preview get.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,31 +171,58 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
     // The one column of cards — notification popups, toasts, the OSD. Long-lived: set up once, it persists across reloads, and it holds no surface at all until one of the three has something to say. The toast watchers are installed by `apply_config`, which has already run, so an event switched on later gets its watcher on the next reload.
     modules::stack::host();
 
-    // One pass brings the surfaces in line with a config — at startup, at every reload that applies one, and when the screens change — so there is one description of what should be on screen rather than an opening path and a reloading path that can disagree. It reports what it did itself, through tracing rather than `println!`, because this runs on the driver thread where a direct write to a pipe nobody is draining blocks forever. See `init_tracing`.
-    let surfaces = Rc::new(RefCell::new(Surfaces::default()));
-    surfaces.borrow_mut().reconcile(
-        &config_path,
-        &config,
-        &platform_wayland::outputs(),
-        Content::Rebuild,
-    );
+    // Where everything the shell draws is written down. Owned here, because the layer windows read it on every pass and the `layout` IPC target writes it; a broken layout file is reported and skipped, and the built-in one is always there to fall back to.
+    let (mut store, mut layouts) = LayoutStore::load(layouts_dir());
+    select_active(&mut store, &mut layouts);
+    let store = Rc::new(RefCell::new(store));
+    report_layout_problems(&layouts);
+
+    // One pass brings the screen in line with a layout — at startup, at every reload that applies one, and when the screens change — so there is one description of what should be on screen rather than an opening path and a reloading path that can disagree. It reports what it did itself, through tracing rather than `println!`, because this runs on the driver thread where a direct write to a pipe nobody is draining blocks forever. See `init_tracing`.
+    let shell = Rc::new(RefCell::new(Shell::new()));
+    let apply = {
+        let shell = Rc::clone(&shell);
+        let store = Rc::clone(&store);
+        let config_path = config_path.clone();
+        move |config: &Arc<Config>, content: Content| {
+            let store = store.borrow();
+            let (desktops, report) = surfaces::reconcile::plan(
+                &config_path,
+                config,
+                store.active(),
+                store.all(),
+                &platform_wayland::outputs(),
+                &active_workspace,
+            );
+            report_layout_problems(&report);
+            shell.borrow_mut().reconcile(&desktops, content);
+        }
+    };
+
+    // A layout edit reaches the shell the same way a config edit does — the watcher fingerprints the layout files too — so the store is read again before the pass that draws from it, and the active name with it. Reading the name on every pass rather than holding it is what lets `layout use` be a write to machine state and nothing else.
+    let refresh = {
+        let store = Rc::clone(&store);
+        move || {
+            let mut store = store.borrow_mut();
+            let mut report = store.reload();
+            select_active(&mut store, &mut report);
+            report_layout_problems(&report);
+        }
+    };
+    apply(&config, Content::Rebuild);
+
+    let apply = Rc::new(apply);
 
     // The config having changed, whoever noticed: the file watcher, `hogar-shell shell reload`, a keybind. The toast belongs here rather than in the surface pass, which also runs at startup — a toast saying the config was reloaded is only true of a reload, and only of one that applied something.
     let on_config_change: Rc<dyn Fn(Reload)> = {
         let reloader = Rc::clone(&reloader);
-        let surfaces = Rc::clone(&surfaces);
-        let config_path = config_path.clone();
+        let apply = Rc::clone(&apply);
         Rc::new(move |reload| {
             let Some((config, seen)) = reloader.borrow_mut().reload(reload) else {
                 return;
             };
             apply_config(&config);
-            surfaces.borrow_mut().reconcile(
-                &config_path,
-                &config,
-                &platform_wayland::outputs(),
-                Content::Rebuild,
-            );
+            refresh();
+            apply(&config, Content::Rebuild);
             // What the user opened and the column of cards are not the surface pass's to rebuild, so they take the new config here, in the same pass.
             surfaces::shell::rebuild_all(&seen, reload);
             modules::stack::reconcile_config();
@@ -216,16 +245,65 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
         tracing::debug!("subscribing at startup: {} — {}", eager.name, eager.reason);
         (eager.subscribe)();
     }
-    // A monitor arriving or leaving changes which surfaces exist and nothing about what they draw, so the screens that were already there keep the trees they have.
+    // A monitor arriving or leaving changes which windows exist and nothing about what they draw, so the screens that were already there keep the trees they have.
     platform_wayland::on_outputs_changed(move || {
         let config = reloader.borrow().live();
-        surfaces.borrow_mut().reconcile(
-            &config_path,
-            &config,
-            &platform_wayland::outputs(),
-            Content::Keep,
-        );
+        apply(&config, Content::Keep);
     });
+}
+
+/// Where the user's layouts live. One directory, one file per layout, beside `config.toml`.
+fn layouts_dir() -> PathBuf {
+    util::paths::config_dir().join("layouts")
+}
+
+/// What the compositor says is on `output` right now, as much of it as a workspace rule can match on.
+///
+/// The name is what `ext-workspace-v1` gives portably; `id:` and `special:` are Hyprland's alone and come through its own socket, so a rule using one on another compositor is reported as inactive rather than quietly never firing (DEC-16).
+fn active_workspace(output: Option<&str>) -> Option<ActiveWorkspace> {
+    let on_this_screen = |workspace: &platform_wayland::Workspace| {
+        workspace.active
+            && output.is_none_or(|name| workspace.outputs.iter().any(|out| out == name))
+    };
+    let named = platform_wayland::current_workspaces()
+        .into_iter()
+        .find(on_this_screen)?;
+    let hyprland = services::hyprland::current_workspaces().and_then(|snapshot| {
+        snapshot
+            .workspaces
+            .into_iter()
+            .find(|workspace| workspace.name == named.name)
+    });
+    Some(ActiveWorkspace {
+        name: named.name,
+        id: hyprland.as_ref().map(|workspace| workspace.id as i64),
+        special: hyprland.as_ref().map(|workspace| workspace.is_special()),
+    })
+}
+
+/// Makes the store draw the layout this installation chose, or say why it cannot.
+///
+/// The name lives in `state.json` because it is a decision about this machine rather than a description of one (TA-2), and `layout use` is the only thing that writes it. A name nothing answers to is reported and the built-in layout stands in — the same shape as every other unknown id in this shell: say what was asked for, draw something anyway.
+fn select_active(store: &mut LayoutStore, report: &mut util::report::Report) {
+    let Some(name) = services::state::get().layout else {
+        return;
+    };
+    let id = layout::LayoutId::new(&name);
+    if let Err(e) = store.use_layout(&id) {
+        report.error(util::report::Finding::new(
+            layouts_dir().join(format!("{name}.toml")),
+            "layout",
+            format!("{e}; drawing the built-in layout instead"),
+        ));
+    }
+}
+
+/// Says what a layout could not answer, in the one live notice the config's own problems already use — a layout that does not resolve is the same kind of news as a config that does not parse, and a user reading one place should see both.
+fn report_layout_problems(report: &util::report::Report) {
+    if report.is_clean() {
+        return;
+    }
+    tracing::warn!("the layout was not fully applied:\n{}", report.render());
 }
 
 /// Where the shell starts from: the config it runs, and what the reload path measures against it.

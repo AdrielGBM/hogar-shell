@@ -17,6 +17,7 @@ use telar::{
     SizeDimension, StyledContainer, TemplateTrack, box_item, motion::Animated, signal,
 };
 
+use crate::layer_window::{AreaContext, Areas, Reserved};
 use config::theme::NordTheme;
 use config::{Align, Config, Edge};
 use layout::{
@@ -28,17 +29,50 @@ use ui::descriptor::Built;
 use ui::host::{Footprint, Host, InstanceId, Representation, Size, WidgetSize};
 use ui::layout::{align_items, fill, justify};
 
-/// What an area's contents are built against beyond the area itself.
+/// What an area's contents are built against beyond the area itself: the [`AreaContext`] the window hands down, minus what only the host acts on.
 #[derive(Clone, Copy)]
 pub struct Surround<'a> {
     pub config: &'a Arc<Config>,
     pub theme: NordTheme,
     pub output: Option<&'a str>,
+    /// The box this area's geometry is measured in, in the window's coordinate space, with [`layout::Within`] already applied — so a fractional [`Rect`] is a fraction of this and nothing here reads `area.within`.
+    pub bounds: telar::Rect,
+    /// What the output's reserving areas take off each edge. A bar running [`Extent::Fill`] is as long as the edges beside it leave it, and those edges are on layers this window cannot see.
+    pub reserved: Reserved,
+}
+
+impl<'a> Surround<'a> {
+    pub fn of(context: &'a AreaContext<'a>) -> Self {
+        Self {
+            config: context.config,
+            theme: context.theme,
+            output: context.output,
+            bounds: context.bounds,
+            reserved: context.reserved,
+        }
+    }
+}
+
+/// Every area of a session layer, built the way the shell draws them.
+pub struct ShellAreas;
+
+impl Areas for ShellAreas {
+    fn build(&self, context: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        match build(context.area, Surround::of(context)) {
+            Some(built) => built,
+            None => Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?)),
+        }
+    }
 }
 
 /// The node `area` draws, or `None` for a kind no builder answers for yet, so a layer draws the areas it can rather than failing whole over the one it cannot.
 pub fn build(area: &ResolvedArea, surround: Surround) -> Option<Built> {
     match &area.kind {
+        ResolvedAreaKind::Bar { .. } => Some(crate::bar::build_bar(
+            area,
+            surround,
+            ui::descriptor::installed(),
+        )),
         ResolvedAreaKind::Grid {
             rect,
             cell,
@@ -48,8 +82,47 @@ pub fn build(area: &ResolvedArea, surround: Surround) -> Option<Built> {
         ResolvedAreaKind::Dock { edge, thickness } => Some(dock(area, *edge, *thickness, surround)),
         ResolvedAreaKind::WallpaperRegion { .. } => Some(wallpaper_region(area, surround)),
         ResolvedAreaKind::Texture { .. } => Some(texture(area, surround)),
+        ResolvedAreaKind::Free { rect } => Some(free(area, *rect, surround)),
         _ => None,
     }
+}
+
+/// A free area: its groups down the box `rect` names, each instance at the size its representation asks for.
+///
+/// It is the kind with no arrangement of its own — no cells, no zones, no edge — so it is what a layout says when the answer to "where" is simply a rectangle.
+pub fn free(area: &ResolvedArea, rect: Rect, surround: Surround) -> Built {
+    let groups = area
+        .groups
+        .iter()
+        .map(|group| {
+            let items = group
+                .children
+                .iter()
+                .map(|instance| {
+                    place(
+                        instance,
+                        Size {
+                            width: f32::INFINITY,
+                            height: f32::INFINITY,
+                        },
+                        None,
+                        LayoutStyle::new(),
+                        surround,
+                    )
+                })
+                .collect::<Result<Vec<_>, LayoutError>>()?;
+            Ok(
+                Box::new(Container::new(LayoutStyle::new().flex_column(), items)?)
+                    as Box<dyn LayoutItem>,
+            )
+        })
+        .collect::<Result<Vec<_>, LayoutError>>()?;
+    Ok(Box::new(Container::new(
+        region(rect, surround)
+            .flex_column()
+            .padding_all(inset(area)),
+        groups,
+    )?))
 }
 
 /// A grid: every group on the cells it was placed at, `cell` px each and `gap` apart, the block they make anchored inside `rect` and held off its edges by the area's padding.
@@ -71,7 +144,7 @@ pub fn grid(
     let block = Container::new(tracks(covered(area), cell, gap), placed)?;
     let (vertical, horizontal) = anchored(anchor);
     Ok(Box::new(Container::new(
-        region(rect)
+        region(rect, surround)
             .flex_row()
             .padding_all(inset(area))
             .align_items(align_items(vertical))
@@ -96,7 +169,7 @@ pub fn dock(area: &ResolvedArea, edge: Edge, thickness: f32, surround: Surround)
     let strip = Container::new(along(edge, thickness), runs)?;
     let (vertical, horizontal) = hugging(edge);
     Ok(Box::new(Container::new(
-        region(Rect::default())
+        region(Rect::default(), surround)
             .flex_row()
             .padding_all(inset(area))
             .align_items(align_items(vertical))
@@ -124,7 +197,11 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
     let (rect, fit, transition) = (*rect, *fit, *transition);
 
     let key = (surround.output.map(str::to_string), area.id.clone());
-    let initial = (!source.is_empty()).then(|| PathBuf::from(source));
+    // No source of its own means "whatever `[background]` is set to", which is what the wallpaper service answers — and keeps answering as the user changes it, through the watcher below.
+    let initial = match source.is_empty() {
+        false => Some(PathBuf::from(source)),
+        true => wallpaper::current_image(surround.config, surround.output),
+    };
     let first = initial.as_deref().and_then(|path| decoded(&key, path));
     if first.is_none() && initial.is_some() {
         tracing::warn!("wallpaper '{source}' could not be loaded; using the theme base colour");
@@ -166,7 +243,7 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
     let stack = Container::new(fill(), vec![layer_a, layer_b])?;
     let base = surround.theme.base;
     Ok(Box::new(StyledContainer::new(
-        region(rect),
+        region(rect, surround),
         move |_| RectStyle::filled(base, 0.0),
         vec![box_item(stack)],
     )?))
@@ -366,9 +443,13 @@ pub fn texture(area: &ResolvedArea, surround: Surround) -> Built {
     };
 
     Ok(Box::new(
-        StyledContainer::new(region(rect), |_| RectStyle::default(), vec![content])?
-            .with_opacity(move || opacity)
-            .with_blend(move || blend_mode),
+        StyledContainer::new(
+            region(rect, surround),
+            |_| RectStyle::default(),
+            vec![content],
+        )?
+        .with_opacity(move || opacity)
+        .with_blend(move || blend_mode),
     ))
 }
 
@@ -416,14 +497,35 @@ fn blank() -> Arc<ImageData> {
     BLANK.with(Arc::clone)
 }
 
-/// The box `rect` names inside the area's surface, in fractions of it, taken out of flow so the areas of one layer stack over each other instead of pushing each other along.
-fn region(rect: Rect) -> LayoutStyle {
+/// The box `rect` names, as the fraction of [`Surround::bounds`] that it is, taken out of flow so the areas of one layer stack over each other instead of pushing each other along.
+///
+/// In pixels rather than percentages, because the percentage would be of the window — the whole output — and an area written `within = "usable"` means a fraction of what the reserving areas left, which is a different box on every monitor and after every bar edit.
+fn region(rect: Rect, surround: Surround) -> LayoutStyle {
+    pixels(within(rect, surround.bounds))
+}
+
+/// Where `rect` lands, as a fraction of `bounds`, in the window's own coordinate space.
+pub(crate) fn within(rect: Rect, bounds: telar::Rect) -> telar::Rect {
+    telar::Rect::new(
+        bounds.x + rect.x * bounds.width,
+        bounds.y + rect.y * bounds.height,
+        rect.w * bounds.width,
+        rect.h * bounds.height,
+    )
+}
+
+/// An absolute box at exactly `rect`, which is how every area is placed: one window is the whole output, so an area positions itself in it rather than being flowed with its neighbours.
+pub(crate) fn at(rect: telar::Rect) -> LayoutStyle {
+    pixels(rect)
+}
+
+fn pixels(rect: telar::Rect) -> LayoutStyle {
     LayoutStyle::new()
         .absolute()
-        .inset_start(SizeDimension::Percent(rect.x))
-        .inset_top(SizeDimension::Percent(rect.y))
-        .width(SizeDimension::Percent(rect.w))
-        .height(SizeDimension::Percent(rect.h))
+        .inset_start(rect.x)
+        .inset_top(rect.y)
+        .width(rect.width)
+        .height(rect.height)
 }
 
 /// How far an area holds its contents off its own edges.
@@ -806,6 +908,9 @@ mod tests {
         },
     ];
 
+    /// The screen these tests stand an area on, which is also the page they lay it out at.
+    const PAGE: (f32, f32) = (1000.0, 800.0);
+
     /// Lays `built` out on a `width` by `height` surface and answers what the probe in it was given and where it landed.
     fn measured(built: Built, width: f32, height: f32) -> (Size, telar::Rect) {
         let item = built.expect("the area builds");
@@ -826,11 +931,14 @@ mod tests {
         (extent, rect.get())
     }
 
+    /// An area built on a screen the size of the page [`measured`] lays it out on, so where it places itself is where the page can show it.
     fn surrounded(config: &Arc<Config>) -> Surround<'_> {
         Surround {
             config,
             theme: config.resolve_theme(),
             output: None,
+            bounds: telar::Rect::new(0.0, 0.0, PAGE.0, PAGE.1),
+            reserved: Reserved::default(),
         }
     }
 

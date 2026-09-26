@@ -27,6 +27,8 @@ pub struct ShellState {
     pub idle_inhibit: bool,
     /// How many times each desktop-entry id was launched, so the launcher can rank by familiarity.
     pub launch_counts: HashMap<String, u32>,
+    /// Which layout the shell draws, by name. Machine state rather than a config key: it is a choice about this installation, not a description of one, and `layout use` is what changes it. `None`, or a name no layout answers to, falls back to the built-in one.
+    pub layout: Option<String>,
 }
 
 fn path() -> PathBuf {

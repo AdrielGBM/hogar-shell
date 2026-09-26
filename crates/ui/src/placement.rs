@@ -6,10 +6,7 @@
 //!
 //! | Primitive | The shape | Who takes it |
 //! | --- | --- | --- |
-//! | [`bar`](Placement::bar) | spans an edge, reserves nothing itself | the bars |
 //! | [`reservation`](Placement::reservation) | invisible, carves an edge's strip | the bars' strips |
-//! | [`backdrop`](Placement::backdrop) | the whole screen, click-through, reserving nothing | wallpaper, frame ring |
-//! | [`desktop`](Placement::desktop) | what the bars left free, click-through | the desktop widgets |
 //! | [`dock`](Placement::dock) | spans an edge, over the windows | the notification centre |
 //! | [`stack`](Placement::stack) | pinned to a spot along an edge, input from its content | toasts, notification popups |
 //! | [`off_chip`](Placement::off_chip) | hangs off the chip that opened it | popouts, drawers, the tray menu |
@@ -154,14 +151,6 @@ impl Placement {
         }
     }
 
-    /// A bar: spans its edge, and reserves nothing *itself* — `-1` opts out of every other surface's zone so its position does not depend on which surface was created first. Its strip is a separate surface.
-    pub fn bar(edge: Edge, thickness: u32) -> Self {
-        let mut placement = Self::new(bar_namespace(edge), spanning(edge), Layer::Top).zone(-1);
-        placement.edge = Some(edge);
-        placement.size = across(edge, thickness);
-        placement
-    }
-
     /// The invisible strip that carves an edge's space out of every window's idea of the screen.
     pub fn reservation(edge: Edge, thickness: u32) -> Self {
         let mut placement = Self::new(reserve_namespace(edge), spanning(edge), Layer::Bottom)
@@ -170,22 +159,6 @@ impl Placement {
         placement.size = across(edge, thickness);
         placement.reserve_only = true;
         placement
-    }
-
-    /// The whole screen and click-through: something painted across the desktop rather than placed on it. `-1` so a bar's reserved strip does not shrink it.
-    ///
-    /// The background layer is only the default — the wallpaper's. The frame ring takes the same shape up on the bars' layer ([`layer`](Self::layer)), because it draws the strip a framed bar leaves empty and on the background that strip showed the window through.
-    pub fn backdrop(namespace: &'static str) -> Self {
-        Self::new(namespace, FULLSCREEN, Layer::Background)
-            .zone(-1)
-            .input(Input::Transparent)
-    }
-
-    /// The part of the screen the bars left free, click-through, under every window: where a desktop widget goes.
-    ///
-    /// A [`backdrop`](Self::backdrop) but for the zone, and that one number is the whole difference. `-1` opts out of every exclusive zone and takes the screen; `0` respects them, so the compositor sizes this to exactly what the bars did not take. A widget centred in it is centred where the applications are, which is where a user looking at their desktop expects the middle to be — and it costs no arithmetic here, because the compositor already did it for the windows.
-    pub fn desktop(namespace: &'static str) -> Self {
-        Self::new(namespace, FULLSCREEN, Layer::Background).input(Input::Transparent)
     }
 
     /// A panel that spans an edge and sits over the windows. Zero zone, not `-1`: the compositor has already cleared the bars, and a dock adds only the shared panel margin beyond them.
@@ -403,16 +376,6 @@ const FULLSCREEN: Anchor = Anchor::TOP
     .union(Anchor::LEFT)
     .union(Anchor::RIGHT);
 
-/// One bar per edge, so the edge is what names it — the string a `layer_rule` in the user's compositor config matches, which is why it is spelled out rather than derived from a debug format.
-fn bar_namespace(edge: Edge) -> &'static str {
-    match edge {
-        Edge::Top => "hogar-shell-top",
-        Edge::Bottom => "hogar-shell-bottom",
-        Edge::Left => "hogar-shell-left",
-        Edge::Right => "hogar-shell-right",
-    }
-}
-
 fn reserve_namespace(edge: Edge) -> &'static str {
     match edge {
         Edge::Top => "hogar-shell-reserve-top",
@@ -553,9 +516,7 @@ mod tests {
             None,
         );
         let every = [
-            ("bar", Placement::bar(Edge::Top, 34)),
             ("reservation", Placement::reservation(Edge::Top, 34)),
-            ("backdrop", Placement::backdrop("hogar-shell-wallpaper")),
             (
                 "dock",
                 Placement::dock("hogar-shell-sidebar", Edge::Right, 380),
@@ -617,7 +578,6 @@ mod tests {
             height: 30.0,
         };
 
-        assert_eq!(Placement::bar(Edge::Top, 34).namespace, "hogar-shell-top");
         assert_eq!(
             Placement::reservation(Edge::Left, 40).namespace,
             "hogar-shell-reserve-left"
@@ -657,11 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bar_spans_its_edge_and_a_stack_pins_to_a_corner() {
-        let bar = Placement::bar(Edge::Top, 34).layer_config();
-        assert!(bar.anchor.contains(Anchor::LEFT) && bar.anchor.contains(Anchor::RIGHT));
-        assert_eq!(bar.exclusive_zone, -1, "a bar reserves through its strip");
-
+    fn a_stack_pins_to_a_corner() {
         for edge in Edge::ALL {
             assert!(
                 Placement::stack("hogar-shell-toasts", edge, Align::Center)
@@ -696,11 +652,6 @@ mod tests {
     /// Every surface that carries no content is click-through, and only those.
     #[test]
     fn what_takes_the_pointer_is_decided_once() {
-        assert!(
-            Placement::backdrop("hogar-shell-wallpaper")
-                .layer_config()
-                .input_transparent
-        );
         assert!(
             Placement::reservation(Edge::Top, 30)
                 .layer_config()

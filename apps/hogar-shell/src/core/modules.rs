@@ -1014,34 +1014,92 @@ mod tests {
         );
     }
 
-    /// The desktop surface places the `clock` and `visualiser` widgets and draws neither itself, so with the table installed each layer it is asked for builds, at every position and on every edge.
+    /// The desktop's areas draw nothing themselves — they place what is in them — so with the table installed a grid holding the clock builds at every anchor and a dock holding the visualiser builds on every edge.
     #[test]
-    fn the_desktop_surface_builds_its_clock_and_visualiser_through_the_table() {
+    fn a_desktop_grid_and_dock_build_their_widgets_through_the_table() {
         telar::set_locale("en");
         ui::descriptor::install(MODULES);
+        let config = Arc::new(Config::starter());
         let mut failed = Vec::new();
-        for (position, edge) in config::ClockPlacement::ALL
+        for (anchor, edge) in layout::Anchor::ALL
             .into_iter()
             .zip(Edge::ALL.into_iter().cycle())
         {
-            let mut config = Config::starter();
-            config.widgets.clock.enabled = true;
-            config.widgets.clock.position = position;
-            config.widgets.visualiser.enabled = true;
-            config.widgets.visualiser.edge = edge;
             reset_layout_runtime();
             set_theme(config.resolve_theme());
             let scope = telar::owner_scope();
             let owner = scope.id();
-            for (module, layer) in surfaces::widgets::layers(&Arc::new(config)) {
-                if let Err(e) = layer {
-                    failed.push(format!("{module} at {position:?}/{edge:?} — {e}"));
+            let surround = surfaces::area::Surround {
+                config: &config,
+                theme: config.resolve_theme(),
+                output: None,
+                bounds: telar::Rect::new(0.0, 0.0, 1920.0, 1080.0),
+                reserved: surfaces::layer_window::Reserved::default(),
+            };
+            for area in [
+                desktop_grid(anchor, "clock"),
+                desktop_dock(edge, "visualiser"),
+            ] {
+                match surfaces::area::build(&area, surround) {
+                    Some(Err(e)) => {
+                        failed.push(format!("{} at {anchor:?}/{edge:?} — {e}", area.id))
+                    }
+                    Some(Ok(_)) => {}
+                    None => failed.push(format!("nothing draws a {} area", area.kind.name())),
                 }
             }
             drop(scope);
             telar::dispose_owner(owner);
         }
         assert!(failed.is_empty(), "{}", failed.join("\n"));
+    }
+
+    fn desktop_grid(anchor: layout::Anchor, module: &str) -> layout::ResolvedArea {
+        desktop_area(
+            layout::ResolvedAreaKind::Grid {
+                rect: layout::Rect::default(),
+                cell: ui::host::GRID_CELL,
+                gap: ui::host::GRID_GAP,
+                anchor,
+            },
+            module,
+        )
+    }
+
+    fn desktop_dock(edge: Edge, module: &str) -> layout::ResolvedArea {
+        desktop_area(
+            layout::ResolvedAreaKind::Dock {
+                edge,
+                thickness: 120.0,
+            },
+            module,
+        )
+    }
+
+    fn desktop_area(kind: layout::ResolvedAreaKind, module: &str) -> layout::ResolvedArea {
+        layout::ResolvedArea {
+            id: layout::AreaId::new(module),
+            kind,
+            reserve: false,
+            above_fullscreen: false,
+            within: layout::Within::Usable,
+            style: layout::AreaStyle::default(),
+            visible: None,
+            groups: vec![layout::ResolvedGroup {
+                id: layout::GroupId::new(module),
+                kind: layout::GroupKind::Zone {
+                    zone: layout::Zone::Center,
+                },
+                children: vec![layout::ResolvedInstance {
+                    id: layout::InstanceId::new(module),
+                    module: module.to_string(),
+                    representation: layout::Representation::WidgetL,
+                    options: toml::Table::new(),
+                    bindings: Default::default(),
+                    actions: Default::default(),
+                }],
+            }],
+        }
     }
 
     /// What a reading draws is what its sources declare, each field marked public or private, so a module offering one says what that is.
