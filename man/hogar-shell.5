@@ -337,6 +337,51 @@ Default: \fBfalse\fR
 Overrides `twelve_hour` when set, for a user who wants seconds, a weekday, or anything else.
 .sp
 Unset by default.
+.SS [clock.face]
+How a face placed on the desktop is drawn, as against the chip these other keys dress.
+.TP
+.B background
+Paint a plate behind the face, so it stays legible over a busy photograph.
+.sp
+Default: \fBfalse\fR
+.TP
+.B background_blur
+How far the plate's edge is feathered into the wallpaper, in px. `0` gives a hard\-edged card.
+.sp
+Default: \fB0.0\fR
+.TP
+.B background_opacity
+How opaque that plate is, `0`\(en`1`.
+.sp
+Default: \fB0.35\fR
+.TP
+.B invert
+Draw the face in the theme's base colour instead of its text colour \(em for a pale wallpaper, where light text disappears.
+.sp
+Default: \fBfalse\fR
+.TP
+.B scale
+Multiplies the theme's display size, so the face can be made as large as the screen allows.
+.sp
+Default: \fB3.0\fR
+.TP
+.B shadow
+Drop a shadow under the glyphs, which is what keeps a plateless face readable over a light wallpaper.
+.sp
+Default: \fBtrue\fR
+.TP
+.B show_date
+Default: \fBtrue\fR
+.TP
+.B format
+Overrides `[clock] format` for the desktop face only. A desktop clock usually wants `%H:%M` where the bar chip wants seconds.
+.sp
+Unset by default.
+.TP
+.B date_format
+Overrides `[clock] date_format` for the desktop face only.
+.sp
+Unset by default.
 .SS [corners]
 .TP
 .B top_left
@@ -380,16 +425,13 @@ Which pages the dashboard offers, in order: `dash`, `media`, `performance` and `
 .sp
 Default: \fB["dash", "media", "performance", "weather"]\fR
 .SS [general]
-App\-wide settings that don't belong to a specific visual section. `language` is a BCP\-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `show_over_fullscreen` lifts the bars onto the overlay layer so they stay visible over a fullscreen window \(em off by default, since a fullscreen game or video is normally meant to cover them. `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os\-release`.
+App\-wide settings that don't belong to a specific visual section. `language` is a BCP\-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os\-release`.
 .TP
 .B language
 Default: \fB""\fR
 .TP
 .B logo
 Default: \fB""\fR
-.TP
-.B show_over_fullscreen
-Default: \fBfalse\fR
 .TP
 .B terminal
 The terminal used to run a desktop entry marked `Terminal=true`; empty falls back to `xterm`.
@@ -1223,6 +1265,33 @@ Default: \fB1.0\fR
 How much of the previous frame each bar keeps, 0\(en1. Higher is smoother and slower; `0` follows the transform exactly and shimmers.
 .sp
 Default: \fB0.6\fR
+.SS [visualiser.face]
+How a row of these bars placed on the desktop is drawn.
+.TP
+.B accent
+Draw the bars in the theme's accent colour rather than its text colour.
+.sp
+Default: \fBtrue\fR
+.TP
+.B gap
+The gap between two bars, in px.
+.sp
+Default: \fB3.0\fR
+.TP
+.B hide_when_silent
+Fade the bars out when nothing is playing, rather than leaving a flat line across the screen.
+.sp
+Default: \fBtrue\fR
+.TP
+.B opacity
+How opaque the bars are over the wallpaper, `0`\(en`1`.
+.sp
+Default: \fB0.75\fR
+.TP
+.B radius
+How round a bar's ends are, in px. `0` is square; half the bar's own width is a capsule.
+.sp
+Default: \fB3.0\fR
 .SS [wallpaper]
 The wallpaper library: which folder is browsed and how (`[wallpaper]`). The folder itself is `[paths] wallpapers`, so the two settings that name a directory stay in one place.
 .TP
@@ -1274,111 +1343,6 @@ Unset by default.
 .TP
 .B longitude
 Unset by default.
-.SS [widgets]
-Widgets drawn on the desktop, on a surface of their own: a clock face, an audio visualiser. All off by default, and the surface exists only while one of them is on.
-.sp
-**Not the wallpaper.** The wallpaper covers the whole screen under every window; this sits in what the bars left free, so a widget lines up with the applications rather than with the screen \(em and a visualiser that repaints with the music repaints that area instead of the whole screen behind it.
-.SS [widgets.clock]
-.TP
-.B background
-Paint a plate behind the face, so it stays legible over a busy photograph.
-.sp
-Default: \fBfalse\fR
-.TP
-.B background_blur
-How far the plate's edge is feathered into the wallpaper, in px. `0` gives a hard\-edged card.
-.sp
-Default: \fB0.0\fR
-.TP
-.B background_opacity
-How opaque that plate is, `0`\(en`1`.
-.sp
-Default: \fB0.35\fR
-.TP
-.B enabled
-Default: \fBfalse\fR
-.TP
-.B invert
-Draw the face in the theme's base colour instead of its text colour \(em for a pale wallpaper, where light text disappears.
-.sp
-Default: \fBfalse\fR
-.TP
-.B margin
-How far the face is kept from the edges of the widget area, in px.
-.sp
-Default: \fB48\fR
-.TP
-.B position
-One of the nine positions: `top_left` ... `bottom_right`, `center` being the default.
-.sp
-Default: \fB"center"\fR
-.TP
-.B scale
-Multiplies the theme's display size, so the face can be made as large as the screen allows.
-.sp
-Default: \fB3.0\fR
-.TP
-.B shadow
-Drop a shadow under the glyphs, which is what keeps a plateless face readable over a light wallpaper.
-.sp
-Default: \fBtrue\fR
-.TP
-.B show_date
-Default: \fBtrue\fR
-.TP
-.B format
-Overrides `[clock] format` for the desktop face only. A desktop clock usually wants `%H:%M` where the bar chip wants seconds.
-.sp
-Unset by default.
-.TP
-.B date_format
-Overrides `[clock] date_format` for the desktop face only.
-.sp
-Unset by default.
-.SS [widgets.visualiser]
-.TP
-.B accent
-Draw the bars in the theme's accent colour rather than its text colour.
-.sp
-Default: \fBtrue\fR
-.TP
-.B edge
-Which edge of the widget area the bars stand on. They always grow away from it, so `left` gives a column up the side.
-.sp
-Default: \fB"bottom"\fR
-.TP
-.B enabled
-Default: \fBfalse\fR
-.TP
-.B gap
-The gap between two bars, in px.
-.sp
-Default: \fB3.0\fR
-.TP
-.B hide_when_silent
-Fade the bars out when nothing is playing, rather than leaving a flat line across the screen.
-.sp
-Default: \fBtrue\fR
-.TP
-.B margin
-How far the row is held off that edge, in px, on top of the gap the widget area already keeps from the bars.
-.sp
-Default: \fB0\fR
-.TP
-.B opacity
-How opaque the bars are over the wallpaper, `0`\(en`1`.
-.sp
-Default: \fB0.75\fR
-.TP
-.B radius
-How round a bar's ends are, in px. `0` is square; half the bar's own width is a capsule.
-.sp
-Default: \fB3.0\fR
-.TP
-.B reach
-How far the tallest bar reaches from that edge, in px.
-.sp
-Default: \fB140\fR
 .SS [workspaces]
 The `workspaces` module.
 .sp

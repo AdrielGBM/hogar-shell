@@ -57,7 +57,7 @@ not repeated here.
 | [Popouts](surfaces/popouts.md) | The readout a chip shows while the pointer rests on it. | `wlr-layer-shell` |
 | [Toasts](surfaces/toasts.md) | The small, self-dismissing messages the shell says about itself. | `wlr-layer-shell` |
 | [Wallpaper layer](surfaces/wallpaper.md) | The background image and how one gives way to the next. | `wlr-layer-shell` |
-| [Desktop widgets](surfaces/widgets.md) | The clock face and audio visualiser drawn on the desktop, on a surface of their own. | `wlr-layer-shell`, `libpipewire` |
+| [Desktop widgets](surfaces/widgets.md) | The clock face and audio visualiser drawn on the desktop, placed by the layout. | `wlr-layer-shell`, `libpipewire` |
 
 ## System — what it does with no chip involved
 

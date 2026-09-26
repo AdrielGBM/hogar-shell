@@ -276,10 +276,10 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 
 | Command | Arguments | What it does |
 | --- | --- | --- |
-| `import-config` | `[--name <name>]` | turn today's bars, widgets, stack and lock screen into a layout file |
 | `list` |  | every layout this shell can use |
 | `show` | `[name]` | print a layout as it is stored |
 | `check` | `[name]` | report what is wrong with a layout, without applying it |
+| `use` | `<name>` | draw this layout from now on |
 
 ## `deps`
 
