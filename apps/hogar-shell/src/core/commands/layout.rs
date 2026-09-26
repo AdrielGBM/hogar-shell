@@ -88,7 +88,10 @@ fn check(name: Option<&str>) -> Result<String, String> {
     if let Ok(text) = std::fs::read_to_string(&path) {
         report.merge(layout::check_unknown_keys(&text, &id));
     }
-    report.merge(layout::validate(found, &Descriptors));
+    report.merge(layout::validate(
+        found,
+        &Descriptors(crate::core::modules::MODULES),
+    ));
 
     let (resolved, resolving) = layout::resolve(found, store.all(), NOMINAL_OUTPUT, None);
     report.merge(resolving);
@@ -112,21 +115,29 @@ fn layouts_dir() -> std::path::PathBuf {
 
 /// What the layout model has to ask the module table.
 ///
-/// It lives here rather than in `crates/layout` because that crate deliberately knows nothing about modules or the IPC table — the whole point of `Catalogue` is that the model can be validated by a test that states its own three modules. This is the real answer, wired to the descriptors this binary installs.
-struct Descriptors;
+/// It lives here rather than in `crates/layout` because that crate deliberately knows nothing about modules or the IPC table — the whole point of `Catalogue` is that the model can be validated by a test that states its own three modules. This is the real answer, wired to the descriptors this binary ships.
+///
+/// **It carries the table rather than reading the installed one.** `ui::descriptor::install` runs in `setup_shell`, and these verbs answer in the CLI process where nothing has run it, so an installed-table lookup answers `None` for every module the binary has — which came out as `layout check` calling `clock` an unknown module. `config check` already takes the table as an argument for the same reason (`check::command`).
+struct Descriptors(&'static [ui::descriptor::ModuleDescriptor]);
+
+impl Descriptors {
+    fn find(&self, module: &str) -> Option<&'static ui::descriptor::ModuleDescriptor> {
+        ui::descriptor::lookup(self.0, module)
+    }
+}
 
 impl layout::Catalogue for Descriptors {
     fn knows_module(&self, module: &str) -> bool {
-        ui::descriptor::find(module).is_some()
+        self.find(module).is_some()
     }
 
     fn has_representation(&self, module: &str, representation: Representation) -> bool {
-        ui::descriptor::find(module)
+        self.find(module)
             .is_some_and(|found| found.input(drawn_as(representation)).is_some())
     }
 
     fn is_read_only(&self, module: &str, representation: Representation) -> bool {
-        ui::descriptor::find(module)
+        self.find(module)
             .and_then(|found| found.input(drawn_as(representation)))
             .is_some_and(|input| input == ui::descriptor::Input::ReadOnly)
     }
@@ -2062,10 +2073,15 @@ mod tests {
     }
 
     /// The check has to pass on the layout the shell falls back to, or the fallback is not one.
+    ///
+    /// **Deliberately without installing the module table**, which is the process this verb actually runs in: `ui::descriptor::install` happens in `setup_shell`, and a check answers in the CLI. Installing it here is what hid the bug — every module in a real user's layout came back "there is no module called `clock`", because the catalogue looked in an empty table while the binary's own table sat one argument away.
     #[test]
-    fn the_built_in_layout_checks_clean_against_the_real_module_table() {
+    fn the_built_in_layout_checks_clean_without_the_module_table_installed() {
         telar::set_locale("en");
-        ui::descriptor::install(crate::core::modules::MODULES);
+        assert!(
+            ui::descriptor::installed().is_empty(),
+            "this test is only worth anything while nothing installed the table on this thread"
+        );
         let verdict = check(None);
         assert!(verdict.is_ok(), "{}", verdict.unwrap_err());
     }
