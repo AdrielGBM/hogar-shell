@@ -10,12 +10,11 @@ use platform_wayland::CaptureBackend;
 use serde::{Deserialize, Serialize};
 use util::report::{Finding, Report};
 
-/// App-wide settings that don't belong to a specific visual section. `language` is a BCP-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `show_over_fullscreen` lifts the bars onto the overlay layer so they stay visible over a fullscreen window — off by default, since a fullscreen game or video is normally meant to cover them. `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os-release`.
+/// App-wide settings that don't belong to a specific visual section. `language` is a BCP-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os-release`.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct GeneralConfig {
     pub language: String,
-    pub show_over_fullscreen: bool,
     pub logo: String,
     /// The terminal used to run a desktop entry marked `Terminal=true`; empty falls back to `xterm`.
     ///

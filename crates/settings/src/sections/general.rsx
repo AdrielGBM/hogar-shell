@@ -9,7 +9,6 @@ use ::config::{AppsConfig, GeneralConfig};
 
 let (config, path) = source();
 let lang = signal(telar::current_locale().unwrap_or_else(|| config.language()));
-let over_fullscreen = signal(config.general.show_over_fullscreen);
 let logo = signal(config.general.logo.clone());
 let apps = config.general.apps.clone();
 let legacy_terminal = config.general.terminal.clone();
@@ -26,7 +25,7 @@ let browser = signal(apps.browser.clone());
 let editor = signal(apps.editor.clone());
 
 let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
-    let (lang, over_fullscreen, logo) = (lang.clone(), over_fullscreen.clone(), logo.clone());
+    let (lang, logo) = (lang.clone(), logo.clone());
     let (terminal, file_manager, audio_mixer) =
         (terminal.clone(), file_manager.clone(), audio_mixer.clone());
     let (media_player, browser, editor) =
@@ -34,7 +33,6 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     move || {
         let value = GeneralConfig {
             language: lang.peek(),
-            show_over_fullscreen: over_fullscreen.peek(),
             logo: logo.peek(),
             terminal: legacy_terminal.clone(),
             apps: AppsConfig {
@@ -53,7 +51,6 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
 [view]
 form_section title:(Reactive::of(|| telar::t!("settings.section.general")))
     language_row label:(Reactive::of(|| telar::t!("settings.field.language"))) value:$lang
-    toggle_row label:(Reactive::of(|| telar::t!("settings.field.show_over_fullscreen"))) value:$over_fullscreen
     text_row label:(Reactive::of(|| telar::t!("settings.field.logo"))) value:$logo placeholder:"auto"
     text_row label:(Reactive::of(|| telar::t!("settings.field.terminal"))) value:$terminal placeholder:"xterm"
     text_row label:(Reactive::of(|| telar::t!("settings.field.file_manager"))) value:$file_manager placeholder:"xdg-open"
