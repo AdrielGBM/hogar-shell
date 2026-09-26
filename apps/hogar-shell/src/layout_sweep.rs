@@ -18,7 +18,7 @@ use telar::{
     reset_layout_runtime, set_theme,
 };
 
-use config::{BarConfig, Config, Edge, ModuleEntry, Shape};
+use config::{BarConfig, Config, Edge, Shape};
 use ui::descriptor::{ChipFrame, ModuleDescriptor};
 use ui::host::{Host, InstanceId, Representation, Size};
 
@@ -32,10 +32,10 @@ const MODES: [Shape; 3] = [Shape::Bar, Shape::Sections, Shape::Chips];
 
 /// The world one combination builds against. Deliberately [`Config::starter`] rather than the user's file: a sweep that read `~/.config/hogar-shell/config.toml` would measure a different shell on every machine.
 ///
-/// `edit` changes the starter before its bar is moved to the edge under test, so an entry added to the top bar is measured on whichever edge is being swept.
-fn seed_world(edge: Edge, mode: Shape, edit: &dyn Fn(&mut Config)) {
+/// `extra` is one more module at the end of the bar, for the check that an unknown id still holds a chip's place.
+fn seed_world(edge: Edge, mode: Shape, extra: Option<&str>) {
     let mut config = Config::starter();
-    edit(&mut config);
+    layout::set_running(Arc::new(swept_layout(edge, mode, extra)));
     // `starter` puts its modules on the top bar and `drawn_edge` reports the first non-empty one, so moving them wholesale is what makes a chip believe it is on the edge under test.
     let bar = std::mem::take(&mut config.bars.top);
     *match edge {
@@ -56,6 +56,40 @@ fn seed_world(edge: Edge, mode: Shape, edit: &dyn Fn(&mut Config)) {
     set_theme(config.resolve_theme());
     config::set_config(config);
     crate::install_hooks();
+}
+
+/// The layout one combination measures: the one the shell ships, with its bar moved to the edge under test and drawn in `mode`, plus `extra` placed at the end of it.
+///
+/// The built-in layout rather than a fixture written here, for the reason the sweep reads `Config::starter` rather than the user's file: what it measures has to be what this shell draws on a machine nobody has configured. A fixture would be a second description of the default, free to drift from the one in `crates/layout`.
+fn swept_layout(edge: Edge, mode: Shape, extra: Option<&str>) -> layout::Layout {
+    let shipped = layout::LayoutStore::safe(std::env::temp_dir());
+    let mut swept = shipped.active().clone();
+    for rule in &mut swept.outputs {
+        for area in &mut rule.layers.top.areas {
+            let Some(layout::AreaKind::Bar {
+                edge: on, shape, ..
+            }) = area.kind.as_mut()
+            else {
+                continue;
+            };
+            *on = Some(edge);
+            shape.mode = Some(mode);
+            let Some(extra) = extra else { continue };
+            if let Some(end) = area
+                .groups
+                .iter_mut()
+                .find(|group| matches!(group.kind, Some(layout::GroupKind::Zone { zone }) if zone == layout::Zone::End))
+            {
+                end.children.push(layout::Instance {
+                    id: layout::InstanceId::new(extra),
+                    module: Some(extra.to_string()),
+                    representation: Some(layout::Representation::Chip),
+                    ..layout::Instance::default()
+                });
+            }
+        }
+    }
+    swept
 }
 
 /// The home a sweep measures in, checked in under `fixtures/home` and copied into this process's scratch home: the glyphs the previews draw, where a run with a network would have cached them, and the GTK settings that name the application icon theme. A test never downloads and never reads the user's own home, so the sweep brings both.
@@ -267,27 +301,31 @@ type Measured = (Vec<DrawCommand>, Vec<Rect>);
 type Each<'a> = dyn FnMut(&Subject, Edge, Shape, Result<Measured, LayoutError>) + 'a;
 
 fn sweep(mut each: impl FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>)) {
-    sweep_over(everything, &|_| {}, &mut |subject, edge, mode, measured| {
+    sweep_over(everything, None, &mut |subject, edge, mode, measured| {
         each(subject, edge, mode, measured.map(|(commands, _)| commands))
     });
 }
 
-/// [`sweep`] over a starter config that `edit` has changed first.
+/// [`sweep`] with one more module placed at the end of the bar.
 fn sweep_with(
-    edit: &dyn Fn(&mut Config),
+    extra: &'static str,
     mut each: impl FnMut(&Subject, Edge, Shape, Result<Vec<DrawCommand>, LayoutError>),
 ) {
-    sweep_over(everything, edit, &mut |subject, edge, mode, measured| {
-        each(subject, edge, mode, measured.map(|(commands, _)| commands))
-    });
+    sweep_over(
+        everything,
+        Some(extra),
+        &mut |subject, edge, mode, measured| {
+            each(subject, edge, mode, measured.map(|(commands, _)| commands))
+        },
+    );
 }
 
 /// [`sweep`] handed the claimed region as well as the draw commands.
 fn sweep_claimed(mut each: impl FnMut(&Subject, Edge, Shape, Result<Measured, LayoutError>)) {
-    sweep_over(everything, &|_| {}, &mut each);
+    sweep_over(everything, None, &mut each);
 }
 
-fn sweep_over(subjects: fn() -> Vec<Subject>, edit: &dyn Fn(&mut Config), each: &mut Each) {
+fn sweep_over(subjects: fn() -> Vec<Subject>, extra: Option<&str>, each: &mut Each) {
     let _world = WORLD
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -295,10 +333,10 @@ fn sweep_over(subjects: fn() -> Vec<Subject>, edit: &dyn Fn(&mut Config), each: 
         for mode in MODES {
             // Seeded before the list is drawn up, not only before each entry is measured: an entry reads the world to declare its surface — a bar's is its thickness, on the axis it runs along — so a list enumerated first describes whichever combination happened to run before this one.
             reset_layout_runtime();
-            seed_world(edge, mode, edit);
+            seed_world(edge, mode, extra);
             for subject in subjects() {
                 reset_layout_runtime();
-                seed_world(edge, mode, edit);
+                seed_world(edge, mode, extra);
                 // Scoped, and disposed before the next reset. Replacing the layout runtime starts its node ids over, so an unscoped entry keeps its effects running against ids the next entry now owns — and taffy answers a stale one with "invalid SlotMap key used".
                 let scope = telar::owner_scope();
                 let owner = scope.id();
@@ -395,57 +433,54 @@ const UNKNOWN: &str = "clokc";
 #[test]
 fn an_unknown_module_holds_a_chips_place_on_every_edge_and_shape() {
     let mut wrong = Vec::new();
-    sweep_with(
-        &|config| config.bars.top.end.push(ModuleEntry::bare(UNKNOWN)),
-        |entry, edge, mode, measured| {
-            if entry.component_name != "bar" {
-                return;
-            }
-            let commands = match measured {
-                Ok(commands) => commands,
-                Err(e) => {
-                    wrong.push(format!(
-                        "{edge:?}/{mode:?}: the bar failed to lay out — {e}"
-                    ));
-                    return;
-                }
-            };
-            let surface = entry.surface.expect("the bar preview declares its surface");
-            let fill = ui::placeholder::fill(
-                config::config()
-                    .expect("the sweep published a config")
-                    .resolve_theme(),
-            );
-            let icon = ui::preview::bar_chip().icon_size();
-
-            let Some(rect) = commands.iter().find_map(|command| match command {
-                DrawCommand::Rect { rect, style, .. } if style.fill == Some(Paint::Solid(fill)) => {
-                    Some(*rect)
-                }
-                _ => None,
-            }) else {
+    sweep_with(UNKNOWN, |entry, edge, mode, measured| {
+        if entry.component_name != "bar" {
+            return;
+        }
+        let commands = match measured {
+            Ok(commands) => commands,
+            Err(e) => {
                 wrong.push(format!(
-                    "{edge:?}/{mode:?}: nothing was drawn for '{UNKNOWN}'"
+                    "{edge:?}/{mode:?}: the bar failed to lay out — {e}"
                 ));
                 return;
-            };
-            // Only the part on the bar counts: a placeholder pushed past the end of its zone is clipped there, and a box that measures well but is cut away is not on screen. Measured on what is left rather than required to fit exactly, because a text chip at the very end of a zone can overhang it by the pixel its fractional width rounds to.
-            let on_bar =
-                |start: f32, length: f32, bar: f32| (start + length).min(bar) - start.max(0.0);
-            let wide = on_bar(rect.x, rect.width, surface.width);
-            let tall = on_bar(rect.y, rect.height, surface.height);
-            if wide < icon || tall < icon {
-                wrong.push(format!(
+            }
+        };
+        let strip = surfaces::preview::bar_strip().expect("the previewed layout has a bar");
+        let fill = ui::placeholder::fill(
+            config::config()
+                .expect("the sweep published a config")
+                .resolve_theme(),
+        );
+        let icon = ui::preview::bar_chip().icon_size();
+
+        let Some(rect) = commands.iter().find_map(|command| match command {
+            DrawCommand::Rect { rect, style, .. } if style.fill == Some(Paint::Solid(fill)) => {
+                Some(*rect)
+            }
+            _ => None,
+        }) else {
+            wrong.push(format!(
+                "{edge:?}/{mode:?}: nothing was drawn for '{UNKNOWN}'"
+            ));
+            return;
+        };
+        // Only the part on the bar counts: a placeholder pushed past the end of its zone is clipped there, and a box that measures well but is cut away is not on screen. Measured on what is left rather than required to fit exactly, because a text chip at the very end of a zone can overhang it by the pixel its fractional width rounds to.
+        let on_bar = |start: f32, length: f32, bar: f32| (start + length).min(bar) - start.max(0.0);
+        let wide = on_bar(rect.x - strip.x, rect.width, strip.width);
+        let tall = on_bar(rect.y - strip.y, rect.height, strip.height);
+        if wide < icon || tall < icon {
+            wrong.push(format!(
                     "{edge:?}/{mode:?}: {wide}x{tall}px of the placeholder at {rect:?} is on the {}x{} bar — less than \
                      the {icon}px glyph it holds",
-                    surface.width, surface.height
+                    strip.width, strip.height
                 ));
-            }
-            let named = commands.iter().any(
-                |command| matches!(command, DrawCommand::Text { text, .. } if &**text == UNKNOWN),
-            );
-            if named != edge.is_horizontal() {
-                wrong.push(format!(
+        }
+        let named = commands
+            .iter()
+            .any(|command| matches!(command, DrawCommand::Text { text, .. } if &**text == UNKNOWN));
+        if named != edge.is_horizontal() {
+            wrong.push(format!(
                     "{edge:?}/{mode:?}: the id is {} — it belongs along a horizontal bar and only there",
                     if named {
                         "written down a vertical bar"
@@ -453,9 +488,8 @@ fn an_unknown_module_holds_a_chips_place_on_every_edge_and_shape() {
                         "missing from a horizontal bar"
                     }
                 ));
-            }
-        },
-    );
+        }
+    });
     assert!(
         wrong.is_empty(),
         "an unknown module did not hold a chip's place:\n  {}",
@@ -583,8 +617,7 @@ fn every_painted_rect_of_a_bar_is_claimed_for_the_input_region() {
         let Ok((commands, region)) = measured else {
             return;
         };
-        let surface = entry.surface.expect("the bar preview declares its surface");
-        let bar = Rect::new(0.0, 0.0, surface.width, surface.height);
+        let bar = surfaces::preview::bar_strip().expect("the previewed layout has a bar");
         let on_bar = under_transform(&commands)
             .into_iter()
             .filter_map(|(command, at)| inked_rect(command, at))

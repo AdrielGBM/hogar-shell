@@ -77,11 +77,11 @@ fn main() -> ExitCode {
         Some("man") => answer_locally(&args),
         // A check reads the files on disk, which is what the user is editing — and one that needed a running shell could not look at a config that stops the shell from starting.
         Some("config") if args.get(1).map(String::as_str) == Some("check") => answer_locally(&args),
-        // The same one step on: the import reads those files and writes a layout beside them, and it is run once, while upgrading — which is exactly when there is no shell up to ask. `list`, `show` and `check` read the same files for the same reason — a layout that stops the shell from starting is the one a user most needs to be able to look at — while every verb that *changes* a layout goes to the shell, which is what owns the store.
+        // The same one step on: `list`, `show` and `check` read the layout files and answer from them — a layout that stops the shell from starting is the one a user most needs to be able to look at — while every verb that *changes* a layout, or which one is drawn, goes to the shell, which is what owns the store.
         Some("layout")
             if matches!(
                 args.get(1).map(String::as_str),
-                Some("import-config" | "list" | "show" | "check")
+                Some("list" | "show" | "check")
             ) =>
         {
             answer_locally(&args)
