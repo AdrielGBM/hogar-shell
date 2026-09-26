@@ -1,13 +1,9 @@
-mod autohide;
-
-pub use autohide::{AutoHide, RevealMargins};
-
 use std::rc::Rc;
 use std::sync::Arc;
 
 use telar::{
     AlignItems, Clip, ClippedItem, Color, Container, JustifyContent, LayoutError, LayoutItem,
-    LayoutStyle, RectStyle, Slots, StyledContainer, track_layout,
+    LayoutStyle, RectStyle, Slots, StyledContainer, box_transform, motion::Animated, track_layout,
 };
 
 use crate::area::Surround;
@@ -15,8 +11,8 @@ use crate::layer_window::Reserved;
 use config::theme::NordTheme;
 use config::{Config, Edge, ResolvedShape, Shape, Variant};
 use layout::{
-    BarShape, Extent, GroupKind, ResolvedArea, ResolvedAreaKind, ResolvedGroup, ResolvedInstance,
-    Zone,
+    AutoHide, BarShape, Extent, GroupKind, ResolvedArea, ResolvedAreaKind, ResolvedGroup,
+    ResolvedInstance, Zone,
 };
 use ui::descriptor::{ChipDef, ChipFrame, ModuleDescriptor};
 use ui::host::{Host, InstanceId, Representation, Size};
@@ -41,7 +37,7 @@ pub fn build_bar(
         length,
         offset,
         shape,
-        ..
+        autohide,
     } = &area.kind
     else {
         return Err(LayoutError::Engine(format!(
@@ -62,6 +58,7 @@ pub fn build_bar(
         abut: ends_abut(length, offset, run),
         theme: surround.theme,
         output: surround.output,
+        autohide,
         strip: strip_of(edge, thickness, length, offset, run, surround),
     };
     match shape.mode {
@@ -217,6 +214,8 @@ struct Chrome<'a> {
     output: Option<&'a str>,
     /// Where on the output the bar sits, which is what it places itself at.
     strip: telar::Rect,
+    /// How the bar takes itself off screen when it is not wanted, and how much of it stays behind.
+    autohide: Option<AutoHide>,
 }
 
 impl Chrome<'_> {
@@ -275,6 +274,35 @@ fn inner_fill(config: &Config, token: Color) -> Color {
         return Color::TRANSPARENT;
     }
     token.with_alpha(config.opacity())
+}
+
+/// Takes an autohiding bar off its edge, and brings it back when the pointer reaches the strip it left behind.
+///
+/// **The bar moves by transform, not by layout.** A translate is a `PushMatrix` change, which telar's diff scopes to the subtree that moved (F-5.2), where moving it by layout would re-measure three zones on every frame of the slide. The input region follows the transform — `interactive_rects` lifts every claim through its node's placements — so the only part of the bar the compositor is handed while it is away is the `peek` that is still on screen. That is the whole of the hot rect: there is no second strip to keep in step with the bar, which is what the surface-moving version had to do.
+///
+/// `on_hover = false` asks for a bar only a drag brings back. The drag is not built yet, so such a bar stays hidden; see F-10.30.
+fn hiding(chrome: &Chrome, bar: StyledContainer) -> StyledContainer {
+    let Some(hide) = chrome.autohide else {
+        return bar;
+    };
+    let away = (chrome.thickness - hide.peek).max(0.0);
+    let (dx, dy) = match chrome.edge {
+        Edge::Top => (0.0, -away),
+        Edge::Bottom => (0.0, away),
+        Edge::Left => (-away, 0.0),
+        Edge::Right => (away, 0.0),
+    };
+    // 0 is away, 1 is on screen. Built at 0 and retargeted rather than at its destination, which would leave it inert — the same rule the wallpaper's cross-fade follows.
+    let shown = Animated::new(0.0f32, chrome.config.animation.tween_ms(160, 1_000));
+    let reading = shown;
+    let bar = bar.with_transform(move |rect| {
+        let out = 1.0 - reading.get();
+        box_transform(rect, 0.0, 1.0, 1.0, dx * out, dy * out)
+    });
+    if !hide.on_hover {
+        return bar;
+    }
+    bar.on_hover(move |inside| shown.retarget(if inside { 1.0 } else { 0.0 }))
 }
 
 /// Cuts the bar off at its own strip.
@@ -337,9 +365,12 @@ fn build_whole_bar(
             .padding_all(shape.padding()),
         edge,
     );
-    Ok(strip_clipped(painted_chrome(
-        StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
-        base,
+    Ok(strip_clipped(hiding(
+        chrome,
+        painted_chrome(
+            StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
+            base,
+        ),
     )))
 }
 
@@ -395,9 +426,12 @@ fn build_units(
     );
     let base = strip_fill(config, shape.mode, theme.base);
     let radius = bar_radius(config, shape);
-    Ok(strip_clipped(painted_chrome(
-        StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
-        base,
+    Ok(strip_clipped(hiding(
+        chrome,
+        painted_chrome(
+            StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
+            base,
+        ),
     )))
 }
 
@@ -1909,6 +1943,73 @@ mod tests {
                 across, side,
                 "{edge:?}: a {content_width}px chip measures {across} across a {side}px bar — it should be \
                  reined in to the bar's thickness, not left at its content width to spill off the screen"
+            );
+        }
+    }
+    /// **A hidden bar hands the compositor its peek strip.**
+    ///
+    /// Autohide's contract on all four edges: the bar is off its edge but for `peek`, and what the window claims along that edge is what is left on screen — so a press anywhere else reaches the application underneath rather than a bar nobody can see. Asserted through `interactive_rects`, which is what the driver actually hands the compositor, rather than through the transform, which would be restating the arithmetic.
+    ///
+    /// **It asks about the bar's own chrome, not about every claim.** A chip inside a hidden vertical bar still overshoots the strip by a couple of pixels (F-10.30); narrowing the question is what keeps this test guarding the part that works instead of failing for a reason it does not describe.
+    #[test]
+    fn a_hidden_bar_claims_its_peek_strip_and_no_more() {
+        const PEEK: f32 = 1.0;
+        const SIZE: f32 = 32.0;
+        const SCREEN: (f32, f32) = (600.0, 600.0);
+
+        for edge in Edge::ALL {
+            telar::reset_layout_runtime();
+            set_theme(NordTheme::new());
+            let _scope = telar::owner_scope();
+            let cfg: Config = toml::from_str(&format!(
+                "[bars.{}]\nsize={SIZE}\npersistent=false\npeek={PEEK}\ncenter=[\"dummy\"]\n",
+                edge.as_str()
+            ))
+            .unwrap();
+
+            let bar = built(&cfg, edge, &registry(), SCREEN).expect("the bar builds");
+            let page = Container::new(
+                LayoutStyle::new().width(SCREEN.0).height(SCREEN.1),
+                vec![bar],
+            )
+            .expect("a screen to stand the bar on");
+            let root = page.layout_node();
+            let _tree = telar::ComponentList::new(page);
+            telar::compute_layout(
+                root,
+                telar::AvailableSpace::Definite(SCREEN.0),
+                telar::AvailableSpace::Definite(SCREEN.1),
+            )
+            .expect("the bar lays out");
+
+            let on_screen = telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1);
+            let claimed: Vec<telar::Rect> = telar::interactive_rects()
+                .into_iter()
+                .filter_map(|rect| rect.intersect(on_screen))
+                .filter(|rect| rect.width > 0.5 && rect.height > 0.5)
+                .collect();
+
+            let (across, along) = match edge.is_horizontal() {
+                true => (
+                    (|rect: &telar::Rect| rect.height) as fn(&telar::Rect) -> f32,
+                    (|rect: &telar::Rect| rect.width) as fn(&telar::Rect) -> f32,
+                ),
+                false => (
+                    (|rect: &telar::Rect| rect.width) as fn(&telar::Rect) -> f32,
+                    (|rect: &telar::Rect| rect.height) as fn(&telar::Rect) -> f32,
+                ),
+            };
+            // The bar's own chrome is the claim that runs the whole edge; the chips inside it are shorter.
+            let strip = claimed
+                .iter()
+                .find(|rect| along(rect) > SCREEN.0 / 2.0)
+                .unwrap_or_else(|| {
+                    panic!("{edge:?}: nothing claims the strip that brings the bar back")
+                });
+            assert!(
+                across(strip) <= PEEK + 0.5,
+                "{edge:?}: the hidden bar claims {}px of the screen, where only its {PEEK}px peek is on it",
+                across(strip)
             );
         }
     }
