@@ -264,6 +264,8 @@ mod tests {
             ("toast", "clear"),
             ("notifs", "center"),
             ("keyboard", "next"),
+            ("layout", "undo"),
+            ("layout", "redo"),
         ];
         for (target, command) in ARGUMENTLESS_MUTATIONS {
             assert!(

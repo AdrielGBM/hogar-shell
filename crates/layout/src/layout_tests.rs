@@ -1057,8 +1057,21 @@ mod tests {
         assert_eq!(area_ids(&resolved, LayerKind::Top), ["bar-top"]);
         assert_eq!(
             instance_ids(&resolved),
-            ["workspaces", "clock", "notes"],
-            "the arrangement a fresh install has always shown"
+            [
+                "workspaces",
+                "clock",
+                "notes",
+                "lock-clock",
+                "lock-user",
+                "lock-media",
+                "lock-notifications"
+            ],
+            "the desktop and the lock screen a fresh install has always shown"
+        );
+        assert_eq!(
+            area_ids(&resolved, LayerKind::Lock),
+            ["lock-readings", "prompt"],
+            "with the prompt last, so nothing the layer holds is stacked over it"
         );
         assert!(
             validate_resolved(&resolved, "built-in").is_clean(),
@@ -1378,5 +1391,427 @@ mod tests {
         let resolved = alone(&parsed, "DP-1");
         assert_eq!(resolved.reserved(config::Edge::Top), 2.0);
         assert_eq!(resolved.reserved(config::Edge::Bottom), 0.0);
+    }
+
+    /// Whatever sequence of edits a gesture, a popover or a script makes, undoing them all comes back to exactly the layout it started from, and redoing them all goes forward to exactly where it stopped.
+    ///
+    /// Over random sequences rather than a chosen one, because the failure this guards against is a *pair* of operations: one that displaces something the other one's inverse then puts back in the wrong place. A fixed list proves the ones whoever wrote it thought of. The generator is seeded and printed, so a failure is a sequence anybody can run again.
+    #[test]
+    fn any_sequence_of_edits_undoes_back_to_where_it_started() {
+        let dir = scratch("property");
+        let mine = LayoutId::new("mine");
+        let written = |store: &LayoutStore| {
+            toml::to_string(store.get(&mine).expect("the store holds it")).unwrap()
+        };
+
+        let mut edits = 0;
+        for seed in 1..=64u64 {
+            let mut store = store_with(&dir, &layout(TWO_ZONES));
+            let start = written(&store);
+            let mut random = Random::from(seed);
+            let mut states = vec![start.clone()];
+            let mut made = 0;
+
+            for step in 0..8 {
+                let op = random.op(store.get(&mine).expect("it is there"), step);
+                let Some(op) = op else { continue };
+                if store
+                    .commit(Transaction::new(
+                        format!("Edit {step}"),
+                        mine.clone(),
+                        vec![op],
+                    ))
+                    .is_err()
+                {
+                    // An operation the layout cannot carry out is abandoned whole, so the state it left is the state it found.
+                    continue;
+                }
+                states.push(written(&store));
+                made += 1;
+            }
+
+            for back in (0..made).rev() {
+                store
+                    .undo()
+                    .unwrap_or_else(|why| panic!("seed {seed}: {why}"));
+                assert_eq!(
+                    written(&store),
+                    states[back],
+                    "seed {seed}: undoing edit {back} did not restore the layout it was made to"
+                );
+            }
+            for forward in 0..made {
+                store
+                    .redo()
+                    .unwrap_or_else(|why| panic!("seed {seed}: {why}"));
+                assert_eq!(
+                    written(&store),
+                    states[forward + 1],
+                    "seed {seed}: redoing edit {forward} did not put it back"
+                );
+            }
+            edits += made;
+        }
+        // A generator that produced nothing would pass every assertion above without testing anything, which is exactly how the unknown-key test first passed with its own fault in place (F-10.4).
+        assert!(edits > 256, "only {edits} edits were generated");
+    }
+
+    /// A layout with two runs and three modules, so a move has somewhere to move to and an index to be wrong about.
+    const TWO_ZONES: &str = r#"
+        id = "test"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        place = "zone"
+        zone = "start"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "clock-1"
+        module = "clock"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "battery-1"
+        module = "battery"
+        [[outputs.layers.top.areas.groups]]
+        id = "end"
+        place = "zone"
+        zone = "end"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "mixer-1"
+        module = "mixer"
+    "#;
+
+    /// A generator the sequence of edits above is drawn from. Not a dependency: what the property needs is a reproducible spread of operations, and that is a multiply-and-add away.
+    struct Random(u64);
+
+    impl Random {
+        fn from(seed: u64) -> Self {
+            Self(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1)
+        }
+
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+
+        fn upto(&mut self, bound: usize) -> usize {
+            match bound {
+                0 => 0,
+                bound => (self.next() % bound as u64) as usize,
+            }
+        }
+
+        /// One edit against the layout as it now stands, addressing something that is actually in it — a sequence of operations against ids that were never there would only ever prove that `apply` refuses them.
+        fn op(&mut self, layout: &Layout, step: usize) -> Option<LayoutOp> {
+            let groups: Vec<GroupId> = layout.outputs[0].layers.top.areas[0]
+                .groups
+                .iter()
+                .map(|group| group.id.clone())
+                .collect();
+            let placed: Vec<(GroupId, InstanceId)> = layout.outputs[0].layers.top.areas[0]
+                .groups
+                .iter()
+                .flat_map(|group| {
+                    group
+                        .children
+                        .iter()
+                        .map(|child| (group.id.clone(), child.id.clone()))
+                })
+                .collect();
+            let spot = |group: &GroupId| Spot {
+                site: Site::everywhere(LayerKind::Top),
+                area: AreaId::new("bar-top"),
+                group: group.clone(),
+            };
+            let group = groups.get(self.upto(groups.len()))?.clone();
+
+            Some(match self.next() % 5 {
+                0 => LayoutOp::InsertInstance {
+                    spot: spot(&group),
+                    index: self.upto(count(layout, &group) + 1),
+                    instance: Box::new(instance(&format!("added-{step}"), "clock")),
+                },
+                1 => {
+                    let (group, id) = placed.get(self.upto(placed.len()))?.clone();
+                    LayoutOp::DeleteInstance {
+                        spot: spot(&group),
+                        id,
+                    }
+                }
+                2 => {
+                    let (from, id) = placed.get(self.upto(placed.len()))?.clone();
+                    let to = groups.get(self.upto(groups.len()))?.clone();
+                    let room = match from == to {
+                        true => count(layout, &to).saturating_sub(1),
+                        false => count(layout, &to),
+                    };
+                    LayoutOp::MoveInstance {
+                        from: spot(&from),
+                        to: spot(&to),
+                        id,
+                        index: self.upto(room + 1),
+                    }
+                }
+                3 => {
+                    let (group, id) = placed.get(self.upto(placed.len()))?.clone();
+                    LayoutOp::SetInstance {
+                        spot: spot(&group),
+                        id,
+                        instance: Box::new(instance("ignored", "battery")),
+                    }
+                }
+                _ => LayoutOp::SetAreaFlags {
+                    site: Site::everywhere(LayerKind::Top),
+                    id: AreaId::new("bar-top"),
+                    reserve: Some(self.next().is_multiple_of(2)),
+                    above_fullscreen: None,
+                    visible: None,
+                },
+            })
+        }
+    }
+
+    fn count(layout: &Layout, group: &GroupId) -> usize {
+        layout.outputs[0].layers.top.areas[0]
+            .groups
+            .iter()
+            .find(|it| &it.id == group)
+            .map(|it| it.children.len())
+            .unwrap_or(0)
+    }
+
+    /// The shell's own write coming back through the watcher is not an edit: the layout keeps what it is holding, including the history that would take the write back.
+    ///
+    /// Without this, `layout undo` would work until the file settled and then stop working — which is the worst shape a command can have, since the moment it stops is a quarter of a second the user does not see.
+    #[test]
+    fn a_reload_after_the_store_s_own_write_keeps_the_edit_and_its_history() {
+        let dir = scratch("echo");
+        let mut store = store_with(&dir, &layout(ONE_BAR));
+        let mine = LayoutId::new("mine");
+
+        store
+            .commit(Transaction::new(
+                "Add a battery",
+                mine.clone(),
+                vec![LayoutOp::InsertInstance {
+                    spot: top_zone(),
+                    index: 1,
+                    instance: Box::new(instance("battery-1", "battery")),
+                }],
+            ))
+            .expect("the edit commits");
+        assert!(store.flush().is_clean());
+        util::writer::flush();
+
+        assert!(store.reload().is_clean());
+        assert_eq!(
+            children(store.get(&mine).expect("still there")),
+            ["clock-1", "battery-1"],
+            "the edit the store itself wrote is still on screen"
+        );
+        assert_eq!(
+            store.undo_label(),
+            Some("Add a battery"),
+            "and can still be taken back"
+        );
+        store.undo().expect("undo");
+        assert_eq!(
+            children(store.get(&mine).expect("still there")),
+            ["clock-1"]
+        );
+    }
+
+    /// An edit somebody else made is the file's to win, and the history of that layout goes with the bytes it described — but a layout nobody touched keeps its own.
+    #[test]
+    fn a_reload_after_someone_else_s_edit_takes_the_file_and_drops_that_layout_s_history() {
+        let dir = scratch("external");
+        let mut store = store_with(&dir, &layout(ONE_BAR));
+        std::fs::write(
+            dir.join("other.toml"),
+            toml::to_string_pretty(&layout(ONE_BAR)).unwrap(),
+        )
+        .unwrap();
+        assert!(store.reload().is_clean());
+
+        let mine = LayoutId::new("mine");
+        let other = LayoutId::new("other");
+        for id in [&mine, &other] {
+            store
+                .commit(Transaction::new(
+                    format!("Add a battery to {id}"),
+                    id.clone(),
+                    vec![LayoutOp::InsertInstance {
+                        spot: top_zone(),
+                        index: 1,
+                        instance: Box::new(instance("battery-1", "battery")),
+                    }],
+                ))
+                .expect("the edit commits");
+        }
+
+        // Somebody's editor rewrites one of the two under the shell.
+        std::fs::write(
+            store.path_of(&mine),
+            toml::to_string_pretty(&layout(TWO_ZONES)).unwrap(),
+        )
+        .unwrap();
+        assert!(store.reload().is_clean());
+
+        assert_eq!(
+            children(store.get(&mine).expect("still there")),
+            ["clock-1", "battery-1"],
+            "the file is what `mine` holds now, not the uncommitted edit"
+        );
+        assert_eq!(
+            store.undo_label(),
+            Some("Add a battery to other"),
+            "and the history left is the untouched layout's"
+        );
+        store.undo().expect("undo");
+        assert_eq!(
+            children(store.get(&other).expect("still there")),
+            ["clock-1"]
+        );
+        assert!(matches!(store.undo(), Err(StoreError::NothingToUndo)));
+    }
+
+    /// A layout file that stops parsing leaves what was drawn on screen and says what is wrong, rather than taking the desktop away over one bad save.
+    #[test]
+    fn a_reload_of_a_file_that_stopped_parsing_keeps_what_is_drawn() {
+        let dir = scratch("unparseable");
+        let mut store = store_with(&dir, &layout(ONE_BAR));
+        let mine = LayoutId::new("mine");
+        store.use_layout(&mine).expect("it is there");
+
+        std::fs::write(store.path_of(&mine), "this is not toml = = =").unwrap();
+        let report = store.reload();
+        assert!(!report.is_clean(), "it says so");
+        assert_eq!(store.active_id(), &mine, "and keeps drawing it");
+        assert_eq!(
+            children(store.get(&mine).expect("still there")),
+            ["clock-1"]
+        );
+    }
+
+    /// A file taken away is taken away, unless the store is holding an edit nothing has written yet — which is the moment between a fork and its flush.
+    #[test]
+    fn a_layout_whose_file_is_gone_goes_with_it_unless_it_is_waiting_to_be_written() {
+        let dir = scratch("vanished");
+        let mut store = store_with(&dir, &layout(ONE_BAR));
+        let mine = LayoutId::new("mine");
+        let fork = LayoutId::new("fork");
+        store.fork(&mine, fork.clone()).expect("it copies");
+
+        std::fs::remove_file(store.path_of(&mine)).unwrap();
+        assert!(store.reload().is_clean());
+        assert!(
+            store.get(&mine).is_none(),
+            "the file is gone, so it is gone"
+        );
+        assert!(
+            store.get(&fork).is_some(),
+            "but a fork nothing has written yet is not something a reload can lose"
+        );
+        assert_eq!(
+            store.active_id().as_str(),
+            BUILT_IN,
+            "and the store falls back to the layout that cannot go missing"
+        );
+    }
+
+    /// `--safe-layout` exists to rescue a session, so it must not be able to write over the files it was started to rescue. It cannot see the user's layouts, so a fork would pick a name from an empty set.
+    #[test]
+    fn the_recovery_store_refuses_every_edit_rather_than_forking_the_built_in_layout() {
+        let mut store = LayoutStore::safe(scratch("safe"));
+        assert!(store.is_safe());
+        let refused = store
+            .fork(&LayoutId::new(BUILT_IN), LayoutId::new("custom"))
+            .expect_err("it refuses");
+        assert!(matches!(refused, StoreError::Safe), "{refused}");
+        assert!(refused.to_string().contains("--safe-layout"), "{refused}");
+        assert!(matches!(
+            store.commit(Transaction::new(
+                "Anything",
+                LayoutId::new("custom"),
+                Vec::new()
+            )),
+            Err(StoreError::Safe)
+        ));
+        assert!(!store.has_unsaved());
+    }
+
+    /// The copy that a broken file falls back to is written once, however many times the pass that keeps it runs — it runs on every reload and every monitor change.
+    #[test]
+    fn a_last_good_copy_is_kept_once_until_the_layout_changes() {
+        let dir = scratch("keep-once");
+        let mut store = store_with(&dir, &layout(ONE_BAR));
+        let mine = LayoutId::new("mine");
+        let copy = dir.join(".last-good").join("mine.toml");
+
+        store.keep_last_good(&mine).expect("it is kept");
+        util::writer::flush();
+        assert!(std::fs::metadata(&copy).is_ok(), "there is a copy");
+
+        // A marker rather than a modification time: two writes a moment apart can share one on a filesystem whose clock did not tick between them, which is the very thing this has to tell apart.
+        std::fs::write(&copy, "# untouched\n").unwrap();
+        store.keep_last_good(&mine).expect("and again");
+        util::writer::flush();
+        assert_eq!(
+            std::fs::read_to_string(&copy).unwrap(),
+            "# untouched\n",
+            "the same layout is not written a second time"
+        );
+
+        store
+            .commit(Transaction::new(
+                "Remove the clock",
+                mine.clone(),
+                vec![LayoutOp::DeleteInstance {
+                    spot: top_zone(),
+                    id: InstanceId::new("clock-1"),
+                }],
+            ))
+            .expect("the edit commits");
+        store.keep_last_good(&mine).expect("it is kept again");
+        util::writer::flush();
+        let kept: Layout =
+            toml::from_str(&std::fs::read_to_string(&copy).unwrap()).expect("it parses");
+        assert!(
+            children(&kept).is_empty(),
+            "and a layout that changed is written again"
+        );
+    }
+
+    /// The rescue draws the copy and leaves the file alone: a shell that quietly wrote an older copy over a broken layout would take away the evidence of what broke it.
+    #[test]
+    fn restoring_the_last_good_copy_changes_what_is_drawn_and_not_what_is_stored() {
+        let dir = scratch("restore");
+        let mut store = store_with(&dir, &layout(ONE_BAR));
+        let mine = LayoutId::new("mine");
+        store.keep_last_good(&mine).expect("it is kept");
+        util::writer::flush();
+
+        let broken = "this is not toml = = =";
+        std::fs::write(store.path_of(&mine), broken).unwrap();
+        assert!(!store.reload().is_clean());
+
+        assert!(store.restore_last_good(&mine), "there is a copy");
+        assert_eq!(
+            children(store.get(&mine).expect("it is drawn")),
+            ["clock-1"]
+        );
+        assert!(!store.has_unsaved(), "and nothing is queued to be written");
+        assert_eq!(
+            std::fs::read_to_string(store.path_of(&mine)).unwrap(),
+            broken,
+            "the file the user has to fix is exactly as they left it"
+        );
     }
 }

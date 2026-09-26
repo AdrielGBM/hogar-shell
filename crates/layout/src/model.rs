@@ -203,6 +203,33 @@ pub struct Layers {
     pub lock: Layer,
 }
 
+impl Layers {
+    pub fn get(&self, kind: LayerKind) -> &Layer {
+        match kind {
+            LayerKind::Background => &self.background,
+            LayerKind::Desktop => &self.desktop,
+            LayerKind::Top => &self.top,
+            LayerKind::Overlay => &self.overlay,
+            LayerKind::Lock => &self.lock,
+        }
+    }
+
+    pub fn get_mut(&mut self, kind: LayerKind) -> &mut Layer {
+        match kind {
+            LayerKind::Background => &mut self.background,
+            LayerKind::Desktop => &mut self.desktop,
+            LayerKind::Top => &mut self.top,
+            LayerKind::Overlay => &mut self.overlay,
+            LayerKind::Lock => &mut self.lock,
+        }
+    }
+
+    /// Every layer with the kind it is, bottom first — which is the order the windows stack in, and the order anything walking a whole level has to take them in.
+    pub fn each(&self) -> [(LayerKind, &Layer); 5] {
+        LayerKind::ALL.map(|kind| (kind, self.get(kind)))
+    }
+}
+
 /// The four layers a workspace rule may refine.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -215,6 +242,18 @@ pub struct SessionLayers {
     pub top: Layer,
     #[serde(skip_serializing_if = "Layer::is_empty")]
     pub overlay: Layer,
+}
+
+impl SessionLayers {
+    /// Every layer a workspace rule may refine, bottom first. The lock layer is not one of them: no workspace is visible while the screen is locked.
+    pub fn each(&self) -> [(LayerKind, &Layer); 4] {
+        [
+            (LayerKind::Background, &self.background),
+            (LayerKind::Desktop, &self.desktop),
+            (LayerKind::Top, &self.top),
+            (LayerKind::Overlay, &self.overlay),
+        ]
+    }
 }
 
 /// Which of the five layers something is on.
@@ -254,6 +293,11 @@ impl LayerKind {
             LayerKind::Overlay => "overlay",
             LayerKind::Lock => "lock",
         }
+    }
+
+    /// The layer a command or a file named, by the one spelling [`LayerKind::as_str`] gives it.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == name)
     }
 
     /// The layer-shell namespace of this layer's window. `hogar-shell-bottom` is avoided for the desktop layer because "bottom" means the bottom bar to a user reading their own compositor rules.
@@ -810,6 +854,20 @@ pub enum Representation {
 }
 
 impl Representation {
+    /// Every size a layout can place. The descriptor table has two more, `Panel` and `Popout`, which are opened rather than placed.
+    pub const ALL: [Representation; 5] = [
+        Representation::Chip,
+        Representation::WidgetS,
+        Representation::WidgetM,
+        Representation::WidgetL,
+        Representation::Card,
+    ];
+
+    /// The size a command or a file named, by the one spelling [`Representation::as_str`] gives it.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|it| it.as_str() == name)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Representation::Chip => "chip",
@@ -831,6 +889,33 @@ pub enum Trigger {
     ScrollDown,
     Middle,
     Secondary,
+}
+
+impl Trigger {
+    pub const ALL: [Trigger; 6] = [
+        Trigger::Press,
+        Trigger::LongPress,
+        Trigger::ScrollUp,
+        Trigger::ScrollDown,
+        Trigger::Middle,
+        Trigger::Secondary,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Trigger::Press => "press",
+            Trigger::LongPress => "long_press",
+            Trigger::ScrollUp => "scroll_up",
+            Trigger::ScrollDown => "scroll_down",
+            Trigger::Middle => "middle",
+            Trigger::Secondary => "secondary",
+        }
+    }
+
+    /// The gesture a command or a file named, by the one spelling [`Trigger::as_str`] gives it — which is also the key serde writes, since both come from the same snake case.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|it| it.as_str() == name)
+    }
 }
 
 /// A chain of shell commands a trigger runs. Each line is an IPC command validated against the command table when the layout loads, so a typo is a located error rather than a gesture that silently does nothing.

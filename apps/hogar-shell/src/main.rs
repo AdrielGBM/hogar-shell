@@ -10,6 +10,9 @@ Bind them in hyprland.conf:
   bind = SUPER, N, exec, hogar-shell panel toggle notifications
 ";
 
+/// Starts the shell on the built-in layout, for a session the user's own layout has made unusable. Accepted before `run` as well as after it, because somebody reaching for it is recovering rather than reading the synopsis.
+const SAFE_LAYOUT: &str = "--safe-layout";
+
 /// The usage block, from the same invocation forms the manual's synopsis is built from — a new way to call the binary appears in both or in neither.
 fn usage() -> String {
     let mut out = String::from("hogar-shell — a Wayland shell for Hyprland\n\nUsage:\n");
@@ -36,15 +39,18 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str);
     // The shell opens its own reach once it knows it is not `cargo telar preview` or `test`, which must reach nothing of the user's.
-    if !matches!(command, None | Some("run")) {
+    if !matches!(command, None | Some("run" | SAFE_LAYOUT)) {
         hogar_shell::Reach::of(command).open();
     }
     match command {
-        None | Some("run") => {
+        None | Some("run" | SAFE_LAYOUT) => {
             cap_malloc_arenas();
             // Held for the whole run: dropping the guard stops the writer thread and flushes what it has.
             let _logging = init_tracing();
-            hogar_shell::run();
+            hogar_shell::run(match args.iter().any(|arg| arg == SAFE_LAYOUT) {
+                true => hogar_shell::Layouts::BuiltInOnly,
+                false => hogar_shell::Layouts::OnDisk,
+            });
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") => {

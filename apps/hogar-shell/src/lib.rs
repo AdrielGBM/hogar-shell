@@ -108,7 +108,18 @@ fn seed_preview_world() {
     install_hooks();
 }
 
-pub fn run() {
+/// Which layouts a run starts from.
+///
+/// `--safe-layout` is for a session the user's own layout has made unusable: the store holds the built-in layout alone, refuses every edit and writes nothing, so the files it was started to rescue are exactly as they were when the shell is restarted without the flag (TA-7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layouts {
+    /// The ones in `~/.config/hogar-shell/layouts/`, drawing whichever this installation chose.
+    OnDisk,
+    /// The built-in one, and nothing else.
+    BuiltInOnly,
+}
+
+pub fn run(layouts: Layouts) {
     // `cargo telar preview`/`test` has to answer while a shell is already up, so this precedes the single-instance check below — it opens no surface and takes no bus name.
     if telar::dev_entry(preview_entries, preview_window(), seed_preview_world) {
         return;
@@ -131,7 +142,7 @@ pub fn run() {
     services::notifications::init(notification_policy(&startup.config));
 
     // Non-destructive reload: one persistent driver. Every surface is opened dynamically on the driver thread (via `setup_shell`, deferred with `run_on_start`) and reconciled on config change, so a reload never tears down the connection, the popup, or the shared services — only the surfaces that changed.
-    platform_wayland::run_on_start(move || setup_shell(config_path, startup));
+    platform_wayland::run_on_start(move || setup_shell(config_path, startup, layouts));
     if let Err(e) = run_multi_with_platform(
         LayerShellPlatform::new(),
         Vec::new(),
@@ -145,7 +156,7 @@ pub fn run() {
 }
 
 /// Runs on the driver thread once its loop is up (deferred via `run_on_start`): brings up the popup host and the shell's own surfaces, then watches the config file and reconciles them on change — in place, without tearing the driver, the connection, the popup, the services or the surfaces themselves down.
-fn setup_shell(config_path: PathBuf, startup: Startup) {
+fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
     install_hooks();
     let Startup {
         config,
@@ -172,10 +183,18 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
     modules::stack::host();
 
     // Where everything the shell draws is written down. Owned here, because the layer windows read it on every pass and the `layout` IPC target writes it; a broken layout file is reported and skipped, and the built-in one is always there to fall back to.
-    let (mut store, mut layouts) = LayoutStore::load(layouts_dir());
-    select_active(&mut store, &mut layouts);
+    let (mut store, mut problems) = match layouts {
+        Layouts::OnDisk => LayoutStore::load(crate::core::layouts::dir()),
+        Layouts::BuiltInOnly => (
+            LayoutStore::safe(crate::core::layouts::dir()),
+            util::report::Report::default(),
+        ),
+    };
+    if layouts == Layouts::OnDisk {
+        select_active(&mut store, &mut problems);
+    }
     let store = Rc::new(RefCell::new(store));
-    report_layout_problems(&layouts);
+    report_layout_problems(&problems);
 
     // One pass brings the screen in line with a layout — at startup, at every reload that applies one, and when the screens change — so there is one description of what should be on screen rather than an opening path and a reloading path that can disagree. It reports what it did itself, through tracing rather than `println!`, because this runs on the driver thread where a direct write to a pipe nobody is draining blocks forever. See `init_tracing`.
     let shell = Rc::new(RefCell::new(Shell::new()));
@@ -184,7 +203,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
         let store = Rc::clone(&store);
         let config_path = config_path.clone();
         move |config: &Arc<Config>, content: Content| {
-            let store = store.borrow();
+            let mut store = store.borrow_mut();
             let (desktops, report) = surfaces::reconcile::plan(
                 &config_path,
                 config,
@@ -194,6 +213,13 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
                 &active_workspace,
             );
             report_layout_problems(&report);
+            // The pass that proves a layout resolves is the one that keeps the copy to fall back to (TA-7). Nothing is written unless the copy would differ, since this runs on every reload and every monitor change.
+            if report.is_clean() {
+                let active = store.active_id().clone();
+                if let Err(why) = store.keep_last_good(&active) {
+                    tracing::warn!("could not keep a copy of `{active}` that works: {why}");
+                }
+            }
             shell.borrow_mut().reconcile(&desktops, content);
         }
     };
@@ -211,6 +237,13 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
     apply(&config, Content::Rebuild);
 
     let apply = Rc::new(apply);
+
+    // What the `layout` verbs and the lock session opener act on, and the pass an edit is redrawn with. Installed once that pass exists: an edit nothing redraws is one the user has no way to judge.
+    crate::core::layouts::install(Rc::clone(&store), {
+        let apply = Rc::clone(&apply);
+        let reloader = Rc::clone(&reloader);
+        Rc::new(move || apply(&reloader.borrow().live(), Content::Rebuild))
+    });
 
     // The config having changed, whoever noticed: the file watcher, `hogar-shell shell reload`, a keybind. The toast belongs here rather than in the surface pass, which also runs at startup — a toast saying the config was reloaded is only true of a reload, and only of one that applied something.
     let on_config_change: Rc<dyn Fn(Reload)> = {
@@ -252,11 +285,6 @@ fn setup_shell(config_path: PathBuf, startup: Startup) {
     });
 }
 
-/// Where the user's layouts live. One directory, one file per layout, beside `config.toml`.
-fn layouts_dir() -> PathBuf {
-    util::paths::config_dir().join("layouts")
-}
-
 /// What the compositor says is on `output` right now, as much of it as a workspace rule can match on.
 ///
 /// The name is what `ext-workspace-v1` gives portably; `id:` and `special:` are Hyprland's alone and come through its own socket, so a rule using one on another compositor is reported as inactive rather than quietly never firing (DEC-16).
@@ -284,22 +312,34 @@ fn active_workspace(output: Option<&str>) -> Option<ActiveWorkspace> {
 /// Makes the store draw the layout this installation chose, or say why it cannot.
 ///
 /// The name lives in `state.json` because it is a decision about this machine rather than a description of one (TA-2), and `layout use` is the only thing that writes it. A name nothing answers to is reported and the built-in layout stands in — the same shape as every other unknown id in this shell: say what was asked for, draw something anyway.
+///
+/// **The copy that last worked comes first, though.** A layout whose file has gone missing or stopped parsing is exactly what `layouts/.last-good/` is kept for, so it is drawn from there and said so, rather than the user losing their whole desktop to one bad save. Nothing is written back: the file is theirs to fix, and the next start rescues it again until they do.
 fn select_active(store: &mut LayoutStore, report: &mut util::report::Report) {
     let Some(name) = services::state::get().layout else {
         return;
     };
+    let path = crate::core::layouts::dir().join(format!("{name}.toml"));
     let id = layout::LayoutId::new(&name);
-    if let Err(e) = store.use_layout(&id) {
-        report.error(util::report::Finding::new(
-            layouts_dir().join(format!("{name}.toml")),
-            "layout",
-            format!("{e}; drawing the built-in layout instead"),
-        ));
+    if store.use_layout(&id).is_ok() {
+        return;
     }
+    if store.restore_last_good(&id) && store.use_layout(&id).is_ok() {
+        report.warn(util::report::Finding::new(
+            path,
+            "layout",
+            "this layout could not be read, so the last copy of it that worked is being drawn; the file is unchanged".to_string(),
+        ));
+        return;
+    }
+    report.error(util::report::Finding::new(
+        path,
+        "layout",
+        format!("there is no layout called `{name}`; drawing the built-in layout instead"),
+    ));
 }
 
 /// Says what a layout could not answer, in the one live notice the config's own problems already use — a layout that does not resolve is the same kind of news as a config that does not parse, and a user reading one place should see both.
-fn report_layout_problems(report: &util::report::Report) {
+pub(crate) fn report_layout_problems(report: &util::report::Report) {
     if report.is_clean() {
         return;
     }

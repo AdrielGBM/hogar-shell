@@ -57,7 +57,7 @@ impl Fingerprint {
                 files.push((file, held));
             }
         }
-        for file in layout_files(config_path) {
+        for file in layouts_beside(config_path) {
             if let held @ Held::Bytes(_) = held(&file) {
                 files.push((file, held));
             }
@@ -73,12 +73,19 @@ impl Fingerprint {
     }
 }
 
-/// Every layout file beside `config_path`, sorted so two reads of an unchanged directory fingerprint alike.
-fn layout_files(config_path: &Path) -> Vec<PathBuf> {
+/// The layouts directory beside `config_path`.
+fn layouts_beside(config_path: &Path) -> Vec<PathBuf> {
     let Some(dir) = config_path.parent().map(|dir| dir.join("layouts")) else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    layout_files(&dir)
+}
+
+/// Every layout file in `dir`, sorted so two reads of an unchanged directory answer alike.
+///
+/// Here rather than in `crates/layout`, which owns the directory, because the dependency runs the other way. One answer all the same: the fingerprint that decides whether a reload has anything to deliver and the store that reads the files must not disagree about which files those are.
+pub fn layout_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut files: Vec<PathBuf> = entries

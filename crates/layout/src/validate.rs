@@ -295,7 +295,7 @@ fn report_strays(
 const MOST_STOPS: usize = 8;
 
 fn check_gradients(layers: &Layers, at: &str, file: &str, report: &mut Report) {
-    for (kind, layer) in each_layer(layers) {
+    for (kind, layer) in layers.each() {
         for area in &layer.areas {
             let Some(AreaKind::Texture {
                 gradient: Some(gradient),
@@ -326,7 +326,7 @@ fn check_layer_ids(
     instances: &mut BTreeSet<InstanceId>,
     report: &mut Report,
 ) {
-    for (kind, layer) in each_layer(layers) {
+    for (kind, layer) in layers.each() {
         let mut areas = BTreeSet::new();
         for area in &layer.areas {
             if !areas.insert(area.id.clone()) {
@@ -367,7 +367,7 @@ fn check_modules(
     catalogue: &dyn Catalogue,
     report: &mut Report,
 ) {
-    for (kind, layer) in each_layer(layers) {
+    for (kind, layer) in layers.each() {
         for (area, group, instance) in instances_of(layer) {
             let Some(module) = &instance.module else {
                 continue;
@@ -406,7 +406,7 @@ fn check_actions(
     catalogue: &dyn Catalogue,
     report: &mut Report,
 ) {
-    for (kind, layer) in each_layer(layers) {
+    for (kind, layer) in layers.each() {
         for (area, group, instance) in instances_of(layer) {
             for (trigger, action) in &instance.actions {
                 let path = format!(
@@ -490,7 +490,7 @@ fn check_workspace_rules(
             lock: Layer::default(),
         };
 
-        for (kind, layer) in each_layer(&layers) {
+        for (kind, layer) in layers.each() {
             for id in &layer.remove {
                 if reserving.contains(id) {
                     report.error(Finding::new(
@@ -525,22 +525,13 @@ fn check_workspace_rules(
 }
 
 fn reserving_areas(layers: &Layers) -> BTreeSet<AreaId> {
-    each_layer(layers)
+    layers
+        .each()
         .into_iter()
         .flat_map(|(_, layer)| layer.areas.iter())
         .filter(|area| area.reserve == Some(true))
         .map(|area| area.id.clone())
         .collect()
-}
-
-fn each_layer(layers: &Layers) -> Vec<(LayerKind, &Layer)> {
-    vec![
-        (LayerKind::Background, &layers.background),
-        (LayerKind::Desktop, &layers.desktop),
-        (LayerKind::Top, &layers.top),
-        (LayerKind::Overlay, &layers.overlay),
-        (LayerKind::Lock, &layers.lock),
-    ]
 }
 
 fn instances_of(layer: &Layer) -> impl Iterator<Item = (&Area, &Group, &Instance)> {

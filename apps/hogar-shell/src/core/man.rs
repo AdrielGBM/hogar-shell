@@ -14,6 +14,10 @@ use super::commands::TARGETS;
 pub const FORMS: &[(&str, &str)] = &[
     ("[run]", "start the shell"),
     (
+        "[run] --safe-layout",
+        "start it on the built-in layout, writing none",
+    ),
+    (
         "<target> <cmd> [args]",
         "send a command to the running shell",
     ),

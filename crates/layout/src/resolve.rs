@@ -296,12 +296,7 @@ fn answer_layers(
 ) -> BTreeMap<LayerKind, ResolvedLayer> {
     LayerKind::ALL
         .into_iter()
-        .map(|kind| {
-            (
-                kind,
-                answer_layer(layer_of(layers, kind), kind, layout, report),
-            )
-        })
+        .map(|kind| (kind, answer_layer(layers.get(kind), kind, layout, report)))
         .collect()
 }
 
@@ -315,16 +310,6 @@ fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
             .filter_map(|area| area.kind.reserving_thickness(edge))
             .sum()
     })
-}
-
-fn layer_of(layers: &Layers, kind: LayerKind) -> &Layer {
-    match kind {
-        LayerKind::Background => &layers.background,
-        LayerKind::Desktop => &layers.desktop,
-        LayerKind::Top => &layers.top,
-        LayerKind::Overlay => &layers.overlay,
-        LayerKind::Lock => &layers.lock,
-    }
 }
 
 /// The layouts to apply, root first. A cycle stops at the layout that closes it, reported once, so a file that extends itself is a message rather than a hang.

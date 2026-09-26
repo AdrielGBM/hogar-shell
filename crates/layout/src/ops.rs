@@ -386,13 +386,7 @@ fn layer_mut<'a>(layout: &'a mut Layout, site: &Site) -> Result<&'a mut Layer, O
         .iter_mut()
         .find(|rule| rule.matches == site.output)
         .ok_or_else(|| OpError::NoOutputRule(site.output.0.clone()))?;
-    Ok(match site.layer {
-        LayerKind::Background => &mut rule.layers.background,
-        LayerKind::Desktop => &mut rule.layers.desktop,
-        LayerKind::Top => &mut rule.layers.top,
-        LayerKind::Overlay => &mut rule.layers.overlay,
-        LayerKind::Lock => &mut rule.layers.lock,
-    })
+    Ok(rule.layers.get_mut(site.layer))
 }
 
 fn area_mut<'a>(layout: &'a mut Layout, site: &Site, id: &AreaId) -> Result<&'a mut Area, OpError> {
