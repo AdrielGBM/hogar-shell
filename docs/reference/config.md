@@ -450,10 +450,6 @@ The screen only comes up on a compositor that implements `ext-session-lock-v1` a
 
   Verify a fingerprint through fprintd alongside the password, when a reader is enrolled.
 
-- **`hide_notifs`** · default `true`
-
-  Start with the notification dock collapsed — the lock screen is the one surface where a stranger can read what arrived without unlocking.
-
 - **`howdy_command`** · default `""`
 
   The Howdy face-unlock command, run with the user name appended; empty disables it. Exit status 0 is a successful match, as Howdy's own PAM module treats it.
@@ -469,6 +465,14 @@ The screen only comes up on a compositor that implements `ext-session-lock-v1` a
 
   Attempts before the field locks itself out for `lockout_seconds`. `0` never locks out.
 
+- **`media_detail`** · default `"title"`
+
+  How much of what is playing a locked screen may show.
+
+- **`notification_detail`** · default `"count"`
+
+  How much of a waiting notification a locked screen may show. The summary and the body are never shown at any setting: a lock screen is read by whoever is in the room.
+
 - **`pam_library`** · default `""`
 
   Where `libpam` is. Empty tries `libpam.so.0`, `libpam.so` and NixOS's `/run/current-system/sw/lib/libpam.so.0`, which between them cover every machine met so far; set it only if `hogar-shell lock status` says the library could not be loaded.
@@ -477,11 +481,6 @@ The screen only comes up on a compositor that implements `ext-session-lock-v1` a
 
   The PAM service to authenticate against — a file under `/etc/pam.d`. Empty picks the first of `hogar-shell`, `swaylock`, `login` that exists, so a machine with no hogar-shell-specific stack still unlocks instead of refusing every password.
 
-- **`show_avatar`** · default `true`
-- **`show_media`** · default `true`
-- **`show_notifications`** · default `true`
-- **`show_resources`** · default `false`
-- **`show_weather`** · default `false`
 - **`trigger_on_wake`** · default `false`
 
   Attempt face unlock as soon as the lock screen appears, rather than only when asked.
@@ -865,6 +864,10 @@ Not notifications. A notification belongs to an application, goes into history a
 - **`dnd`** · default `true`
 - **`game_mode`** · default `true`
 - **`kb_layout`** · default `true`
+- **`lock_fallback`** · default `true`
+
+  That the lock screen fell back to the built-in one because the layout could not be drawn, said once the session is unlocked and there is somebody to read it.
+
 - **`lock_keys`** · default `true`
 
   Caps Lock and Num Lock — the one piece of state a keyboard changes and never reports.

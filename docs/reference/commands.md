@@ -280,6 +280,13 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `show` | `[name]` | print a layout as it is stored |
 | `check` | `[name]` | report what is wrong with a layout, without applying it |
 | `use` | `<name>` | draw this layout from now on |
+| `undo` |  | take back the last edit, whatever made it |
+| `redo` |  | make the edit that was last taken back again |
+| `add` | `<module> <area> [group]` | place a module in an area of the layout being drawn |
+| `remove` | `<id>` | take a placed module, or a whole area, out of the layout |
+| `move` | `<id> <group> [index]` | put a placed module in another group, or elsewhere in its own |
+| `set` | `<instance> <key> <value>` | change one property of a placed module |
+| `reset` | `<id\|layer\|all>` | put a part of the layout back to what the built-in one says |
 
 ## `deps`
 

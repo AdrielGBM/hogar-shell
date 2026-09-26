@@ -581,11 +581,6 @@ Verify a fingerprint through fprintd alongside the password, when a reader is en
 .sp
 Default: \fBfalse\fR
 .TP
-.B hide_notifs
-Start with the notification dock collapsed \(em the lock screen is the one surface where a stranger can read what arrived without unlocking.
-.sp
-Default: \fBtrue\fR
-.TP
 .B howdy_command
 The Howdy face\-unlock command, run with the user name appended; empty disables it. Exit status 0 is a successful match, as Howdy's own PAM module treats it.
 .sp
@@ -610,6 +605,16 @@ Attempts before the field locks itself out for `lockout_seconds`. `0` never lock
 .sp
 Default: \fB5\fR
 .TP
+.B media_detail
+How much of what is playing a locked screen may show.
+.sp
+Default: \fB"title"\fR
+.TP
+.B notification_detail
+How much of a waiting notification a locked screen may show. The summary and the body are never shown at any setting: a lock screen is read by whoever is in the room.
+.sp
+Default: \fB"count"\fR
+.TP
 .B pam_library
 Where `libpam` is. Empty tries `libpam.so.0`, `libpam.so` and NixOS's `/run/current\-system/sw/lib/libpam.so.0`, which between them cover every machine met so far; set it only if `hogar\-shell lock status` says the library could not be loaded.
 .sp
@@ -619,21 +624,6 @@ Default: \fB""\fR
 The PAM service to authenticate against \(em a file under `/etc/pam.d`. Empty picks the first of `hogar\-shell`, `swaylock`, `login` that exists, so a machine with no hogar\-shell\-specific stack still unlocks instead of refusing every password.
 .sp
 Default: \fB""\fR
-.TP
-.B show_avatar
-Default: \fBtrue\fR
-.TP
-.B show_media
-Default: \fBtrue\fR
-.TP
-.B show_notifications
-Default: \fBtrue\fR
-.TP
-.B show_resources
-Default: \fBfalse\fR
-.TP
-.B show_weather
-Default: \fBfalse\fR
 .TP
 .B trigger_on_wake
 Attempt face unlock as soon as the lock screen appears, rather than only when asked.
@@ -1158,6 +1148,11 @@ Default: \fBtrue\fR
 .B kb_layout
 Default: \fBtrue\fR
 .TP
+.B lock_fallback
+That the lock screen fell back to the built\-in one because the layout could not be drawn, said once the session is unlocked and there is somebody to read it.
+.sp
+Default: \fBtrue\fR
+.TP
 .B lock_keys
 Caps Lock and Num Lock \(em the one piece of state a keyboard changes and never reports.
 .sp
@@ -1405,5 +1400,386 @@ Draw an app icon per window inside each pill, capped at `max_window_icons`.
 .sp
 Default: \fBfalse\fR
 .SS [workspaces.special_icons]
+.SH LAYOUT
+.I ~/.config/hogar-shell/layouts/<name>.toml
+.PP
+Where everything the shell draws is written down: which areas are on which layer of which output, what
+is inside them, and what each placed module is. One file per layout;
+.B hogar-shell layout use <name>
+chooses which one is drawn, and
+.B hogar-shell config schema layout
+prints this same reference as a complete, valid layout file.
+.PP
+A layout is written at four levels \(em the built-in default, an
+.B extends
+parent, an output rule and a workspace rule \(em and they are merged by
+.BR id ,
+so a monitor rule says only what it changes.
+.SS Layout
+One named arrangement of everything the shell draws.
+.TP
+.B id
+The name everything addresses this layout by \(em `layout use`, `extends`, the last\-good copy. It comes from the file name, so writing something else here changes nothing.
+.TP
+.B name
+What the user sees in the layout list. Falls back to `id` when empty.
+.TP
+.B extends
+A layout this one starts from. The chain is applied root first, so this layout's own rules win.
+.TP
+.B outputs
+Output rules in file order. Every one whose glob matches is applied, most\-specific glob last, so a `*` rule is the base and a named monitor refines it.
+.SS OutputRule
+What an output, or every output, is arranged like.
+.TP
+.B match
+`*` for every output, or a glob over the connector name (`DP\-*`, `eDP\-1`).
+.TP
+.B layers
+The five layers of one output. The first four are wlr layer\-shell layers, one window each; `lock` is the same model on `ext\-session\-lock\-v1` surfaces.
+.TP
+.B workspaces
+Per\-workspace refinements of this output. They may change contents and non\-reserving areas only, so switching workspaces never re\-tiles windows.
+.SS WorkspaceRule
+A refinement that applies only while a given workspace is active on the output.
+.TP
+.B match
+A workspace name, `id:<n>` or `special:<name>`. The prefixed forms need Hyprland; without it the rule is reported as inactive instead of being silently dropped.
+.TP
+.B layers
+The four wlr layers. `lock` is absent on purpose: no workspace is visible while the session is locked.
+.SS Layers
+The five layers of one output. The first four are wlr layer\-shell layers, one window each; `lock` is the same model on `ext\-session\-lock\-v1` surfaces.
+.TP
+.B background
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B desktop
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B top
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B overlay
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B lock
+One layer's areas. Their order is their z\-order inside the layer's window.
+.SS SessionLayers
+The four layers a workspace rule may refine.
+.TP
+.B background
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B desktop
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B top
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B overlay
+One layer's areas. Their order is their z\-order inside the layer's window.
+.SS Layer
+One layer's areas. Their order is their z\-order inside the layer's window.
+.TP
+.B areas
+A region of a layer that holds instances and has a geometry of its own.
+.sp
+Its geometry is written *in this table*, beside the keys below: `kind` says which kind of region it is and the keys that kind has follow it. A key no kind of area has is reported with its line and column rather than ignored \(em see `layout check`.
+.TP
+.B remove
+Ids of areas an earlier level placed that this one takes away.
+.SS Area
+A region of a layer that holds instances and has a geometry of its own.
+.sp
+Its geometry is written *in this table*, beside the keys below: `kind` says which kind of region it is and the keys that kind has follow it. A key no kind of area has is reported with its line and column rather than ignored \(em see `layout check`.
+.TP
+.B id
+What a rule, a command or another level of the same layout addresses this area by. Unique within its layer.
+.TP
+.B kind
+What kind of region this is. Required the first time the area is named; absent when a later level only adjusts one that already exists.
+.TP
+.B reserve
+Whether the compositor keeps windows out of this area's edge. Only an output\-level area may reserve: a workspace rule that changes this is rejected, so switching workspaces never re\-tiles windows.
+.TP
+.B above_fullscreen
+Whether this area stays visible over a fullscreen window, which costs direct scanout on that output for as long as it is mapped.
+.TP
+.B within
+Which box this area's geometry is measured in: the whole output, or what is left of it once the reserving areas have taken their edges.
+.TP
+.B style
+Per\-area appearance. Every field is optional because the theme answers whatever an area does not.
+.TP
+.B visible
+An expression that decides whether the area draws. An invisible area contributes nothing to the input region.
+.TP
+.B groups
+A run of instances inside an area, and how the area places it.
+.TP
+.B remove
+Ids of groups an earlier level placed that this one takes away.
+.SS AreaKind::Bar
+A strip along one edge: today's bar.
+.TP
+.B edge
+Which edge of the output the strip hugs.
+.TP
+.B thickness
+How thick the strip is, across the edge.
+.TP
+.B length
+How far it runs along the edge.
+.TP
+.B offset
+Where it starts along the edge, as a fraction of the edge, so several bars can share one.
+.TP
+.B shape
+A bar's own shape, overriding the global `[shape]` where it is set.
+.TP
+.B autohide
+A bar that hides itself off its edge and comes back when the pointer reaches the strip it leaves behind.
+.SS AreaKind::Grid
+A grid of cells that widgets are placed into by explicit coordinates.
+.TP
+.B rect
+A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+.TP
+.B cell
+How big one cell is, in logical pixels. A widget covers whole cells, so this is what decides how big every widget on this grid is.
+.TP
+.B gap
+The space between two cells.
+.TP
+.B anchor
+Where the cells sit inside `rect` when they do not fill it. A grid of one widget is the common case, and without this it could only ever sit in the corner its origin is at.
+.SS AreaKind::Stack
+A column that notification, toast and OSD cards are routed into.
+.TP
+.B anchor
+One of the nine places a stack or a free area can be pinned to.
+.TP
+.B width
+How wide a card in this column is, in logical pixels.
+.TP
+.B output_policy
+Which outputs a stack appears on.
+.TP
+.B routes
+Which cards land here. A card goes to the first stack whose routes accept it; a stack with no routes accepts everything.
+.SS AreaKind::WallpaperRegion
+A region of the output that draws a wallpaper of its own.
+.TP
+.B rect
+A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+.TP
+.B source
+A path to the picture this region shows. Left out, it shows whatever `[background]` is set to \(em so changing the desktop's picture stays a `[background]` edit and a `hogar\-shell wallpaper set` rather than a layout edit.
+.TP
+.B fit
+How the picture is fitted to the region.
+.TP
+.B transition
+How a wallpaper changes to the next one.
+.SS AreaKind::Texture
+An image or gradient painted over what is behind it.
+.TP
+.B rect
+A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+.TP
+.B image
+A path to the image to paint. Exactly one of this and `gradient` is drawn; an area that names both is reported.
+.TP
+.B gradient
+A gradient with its stops in order along `angle`.
+.TP
+.B tile
+How an image repeats inside its rectangle.
+.TP
+.B blend
+How a texture combines with what is behind it.
+.TP
+.B opacity
+How opaque the paint is, from 0 to 1.
+.SS AreaKind::Dock
+A strip that hugs an edge and sizes itself to its contents, like today's visualiser.
+.TP
+.B edge
+Which edge of the output the strip hugs.
+.TP
+.B thickness
+How deep the strip is, across the edge.
+.SS AreaKind::Free
+A rectangle placed by hand.
+.TP
+.B rect
+A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+.SS AreaKind::Prompt
+The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden.
+.TP
+.B rect
+A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+.TP
+.B style
+How the lock layer's prompt is drawn.
+.SS AreaStyle
+Per\-area appearance. Every field is optional because the theme answers whatever an area does not.
+.TP
+.B fill
+A theme token name or a hex colour.
+.TP
+.B radius
+How far the corners are rounded, in logical pixels.
+.TP
+.B opacity
+How opaque the area is drawn, from 0 to 1.
+.TP
+.B padding
+How far the area holds its contents off its own edges.
+.TP
+.B backdrop
+What happens to what is behind an area.
+.SS BarShape
+A bar's own shape, overriding the global `[shape]` where it is set.
+.TP
+.B mode
+Whether the bar is one surface, three sections or a chip per module: `bar`, `sections` or `chips`.
+.TP
+.B gap
+How far the bar floats from its edge and from the screen's sides.
+.TP
+.B spacing
+The space between two modules on it.
+.TP
+.B radius
+How far its corners are rounded.
+.SS AutoHide
+A bar that hides itself off its edge and comes back when the pointer reaches the strip it leaves behind.
+.TP
+.B peek
+How much of the bar stays on screen while it is hidden, and therefore how big the rectangle that reveals it is.
+.TP
+.B on_hover
+Whether resting the pointer on that strip is enough to bring the bar back. With it off the bar is revealed by pulling inward from the edge instead, which is a deliberate gesture rather than something a pointer crossing the screen can trigger.
+.SS PromptStyle
+How the lock layer's prompt is drawn.
+.TP
+.B fill
+A theme token name or a hex colour for the card behind the field.
+.TP
+.B radius
+How far its corners are rounded.
+.TP
+.B opacity
+Kept at or above 0.9 by validation: a prompt faded into its background is a lockout.
+.SS Rect
+A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+.TP
+.B x
+No explanation of its own.
+.TP
+.B y
+No explanation of its own.
+.TP
+.B w
+No explanation of its own.
+.TP
+.B h
+No explanation of its own.
+.SS Gradient
+A gradient with its stops in order along `angle`.
+.TP
+.B angle
+Degrees clockwise from a left\-to\-right sweep.
+.TP
+.B stops
+One colour of a gradient, and where along it that colour sits.
+.SS GradientStop
+One colour of a gradient, and where along it that colour sits.
+.TP
+.B at
+Where along the gradient this stop sits, from 0 to 1.
+.TP
+.B color
+A theme token name or a hex colour, the same vocabulary `[theme.colors]` uses.
+.SS Tile::NineSlice
+Stretch the middle and keep the corners, for a border or a frame image. The four insets are in the image's own pixels and say where its corners end, which is what the renderer needs and what a slice cannot be drawn without.
+.TP
+.B top
+No explanation of its own.
+.TP
+.B right
+No explanation of its own.
+.TP
+.B bottom
+No explanation of its own.
+.TP
+.B left
+No explanation of its own.
+.SS Route
+Which cards a stack accepts. An empty field matches anything.
+.TP
+.B kind
+Which kind of card this route accepts. Absent accepts every kind.
+.TP
+.B app
+The application id a notification came from.
+.TP
+.B urgency
+How insistent a notification has to be to land here.
+.SS Group
+A run of instances inside an area, and how the area places it.
+.TP
+.B id
+What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`.
+.TP
+.B kind
+Where in its area the group sits. `place` says which way, and the keys that way needs follow it.
+.TP
+.B children
+One placed module.
+.TP
+.B remove
+Ids of instances an earlier level placed that this one takes away.
+.SS GroupKind::Zone
+One of a bar's three runs.
+.TP
+.B zone
+Which run of a bar a group is in.
+.SS GroupKind::Cell
+An explicit cell in a grid, which is what keeps a widget where it was put instead of reflowing it.
+.TP
+.B col
+Which column of the grid the group starts at, counting from 0.
+.TP
+.B row
+Which row it starts at.
+.TP
+.B col_span
+How many columns it covers. A span of one is what a cell already is, so it is left out of a written layout.
+.TP
+.B row_span
+How many rows it covers.
+.SS Instance
+One placed module.
+.TP
+.B id
+What IPC, a rule and another level of the same layout address this placed module by. Unique across the whole layout, readable, and never reused \(em `clock`, then `clock\-2`.
+.TP
+.B module
+The module descriptor this instance shows. Required the first time the instance is named.
+.TP
+.B representation
+How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`.
+.TP
+.B options
+Option overrides for this instance alone, on top of the module's global defaults.
+.TP
+.B bindings
+Properties driven by an expression instead of a fixed value, keyed by the property's path.
+.TP
+.B actions
+What each gesture on this instance runs.
 .SH SEE ALSO
 .BR hogar-shell (1)

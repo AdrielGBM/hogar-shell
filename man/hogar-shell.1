@@ -6,6 +6,9 @@ hogar-shell \- a Wayland desktop shell for Hyprland
 [run]
 .br
 .B hogar-shell
+[run] \-\-safe\-layout
+.br
+.B hogar-shell
 <target> <cmd> [args]
 .br
 .B hogar-shell
@@ -18,7 +21,7 @@ launcher
 \-\-list
 .br
 .B hogar-shell
-config schema [name]
+config schema [name|layout]
 .br
 .B hogar-shell
 config check
@@ -489,6 +492,27 @@ report what is wrong with a layout, without applying it
 .TP
 \fBuse\fR \fI<name>\fR
 draw this layout from now on
+.TP
+\fBundo\fR
+take back the last edit, whatever made it
+.TP
+\fBredo\fR
+make the edit that was last taken back again
+.TP
+\fBadd\fR \fI<module> <area> [group]\fR
+place a module in an area of the layout being drawn
+.TP
+\fBremove\fR \fI<id>\fR
+take a placed module, or a whole area, out of the layout
+.TP
+\fBmove\fR \fI<id> <group> [index]\fR
+put a placed module in another group, or elsewhere in its own
+.TP
+\fBset\fR \fI<instance> <key> <value>\fR
+change one property of a placed module
+.TP
+\fBreset\fR \fI<id|layer|all>\fR
+put a part of the layout back to what the built\-in one says
 .SS deps
 .TP
 \fBlist\fR
