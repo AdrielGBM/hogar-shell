@@ -5,8 +5,8 @@ use telar::{
     SizeDimension, StyledContainer, Text, box_item, signal, use_theme,
 };
 
+use config::ClockConfig;
 use config::theme::{FontRole, NordTheme};
-use config::{ClockConfig, WidgetsConfig};
 use services::clock;
 use ui::host::{Host, Size};
 
@@ -22,8 +22,8 @@ const LINE_HEIGHT: f32 = 1.25;
 /// The face at `[widgets.clock] scale`, shrunk until it fits the host's extent; an unbounded extent leaves the configured size alone. A small one is too narrow for a date beside a time worth reading, so it shows the time alone.
 pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let settings = host.options::<WidgetsConfig>().clock.clone();
     let chip = host.options::<ClockConfig>();
+    let settings = chip.face.clone();
     let ink = if settings.invert {
         theme.base
     } else {
@@ -152,7 +152,7 @@ fn fitted(asked: f32, extent: Size, glyphs: usize, show_date: bool) -> f32 {
 mod tests {
     use std::sync::Arc;
 
-    use config::{Config, DesktopClockConfig};
+    use config::{ClockFaceConfig, Config};
     use ui::host::{Representation, WidgetSize};
 
     use super::*;
@@ -173,12 +173,12 @@ mod tests {
                 telar::reset_layout_runtime();
                 let _scope = telar::owner_scope();
                 let mut config = Config::starter();
-                config.widgets.clock = DesktopClockConfig {
+                config.clock.face = ClockFaceConfig {
                     background: decorated,
                     background_blur: 8.0,
                     invert: decorated,
                     shadow: decorated,
-                    ..DesktopClockConfig::default()
+                    ..ClockFaceConfig::default()
                 };
                 telar::set_theme(config.resolve_theme());
                 assert!(
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn the_desktop_face_drops_the_seconds_the_bar_chip_keeps() {
         let clock = config::ClockConfig::default();
-        let desktop = DesktopClockConfig::default();
+        let desktop = ClockFaceConfig::default();
         assert_eq!(clock.time_format(), "%H:%M:%S");
         assert_eq!(
             desktop.time_format(&clock),
@@ -225,9 +225,9 @@ mod tests {
         };
         assert_eq!(desktop.time_format(&explicit), "%H.%M");
 
-        let own = DesktopClockConfig {
+        let own = ClockFaceConfig {
             format: Some("%I%p".to_string()),
-            ..DesktopClockConfig::default()
+            ..ClockFaceConfig::default()
         };
         assert_eq!(own.time_format(&explicit), "%I%p");
     }
@@ -235,9 +235,9 @@ mod tests {
     #[test]
     fn the_plate_opacity_can_never_resolve_to_invisible_or_opaque_by_accident() {
         let bounded = |value: f32| {
-            DesktopClockConfig {
+            ClockFaceConfig {
                 background_opacity: value,
-                ..DesktopClockConfig::default()
+                ..ClockFaceConfig::default()
             }
             .plate_opacity()
         };

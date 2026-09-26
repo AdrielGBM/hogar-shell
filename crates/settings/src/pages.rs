@@ -340,18 +340,6 @@ pub const PAGES: &[Page] = &[
                     telar::Children::default(),
                 )
             }),
-            section!("desktop_clock", ["widgets"], || {
-                crate::sections::desktop_clock::desktop_clock(
-                    crate::sections::desktop_clock::DesktopClockProps::props().build(),
-                    telar::Children::default(),
-                )
-            }),
-            section!("desktop_visualiser", ["widgets"], || {
-                crate::sections::desktop_visualiser::desktop_visualiser(
-                    crate::sections::desktop_visualiser::DesktopVisualiserProps::props().build(),
-                    telar::Children::default(),
-                )
-            }),
         ],
     },
     Page {

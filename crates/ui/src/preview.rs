@@ -97,3 +97,16 @@ pub fn host_on(
     let env = SurfaceEnv::for_edge(Arc::clone(&config), drawn_edge(&config), None);
     Host::on_surface(InstanceId::of_module(module), representation, &env, extent)
 }
+
+/// [`host_on`] for a representation an area hands an edge to — a dock's row of bars, which stands on the edge its area hugs rather than on one of its own.
+pub fn host_facing(
+    config: Arc<Config>,
+    module: &str,
+    representation: Representation,
+    extent: Size,
+    edge: config::Edge,
+) -> Host {
+    let mut host = host_on(config, module, representation, extent);
+    host.axis = Some(edge);
+    host
+}

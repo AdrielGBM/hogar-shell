@@ -19,6 +19,7 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
     let (gain, beat, frame_rate) = (gain.clone(), beat.clone(), frame_rate.clone());
     move || {
         let value = VisualiserConfig {
+            face: v.face,
             bars: parse_u32(&bars.peek(), v.bars),
             smoothing: parse_f32(&smoothing.peek(), v.smoothing),
             floor_db: parse_f32(&floor_db.peek(), v.floor_db),

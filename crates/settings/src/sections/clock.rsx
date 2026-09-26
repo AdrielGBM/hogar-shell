@@ -22,6 +22,7 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
         let typed = format.peek();
         let value = ClockConfig {
             twelve_hour: twelve_hour.peek(),
+            face: base.face.clone(),
             format: (!typed.trim().is_empty()).then_some(typed),
             show_date: show_date.peek(),
             date_format: {

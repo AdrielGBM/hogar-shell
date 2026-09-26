@@ -5,9 +5,7 @@ use telar::{
     motion::Animated, signal,
 };
 
-use config::{
-    Align, AnimationConfig, DesktopVisualiserConfig, Edge, VisualiserConfig, WidgetsConfig,
-};
+use config::{Align, AnimationConfig, Edge, VisualiserConfig, VisualiserFaceConfig};
 use services::visualiser;
 use ui::host::Host;
 use ui::layout::{align_items, fill, justify};
@@ -18,7 +16,7 @@ use util::reactive::{derive, fixed};
 const RING_HOLE: f32 = 0.45;
 
 pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let settings = host.options::<WidgetsConfig>().visualiser;
+    let settings = host.options::<VisualiserConfig>().face;
     let tint = if settings.accent {
         host.accent
     } else {
@@ -44,7 +42,8 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         floor: 0.0,
     };
 
-    let edge = settings.edge;
+    // Which edge the bars stand on is the dock area's, handed down by the host — a row of bars does not carry its own idea of where it is.
+    let edge = host.axis.unwrap_or(Edge::Bottom);
     let bars = if host.is_small() {
         let radius = host.extent.width.min(host.extent.height) / 2.0;
         widget::spectrum_ring(
@@ -61,13 +60,7 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         } else {
             host.extent.width
         };
-        widget::spectrum(
-            bands,
-            tint,
-            edge,
-            style,
-            standing_on(edge, settings.reach_px().min(across)),
-        )?
+        widget::spectrum(bands, tint, edge, style, standing_on(edge, across))?
     };
 
     let fade = fade(&settings, &host.config().animation, silent.read_only());
@@ -106,7 +99,7 @@ fn standing_on(edge: Edge, reach: f32) -> LayoutStyle {
 
 /// How opaque the bars are: one with sound, zero when `hide_when_silent` and there is none — switched rather than tweened with animation off, where a tween would have no duration to divide by.
 fn fade(
-    settings: &DesktopVisualiserConfig,
+    settings: &VisualiserFaceConfig,
     animation: &AnimationConfig,
     silent: telar::ReadSignal<bool>,
 ) -> Box<dyn Fn() -> f32> {
@@ -144,19 +137,15 @@ mod tests {
                         telar::reset_layout_runtime();
                         let _scope = telar::owner_scope();
                         let mut config = Config::starter();
-                        config.widgets.visualiser = config::DesktopVisualiserConfig {
-                            enabled: true,
-                            edge,
-                            hide_when_silent: hide,
-                            ..config::DesktopVisualiserConfig::default()
-                        };
+                        config.visualiser.face.hide_when_silent = hide;
                         config.animation.enabled = animated;
                         telar::set_theme(config.resolve_theme());
-                        let host = ui::preview::host_on(
+                        let host = ui::preview::host_facing(
                             Arc::new(config),
                             "visualiser",
                             Representation::Widget(size),
                             size.extent(),
+                            edge,
                         );
                         assert!(
                             host.build(widget).is_ok(),

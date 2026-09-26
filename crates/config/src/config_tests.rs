@@ -772,12 +772,8 @@ end = ["battery", "volume"]
     }
 
     #[test]
-    fn general_defaults_keep_bars_under_fullscreen_windows() {
+    fn general_defaults_detect_the_distribution_logo() {
         let d: Config = toml::from_str("").unwrap();
-        assert!(
-            !d.general.show_over_fullscreen,
-            "a fullscreen game is meant to cover the bar unless asked otherwise"
-        );
         assert!(d.general.logo.is_empty(), "an empty logo means auto-detect");
     }
 
@@ -1407,30 +1403,6 @@ accent = "orange"
             assert!(
                 config.background.is_enabled(),
                 "'{toml_text}' needs the surface"
-            );
-        }
-    }
-
-    /// The two surfaces are asked for separately, which is the whole point of `[widgets]` being its own section.
-    ///
-    /// A clock on a screen with no wallpaper is a clock, not a reason to paint the desktop; and a wallpaper is not a reason to open the surface the visualiser repaints with the music.
-    #[test]
-    fn the_widgets_surface_is_opened_by_its_own_widgets_and_by_nothing_else() {
-        let papered: Config = toml::from_str("[background]\nimage = \"~/wall.png\"\n").unwrap();
-        assert!(!papered.widgets.is_enabled());
-
-        for toml_text in [
-            "[widgets.clock]\nenabled = true\n",
-            "[widgets.visualiser]\nenabled = true\n",
-        ] {
-            let config: Config = toml::from_str(toml_text).unwrap();
-            assert!(
-                config.widgets.is_enabled(),
-                "'{toml_text}' needs the surface"
-            );
-            assert!(
-                !config.background.is_enabled(),
-                "'{toml_text}' does not ask for a wallpaper"
             );
         }
     }

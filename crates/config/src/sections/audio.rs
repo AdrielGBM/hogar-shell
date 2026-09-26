@@ -42,6 +42,8 @@ impl AudioConfig {
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct VisualiserConfig {
+    /// How a row of these bars placed on the desktop is drawn.
+    pub face: VisualiserFaceConfig,
     /// How many bands the spectrum is folded into — the number of bars every consumer draws.
     pub bars: u32,
     /// How much of the previous frame each bar keeps, 0–1. Higher is smoother and slower; `0` follows the transform exactly and shimmers.
@@ -56,9 +58,39 @@ pub struct VisualiserConfig {
     pub frame_rate: u32,
 }
 
+/// How a visualiser placed on the desktop is drawn (`[visualiser.face]`), as against what the bars *are* — how many, how smooth, how loud — which is `[visualiser]`'s other keys and is shared with every consumer.
+///
+/// Which edge the bars stand on, how far the tallest reaches and how far the row is held off that edge are not here: they are a dock area's `edge`, its `thickness` and its `padding`, because they describe an arrangement rather than a visualiser.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug)]
+#[serde(default)]
+pub struct VisualiserFaceConfig {
+    /// The gap between two bars, in px.
+    pub gap: f32,
+    /// How round a bar's ends are, in px. `0` is square; half the bar's own width is a capsule.
+    pub radius: f32,
+    /// How opaque the bars are over the wallpaper, `0`–`1`.
+    pub opacity: f32,
+    /// Fade the bars out when nothing is playing, rather than leaving a flat line across the screen.
+    pub hide_when_silent: bool,
+    /// Draw the bars in the theme's accent colour rather than its text colour.
+    pub accent: bool,
+}
+
+impl Default for VisualiserFaceConfig {
+    fn default() -> Self {
+        Self {
+            gap: 3.0,
+            radius: 3.0,
+            opacity: 0.75,
+            hide_when_silent: true,
+            accent: true,
+        }
+    }
+}
 impl Default for VisualiserConfig {
     fn default() -> Self {
         Self {
+            face: VisualiserFaceConfig::default(),
             bars: 48,
             smoothing: 0.6,
             floor_db: -60.0,
@@ -200,4 +232,31 @@ pub enum MediaScroll {
     /// Move the playhead. Needs a player that reports `CanSeek`; on one that does not, the wheel does nothing rather than pretending.
     Seek,
     None,
+}
+
+impl VisualiserFaceConfig {
+    /// The bar opacity, never fully transparent — a visualiser switched on is one that can be seen.
+    pub fn alpha(&self) -> f32 {
+        if self.opacity.is_finite() {
+            self.opacity.clamp(0.05, 1.0)
+        } else {
+            0.75
+        }
+    }
+
+    pub fn gap_px(&self) -> f32 {
+        if self.gap.is_finite() {
+            self.gap.clamp(0.0, 40.0)
+        } else {
+            3.0
+        }
+    }
+
+    pub fn radius_px(&self) -> f32 {
+        if self.radius.is_finite() {
+            self.radius.clamp(0.0, 40.0)
+        } else {
+            3.0
+        }
+    }
 }

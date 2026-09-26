@@ -39,17 +39,6 @@ pub(crate) const CURVES: &[&str] = &["gentle", "snappy", "bouncy"];
 pub(crate) const VARIANT_STYLES: &[&str] = &["default", "filled"];
 pub(crate) const OPEN_MODES: &[&str] = &["drawer", "float"];
 pub(crate) const EASINGS: &[&str] = &["linear", "ease-in", "ease-out", "ease-in-out"];
-pub(crate) const PLACEMENTS: &[&str] = &[
-    "center",
-    "top_left",
-    "top_center",
-    "top_right",
-    "center_left",
-    "center_right",
-    "bottom_left",
-    "bottom_center",
-    "bottom_right",
-];
 /// K14, the recorder half: every field the form helpers build, so a section knows when one of them moved.
 ///
 /// A thread-local rather than a parameter because the alternative is threading a tracker through all forty `*_section` functions and every `text_field`/`toggle_field`/`enum_field` call inside them. The forms are built one at a time on the driver thread, and each ends with exactly one [`save_button`] — which is where the recording is drained. That is the whole contract: **a form's fields must be built before its button.**

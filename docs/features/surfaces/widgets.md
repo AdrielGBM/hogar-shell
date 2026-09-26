@@ -2,58 +2,56 @@
 id: widgets
 kind: surface
 title: Desktop widgets
-summary: The clock face and audio visualiser drawn on the desktop, on a surface of their own.
+summary: The clock face and audio visualiser drawn on the desktop, placed by the layout.
 status: stable
 compositor: any
-config: [widgets, visualiser, clock]
-commands: []
+config: [visualiser, clock]
+commands: [layout]
 deps: [wlr-layer-shell, libpipewire]
 see_also: [wallpaper, clock, dynamic-scheme]
 ---
 
 # Desktop widgets
 
-One surface per monitor, over the wallpaper and under every window, carrying whatever `[widgets]` asks for. It
-exists only while something is on it — no clock, no visualiser, no surface.
+What the shell draws on the desktop itself — a clock face, a row of audio bars — placed on the **desktop
+layer** of the active layout. They share that layer's window with everything else on it, and the window is on
+screen only while the layer resolves something to show.
 
-## Where it sits
+## Where they sit
 
-**It is given the space the bars left, not the screen.** The wallpaper opts out of every exclusive zone and
-covers the whole monitor; this surface respects them, so the compositor hands it exactly the area your windows
-get, minus the same gap every panel keeps off a bar. Nothing here computes that: a bar appearing, an edge being
-emptied or `[shape] frame` switching on moves the widgets with it.
+**The layout says, not a config key.** A clock face is a widget instance in a `grid` area: the area's `anchor`
+picks which of the nine places it is pinned to and its `padding` how far it is held off them. A row of bars is
+an instance in a `dock` area: the area's `edge` is the edge they stand on and its `thickness` how far the
+tallest reaches.
 
-So `position = "center"` is the centre of the *application* area. On a screen with bars on one side only, that
-is deliberately not the centre of the glass.
+An area written `within = "usable"` is measured against **the space the bars left**, not the whole screen — so
+`anchor = "center"` is the centre of the application area. On a screen with bars down one side only, that is
+deliberately not the centre of the glass.
 
-## Why it is not the wallpaper's surface
-
-A layer that changes forces its whole surface to be redrawn. The visualiser changes with the music, so drawing
-it on the wallpaper meant rasterizing a screen-sized photograph up to sixty times a second on the CPU — on a
-laptop, a core pinned and the machine throttling. On its own surface the same row repaints only itself.
+`hogar-shell layout show` prints the areas the running layout has; `hogar-shell layout check` says what is
+wrong with one.
 
 ## Clock
 
-`[widgets.clock]` draws a clock face: `position`, `scale`, `format`, `date_format`, `show_date`, `invert`,
-`margin`, `shadow`, `background`, `background_opacity`, `background_blur`.
+`[clock.face]` is how a placed face is drawn: `scale`, `format`, `date_format`, `show_date`, `invert`,
+`shadow`, `background`, `background_opacity`, `background_blur`. `[clock]`'s other keys dress the chip on a
+bar.
 
-`format` and `date_format` fall back to `[clock]`, so the face and the bar chip read the same unless you
+`format` and `date_format` fall back to `[clock]`, so the face and the chip read the same unless you
 deliberately give one its own — and the face drops the seconds the chip keeps, because a clock that ticks every
 second is a surface that repaints every second.
 
-**`background_blur` feathers the plate's own edge — it does not sample what is behind it.** No client-side
-renderer can; asking the compositor is the route, through `ext-background-effect-v1` or a Hyprland
-`layer_rule = blur, hogar-shell-widgets`, and neither is wired up yet.
+**`background_blur` feathers the plate's own edge — it does not sample what is behind it.** For real blur an
+area asks the compositor, through `backdrop = "blur"` and `ext-background-effect-v1`.
 
 ## Visualiser
 
 <a id="visualiser"></a>
 
-`[widgets.visualiser]` draws the sound coming out of your speakers along an edge of that area: `enabled`,
-`edge`, `reach`, `gap`, `margin`, `radius`, `opacity`, `accent`, `hide_when_silent`.
+`[visualiser.face]` is how a placed row is drawn: `gap`, `radius`, `opacity`, `accent`, `hide_when_silent`.
 
 `[visualiser]` tunes the analysis itself — `bars`, `frame_rate`, `gain`, `smoothing`, `floor_db`,
-`beat_sensitivity`.
+`beat_sensitivity` — and is shared with every other consumer, the media card's ring included.
 
 It needs **`libpipewire`**, opened at runtime and read as the default sink's *monitor* — what is being played,
 not what a microphone hears. Without it the bars stay silent.

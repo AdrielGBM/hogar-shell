@@ -8,7 +8,7 @@ use config::{
     DashboardConfig, GeneralConfig, GpuConfig, LauncherConfig, LockStatusConfig, MediaConfig,
     NetworkConfig, NotificationsConfig, PathsConfig, RecorderConfig, StackConfig,
     StatusIconsConfig, TemperatureConfig, TrayConfig, UtilitiesConfig, VisualiserConfig,
-    WeatherConfig, WidgetsConfig, WorkspacesConfig,
+    WeatherConfig, WorkspacesConfig,
 };
 use ui::descriptor::{
     ActionDef, Built, CardDef, ChipDef, FieldDef, Input, ModuleDescriptor, OptionsType, PanelDef,
@@ -177,10 +177,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "clock",
         name: "Clock",
         icon: "clock",
-        options: &[
-            OptionsType::of::<ClockConfig>(),
-            OptionsType::of::<WidgetsConfig>(),
-        ],
+        options: &[OptionsType::of::<ClockConfig>()],
         representations: Representations {
             chip: Some(ChipDef::new(
                 rsx!(modules::clock::clock, clock, ClockProps),
@@ -680,10 +677,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "visualiser",
         name: "Visualiser",
         icon: "audio-lines",
-        options: &[
-            OptionsType::of::<VisualiserConfig>(),
-            OptionsType::of::<WidgetsConfig>(),
-        ],
+        options: &[OptionsType::of::<VisualiserConfig>()],
         representations: Representations {
             widget: reading(EVERY_SIZE, modules::visualiser::widget),
             ..Representations::NONE

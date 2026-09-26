@@ -52,6 +52,5 @@ module_options! {
     utilities: UtilitiesConfig,
     visualiser: VisualiserConfig,
     weather: WeatherConfig,
-    widgets: WidgetsConfig,
     workspaces: WorkspacesConfig,
 }

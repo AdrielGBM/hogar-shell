@@ -31,7 +31,6 @@ fn section_structs() -> HashMap<&'static str, &'static str> {
         ("sidebar", "SidebarConfig"),
         ("background", "BackgroundConfig"),
         ("wallpaper", "WallpaperConfig"),
-        ("widgets", "WidgetsConfig"),
         ("active_window", "ActiveWindowConfig"),
         ("clock", "ClockConfig"),
         ("media", "MediaConfig"),
@@ -397,8 +396,8 @@ mod tests {
         // And the shorter spelling still parses back to the same value the code holds.
         let parsed: Config = toml::from_str(&text).expect("the printed schema parses");
         assert_eq!(
-            parsed.widgets.clock.background_opacity,
-            Config::starter().widgets.clock.background_opacity
+            parsed.clock.face.background_opacity,
+            Config::starter().clock.face.background_opacity
         );
     }
 

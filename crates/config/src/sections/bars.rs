@@ -693,16 +693,59 @@ impl TrayConfig {
 #[serde(default)]
 pub struct ClockConfig {
     pub twelve_hour: bool,
+    /// How a face placed on the desktop is drawn, as against the chip these other keys dress.
+    pub face: ClockFaceConfig,
     /// Overrides `twelve_hour` when set, for a user who wants seconds, a weekday, or anything else.
     pub format: Option<String>,
     pub show_date: bool,
     pub date_format: String,
 }
 
+/// The desktop clock's own look (`[clock.face]`), for the face a layout places on the desktop grid — as against the chip on a bar, which `[clock]`'s other keys dress.
+///
+/// Where the face sits is not here: a grid area's `anchor` says which of the nine places it is pinned to and the area's `padding` how far it is held off them, because those are facts about an arrangement rather than about a clock. What is here is what a second face placed beside the first would want to differ in, which is what makes these the module's options and an instance's overrides (TA-2).
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(default)]
+pub struct ClockFaceConfig {
+    /// Multiplies the theme's display size, so the face can be made as large as the screen allows.
+    pub scale: f32,
+    /// Draw the face in the theme's base colour instead of its text colour — for a pale wallpaper, where light text disappears.
+    pub invert: bool,
+    pub show_date: bool,
+    /// Overrides `[clock] format` for the desktop face only. A desktop clock usually wants `%H:%M` where the bar chip wants seconds.
+    pub format: Option<String>,
+    /// Overrides `[clock] date_format` for the desktop face only.
+    pub date_format: Option<String>,
+    /// Paint a plate behind the face, so it stays legible over a busy photograph.
+    pub background: bool,
+    /// How opaque that plate is, `0`–`1`.
+    pub background_opacity: f32,
+    /// How far the plate's edge is feathered into the wallpaper, in px. `0` gives a hard-edged card.
+    pub background_blur: f32,
+    /// Drop a shadow under the glyphs, which is what keeps a plateless face readable over a light wallpaper.
+    pub shadow: bool,
+}
+
+impl Default for ClockFaceConfig {
+    fn default() -> Self {
+        Self {
+            scale: 3.0,
+            invert: false,
+            show_date: true,
+            format: None,
+            date_format: None,
+            background: false,
+            background_opacity: 0.35,
+            background_blur: 0.0,
+            shadow: true,
+        }
+    }
+}
 impl Default for ClockConfig {
     fn default() -> Self {
         Self {
             twelve_hour: false,
+            face: ClockFaceConfig::default(),
             format: None,
             show_date: false,
             date_format: "%a %d %b".to_string(),
@@ -720,6 +763,44 @@ impl ClockConfig {
             "%I:%M:%S %p"
         } else {
             "%H:%M:%S"
+        }
+    }
+}
+
+impl ClockFaceConfig {
+    /// The `strftime` pattern the face renders: its own override, else the chip's, else a 12- or 24-hour clock without seconds — a desktop face is read at a glance, where the chip is read deliberately.
+    pub fn time_format<'a>(&'a self, clock: &'a ClockConfig) -> &'a str {
+        if let Some(format) = &self.format {
+            return format;
+        }
+        if clock.format.is_some() {
+            return clock.time_format();
+        }
+        if clock.twelve_hour {
+            "%I:%M %p"
+        } else {
+            "%H:%M"
+        }
+    }
+
+    pub fn date_format<'a>(&'a self, clock: &'a ClockConfig) -> &'a str {
+        self.date_format.as_deref().unwrap_or(&clock.date_format)
+    }
+
+    /// The plate's fill, bounded so `background = true` cannot resolve to an invisible plate or a fully opaque one the user did not ask for.
+    pub fn plate_opacity(&self) -> f32 {
+        if self.background_opacity.is_finite() {
+            self.background_opacity.clamp(0.05, 1.0)
+        } else {
+            0.35
+        }
+    }
+
+    pub fn resolved_scale(&self) -> f32 {
+        if self.scale.is_finite() {
+            self.scale.clamp(0.5, 20.0)
+        } else {
+            1.0
         }
     }
 }

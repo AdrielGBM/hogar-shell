@@ -45,6 +45,6 @@ shell took to start.
 
 ## Related
 
-- [Desktop widgets](../surfaces/widgets.md) — `[widgets.clock]` is a second, larger clock drawn on the desktop
+- [Desktop widgets](../surfaces/widgets.md) — `[clock.face]` is a second, larger clock a layout places on the desktop
   itself.
 - [dashboard](dashboard.md) — where the calendar lives when you want it beside everything else.

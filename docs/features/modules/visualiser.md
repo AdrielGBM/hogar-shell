@@ -5,7 +5,7 @@ title: Visualiser
 summary: Bars that follow the music, stood along an edge of the desktop.
 status: partial
 compositor: any
-config: [visualiser, widgets]
+config: [visualiser]
 commands: []
 deps: [libpipewire]
 see_also: [widgets, media]
@@ -15,13 +15,11 @@ see_also: [widgets, media]
 
 ## What you can do with it today
 
-Switch it on with `[widgets.visualiser] enabled = true` and the desktop's
-[widget surface](../surfaces/widgets.md) draws it across the free area of the screen, its bars standing in a
-row on `[widgets.visualiser] edge`, reaching at most `reach` into the screen. That surface builds this module
-and only decides where it goes.
+Place it in a `dock` area on the desktop layer and its bars stand in a row on that area's `edge`, reaching
+as far into the screen as the area is thick — see [desktop widgets](../surfaces/widgets.md). The area decides
+where the row goes; this module only draws it.
 
-The module also draws a ring of bars at the small widget size; nothing places a small widget yet, so the ring
-is not something a user can put on screen today. Placing widgets arrives with the layout model.
+The module also draws a ring of bars at the small widget size, which a `grid` area places on a cell.
 
 ## What it shows
 
@@ -30,8 +28,8 @@ The audio spectrum, one bar per band.
 ## Configuring
 
 `[visualiser]` is what the bars are — how many, how smooth — and is shared with every consumer, the media
-card's ring included. `[widgets.visualiser]` is how they look: gap, radius, opacity, accent and whether they fade
-out when nothing plays.
+card's ring included. `[visualiser.face]` is how a placed row looks: gap, radius, opacity, accent and whether
+they fade out when nothing plays.
 
 ## What it needs
 
