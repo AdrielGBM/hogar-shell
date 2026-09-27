@@ -13,15 +13,16 @@ therefore the window-info panel, the window count behind a workspace pill and th
 ## What it does
 
 **Bars.** One per screen edge, all four at once if you like, on every monitor. Three shapes — a single `bar`,
-grouped `sections`, or individual `chips` — with per-monitor overrides.
+grouped `sections`, or individual `chips` — arranged per output in a layout file.
 
 **Modules.** `activewindow` `battery` `bluetooth` `brightness` `clock` `cpu` `dashboard` `gpu` `kblayout`
 `launcher` `lockstatus` `logo` `media` `memory` `mic` `mixer` `netspeed` `network` `notes` `notifications` `session`
 `settings` `spacer` `statusicons` `temperature` `tray` `user` `utilities` `visualiser` `volume` `weather` `windowinfo`
 `workspaces`.
 
-**Surfaces.** Drawers and floats anchored to the chip that opened them, hover popouts, OSDs, a full-screen
-launcher, a notification centre, a session-lock screen, a per-monitor wallpaper layer, and in-shell toasts.
+**Surfaces.** Drawers anchored to the chip that opened them, floats centred on screen, hover popouts, OSDs, a
+full-screen launcher, a notification centre, a session-lock screen, a per-monitor wallpaper layer, and in-shell
+toasts.
 
 **Services.** Audio (PipeWire), network (NetworkManager), Bluetooth (BlueZ), battery (UPower), notifications
 (the freedesktop spec), tray (StatusNotifierItem), MPRIS, weather, GPU, brightness (sysfs and DDC/CI), idle and

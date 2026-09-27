@@ -8,9 +8,10 @@ use telar::{
 
 mod menu;
 
+use config::TrayConfig;
 use config::theme::NordTheme;
-use config::{SurfaceEnv, TrayConfig};
 use services::tray::{self as tray_service, Pixmap, TrayItem};
+use surfaces::transient::chips::Site;
 use ui::host::Host;
 use ui::icon::{app_icon_view_tinted, icon_view};
 
@@ -85,36 +86,29 @@ fn icon_widget(
     icon_view(|| FALLBACK_GLYPH.to_string(), move || tint, size)
 }
 
-/// Where the chip sits inside its bar, and which bar that is — everything the menu needs to anchor itself. `None` for a host that runs along no bar, where there is no edge to hang a menu off.
-fn anchor_for(host: &Host, rect: ReadSignal<Rect>) -> Option<(Rect, SurfaceEnv)> {
-    let edge = host.axis?;
-    let env = SurfaceEnv::for_edge(
-        std::sync::Arc::clone(host.config()),
-        edge,
-        host.output.clone(),
-    );
-    Some((rect.get(), env))
+fn anchor_for(site: &Option<Site>, rect: ReadSignal<Rect>) -> Option<surfaces::transient::Anchor> {
+    site.as_ref().map(|site| site.anchor(rect.get()))
 }
 
 /// A primary click. An item that says it is a menu, or that implements no `Activate`, gets its menu opened — which for everything built on libappindicator is the only interaction it has.
-fn primary(item: &TrayItem, host: &Host, rect: ReadSignal<Rect>) {
+fn primary(item: &TrayItem, site: &Option<Site>, rect: ReadSignal<Rect>) {
     if item.item_is_menu || !item.has_activate {
-        open_menu(item, host, rect);
+        open_menu(item, site, rect);
         return;
     }
     tray_service::activate(item, 0, 0);
 }
 
 /// A right click always means "show me the menu". Only when the item exposes none does this fall back to asking the application to pop its own.
-fn open_menu(item: &TrayItem, host: &Host, rect: ReadSignal<Rect>) {
+fn open_menu(item: &TrayItem, site: &Option<Site>, rect: ReadSignal<Rect>) {
     if item.menu.trim().is_empty() {
         tray_service::context_menu(item, 0, 0);
         return;
     }
-    let Some((chip, env)) = anchor_for(host, rect) else {
+    let Some(anchor) = anchor_for(site, rect) else {
         return;
     };
-    menu::toggle(item, chip, env);
+    menu::toggle(item, anchor);
 }
 
 fn secondary(item: &TrayItem) {
@@ -167,7 +161,8 @@ pub fn tray_icon(
         .flex_shrink(0.0);
 
     let press_item = item.clone();
-    let alt_host = host.clone();
+    let site = Site::of_host(&host);
+    let alt_site = site.clone();
     let alt_item = item.clone();
     let scroll_item = item;
     let container =
@@ -180,9 +175,9 @@ pub fn tray_icon(
     let container = container
         .hover_style(move |_r| RectStyle::filled(hover, radius))
         .active_style(move |_r| RectStyle::filled(hover.darken(0.14), radius))
-        .on_press(move || primary(&press_item, &host, rect))
+        .on_press(move || primary(&press_item, &site, rect))
         .on_alt_press(move |button| match button {
-            PointerButton::Secondary => open_menu(&alt_item, &alt_host, alt_rect),
+            PointerButton::Secondary => open_menu(&alt_item, &alt_site, alt_rect),
             _ => secondary(&alt_item),
         })
         .on_scroll(move |dx, dy| {

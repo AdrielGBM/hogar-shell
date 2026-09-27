@@ -1,6 +1,6 @@
 //! What each chip shows when the pointer rests on it.
 //!
-//! Every popout here reads a service that already exists and subscribes to it, so the card follows the value while it is up — hovering the volume chip and scrolling it is one gesture, and a card that froze at the level it opened with would be worse than no card. Nothing polls: each `watch` is bound to the popout surface and dies with it.
+//! Every popout here reads a service that already exists and subscribes to it, so the card follows the value while it is up — hovering the volume chip and scrolling it is one gesture, and a card that froze at the level it opened with would be worse than no card. Nothing polls: each `watch` is bound to the popout transient and dies with it.
 
 use telar::{RwSignal, signal, use_theme};
 

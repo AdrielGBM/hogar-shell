@@ -85,177 +85,6 @@ Default: \fB600\fR
 .B image
 Unset by default.
 .SS [background.monitors]
-.SS [bars]
-One bar per screen edge; empty bars collapse to zero. Default is all\-empty by design (serde fills missing fields), so configs get only what they specify \(em see [`Config::starter`] for the initial setup.
-.sp
-`excluded_screens` names outputs that get no bars at all \(em a TV, a projector, a monitor that only ever shows one fullscreen thing. Each entry matches the connector name (`DP\-1`) as a `*` pattern, so `HDMI\-*` covers a port whose index moves between reboots. *Which* modules a screen shows is a per\-monitor config override (`monitors/<output>/config.toml`) rather than a key here: it is the same `[bars.<edge>]` shape, so there is nothing new to learn and nothing to keep in step.
-.TP
-.B excluded_screens
-Default: \fB[]\fR
-.SS [bars.bottom]
-.TP
-.B center
-Default: \fB[]\fR
-.TP
-.B end
-Default: \fB[]\fR
-.TP
-.B peek
-How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-.sp
-Default: \fB2\fR
-.TP
-.B persistent
-Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-.sp
-Default: \fBtrue\fR
-.TP
-.B show_on_hover
-Reveal a non\-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in \(em which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-.sp
-Default: \fBtrue\fR
-.TP
-.B size
-Default: \fB34\fR
-.TP
-.B start
-Default: \fB[]\fR
-.SS [bars.bottom.shape]
-.TP
-.B mode
-Unset by default.
-.TP
-.B gap
-Unset by default.
-.TP
-.B spacing
-Unset by default.
-.TP
-.B radius
-Unset by default.
-.SS [bars.left]
-.TP
-.B center
-Default: \fB[]\fR
-.TP
-.B end
-Default: \fB[]\fR
-.TP
-.B peek
-How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-.sp
-Default: \fB2\fR
-.TP
-.B persistent
-Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-.sp
-Default: \fBtrue\fR
-.TP
-.B show_on_hover
-Reveal a non\-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in \(em which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-.sp
-Default: \fBtrue\fR
-.TP
-.B size
-Default: \fB34\fR
-.TP
-.B start
-Default: \fB[]\fR
-.SS [bars.left.shape]
-.TP
-.B mode
-Unset by default.
-.TP
-.B gap
-Unset by default.
-.TP
-.B spacing
-Unset by default.
-.TP
-.B radius
-Unset by default.
-.SS [bars.right]
-.TP
-.B center
-Default: \fB[]\fR
-.TP
-.B end
-Default: \fB[]\fR
-.TP
-.B peek
-How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-.sp
-Default: \fB2\fR
-.TP
-.B persistent
-Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-.sp
-Default: \fBtrue\fR
-.TP
-.B show_on_hover
-Reveal a non\-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in \(em which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-.sp
-Default: \fBtrue\fR
-.TP
-.B size
-Default: \fB34\fR
-.TP
-.B start
-Default: \fB[]\fR
-.SS [bars.right.shape]
-.TP
-.B mode
-Unset by default.
-.TP
-.B gap
-Unset by default.
-.TP
-.B spacing
-Unset by default.
-.TP
-.B radius
-Unset by default.
-.SS [bars.top]
-.TP
-.B center
-Default: \fB["clock"]\fR
-.TP
-.B end
-Default: \fB["notes"]\fR
-.TP
-.B peek
-How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-.sp
-Default: \fB2\fR
-.TP
-.B persistent
-Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-.sp
-Default: \fBtrue\fR
-.TP
-.B show_on_hover
-Reveal a non\-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in \(em which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-.sp
-Default: \fBtrue\fR
-.TP
-.B size
-Default: \fB34\fR
-.TP
-.B start
-Default: \fB["workspaces"]\fR
-.SS [bars.top.shape]
-.TP
-.B mode
-Unset by default.
-.TP
-.B gap
-Unset by default.
-.TP
-.B spacing
-Unset by default.
-.TP
-.B radius
-Unset by default.
 .SS [battery]
 Low\-battery behaviour (`[battery]`): the levels that raise a notification, and the action to take once the charge is low enough that the machine should put itself away. On a desktop none of it ever fires, since there is no battery to read.
 .TP
@@ -381,19 +210,6 @@ Unset by default.
 .B date_format
 Overrides `[clock] date_format` for the desktop face only.
 .sp
-Unset by default.
-.SS [corners]
-.TP
-.B top_left
-Unset by default.
-.TP
-.B top_right
-Unset by default.
-.TP
-.B bottom_left
-Unset by default.
-.TP
-.B bottom_right
 Unset by default.
 .SS [dashboard]
 The dashboard surface (`[dashboard]`).
@@ -806,12 +622,12 @@ How long the popout survives after the pointer leaves, in ms.
 Default: \fB200\fR
 .TP
 .B enabled
-Off costs nothing: no chip tracks the pointer and no surface is ever opened.
+Off costs nothing: no chip tracks the pointer and no transient is ever opened.
 .sp
 Default: \fBtrue\fR
 .TP
 .B max_height
-The tallest a popout may grow. Its surface is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click\-through rather than swallowing presses.
+The tallest a popout may grow. Its transient is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click\-through rather than swallowing presses.
 .sp
 Default: \fB300.0\fR
 .TP
@@ -930,14 +746,9 @@ Width for a left/right sidebar, height for a top/bottom one, in px.
 .sp
 Default: \fB400\fR
 .SS [stack]
-The column of cards the shell pins to a screen edge and takes away again (`[stack]`): notification popups, in\-shell toasts, and the OSD a volume or brightness change flashes.
+How the column of cards behaves (`[stack]`): notification popups, in\-shell toasts, and the OSD a volume or brightness change flashes. Where a column is and how wide it is are the layout's \(em a `stack` area \(em so one layout can put critical notifications in the middle of the screen and toasts in a corner.
 .sp
-**One section because they are one column.** They were three, each with its own `edge`, `align`, `width` and timeout, and being three is what let them sit in three different places and overlap each other on a narrow screen with no one of them able to know. Where the column is, how wide it is and how many cards it shows at once are properties of the column; what each card *is* stays in `[notifications]` and `[toasts]`.
-.sp
-`timeout_ms` is one number for the same reason. Which is not to say every card goes: a `critical` notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with nothing left to say. Not expiring is a property of the card, not a second timeout.
-.TP
-.B align
-Default: \fB"end"\fR
+`timeout_ms` is one number because the column is one column: whatever is in it, popup or toast or OSD, lives and dies on the same clock. Which is not to say every card goes: a `critical` notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with nothing left to say. Not expiring is a property of the card, not a second timeout.
 .TP
 .B clear_threshold
 How far sideways a card must be dragged before letting go retires it, as a fraction of its width. `0` switches the gesture off, which is what a touchpad user who keeps catching it wants.
@@ -945,9 +756,6 @@ How far sideways a card must be dragged before letting go retires it, as a fract
 The column's, not any one card's: a notification, a toast and an OSD are dismissed by the same gesture, and a threshold that differed between them would make the column feel like three surfaces again.
 .sp
 Default: \fB0.35\fR
-.TP
-.B edge
-Default: \fB"top"\fR
 .TP
 .B max_visible
 How many cards show at once; the rest queue behind them.
@@ -958,9 +766,6 @@ Default: \fB4\fR
 .TP
 .B timeout_ms
 Default: \fB3000\fR
-.TP
-.B width
-Default: \fB380.0\fR
 .SS [status_icons]
 The compact status cluster (`[status_icons]`): several service readings sharing one chip.
 .sp
@@ -1009,7 +814,7 @@ Default: \fB"nord"\fR
 .B opacity
 How opaque every surface the shell paints is, from `0.2` to `1.0` \(em bars, panels, cards and flashes alike. One key for the whole shell and no way to break it apart: a drawer at an opacity the bar it hangs off does not share is not a look anybody chooses, it is two settings that drifted.
 .sp
-**This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job \(em a `layer_rule = blur, ^hogar\-shell`, which needs no code here \(em and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
+**This is the half `backdrop = "blur"` cannot supply.** An area asks for blur behind it through `ext\-background\-effect\-v1` (see [Compositor rules](../guides/compositor\-rules.md) for what moved off per\-namespace compositor rules), and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
 .sp
 Default: \fB1.0\fR
 .TP

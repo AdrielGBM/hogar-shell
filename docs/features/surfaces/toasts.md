@@ -6,7 +6,7 @@ summary: The small, self-dismissing messages the shell says about itself.
 status: stable
 compositor: any
 config: [stack, toasts]
-commands: [toast]
+commands: [toast, layout]
 deps: [wlr-layer-shell]
 see_also: [osd, notifications-daemon]
 ---
@@ -23,7 +23,7 @@ goes into history, it can be acted on, and under do-not-disturb it is *kept* rat
 on" is none of those: it is feedback about a key you just pressed, it is worthless a second later, and filing
 it in the notification history would be filing your own keystrokes.
 
-So toasts have their own queue, their own surface and their own switches, and nothing here reaches the daemon.
+So toasts have their own queue and their own switches, and nothing here reaches the daemon.
 
 ## Which events raise one
 
@@ -46,13 +46,20 @@ Which makes the shell's own feedback channel available to anything you write.
 On whichever monitor the compositor reports as focused **at the moment the toast is posted** — for feedback
 about a keypress, that is the screen you are looking at.
 
-The surface is opened on the first toast and closed with the last, so an idle session carries no overlay at
-all. Expiry runs on a thread of its own, because toasts are posted from wherever the event happened and the one
-thing they cannot rely on is a surface being up to time them out.
+The stack's window is opened on the first card and closed with the last, so an idle session carries no overlay
+at all. Expiry runs on a thread of its own, because toasts are posted from wherever the event happened and the
+one thing they cannot rely on is the stack being up to time them out.
 
 ## Configuring
 
-`[toasts]` — `enabled`, plus `[toasts.events]`. Where a toast appears and how long it stays are not a toast setting: a toast, a notification popup and an OSD are one column, and the column is `[stack]` — `edge`, `align`, `width`, `max_visible`, `timeout_ms`. The space between two cards is the shell's `spacing` token, the same one that separates two chips on a bar.
+`[toasts]` — `enabled`, plus `[toasts.events]`. Where a toast appears is not a toast setting: a toast, a
+notification popup and an OSD are one column — the layout's `Stack` area, by default in the overlay layer,
+pinned to the top right — and its place, size and which outputs it appears on are that area's own `anchor`,
+`width` and `output_policy`.
+
+How many cards show at once and how long each stays is still `[stack]` — `max_visible`, `timeout_ms`,
+`clear_threshold`. The space between two cards is the shell's `spacing` token, the same one that separates two
+chips on a bar.
 
 `max_visible` bounds the column but does not silence anyone: **each of the three — a notification, a toast, an
 OSD — is guaranteed one card before the rest of the room is shared out**, so a brightness reading you asked for
@@ -75,3 +82,4 @@ service behind it — running. Restart the shell to actually quiet it.
 
 - [OSD](osd.md) — for levels rather than text.
 - [Notification daemon](../system/notifications-daemon.md) — for messages that belong to an application.
+- [Layout reference](../../reference/layout.md#areakindstack) — `AreaKind::Stack`, the column's own placement.

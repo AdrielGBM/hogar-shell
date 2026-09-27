@@ -49,10 +49,27 @@ mod tests {
                         areas: top,
                         remove: Vec::new(),
                     },
+                    overlay: Layer {
+                        areas: vec![stack()],
+                        remove: Vec::new(),
+                    },
                     ..Layers::default()
                 },
                 workspaces,
             }],
+        }
+    }
+
+    fn stack() -> Area {
+        Area {
+            id: AreaId::new("stack"),
+            kind: Some(AreaKind::Stack {
+                anchor: Some(layout::Anchor::TopRight),
+                width: Some(380.0),
+                output_policy: None,
+                routes: Vec::new(),
+            }),
+            ..Area::default()
         }
     }
 
@@ -108,6 +125,39 @@ mod tests {
         desktops
     }
 
+    /// Notifications, toasts and OSDs go to a stack area and nowhere else, so a layout with none has quietly switched them all off — which is reported rather than left for the user to notice.
+    #[test]
+    fn a_layout_with_no_stack_area_is_reported() {
+        let mut bare = layout_of(
+            vec![bar("bar-top", Edge::Top, 34.0, &["clock"])],
+            Vec::new(),
+        );
+        bare.outputs[0].layers.overlay.areas.clear();
+        let (_, report) = on(&bare, &outputs(), None);
+        assert!(
+            report
+                .findings()
+                .any(|finding| finding.message.contains("stack area")),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// Without `ext-background-effect-v1` an area styled to blur draws translucent and unblurred, and the report says so — there is no compositor in a test, so the protocol is absent here.
+    #[test]
+    fn an_area_that_asks_for_blur_the_compositor_cannot_give_is_reported() {
+        let mut blurred = bar("bar-top", Edge::Top, 34.0, &["clock"]);
+        blurred.style.backdrop = Some(layout::Backdrop::Blur);
+        let (_, report) = on(&layout_of(vec![blurred], Vec::new()), &outputs(), None);
+        assert!(
+            report
+                .findings()
+                .any(|finding| finding.key == "top.bar-top" && finding.message.contains("blur")),
+            "{}",
+            report.render()
+        );
+    }
+
     /// The strip an edge commits is what its areas take plus the air they float at — the thing a bar cannot answer for itself and the thing a window most needs right.
     #[test]
     fn an_edge_reserves_what_its_areas_take_and_the_gap_they_float_at() {
@@ -119,9 +169,13 @@ mod tests {
 
         assert_eq!(only.output.as_deref(), Some(SCREEN));
         assert_eq!(only.size, (1920.0, 1080.0));
+        let gap = only
+            .config
+            .gap_of(&crate::bar::bar_shape(&only.config, BarShape::default()))
+            as f32;
         assert_eq!(
             only.reserved.top,
-            34.0 + only.config.edge_gap(Edge::Top) as f32,
+            34.0 + gap,
             "a window must clear the bar and the air it floats in, or it tiles underneath it"
         );
         assert_eq!(
@@ -149,7 +203,10 @@ mod tests {
 
         let desktops = planned(&layout_of(vec![hiding], Vec::new()));
 
-        let gap = desktops[0].config.edge_gap(Edge::Top) as f32;
+        let gap = desktops[0].config.gap_of(&crate::bar::bar_shape(
+            &desktops[0].config,
+            BarShape::default(),
+        )) as f32;
         assert_eq!(desktops[0].reserved.top, 2.0 + gap);
     }
 
@@ -350,11 +407,7 @@ mod tests {
                 .layer(LayerKind::Top)
                 .is_some_and(|top| !top.areas.is_empty())
         );
-        for quiet in [
-            LayerKind::Background,
-            LayerKind::Desktop,
-            LayerKind::Overlay,
-        ] {
+        for quiet in [LayerKind::Background, LayerKind::Desktop] {
             assert!(
                 desktops[0]
                     .resolved

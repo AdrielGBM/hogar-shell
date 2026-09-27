@@ -15,7 +15,7 @@ use ui::host::Host;
 use ui::icon::icon_view;
 use util::state::kept;
 
-/// This application's module id, which is also the id its surface is registered under — the entry its own writes stamp, so the reload each one causes passes the window by (see [`surfaces::shell::stamp`]).
+/// This application's module id, which is also the id its surface is registered under — the entry its own writes stamp, so the reload each one causes passes the window by (see [`surfaces::transient::stamp`]).
 pub(crate) const MODULE: &str = "settings";
 
 /// The nav pane's width, the gap to the forms beside it, and how wide the search box is. Wide enough for the longest page label in either catalogue without wrapping, which is what stops the nav reflowing as the language changes under it.

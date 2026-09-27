@@ -11,11 +11,13 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use platform_wayland::{LayerConfig, OutputDescriptor, SurfaceHandle};
+use platform_wayland::{Anchor, Layer, LayerConfig, OutputDescriptor, SurfaceHandle};
 
 use config::{Config, Edge};
-use layout::{ActiveWorkspace, Layout, LayoutId, NOMINAL_OUTPUT, Resolved, resolve};
-use ui::placement::Placement;
+use layout::{
+    ActiveWorkspace, AreaId, LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, Resolved,
+    ResolvedAreaKind, Route, StackOutputPolicy, resolve,
+};
 use util::report::Report;
 
 use crate::area::ShellAreas;
@@ -74,6 +76,7 @@ impl Shell {
     /// The strips go first, so an edge that stopped reserving gives its zone back before anything else is measured against the screen it was on — otherwise every surface would be configured once against the old zone and again a frame later.
     pub fn reconcile(&mut self, desktops: &[Desktop], content: Content) -> Done {
         self.reconcile_strips(desktops);
+        publish_stacks(desktops);
         let plans: Vec<LayerPlan<'_>> = desktops.iter().map(Desktop::plan).collect();
         let windows = self.windows.reconcile(&plans, content);
         tracing::info!(
@@ -126,9 +129,7 @@ impl Shell {
         let keep: HashSet<&StripKey> = wanted.iter().map(|(key, _)| key).collect();
         self.strips.retain(|(key, _)| keep.contains(key));
         for (key, thickness) in wanted {
-            let layer = Placement::reservation(key.edge, thickness)
-                .output(key.output.clone())
-                .layer_config();
+            let layer = reservation(key.edge, thickness, key.output.clone());
             match self.strips.iter_mut().find(|(live, _)| *live == key) {
                 Some((_, strip)) => strip.adopt(layer),
                 None => {
@@ -181,7 +182,8 @@ pub fn plan(
 ) -> (Vec<Desktop>, Report) {
     layout::set_running(Arc::new(layout.clone()));
     let mut report = Report::default();
-    let desktops = outputs
+    let mut unblurred = std::collections::BTreeSet::new();
+    let desktops: Vec<Desktop> = outputs
         .iter()
         .map(|out| {
             let name = out.name.as_deref();
@@ -198,6 +200,12 @@ pub fn plan(
                 active.as_ref(),
             );
             report.merge(findings);
+            unblurred.extend(
+                resolved
+                    .areas()
+                    .filter(|(_, area)| area.style.backdrop == Some(layout::Backdrop::Blur))
+                    .map(|(layer, area)| format!("{layer}.{}", area.id)),
+            );
             let reserved = Reserved::of(&resolved, &config);
             Desktop {
                 output: name.map(str::to_string),
@@ -208,6 +216,29 @@ pub fn plan(
             }
         })
         .collect();
+    let stacked = desktops.iter().any(|desktop| {
+        desktop
+            .resolved
+            .areas()
+            .any(|(_, area)| matches!(area.kind, ResolvedAreaKind::Stack { .. }))
+    });
+    if !stacked && !desktops.is_empty() {
+        report.warn(util::report::Finding::new(
+            format!("layouts/{}.toml", layout.id),
+            "outputs",
+            "no output has a stack area, so notifications, toasts and OSDs are shown nowhere"
+                .to_string(),
+        ));
+    }
+    if !platform_wayland::background_effect_supported() {
+        for area in unblurred {
+            report.warn(util::report::Finding::new(
+                format!("layouts/{}.toml", layout.id),
+                area,
+                "the compositor offers no background blur (ext-background-effect-v1), so this area draws translucent without it".to_string(),
+            ));
+        }
+    }
     (desktops, report)
 }
 
@@ -232,3 +263,72 @@ fn output_config(path: &Path, global: &Arc<Config>, output: Option<&str>) -> Arc
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StackSite {
+    pub output: Option<String>,
+    pub layer: LayerKind,
+    pub area: AreaId,
+    pub policy: StackOutputPolicy,
+    pub routes: Vec<Route>,
+}
+
+thread_local! {
+    static STACKS: std::cell::RefCell<Vec<StackSite>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Every stack area of every output, in the order a card is offered to them: output by output, bottom layer first, and in each layer in z-order.
+pub fn stacks() -> Vec<StackSite> {
+    STACKS.with(|stacks| stacks.borrow().clone())
+}
+
+pub fn publish_stacks(desktops: &[Desktop]) {
+    let sites = desktops
+        .iter()
+        .flat_map(|desktop| {
+            desktop
+                .resolved
+                .areas()
+                .filter_map(|(layer, area)| match &area.kind {
+                    ResolvedAreaKind::Stack {
+                        output_policy,
+                        routes,
+                        ..
+                    } => Some(StackSite {
+                        output: desktop.output.clone(),
+                        layer,
+                        area: area.id.clone(),
+                        policy: output_policy.clone(),
+                        routes: routes.clone(),
+                    }),
+                    _ => None,
+                })
+        })
+        .collect();
+    STACKS.with(|stacks| *stacks.borrow_mut() = sites);
+}
+
+/// The strip that carves `thickness` off `edge` of `output` out of every window's idea of the screen. It draws nothing and takes no input: it exists to hold an exclusive zone.
+fn reservation(edge: Edge, thickness: u32, output: Option<String>) -> LayerConfig {
+    let (anchor, size) = match edge {
+        Edge::Top => (Anchor::TOP | Anchor::LEFT | Anchor::RIGHT, (0, thickness)),
+        Edge::Bottom => (
+            Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+            (0, thickness),
+        ),
+        Edge::Left => (Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM, (thickness, 0)),
+        Edge::Right => (Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM, (thickness, 0)),
+    };
+    LayerConfig {
+        output,
+        layer: Layer::Bottom,
+        anchor,
+        exclusive_zone: thickness as i32,
+        size,
+        namespace: RESERVE_NAMESPACE.to_string(),
+        reserve_only: true,
+        ..LayerConfig::default()
+    }
+}
+
+pub const RESERVE_NAMESPACE: &str = "hogar-shell-reserve";

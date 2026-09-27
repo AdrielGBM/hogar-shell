@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use platform_wayland::EventSender;
 
-use surfaces::shell;
+use surfaces::transient;
 use util::paths;
 
 /// How long the socket thread waits for the driver thread to answer before giving up. Long enough for a command that opens a surface, short enough that a wedged UI thread doesn't hang a script forever.
@@ -31,11 +31,11 @@ pub fn socket_path() -> PathBuf {
     ))
 }
 
-/// Shuts the shell down: closes every surface, then exits. Surfaces are dropped first so the compositor sees them unmapped rather than the connection simply dying, and the IPC socket is removed on the way out — which is why this lives beside the socket rather than beside the surface registry it empties.
+/// Shuts the shell down: drops every open transient, then exits. Transients are dropped first so the compositor sees them unmapped rather than the connection simply dying, and the IPC socket is removed on the way out — which is why this lives beside the socket rather than beside the transient registry it empties.
 pub(crate) fn request_quit() {
-    // Before the surfaces go: a layout edit made in the last quarter second is still waiting for the store to settle, and a shell on its way out is not going to settle it (TA-7).
+    // Before the transients go: a layout edit made in the last quarter second is still waiting for the store to settle, and a shell on its way out is not going to settle it (TA-7).
     crate::core::layouts::flush();
-    shell::close_all();
+    transient::close_all();
     let _ = std::fs::remove_file(socket_path());
     tracing::info!("shutting down on request");
     // A detached exit lets queued file writes land and the in-flight IPC reply reach the client before the process goes away.

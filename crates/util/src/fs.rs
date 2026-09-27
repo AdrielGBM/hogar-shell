@@ -137,18 +137,19 @@ mod tests {
         let dir = scratch("write");
         let nested = dir.join("monitors").join("DP-1");
         let path = nested.join("config.toml");
-        write_atomic(&path, b"[bars.top]\nsize = 34\n").expect("a first write seeds the directory");
+        write_atomic(&path, b"[clock]\nformat = \"%H\"\n")
+            .expect("a first write seeds the directory");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "[bars.top]\nsize = 34\n"
+            "[clock]\nformat = \"%H\"\n"
         );
 
         // A config the user has locked down is a decision about that file, and a save must not undo it.
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        write_atomic(&path, b"[bars.top]\nsize = 40\n").expect("a second write replaces it");
+        write_atomic(&path, b"[clock]\nformat = \"%M\"\n").expect("a second write replaces it");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "[bars.top]\nsize = 40\n"
+            "[clock]\nformat = \"%M\"\n"
         );
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,

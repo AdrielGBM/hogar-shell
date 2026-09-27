@@ -42,9 +42,9 @@ Per-application mute is a separate, binary switch.
 `[notifications]` — `body_lines`, `group_by_app`, `group_preview_num`, `open_expanded`, `critical_sticky`,
 `clear_threshold`, `action_on_click`, `fullscreen`, `sound`.
 
-Where a popup appears, how wide it is, how many show at once and how long each stays are not the daemon's: a
-notification popup, a toast and an OSD are one column, and the column is `[stack]` — `edge`, `align`, `width`,
-`max_visible`, `timeout_ms`.
+Where a popup appears and how wide it is are not the daemon's, or `[stack]`'s: a notification popup, a toast
+and an OSD are one column, and where that column sits and how wide it is are the layout's own `stack` area.
+How many show at once and how long each stays are still `[stack]` — `max_visible`, `timeout_ms`.
 
 `critical_sticky` keeps urgency-critical notifications up until they are dismissed. `fullscreen` is the policy
 for what happens while a window is fullscreen.

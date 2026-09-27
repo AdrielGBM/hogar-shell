@@ -6,7 +6,7 @@ use ui::scale::{corner, paint};
 use platform_wayland::KeyboardMode;
 use telar::{
     AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension,
-    StyledContainer, SurfaceToken, Text, box_item, memo, signal, use_theme,
+    StyledContainer, Text, box_item, memo, signal, use_theme,
 };
 
 use platform_wayland::ManagedToplevel;
@@ -17,17 +17,16 @@ use config::{LauncherAction, LauncherConfig};
 use services::apps::{self, App};
 use services::state;
 use services::wallpaper;
-use surfaces::shell;
+use surfaces::transient::{self, Motion, Place, Slot, Spec};
+use ui::chrome::{Chrome, content_radius, panel_fill};
 use ui::keynav::{self, Move};
-use ui::panel::{PanelSurface, content_radius, panel_fill};
-use ui::placement::{Centred, Placement};
 use ui::scale::space;
 use ui::thumbnail;
 use util::calc;
 use util::search::{self, Mode};
 use util::state::kept;
 
-/// The id the surface registry keys the launcher on.
+/// The id the transient registry keys the launcher on.
 pub const ID: &str = "launcher";
 
 /// Typing this first switches to the action mode, listing `[[launcher.actions]]` instead of applications.
@@ -371,19 +370,21 @@ fn choose(entry: &Entry) {
     }
 }
 
-/// Opens the launcher, or closes it if it is already up. Opening it takes the screen from whatever drawer was up — see [`shell::close_drawer`].
 pub fn toggle() {
-    shell::toggle_standing_window(ID, open);
-}
-
-fn open() -> SurfaceToken {
-    let output = shell::focused_output();
-
-    // No `.size(...)`: a modal is dismissed by a press outside it, so its *surface* is full-screen and the scaffold centres the window inside it. The window's own size is a layout property (see `panel`), not a surface one — asking the surface to be 640×420 would leave every press beyond that box unheard.
-    PanelSurface::new(Placement::centred(Centred::Modal).output(output), |env| {
-        panel(env.config.resolve_theme(), &env.config.launcher)
-    })
-    .open()
+    transient::toggle(
+        Spec::new(
+            ID,
+            Place::Centred,
+            Rc::new(|chrome: &Chrome| {
+                panel(chrome.config.resolve_theme(), &chrome.config.launcher)
+            }),
+        )
+        .slot(Slot::Standing)
+        .output(transient::focused_output())
+        .keyboard(KeyboardMode::OnDemand)
+        .dismiss_on_outside()
+        .motion(Motion::Fade),
+    );
 }
 
 /// Where the arrow keys move the selection, given the current index and how many results there are.
@@ -475,13 +476,13 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
                     keys_armed.set(key);
                     return;
                 }
-                shell::close(ID);
+                transient::close(ID);
                 choose(&entry);
             }
             Move::Cancel => {
                 // Escape backs out of one thing at a time: an armed confirmation first, the launcher itself once there is nothing left to back out of. Closed here rather than left to the surface's own Escape handling because the search field is focused and claims the key before it gets there.
                 if keys_armed.peek().is_empty() {
-                    shell::close(ID);
+                    transient::close(ID);
                 } else {
                     keys_armed.set(String::new());
                 }
@@ -882,7 +883,7 @@ fn tile(
         }
     })
     .on_press(move || {
-        shell::close(ID);
+        transient::close(ID);
         choose(&chosen);
     });
     Ok(Box::new(tile))
@@ -1040,7 +1041,7 @@ fn row(
         if dangerous && !armed_press() {
             return;
         }
-        shell::close(ID);
+        transient::close(ID);
         choose(&chosen);
     });
     Ok(Box::new(row))

@@ -7,12 +7,14 @@ use telar::{
 };
 
 use crate::area::Surround;
-use crate::layer_window::Reserved;
+use crate::layer_window::{LayerWindowContext, Reserved};
+use crate::transient::chips::{self, Site};
+use crate::transient::standoff;
 use config::theme::NordTheme;
 use config::{Config, Edge, ResolvedShape, Shape, Variant};
 use layout::{
-    AutoHide, BarShape, Extent, GroupKind, ResolvedArea, ResolvedAreaKind, ResolvedGroup,
-    ResolvedInstance, Zone,
+    AutoHide, BarShape, Extent, GroupKind, LayerKind, ResolvedArea, ResolvedAreaKind,
+    ResolvedGroup, ResolvedInstance, Zone,
 };
 use ui::descriptor::{ChipDef, ChipFrame, ModuleDescriptor};
 use ui::host::{Host, InstanceId, Representation, Size};
@@ -48,9 +50,26 @@ pub fn build_bar(
     };
     let config = surround.config;
     let shape = bar_shape(config, shape);
-    let run = run_of(edge, surround.bounds, surround.reserved, shape.gap as f32);
+    let run = run_of(
+        edge,
+        surround.bounds,
+        surround.reserved,
+        config.gap_of(&shape) as f32,
+    );
     let zones = zones_of(&area.groups);
-    let chrome = Chrome {
+    let site = Site {
+        output: surround.output.map(str::to_string),
+        layer: LayerWindowContext::current().map_or(LayerKind::Top, |window| window.layer),
+        edge,
+        chrome: ui::chrome::Chrome::new(
+            Arc::clone(config),
+            shape,
+            surround.output.map(str::to_string),
+        ),
+        gap: standoff(config, &shape),
+    };
+    site.chrome.provide();
+    let chrome = BarFrame {
         config,
         edge,
         thickness,
@@ -59,7 +78,16 @@ pub fn build_bar(
         theme: surround.theme,
         output: surround.output,
         autohide,
-        strip: strip_of(edge, thickness, length, offset, run, surround),
+        strip: strip_of(
+            edge,
+            thickness,
+            length,
+            offset,
+            run,
+            config.gap_of(&shape) as f32,
+            surround.bounds,
+        ),
+        site,
     };
     match shape.mode {
         Shape::Bar => build_whole_bar(&chrome, &zones, modules),
@@ -83,9 +111,9 @@ pub fn strip_of_area(area: &ResolvedArea, surround: Surround) -> telar::Rect {
     else {
         return surround.bounds;
     };
-    let gap = bar_shape(surround.config, shape).gap as f32;
+    let gap = surround.config.gap_of(&bar_shape(surround.config, shape)) as f32;
     let run = run_of(edge, surround.bounds, surround.reserved, gap);
-    strip_of(edge, thickness, length, offset, run, surround)
+    strip_of(edge, thickness, length, offset, run, gap, surround.bounds)
 }
 
 /// The stretch of its edge a bar has to place itself along: where it starts and how long it is, in the window's own coordinates.
@@ -133,10 +161,9 @@ fn strip_of(
     length: Extent,
     offset: f32,
     run: Run,
-    surround: Surround,
+    gap: f32,
+    bounds: telar::Rect,
 ) -> telar::Rect {
-    let gap = surround.config.edge_gap(edge) as f32;
-    let bounds = surround.bounds;
     let along = match length {
         Extent::Fill => run.length,
         Extent::Px(px) => px.min(run.length),
@@ -164,7 +191,7 @@ fn strip_of(
 /// The area's own shape over the global `[shape]`, and the theme under both.
 ///
 /// The model measures gap, spacing and radius as floats where `[shape]` has always taken whole pixels, so they are rounded on the way in rather than the config being widened to match: each is a distance in logical px, and no part of the shell draws a fraction of one.
-fn bar_shape(config: &Config, shape: BarShape) -> ResolvedShape {
+pub fn bar_shape(config: &Config, shape: BarShape) -> ResolvedShape {
     let px = |value: Option<f32>| value.map(|px| px.round() as u32);
     config.shape_from(
         shape.mode,
@@ -201,8 +228,8 @@ fn justify(zone: Zone) -> JustifyContent {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Chrome<'a> {
+#[derive(Clone)]
+struct BarFrame<'a> {
     config: &'a Arc<Config>,
     edge: Edge,
     /// How thick the area is across its edge, which is the only size a chip on it is given.
@@ -216,9 +243,11 @@ struct Chrome<'a> {
     strip: telar::Rect,
     /// How the bar takes itself off screen when it is not wanted, and how much of it stays behind.
     autohide: Option<AutoHide>,
+    /// Where this bar's chips are, for whatever hangs off one of them.
+    site: Site,
 }
 
-impl Chrome<'_> {
+impl BarFrame<'_> {
     /// The host a chip is built under.
     ///
     /// Keyed by the module rather than by the placed instance's own id: a chip's press, a keybind and `hogar-shell panel toggle` all name a module, so a chip that kept its state under a layout id would stop sharing it with the three ways the same instance is reached from outside the bar. Giving those an instance to name is one change, and this is not it.
@@ -281,7 +310,7 @@ fn inner_fill(config: &Config, token: Color) -> Color {
 /// **The bar moves by transform, not by layout.** A translate is a `PushMatrix` change, which telar's diff scopes to the subtree that moved (F-5.2), where moving it by layout would re-measure three zones on every frame of the slide. The input region follows the transform — `interactive_rects` lifts every claim through its node's placements — so the only part of the bar the compositor is handed while it is away is the `peek` that is still on screen. That is the whole of the hot rect: there is no second strip to keep in step with the bar, which is what the surface-moving version had to do.
 ///
 /// `on_hover = false` asks for a bar only a drag brings back. The drag is not built yet, so such a bar stays hidden; see F-10.30.
-fn hiding(chrome: &Chrome, bar: StyledContainer) -> StyledContainer {
+fn hiding(chrome: &BarFrame, bar: StyledContainer) -> StyledContainer {
     let Some(hide) = chrome.autohide else {
         return bar;
     };
@@ -322,11 +351,11 @@ fn bar_radius(config: &Config, shape: ResolvedShape) -> f32 {
 }
 
 fn build_whole_bar(
-    chrome: &Chrome,
+    chrome: &BarFrame,
     zones: &Zones,
     modules: &[ModuleDescriptor],
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let Chrome {
+    let BarFrame {
         config,
         edge,
         shape,
@@ -375,12 +404,12 @@ fn build_whole_bar(
 }
 
 fn build_units(
-    chrome: &Chrome,
+    chrome: &BarFrame,
     zones: &Zones,
     modules: &[ModuleDescriptor],
     granularity: Granularity,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let Chrome {
+    let BarFrame {
         config,
         edge,
         shape,
@@ -541,7 +570,7 @@ struct Wrapper {
 fn chip_wrapper(
     content: Box<dyn LayoutItem>,
     on_scroll: Option<Wheel>,
-    popout: Option<&str>,
+    popout: Option<(&str, Site)>,
     dress: Wrapper,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let Wrapper {
@@ -569,14 +598,15 @@ fn chip_wrapper(
     if let Some(on_scroll) = on_scroll {
         wrapper = wrapper.on_scroll(move |dx, dy| on_scroll(dx, dy));
     }
-    if let Some(module) = popout {
+    if let Some((module, site)) = popout {
         // Tracked before the handler that reads it is attached, so the popout has a rect the first time the pointer arrives.
         let rect = track_layout(wrapper.layout_node())
             .expect("a container registers its rect")
             .read_only();
         let module = module.to_string();
-        wrapper =
-            wrapper.on_hover(move |entered| crate::popout::hover(&module, rect.get(), entered));
+        wrapper = wrapper.on_hover(move |entered| {
+            crate::popout::hover(&module, site.anchor(rect.get()), entered)
+        });
     }
     Ok(Box::new(wrapper))
 }
@@ -634,7 +664,7 @@ fn instance_accent_name<'a>(config: &'a Config, instance: &'a ResolvedInstance) 
 
 /// Builds each instance's content and wraps it in its base container; a module no id answers to, one with no chip, and a chip whose build fails or panics are each drawn as a [placeholder](ui::placeholder) where declared, so the mistake stays on screen.
 fn build_items(
-    chrome: &Chrome,
+    chrome: &BarFrame,
     instances: &[&ResolvedInstance],
     modules: &[ModuleDescriptor],
     rest: Color,
@@ -663,12 +693,17 @@ fn build_items(
             edge: chrome.edge,
             popout: module.representations.popout.is_some() && config.popouts.enabled,
             drag_open: drag_open_for(config, &module, chrome.edge),
+            site: chrome.site.clone(),
         };
         let style = chip_box(&chip, chrome.edge);
         let built = host.clone();
-        items.push(ui::descriptor::guard(id, &host, style, move || {
+        let item = ui::descriptor::guard(id, &host, style, move || {
             placed_chip(&module, &chip, &built, look)
-        })?);
+        })?;
+        if let Some(rect) = track_layout(item.layout_node()) {
+            chips::register(id, chrome.site.clone(), rect);
+        }
+        items.push(item);
     }
     Ok(items)
 }
@@ -682,6 +717,7 @@ struct Look {
     edge: Edge,
     popout: bool,
     drag_open: Option<DragOpen>,
+    site: Site,
 }
 
 /// The box a chip's failure is caught in, carrying the part the chip plays in its zone: a filler takes the room left over, an elastic chip gives up length, and every other chip holds its own.
@@ -706,7 +742,7 @@ fn placed_chip(
             module.id
         )))
     })?;
-    let popout = look.popout.then_some(module.id);
+    let popout = look.popout.then(|| (module.id, look.site.clone()));
     let wheel = wheel(chip, host);
     if chip.is_bare() {
         return bare_chip(
@@ -786,7 +822,7 @@ fn bare_chip(
     content: Box<dyn LayoutItem>,
     chip: &ChipDef,
     wheel: Option<Wheel>,
-    popout: Option<&str>,
+    popout: Option<(&str, Site)>,
     edge: Edge,
     resting: Color,
     radius: f32,
@@ -818,48 +854,59 @@ mod tests {
     use telar::{AvailableSpace, compute_layout, reset_layout_runtime, set_theme};
     use ui::descriptor::{CardDef, Input, Representations};
 
-    /// The bar `config` draws on `edge`, on a screen exactly the size of the page the test lays it out on.
+    /// Builds `area` on a screen exactly the size of the page the test lays it out on, with nothing else on the output.
     ///
     /// A bar places itself on its output now, so a test has to say how big that output is or the strip lands somewhere the page cannot show. `page` is the same pair the test hands `compute_layout`, which is what keeps the two from drifting.
-    ///
-    /// The tests describe a bar in `config.toml` and the builder reads an area, so [`area_of`] stands between them. It goes with `[bars]` itself in T-3.4, and these tests then say what they mean in the layout model's own words.
     fn built(
         config: &Config,
-        edge: Edge,
+        area: &ResolvedArea,
+        modules: &[ModuleDescriptor],
+        page: (f32, f32),
+    ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        built_amid(config, area, &[], modules, page)
+    }
+
+    /// [`built`], but with `neighbours` on the same output, so their reservation reaches `area` the way a bar above or below a vertical one does.
+    fn built_amid(
+        config: &Config,
+        area: &ResolvedArea,
+        neighbours: &[ResolvedArea],
         modules: &[ModuleDescriptor],
         page: (f32, f32),
     ) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let config = Arc::new(config.clone());
+        let reserved = Reserved::of(&resolved_of(area, neighbours), &config);
         build_bar(
-            &area_of(&config, edge),
+            area,
             Surround {
                 config: &config,
                 theme: NordTheme::new(),
                 output: None,
                 bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
-                reserved: reserved_of(&config),
+                reserved,
                 audience: ui::host::Audience::Owner,
             },
             modules,
         )
     }
 
-    /// What `config`'s own bars take off each edge, which is what a bar reads to know where its neighbours left it room.
-    fn reserved_of(config: &Config) -> Reserved {
-        let on = |edge| config.edge_reserved(edge) as f32;
-        Reserved {
-            top: on(Edge::Top),
-            right: on(Edge::Right),
-            bottom: on(Edge::Bottom),
-            left: on(Edge::Left),
-        }
+    /// `area` and `neighbours` as the one-output arrangement [`Reserved::of`] reads its reservation from.
+    fn resolved_of(area: &ResolvedArea, neighbours: &[ResolvedArea]) -> layout::Resolved {
+        let mut areas = neighbours.to_vec();
+        areas.push(area.clone());
+        layout::Resolved::of("test", [(LayerKind::Top, layout::ResolvedLayer { areas })])
     }
 
-    /// Where on `page` the bar `config` describes for `edge` actually lands, for a test measuring the air at its ends.
-    fn strip(config: &Config, edge: Edge, page: (f32, f32)) -> telar::Rect {
+    /// Where `area` actually lands on `page`, for a test measuring the air at its ends.
+    fn strip(
+        config: &Config,
+        area: &ResolvedArea,
+        neighbours: &[ResolvedArea],
+        page: (f32, f32),
+    ) -> telar::Rect {
         let config = Arc::new(config.clone());
-        let area = area_of(&config, edge);
         let ResolvedAreaKind::Bar {
+            edge,
             thickness,
             length,
             offset,
@@ -869,90 +916,98 @@ mod tests {
         else {
             unreachable!("the helper builds a bar")
         };
-        let surround = Surround {
-            config: &config,
-            theme: NordTheme::new(),
-            output: None,
-            bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
-            reserved: reserved_of(&config),
-            audience: ui::host::Audience::Owner,
-        };
+        let reserved = Reserved::of(&resolved_of(area, neighbours), &config);
         let gap = bar_shape(&config, shape).gap as f32;
-        let run = run_of(edge, surround.bounds, surround.reserved, gap);
-        strip_of(edge, thickness, length, offset, run, surround)
+        let bounds = telar::Rect::new(0.0, 0.0, page.0, page.1);
+        let run = run_of(edge, bounds, reserved, gap);
+        strip_of(edge, thickness, length, offset, run, gap, bounds)
     }
 
-    /// The area one edge's `[bars.<edge>]` section describes, corner sugar routed into the start and end zones as [`Config::corner_modules_for`] answers it.
-    fn area_of(config: &Config, edge: Edge) -> ResolvedArea {
-        let bar = config.bars.get(edge);
-        let (lead, trail) = config.corner_modules_for(edge);
-        let mut start: Vec<config::ModuleEntry> = Vec::new();
-        start.extend(lead.map(config::ModuleEntry::bare));
-        start.extend(bar.start.iter().cloned());
-        let mut end: Vec<config::ModuleEntry> = bar.end.clone();
-        end.extend(trail.map(config::ModuleEntry::bare));
+    /// A bar area in the layout model's own words: `thickness` across `edge`, running the whole edge, holding whichever modules `zones` names in its start, center and end zones.
+    fn bar_area(edge: Edge, thickness: f32, zones: [&[&str]; 3]) -> ResolvedArea {
+        shaped_bar_area(edge, thickness, zones, BarShape::default(), None)
+    }
+
+    /// [`bar_area`], with its shape and autohide named explicitly instead of defaulted.
+    fn shaped_bar_area(
+        edge: Edge,
+        thickness: f32,
+        zones: [&[&str]; 3],
+        shape: BarShape,
+        autohide: Option<AutoHide>,
+    ) -> ResolvedArea {
+        area_of(
+            edge,
+            thickness,
+            shape,
+            autohide,
+            vec![
+                zone_group("start", Zone::Start, zones[0]),
+                zone_group("center", Zone::Center, zones[1]),
+                zone_group("end", Zone::End, zones[2]),
+            ],
+        )
+    }
+
+    /// The bar area every other builder here assembles: an id, the geometry a bar needs, and whatever `groups` it was handed.
+    fn area_of(
+        edge: Edge,
+        thickness: f32,
+        shape: BarShape,
+        autohide: Option<AutoHide>,
+        groups: Vec<ResolvedGroup>,
+    ) -> ResolvedArea {
         ResolvedArea {
             id: layout::AreaId::new(format!("bar-{}", edge.as_str())),
             kind: ResolvedAreaKind::Bar {
                 edge,
-                thickness: bar.size as f32,
+                thickness,
                 length: Extent::Fill,
                 offset: 0.0,
-                shape: BarShape {
-                    mode: bar.shape.mode,
-                    gap: bar.shape.gap.map(|px| px as f32),
-                    spacing: bar.shape.spacing.map(|px| px as f32),
-                    radius: bar.shape.radius.map(|px| px as f32),
-                },
-                autohide: (!bar.persistent).then(|| layout::AutoHide {
-                    peek: config.bar_peek(edge) as f32,
-                    on_hover: bar.show_on_hover,
-                }),
+                shape,
+                autohide,
             },
-            reserve: config.bar_is_persistent(edge),
+            reserve: true,
             above_fullscreen: false,
             within: layout::Within::Output,
             style: layout::AreaStyle::default(),
             visible: None,
-            groups: vec![
-                zone_group("start", Zone::Start, &start),
-                zone_group("center", Zone::Center, &bar.center),
-                zone_group("end", Zone::End, &end),
-            ],
+            groups,
         }
     }
 
-    fn zone_group(id: &str, zone: Zone, entries: &[config::ModuleEntry]) -> ResolvedGroup {
+    fn zone_group(id: &str, zone: Zone, ids: &[&str]) -> ResolvedGroup {
         ResolvedGroup {
             id: layout::GroupId::new(id),
             kind: GroupKind::Zone { zone },
-            children: entries.iter().map(placed).collect(),
+            children: ids.iter().map(|id| instance(id)).collect(),
         }
     }
 
-    /// One `[bars.<edge>]` entry as a placed instance: its `variant` and `accent` become instance options, which is where a chip's own look is read from now that an entry is not what the builder sees.
-    fn placed(entry: &config::ModuleEntry) -> ResolvedInstance {
-        let mut options = toml::Table::new();
-        if let Some(variant) = entry
-            .variant
-            .and_then(|variant| toml::Value::try_from(variant).ok())
-        {
-            options.insert("variant".into(), variant);
-        }
-        if let Some(accent) = &entry.accent {
-            options.insert("accent".into(), toml::Value::String(accent.clone()));
-        }
+    fn instance(id: &str) -> ResolvedInstance {
         ResolvedInstance {
-            id: layout::InstanceId::new(&entry.id),
-            module: entry.id.clone(),
+            id: layout::InstanceId::new(id),
+            module: id.to_string(),
             representation: layout::Representation::Chip,
-            options,
+            options: toml::Table::new(),
             bindings: std::collections::BTreeMap::new(),
             actions: std::collections::BTreeMap::new(),
         }
     }
 
-    /// A chip on a 32px bar along `edge`, dressed exactly as [`Chrome::host`] dresses one.
+    /// An instance carrying its own `variant` and `accent` options, which is where a chip's own look is read from.
+    fn styled_instance(id: &str, variant: Variant, accent: &str) -> ResolvedInstance {
+        let mut placed = instance(id);
+        placed
+            .options
+            .insert("variant".into(), toml::Value::try_from(variant).unwrap());
+        placed
+            .options
+            .insert("accent".into(), toml::Value::String(accent.to_string()));
+        placed
+    }
+
+    /// A chip on a 32px bar along `edge`, dressed exactly as [`BarFrame::host`] dresses one.
     fn test_host(edge: Edge) -> Host {
         let theme = NordTheme::new();
         let config = Config::default();
@@ -968,6 +1023,17 @@ mod tests {
             theme.text,
             None,
         )
+    }
+
+    /// A [`Site`] for a chip's popout to hang off, with nothing behind it worth naming.
+    fn test_site(edge: Edge) -> Site {
+        Site {
+            output: None,
+            layer: LayerKind::Top,
+            edge,
+            chrome: ui::chrome::Chrome::global(Arc::new(Config::default()), None),
+            gap: 8.0,
+        }
     }
 
     fn module(id: &'static str, chip: ChipDef) -> ModuleDescriptor {
@@ -1097,10 +1163,10 @@ mod tests {
         reset_layout_runtime();
         set_theme(NordTheme::new());
         BUILT.with(|built| built.borrow_mut().clear());
-        let config: config::Config =
-            toml::from_str("[bars.top]\nsize=34\ncenter=[\"wanted\"]\n").unwrap();
+        let config = config::Config::default();
+        let area = bar_area(Edge::Top, 34.0, [&[], &["wanted"], &[]]);
 
-        built(&config, Edge::Top, &registry, (600.0, 34.0)).expect("the bar builds");
+        built(&config, &area, &registry, (600.0, 34.0)).expect("the bar builds");
 
         assert_eq!(
             BUILT.with(|built| built.borrow().clone()),
@@ -1145,7 +1211,7 @@ mod tests {
         let mut wrapped = chip_wrapper(
             chip,
             None,
-            Some("volume"),
+            Some(("volume", test_site(Edge::Top))),
             Wrapper {
                 cross: AlignItems::STRETCH,
                 edge: Edge::Top,
@@ -1201,19 +1267,28 @@ mod tests {
                 reset_layout_runtime();
                 set_theme(theme);
                 OPENED.with(|opened| opened.borrow_mut().clear());
-                let cfg: Config = toml::from_str(&format!(
-                    "[shape]\nmode=\"{mode}\"\n[bars.{}]\nsize=32\n\
-                     start=[{{id=\"dummy\",variant=\"filled\",accent=\"green\"}},\"{broken}\",\
-                     {{id=\"dummy\",variant=\"filled\",accent=\"purple\"}}]\n",
-                    edge.as_str()
-                ))
-                .unwrap();
+                let cfg: Config = toml::from_str(&format!("[shape]\nmode=\"{mode}\"\n")).unwrap();
+                let area = area_of(
+                    edge,
+                    32.0,
+                    BarShape::default(),
+                    None,
+                    vec![ResolvedGroup {
+                        id: layout::GroupId::new("start"),
+                        kind: GroupKind::Zone { zone: Zone::Start },
+                        children: vec![
+                            styled_instance("dummy", config::Variant::Filled, "green"),
+                            instance(broken),
+                            styled_instance("dummy", config::Variant::Filled, "purple"),
+                        ],
+                    }],
+                );
                 let (w, h) = if edge.is_horizontal() {
                     (600.0, 32.0)
                 } else {
                     (32.0, 600.0)
                 };
-                let bar = built(&cfg, edge, &registry(), (w, h)).expect("the bar builds");
+                let bar = built(&cfg, &area, &registry(), (w, h)).expect("the bar builds");
                 let page =
                     Container::new(axis(LayoutStyle::new(), edge).width(w).height(h), vec![bar])
                         .unwrap();
@@ -1320,12 +1395,10 @@ mod tests {
             reset_layout_runtime();
             set_theme(NordTheme::new());
             let registry = vec![module("probe", def)];
-            let cfg: Config = toml::from_str(&format!(
-                "[shape]\nmode=\"{mode}\"\n[bars.top]\nsize=32\ncenter=[\"probe\"]\n"
-            ))
-            .unwrap();
+            let cfg: Config = toml::from_str(&format!("[shape]\nmode=\"{mode}\"\n")).unwrap();
+            let area = bar_area(Edge::Top, 32.0, [&[], &["probe"], &[]]);
             let surface = telar::Paint::Solid(inner_fill(&cfg, NordTheme::new().surface));
-            let bar = built(&cfg, Edge::Top, &registry, (400.0, 32.0)).expect("the bar builds");
+            let bar = built(&cfg, &area, &registry, (400.0, 32.0)).expect("the bar builds");
             let page = Container::new(
                 LayoutStyle::new().flex_row().width(400.0).height(32.0),
                 vec![bar],
@@ -1373,14 +1446,12 @@ mod tests {
     #[test]
     fn every_mode_builds_a_tree() {
         for mode in ["bar", "sections", "chips"] {
-            let toml = format!(
-                "[shape]\nmode=\"{mode}\"\ngap=6\nradius=10\nspacing=8\n\
-                 [bars.top]\nstart=[\"dummy\"]\ncenter=[\"dummy\"]\nend=[\"dummy\"]\n"
-            );
+            let toml = format!("[shape]\nmode=\"{mode}\"\ngap=6\nradius=10\nspacing=8\n");
             let cfg: Config = toml::from_str(&toml).unwrap();
+            let area = bar_area(Edge::Top, 32.0, [&["dummy"], &["dummy"], &["dummy"]]);
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let bar = built(&cfg, Edge::Top, &registry(), (1920.0, 32.0));
+            let bar = built(&cfg, &area, &registry(), (1920.0, 32.0));
             assert!(bar.is_ok(), "mode {mode} builds a tree");
         }
     }
@@ -1392,15 +1463,13 @@ mod tests {
     fn the_centre_holds_still_while_a_side_chip_changes_width() {
         const BAR: f32 = 1920.0;
 
-        let midpoint = |start: &str, mode: &str| {
+        let midpoint = |start: &[&str], mode: &str| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config = toml::from_str(&format!(
-                "[shape]\nmode=\"{mode}\"\nspacing=8\n\
-                 [bars.top]\nsize=32\nstart=[\"{start}\"]\ncenter=[\"centred\"]\nend=[\"dummy\"]\n"
-            ))
-            .unwrap();
-            let bar = built(&cfg, Edge::Top, &registry(), (BAR, 32.0)).expect("the bar builds");
+            let cfg: Config =
+                toml::from_str(&format!("[shape]\nmode=\"{mode}\"\nspacing=8\n")).unwrap();
+            let area = bar_area(Edge::Top, 32.0, [start, &["centred"], &["dummy"]]);
+            let bar = built(&cfg, &area, &registry(), (BAR, 32.0)).expect("the bar builds");
             compute_layout(
                 bar.layout_node(),
                 AvailableSpace::Definite(BAR),
@@ -1415,8 +1484,8 @@ mod tests {
         };
 
         for mode in ["bar", "sections", "chips"] {
-            let narrow = midpoint("dummy", mode);
-            let widened = midpoint("wide", mode);
+            let narrow = midpoint(&["dummy"], mode);
+            let widened = midpoint(&["wide"], mode);
             assert_eq!(
                 narrow,
                 BAR / 2.0,
@@ -1428,7 +1497,7 @@ mod tests {
                  the window title would drag the whole centre section around with it"
             );
             // Four 320px chips want 1304px of a 956px half. A zone free to claim its content would shove the centre 350px sideways; this one is cut off at the centre's edge instead.
-            let overrun = midpoint("wide\",\"wide\",\"wide\",\"wide", mode);
+            let overrun = midpoint(&["wide", "wide", "wide", "wide"], mode);
             assert_eq!(
                 overrun, narrow,
                 "{mode}: a start zone holding more than fits still moved the centre to {overrun} — it has to \
@@ -1533,18 +1602,19 @@ mod tests {
     fn a_vertical_bar_keeps_its_end_chips_off_the_bars_it_runs_into() {
         const LENGTH: f32 = 1000.0;
         const SPACING: f32 = 8.0;
-        const ABOVE: &str = "[bars.top]\nsize=30\ncenter=[\"dummy\"]\n";
-        const BELOW: &str = "[bars.bottom]\nsize=30\ncenter=[\"dummy\"]\n";
+
+        let above = || bar_area(Edge::Top, 30.0, [&[], &["dummy"], &[]]);
+        let below = || bar_area(Edge::Bottom, 30.0, [&[], &["dummy"], &[]]);
 
         // The chip's rect and the strip the bar landed on, both in the screen's own coordinates: a vertical bar stops where the bars above and below it left it, so its own middle is no longer the screen's.
-        let probe = |mode: &str, neighbours: &str, zones: &str| {
+        let probe = |mode: &str, neighbours: &[ResolvedArea], zones: [&[&str]; 3]| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config = toml::from_str(&format!(
-                "[shape]\nmode=\"{mode}\"\nspacing=8\n{neighbours}[bars.left]\nsize=32\n{zones}"
-            ))
-            .unwrap();
-            let bar = built(&cfg, Edge::Left, &registry(), (32.0, LENGTH)).expect("the bar builds");
+            let cfg: Config =
+                toml::from_str(&format!("[shape]\nmode=\"{mode}\"\nspacing=8\n")).unwrap();
+            let area = bar_area(Edge::Left, 32.0, zones);
+            let bar = built_amid(&cfg, &area, neighbours, &registry(), (32.0, LENGTH))
+                .expect("the bar builds");
             let page = Container::new(
                 LayoutStyle::new().flex_column().width(32.0).height(LENGTH),
                 vec![bar],
@@ -1560,18 +1630,18 @@ mod tests {
                 .with(|c| *c.borrow())
                 .expect("the probe published its rect")
                 .get();
-            (chip, strip(&cfg, Edge::Left, (32.0, LENGTH)))
+            (chip, strip(&cfg, &area, neighbours, (32.0, LENGTH)))
         };
-        let air = |mode: &str, neighbours: &str| {
-            let (first, strip) = probe(mode, neighbours, "start=[\"centred\"]\n");
-            let (last, _) = probe(mode, neighbours, "end=[\"centred\"]\n");
+        let air = |mode: &str, neighbours: &[ResolvedArea]| {
+            let (first, strip) = probe(mode, neighbours, [&["centred"], &[], &[]]);
+            let (last, _) = probe(mode, neighbours, [&[], &[], &["centred"]]);
             (
                 first.y - strip.y,
                 (strip.y + strip.height) - (last.y + last.height),
             )
         };
 
-        let boxed_in = format!("{ABOVE}{BELOW}");
+        let boxed_in = vec![above(), below()];
         let in_bar_mode = air("bar", &boxed_in);
         for mode in ["bar", "sections", "chips"] {
             let (lead, trail) = air(mode, &boxed_in);
@@ -1585,14 +1655,14 @@ mod tests {
                 in_bar_mode,
                 "{mode}: the air at the ends cannot depend on the mode"
             );
-            let (bare_lead, bare_trail) = air(mode, "");
+            let (bare_lead, bare_trail) = air(mode, &[]);
             assert!(
                 bare_lead < lead && bare_trail < trail,
                 "{mode}: with no bar above or below, the end chips still hold {bare_lead}px and {bare_trail}px \
                  off the screen's edges"
             );
 
-            let (centre, strip) = probe(mode, ABOVE, "start=[\"dummy\"]\ncenter=[\"centred\"]\n");
+            let (centre, strip) = probe(mode, &[above()], [&["dummy"], &["centred"], &[]]);
             assert_eq!(
                 centre.y + centre.height / 2.0,
                 strip.y + strip.height / 2.0,
@@ -1609,12 +1679,9 @@ mod tests {
         let kept = |module: &str| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config = toml::from_str(&format!(
-                "[shape]\nmode=\"chips\"\nspacing=8\n\
-                 [bars.top]\nsize=32\nstart=[\"wide\",\"{module}\"]\ncenter=[\"dummy\"]\n"
-            ))
-            .unwrap();
-            let bar = built(&cfg, Edge::Top, &registry(), (600.0, 32.0)).expect("the bar builds");
+            let cfg: Config = toml::from_str("[shape]\nmode=\"chips\"\nspacing=8\n").unwrap();
+            let area = bar_area(Edge::Top, 32.0, [&["wide", module], &["dummy"], &[]]);
+            let bar = built(&cfg, &area, &registry(), (600.0, 32.0)).expect("the bar builds");
             compute_layout(
                 bar.layout_node(),
                 AvailableSpace::Definite(600.0),
@@ -1667,12 +1734,9 @@ mod tests {
                 chip(overrunner).self_managed().on_scroll(nudge),
             ),
         ];
-        let cfg: Config = toml::from_str(
-            "[shape]\nmode=\"bar\"\nspacing=8\n\
-             [bars.left]\nsize=32\nstart=[\"overrunner\"]\ncenter=[\"dummy\"]\n",
-        )
-        .unwrap();
-        let bar = built(&cfg, Edge::Left, &registry, (32.0, BAR)).expect("the bar builds");
+        let cfg: Config = toml::from_str("[shape]\nmode=\"bar\"\nspacing=8\n").unwrap();
+        let area = bar_area(Edge::Left, 32.0, [&["overrunner"], &["dummy"], &[]]);
+        let bar = built(&cfg, &area, &registry, (32.0, BAR)).expect("the bar builds");
         let page = Container::new(
             LayoutStyle::new().flex_column().width(32.0).height(BAR),
             vec![bar],
@@ -1728,13 +1792,18 @@ mod tests {
         let gap_before_centre = |mode: &str| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config = toml::from_str(&format!(
-                "[shape]\nmode=\"{mode}\"\nspacing=8\n\
-                 [bars.top]\nsize=32\nstart=[\"wide\",\"wide\",\"wide\",\"wide\"]\n\
-                 center=[\"centred\"]\nend=[\"wide\",\"wide\",\"wide\",\"wide\"]\n"
-            ))
-            .unwrap();
-            let bar = built(&cfg, Edge::Top, &registry(), (BAR, 32.0)).expect("the bar builds");
+            let cfg: Config =
+                toml::from_str(&format!("[shape]\nmode=\"{mode}\"\nspacing=8\n")).unwrap();
+            let area = bar_area(
+                Edge::Top,
+                32.0,
+                [
+                    &["wide", "wide", "wide", "wide"],
+                    &["centred"],
+                    &["wide", "wide", "wide", "wide"],
+                ],
+            );
+            let bar = built(&cfg, &area, &registry(), (BAR, 32.0)).expect("the bar builds");
             let page = Container::new(
                 LayoutStyle::new().flex_row().width(BAR).height(32.0),
                 vec![bar],
@@ -1787,12 +1856,14 @@ mod tests {
 
         reset_layout_runtime();
         set_theme(NordTheme::new());
-        let cfg: Config = toml::from_str(
-            "[shape]\nmode=\"sections\"\nspacing=8\nradius=8\n\
-             [bars.top]\nsize=32\nstart=[\"wide\",\"wide\",\"wide\",\"wide\"]\ncenter=[\"dummy\"]\n",
-        )
-        .unwrap();
-        let bar = built(&cfg, Edge::Top, &registry(), (BAR, 32.0)).expect("the bar builds");
+        let cfg: Config =
+            toml::from_str("[shape]\nmode=\"sections\"\nspacing=8\nradius=8\n").unwrap();
+        let area = bar_area(
+            Edge::Top,
+            32.0,
+            [&["wide", "wide", "wide", "wide"], &["dummy"], &[]],
+        );
+        let bar = built(&cfg, &area, &registry(), (BAR, 32.0)).expect("the bar builds");
         let page = Container::new(
             LayoutStyle::new().flex_row().width(BAR).height(32.0),
             vec![bar],
@@ -1839,41 +1910,24 @@ mod tests {
     }
 
     #[test]
-    fn corner_module_routes_into_owning_bar() {
-        for mode in ["bar", "sections", "chips"] {
-            let cfg: Config = toml::from_str(&format!(
-                "[shape]\nmode=\"{mode}\"\n[bars.top]\ncenter=[\"dummy\"]\n[corners]\ntop_left=\"dummy\"\n"
-            ))
-            .unwrap();
-            reset_layout_runtime();
-            set_theme(NordTheme::new());
-            let bar = built(&cfg, Edge::Top, &registry(), (1920.0, 34.0));
-            assert!(bar.is_ok(), "corner routing builds in mode {mode}");
-        }
-    }
-
-    #[test]
     fn center_only_sections_builds_a_notch() {
-        let cfg: Config = toml::from_str(
-            "[shape]\nmode=\"sections\"\ngap=8\nradius=12\n[bars.top]\ncenter=[\"dummy\"]\n",
-        )
-        .unwrap();
+        let cfg: Config = toml::from_str("[shape]\nmode=\"sections\"\ngap=8\nradius=12\n").unwrap();
+        let area = bar_area(Edge::Top, 34.0, [&[], &["dummy"], &[]]);
         reset_layout_runtime();
         set_theme(NordTheme::new());
-        assert!(built(&cfg, Edge::Top, &registry(), (1920.0, 34.0)).is_ok());
+        assert!(built(&cfg, &area, &registry(), (1920.0, 34.0)).is_ok());
     }
 
     #[test]
     fn vertical_bar_builds_in_every_mode() {
         for mode in ["bar", "sections", "chips"] {
-            let toml = format!(
-                "[shape]\nmode=\"{mode}\"\nradius=8\n[bars.left]\nsize=44\nstart=[\"dummy\"]\nend=[\"dummy\"]\n"
-            );
+            let toml = format!("[shape]\nmode=\"{mode}\"\nradius=8\n");
             let cfg: Config = toml::from_str(&toml).unwrap();
+            let area = bar_area(Edge::Left, 44.0, [&["dummy"], &[], &["dummy"]]);
             reset_layout_runtime();
             set_theme(NordTheme::new());
             assert!(
-                built(&cfg, Edge::Left, &registry(), (44.0, 1080.0)).is_ok(),
+                built(&cfg, &area, &registry(), (44.0, 1080.0)).is_ok(),
                 "vertical {mode} builds"
             );
         }
@@ -1903,7 +1957,7 @@ mod tests {
             let wrapped = chip_wrapper(
                 Box::new(chip),
                 None,
-                Some("clock"),
+                Some(("clock", test_site(edge))),
                 Wrapper {
                     cross: AlignItems::STRETCH,
                     edge,
@@ -1963,13 +2017,19 @@ mod tests {
             telar::reset_layout_runtime();
             set_theme(NordTheme::new());
             let _scope = telar::owner_scope();
-            let cfg: Config = toml::from_str(&format!(
-                "[bars.{}]\nsize={SIZE}\npersistent=false\npeek={PEEK}\ncenter=[\"dummy\"]\n",
-                edge.as_str()
-            ))
-            .unwrap();
+            let cfg = Config::default();
+            let area = shaped_bar_area(
+                edge,
+                SIZE,
+                [&[], &["dummy"], &[]],
+                BarShape::default(),
+                Some(layout::AutoHide {
+                    peek: PEEK,
+                    on_hover: true,
+                }),
+            );
 
-            let bar = built(&cfg, edge, &registry(), SCREEN).expect("the bar builds");
+            let bar = built(&cfg, &area, &registry(), SCREEN).expect("the bar builds");
             let page = Container::new(
                 LayoutStyle::new().width(SCREEN.0).height(SCREEN.1),
                 vec![bar],

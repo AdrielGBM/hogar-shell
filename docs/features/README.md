@@ -49,7 +49,7 @@ not repeated here.
 | --- | --- | --- |
 | [Bars](surfaces/bars.md) | One per screen edge, all four at once if you like, on every monitor. | `wlr-layer-shell` |
 | [Drawers](surfaces/drawers.md) | A panel anchored to the chip that opened it. | `wlr-layer-shell` |
-| [Floats](surfaces/floats.md) | A panel as a free-standing window you can move and resize. | `wlr-layer-shell` |
+| [Floats](surfaces/floats.md) | A panel as a free-standing, centred window with a title bar and close button. | `wlr-layer-shell` |
 | [Launcher](surfaces/launcher.md) | A full-screen modal that owns the keyboard: applications, actions, a calculator, schemes, wallpapers and the windows already open. | `wlr-layer-shell`, `qalc`, `wlr-foreign-toplevel-management` |
 | [Notification centre](surfaces/notification-centre.md) | A full-height surface for what has arrived and what can be switched. | `wlr-layer-shell` |
 | [On-screen display](surfaces/osd.md) | The overlay that shows a level while you are changing it. | `wlr-layer-shell` |

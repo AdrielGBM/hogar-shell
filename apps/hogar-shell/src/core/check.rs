@@ -6,76 +6,59 @@ use std::io::ErrorKind;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use config::{Config, Corner, Edge, GLOBAL_ONLY_SECTIONS, LoadError};
+use config::{Config, GLOBAL_ONLY_SECTIONS, LoadError};
 use services::notifications::{Urgency, notify_status, withdraw_status};
 use toml::de::{DeTable, DeValue};
-use ui::descriptor::ModuleDescriptor;
 use util::report::{Finding, Report, Span};
 
 /// How many new findings a notification lists before it counts the rest. A card is read at a glance; the full list is what `config check` is for.
 const LISTED: usize = 3;
 
-/// Every id on a bar or in a corner the bar draws as a placeholder: one no module answers to, and one whose module has no chip.
-fn unplaceable_modules(config: &Config, file: &Path, modules: &[ModuleDescriptor]) -> Report {
-    let mut report = Report::default();
-    let mut unknown = |key: String, id: &str| {
-        let message = match ui::descriptor::lookup(modules, id) {
-            None => telar::t!("config.unknown_module", id = id),
-            Some(module) if module.representations.chip.is_none() => {
-                telar::t!("config.module_without_chip", id = id)
-            }
-            Some(_) => return,
-        };
-        report.error(Finding::new(file, key, message));
-    };
-    for edge in Edge::ALL {
-        let bar = config.bars.get(edge);
-        for (zone, entries) in [
-            ("start", &bar.start),
-            ("center", &bar.center),
-            ("end", &bar.end),
-        ] {
-            for (index, entry) in entries.iter().enumerate() {
-                unknown(format!("bars.{}.{zone}[{index}]", edge.as_str()), &entry.id);
-            }
-        }
-    }
-    for corner in Corner::ALL {
-        if let Some(id) = config.corners.get(corner) {
-            unknown(format!("corners.{}", corner.key()), id);
-        }
-    }
-    report
-}
-
 /// What is wrong with a config that has already been parsed, attributed to `file`: every id it names that its owner does not have. Spans are left to whoever has the text.
-fn problems(config: &Config, file: &Path, modules: &[ModuleDescriptor]) -> Report {
-    let mut report = unplaceable_modules(config, file, modules);
-    report.merge(config.dashboard.check(file));
+fn problems(config: &Config, file: &Path) -> Report {
+    let mut report = config.dashboard.check(file);
     report.merge(modules::utilities::check(&config.utilities, file));
     report.merge(modules::statusicons::check(&config.status_icons, file));
     report.merge(config.theme.check(file));
     report
 }
 
-/// Every corner that names a module no bar is there to draw: neither edge beside it has a bar, so the module is on no screen at all. A warning rather than an error, because the id may well be fine — it is the placement that goes nowhere.
-///
-/// `drawn` is the config the screens are actually built from, which for a monitor override is not the file on its own: a corner the override names can be drawn by a bar the global config set, and one the global config names can lose its bar to the override. `global` is that global config, for an override: a corner that already goes nowhere there, with the same module in it, is the global file's to report, and saying it again against every override would name a file that did not cause it.
-fn corners_shown_nowhere(drawn: &Config, global: Option<&Config>, file: &Path) -> Report {
+/// Keys that said where something is drawn, which the layout says now. Each is an error rather than something ignored: a user editing one would otherwise see nothing happen.
+pub(crate) const RETIRED: &[&str] = &[
+    "bars",
+    "corners",
+    "widgets",
+    "general.show_over_fullscreen",
+    "stack.edge",
+    "stack.align",
+    "stack.width",
+];
+
+fn retired_in(file: &Path, text: &str) -> Report {
+    let Ok(document) = DeTable::parse(text) else {
+        return Report::default();
+    };
+    let document = DeValue::Table(document.into_inner());
+    let mut report = retired(&document, file);
+    for finding in report.findings_mut() {
+        finding.span = span_of(&document, &finding.key).map(|bytes| Span::locate(text, bytes));
+    }
+    report
+}
+
+fn retired(document: &DeValue, file: &Path) -> Report {
     let mut report = Report::default();
-    for corner in Corner::ALL {
-        let inherited = global.is_some_and(|global| {
-            global.corners.get(corner) == drawn.corners.get(corner)
-                && global.corner_owner(corner).is_none()
-        });
-        if let Some(id) = drawn.corners.get(corner)
-            && drawn.corner_owner(corner).is_none()
-            && !inherited
-        {
-            report.warn(Finding::new(
+    let layout = crate::core::layouts::file_for_edits();
+    for key in RETIRED {
+        if span_of(document, key).is_some() {
+            report.error(Finding::new(
                 file,
-                format!("corners.{}", corner.key()),
-                telar::t!("config.corner_nowhere", id = id),
+                *key,
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = key,
+                    layout = layout.display().to_string()
+                ),
             ));
         }
     }
@@ -100,12 +83,7 @@ fn global_only(table: &DeTable, file: &Path) -> Report {
 /// Everything wrong with one file's text: that it does not parse, or what it names that the shell does not have. `global` is the `config.toml` that `file` overrides, for a `monitors/<output>/config.toml` — which may not set every section, and whose screen is drawn from the two merged.
 ///
 /// Parsed straight into [`Config`] rather than through a `toml::Value` first, as the loader does: the result is the same config, but a type error keeps the place it was made at.
-fn check_text(
-    file: &Path,
-    text: &str,
-    modules: &[ModuleDescriptor],
-    global: Option<&Path>,
-) -> Report {
+fn check_text(file: &Path, text: &str, global: Option<&Path>) -> Report {
     let config: Config = match toml::from_str(text) {
         Ok(config) => config,
         Err(error) => {
@@ -114,17 +92,10 @@ fn check_text(
             return report;
         }
     };
-    let mut report = problems(&config, file, modules);
-    match global {
-        None => report.merge(corners_shown_nowhere(&config, None, file)),
-        Some(global) => {
-            if let Some((global, merged)) = merged(global, file) {
-                report.merge(corners_shown_nowhere(&merged, Some(&global), file));
-            }
-        }
-    }
+    let mut report = problems(&config, file);
     if let Ok(document) = DeTable::parse(text) {
         let document = DeValue::Table(document.into_inner());
+        report.merge(retired(&document, file));
         if global.is_some()
             && let DeValue::Table(table) = &document
         {
@@ -138,18 +109,6 @@ fn check_text(
         }
     }
     report
-}
-
-/// The global config `file` overrides, and the config its screen is drawn from — the global one with the override merged over it, the way the shell builds that screen. `None` when the two do not merge: a global config that is missing or does not parse, which is reported on its own.
-///
-/// Both files are made sure of first, because the loader falls back to loading the global config when the override cannot be read — and loading one that is missing writes the starter config in its place.
-fn merged(global: &Path, file: &Path) -> Option<(Config, Config)> {
-    if !global.is_file() || !file.is_file() {
-        return None;
-    }
-    let output = file.parent()?.file_name()?.to_str()?;
-    let unmerged = toml::from_str(&std::fs::read_to_string(global).ok()?).ok()?;
-    Some((unmerged, Config::for_output(global, Some(output)).ok()?))
 }
 
 /// Where the value at a key path like `bars.top.center[1]` sits in a parsed document, or `None` when the path leads nowhere — a finding about a default the file never wrote has nothing in the text to point at.
@@ -190,11 +149,11 @@ fn overrides(path: &Path) -> Vec<PathBuf> {
 }
 
 /// Every override beside `path`, each checked on its own terms.
-fn check_overrides(path: &Path, modules: &[ModuleDescriptor]) -> Report {
+fn check_overrides(path: &Path) -> Report {
     let mut report = Report::default();
     for file in overrides(path) {
         match std::fs::read_to_string(&file) {
-            Ok(text) => report.merge(check_text(&file, &text, modules, Some(path))),
+            Ok(text) => report.merge(check_text(&file, &text, Some(path))),
             Err(error) => report.error(unreadable(&file, &error)),
         }
     }
@@ -202,9 +161,9 @@ fn check_overrides(path: &Path, modules: &[ModuleDescriptor]) -> Report {
 }
 
 /// The files at `path` as they are on disk, for `hogar-shell config check`: `config.toml` and every monitor override beside it, each read and parsed here. A missing `config.toml` is not a problem — the shell writes its starter config there on first run — and is never created by asking.
-pub(crate) fn on_disk(path: &Path, modules: &[ModuleDescriptor]) -> Report {
+pub(crate) fn on_disk(path: &Path) -> Report {
     let mut report = match std::fs::read_to_string(path) {
-        Ok(text) => check_text(path, &text, modules, None),
+        Ok(text) => check_text(path, &text, None),
         Err(error) if error.kind() == ErrorKind::NotFound => Report::default(),
         Err(error) => {
             let mut report = Report::default();
@@ -212,29 +171,30 @@ pub(crate) fn on_disk(path: &Path, modules: &[ModuleDescriptor]) -> Report {
             report
         }
     };
-    report.merge(check_overrides(path, modules));
+    report.merge(check_overrides(path));
     report
 }
 
 /// Reports config.toml and the monitor overrides' state; on a failed reload, reports the file's own failure rather than the still-running config, since that config describes a text the user has already edited away.
 pub fn running(config: &Config, path: &Path, failed: Option<&LoadError>) -> Report {
-    let modules = ui::descriptor::installed();
     let mut report = Report::default();
     match failed {
         Some(LoadError::Parse(error)) => report.error(unparsable(path, error, None)),
         Some(LoadError::Io(error)) => report.error(unreadable(path, error)),
         None => {
-            report.merge(problems(config, path, modules));
-            report.merge(corners_shown_nowhere(config, None, path));
+            report.merge(problems(config, path));
+            if let Ok(text) = std::fs::read_to_string(path) {
+                report.merge(retired_in(path, &text));
+            }
         }
     }
-    report.merge(check_overrides(path, modules));
+    report.merge(check_overrides(path));
     report
 }
 
 /// `hogar-shell config check`: the report on what is at `path`, failing when there is an error so a script can branch on it, and saying plainly when there is nothing wrong.
 pub(crate) fn command(path: &Path) -> Result<String, String> {
-    let report = on_disk(path, crate::core::modules::MODULES);
+    let report = on_disk(path);
     if report.is_clean() {
         return Ok(nothing_wrong(path));
     }
@@ -416,60 +376,30 @@ fn card(report: &Report) -> String {
 mod tests {
     use super::*;
 
-    fn table() -> &'static [ModuleDescriptor] {
-        crate::core::modules::MODULES
-    }
-
-    /// A config written by hand with one of each mistake the report knows about, beside ids that are fine, so a report that named the wrong entry — or every entry in a list with one bad one — fails here.
-    const FIXTURE: &str = r#"[bars.top]
-start = ["workspaces"]
-center = ["clock", "clokc"]
-end = ["notes"]
-
-[dashboard]
+    /// A config written by hand with one mistake per section the report still knows about, beside ids that are fine, so a report that named the wrong entry — or every entry in a list with one bad one — fails here.
+    const FIXTURE: &str = r#"[dashboard]
 tabs = ["dash", "wether"]
 
 [utilities]
 toggles = ["wifi", "teleporter"]
 "#;
 
-    /// The report, snapshotted: one entry each for the module, the tab and the toggle, at the line and column the id is written, in the order `config check` prints them — and nothing for the ids that are fine.
+    /// The report, snapshotted: one entry each for the tab and the toggle, at the line and column the id is written, in the order `config check` prints them — and nothing for the ids that are fine.
     #[test]
-    fn a_config_with_an_unknown_module_tab_and_toggle_reports_exactly_those_three() {
+    fn a_config_with_an_unknown_tab_and_toggle_reports_both() {
         telar::set_locale("en");
-        let report = check_text(Path::new("config.toml"), FIXTURE, table(), None);
+        let report = check_text(Path::new("config.toml"), FIXTURE, None);
 
         assert_eq!(
             report.render(),
-            "config.toml:3:20: error: bars.top.center[1]: there is no module called 'clokc'\n\
-             config.toml:7:17: error: dashboard.tabs[1]: the dashboard has no page called 'wether'\n\
-             config.toml:10:20: error: utilities.toggles[1]: there is no toggle called 'teleporter'\n",
-            "each of the three is named once, where it is written, by the owner that knows it is wrong"
+            "config.toml:2:17: error: dashboard.tabs[1]: the dashboard has no page called 'wether'\n\
+             config.toml:5:20: error: utilities.toggles[1]: there is no toggle called 'teleporter'\n",
+            "each is named once, where it is written, by the owner that knows it is wrong"
         );
     }
 
-    /// A module the table has but a bar cannot place passes a lookup and is still a placeholder on screen, so it is reported as its own error, where it is written.
-    #[test]
-    fn a_module_with_no_chip_on_a_bar_is_reported_where_it_is_written() {
-        telar::set_locale("en");
-        let text = "[bars.top]\nstart = [\"clock\", \"weather\"]\n\n[corners]\ntop_left = \"visualiser\"\n";
-        let report = check_text(Path::new("config.toml"), text, table(), None);
-        assert_eq!(
-            report.render(),
-            "config.toml:2:19: error: bars.top.start[1]: the 'weather' module has no chip to put on a bar\n\
-             config.toml:5:12: error: corners.top_left: the 'visualiser' module has no chip to put on a bar\n",
-        );
-    }
-
-    /// The other ids that used to vanish without a word, one of each, beside names that are fine: a status icon the cluster has none for, a theme, accent and `[theme.colors]` token the palette has none for, and a corner module on a corner no bar runs along — which is on no screen at all.
-    const MORE_DROPS: &str = r##"[bars.left]
-start = ["workspaces"]
-
-[corners]
-top_left = "clock"
-bottom_right = "notes"
-
-[status_icons]
+    /// The other ids that used to vanish without a word, one of each, beside names that are fine: a status icon the cluster has none for, and a theme, accent and `[theme.colors]` token the palette has none for.
+    const MORE_DROPS: &str = r##"[status_icons]
 icons = ["volume", "wfi"]
 
 [theme]
@@ -481,78 +411,158 @@ base = "#2e3440"
 bse = "#2e3440"
 "##;
 
-    /// Each is reported once, at the line it is written on, by the owner that knows the name: the cluster for its icons, the palette for its names and tokens, the config's own corner routing for where a corner lands. The theme and the accent are warnings, since the shell puts a palette and an accent of its own in their place; the corner is one too — `clock` is a real module, it is the placement that reaches no screen — and the other corner, on a left bar, is not reported at all.
+    /// Each is reported once, at the line it is written on, by the owner that knows the name: the cluster for its icons, the palette for its names and tokens. The theme and the accent are warnings, since the shell puts a palette and an accent of its own in their place.
     #[test]
     fn every_other_silent_drop_is_reported_where_it_is_written() {
         telar::set_locale("en");
-        let report = check_text(Path::new("config.toml"), MORE_DROPS, table(), None);
+        let report = check_text(Path::new("config.toml"), MORE_DROPS, None);
 
         assert_eq!(
             report.render(),
-            "config.toml:9:20: error: status_icons.icons[1]: there is no status icon called 'wfi'\n\
-             config.toml:17:7: error: theme.colors.bse: there is no colour token called 'bse', so this colour is not applied\n\
-             config.toml:12:8: warning: theme.name: there is no theme called 'gruvbx', so the shell uses nord\n\
-             config.toml:13:10: warning: theme.accent: there is no accent called 'cyna', so the palette's own accent is used\n\
-             config.toml:6:16: warning: corners.bottom_right: no bar runs along either edge of this corner, so 'notes' is shown nowhere\n",
-            "one entry per name nothing answers to, and one for the corner that reaches no screen"
+            "config.toml:2:20: error: status_icons.icons[1]: there is no status icon called 'wfi'\n\
+             config.toml:10:7: error: theme.colors.bse: there is no colour token called 'bse', so this colour is not applied\n\
+             config.toml:5:8: warning: theme.name: there is no theme called 'gruvbx', so the shell uses nord\n\
+             config.toml:6:10: warning: theme.accent: there is no accent called 'cyna', so the palette's own accent is used\n",
+            "one entry per name nothing answers to"
         );
     }
 
-    /// Where a corner module lands on a monitor with an override is decided by the two files merged, so it is checked against the merge: a corner the override names can be drawn by a bar the global config set, and a bar the override takes away can leave the global config's corner with nowhere to go — which is the override's doing, and reported against it. A corner that already goes nowhere in the global config is that file's problem, and reported there alone.
+    /// Every key that used to say where something is drawn is now the layout's to say, so writing one is an error rather than something silently followed, and it names the layout file to move it to.
     #[test]
-    fn a_corner_in_a_monitor_override_is_checked_against_the_merged_config() {
+    fn a_config_naming_a_retired_layout_key_reports_it_at_the_layout_file() {
         telar::set_locale("en");
-        let dir = util::paths::isolated_root()
-            .expect("a test process resolves under its scratch root")
-            .join("corners");
-        std::fs::create_dir_all(dir.join("monitors/DP-1")).expect("a scratch directory");
-        std::fs::create_dir_all(dir.join("monitors/HDMI-A-1")).expect("a scratch directory");
-        let path = dir.join("config.toml");
-        std::fs::write(
-            &path,
-            "[bars.top]\ncenter = [\"clock\"]\n\n[corners]\ntop_right = \"notes\"\nbottom_left = \"clock\"\n",
-        )
-        .expect("a global config");
-        std::fs::write(
-            dir.join("monitors/DP-1/config.toml"),
-            "[corners]\ntop_left = \"clock\"\n",
-        )
-        .expect("an override naming a corner the global top bar draws");
-        std::fs::write(
-            dir.join("monitors/HDMI-A-1/config.toml"),
-            "[bars.top]\ncenter = []\n",
-        )
-        .expect("an override taking the top bar away");
+        let layout = crate::core::layouts::file_for_edits().display().to_string();
+        let text = r#"[bars.top]
+start = ["workspaces"]
 
-        let report = on_disk(&path, table());
-        let _ = std::fs::remove_dir_all(&dir);
+[corners]
+top_left = "clock"
+
+[widgets]
+clock = "top"
+
+[general]
+show_over_fullscreen = true
+
+[stack]
+edge = "top"
+align = "start"
+width = 320
+"#;
+        let report = check_text(Path::new("config.toml"), text, None);
 
         assert_eq!(
-            report
-                .warnings
+            report.errors.len(),
+            RETIRED.len(),
+            "one error per retired key: {}",
+            report.render()
+        );
+        for key in RETIRED {
+            let finding = report
+                .errors
                 .iter()
-                .map(|finding| {
-                    (
-                        finding
-                            .file
-                            .strip_prefix(&dir)
-                            .unwrap()
-                            .display()
-                            .to_string(),
-                        finding.key.as_str(),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            [
-                ("config.toml".to_string(), "corners.bottom_left"),
-                (
-                    "monitors/HDMI-A-1/config.toml".to_string(),
-                    "corners.top_right"
+                .find(|finding| finding.key == *key)
+                .unwrap_or_else(|| panic!("no finding for '{key}' in:\n{}", report.render()));
+            assert!(
+                finding.span.is_some(),
+                "'{key}' is placed where it is written"
+            );
+            assert_eq!(
+                finding.message,
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = *key,
+                    layout = layout.as_str()
                 ),
-            ],
-            "DP-1's corner is drawn by the global top bar; HDMI-A-1 took that bar away from the global corner, and is \
-             reported for it; and the corner that goes nowhere in the global config is reported there once, not again \
-             against every override that inherits it"
+                "'{key}' names the layout file to move it to"
+            );
+        }
+        assert_eq!(
+            report.render(),
+            format!(
+                "config.toml:1:2: error: bars: {}\n\
+                 config.toml:4:1: error: corners: {}\n\
+                 config.toml:7:1: error: widgets: {}\n\
+                 config.toml:11:24: error: general.show_over_fullscreen: {}\n\
+                 config.toml:14:8: error: stack.edge: {}\n\
+                 config.toml:15:9: error: stack.align: {}\n\
+                 config.toml:16:9: error: stack.width: {}\n",
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "bars",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "corners",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "widgets",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "general.show_over_fullscreen",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "stack.edge",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "stack.align",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "stack.width",
+                    layout = layout.as_str()
+                ),
+            ),
+            "the exact rendering `config check` prints, one line per retired key"
+        );
+    }
+
+    /// A file that never wrote any of the retired keys reports none of them.
+    #[test]
+    fn a_config_naming_no_retired_key_reports_none() {
+        telar::set_locale("en");
+        let report = retired(
+            &{
+                let document = toml::de::DeTable::parse("[dashboard]\ntabs = [\"dash\"]\n")
+                    .expect("valid toml");
+                toml::de::DeValue::Table(document.into_inner())
+            },
+            Path::new("config.toml"),
+        );
+        assert!(report.is_clean(), "{}", report.render());
+    }
+
+    /// A monitor override can write a retired key just as easily as `config.toml`, and is checked the same way, against the file it is actually in.
+    #[test]
+    fn a_monitor_override_naming_a_retired_key_is_reported_too() {
+        telar::set_locale("en");
+        let layout = crate::core::layouts::file_for_edits().display().to_string();
+        let report = check_text(
+            Path::new("monitors/DP-1/config.toml"),
+            "[bars.top]\nstart = [\"clock\"]\n",
+            Some(Path::new("config.toml")),
+        );
+
+        assert_eq!(
+            report.render(),
+            format!(
+                "monitors/DP-1/config.toml:1:2: error: bars: {}\n",
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "bars",
+                    layout = layout.as_str()
+                )
+            ),
         );
     }
 
@@ -562,87 +572,13 @@ bse = "#2e3440"
         let starter = toml::to_string_pretty(&Config::starter()).expect("the starter serialises");
         let schema = config::schema::render(None).expect("the schema renders");
         for (name, text) in [("starter", starter), ("schema", schema)] {
-            let report = check_text(Path::new("config.toml"), &text, table(), None);
+            let report = check_text(Path::new("config.toml"), &text, None);
             assert!(
                 report.is_clean(),
                 "the {name} config reports:\n{}",
                 report.render()
             );
         }
-    }
-
-    thread_local! {
-        static BUILT: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
-    }
-
-    fn built(_host: &ui::host::Host) -> Result<Box<dyn telar::LayoutItem>, telar::LayoutError> {
-        BUILT.with(|built| built.borrow_mut().push("clock"));
-        Err(telar::LayoutError::Engine(
-            "a report must never build a module".into(),
-        ))
-    }
-
-    /// Asking is not doing. A module built to see whether it exists is a module subscribed to its service, and a config loaded to see whether it parses is a starter config written to a machine that had none — so the report looks ids up, reads files, and does neither.
-    #[test]
-    fn building_a_report_runs_nothing_and_writes_nothing() {
-        let dir = util::paths::isolated_root()
-            .expect("a test process resolves under its scratch root")
-            .join("check");
-        std::fs::create_dir_all(dir.join("monitors/DP-1")).expect("a scratch directory");
-        let path = dir.join("config.toml");
-        let _ = std::fs::remove_file(&path);
-        std::fs::write(
-            dir.join("monitors/DP-1/config.toml"),
-            "[bars.left]\nstart = [\"clock\", \"clokc\"]\n",
-        )
-        .expect("an override to read");
-        static CLOCK_ONLY: &[ModuleDescriptor] = &[ModuleDescriptor {
-            id: "clock",
-            name: "Clock",
-            icon: "clock",
-            options: &[],
-            representations: ui::descriptor::Representations {
-                chip: Some(ui::descriptor::ChipDef::new(
-                    built,
-                    ui::descriptor::Input::ReadOnly,
-                )),
-                ..ui::descriptor::Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }];
-
-        let report = on_disk(&path, CLOCK_ONLY);
-        ui::descriptor::install(CLOCK_ONLY);
-        let running = running(&Config::starter(), &path, None);
-
-        assert!(
-            BUILT.with(|built| built.borrow().is_empty()),
-            "checking an id built its module, which subscribes whatever service it reads"
-        );
-        assert!(
-            !path.exists(),
-            "checking a config that is not there created one — the loader writes the starter config, and a check must not"
-        );
-        assert_eq!(
-            report
-                .errors
-                .iter()
-                .map(|finding| finding.key.as_str())
-                .collect::<Vec<_>>(),
-            ["bars.left.start[1]"],
-            "the override was read all the same, and only its unknown id reported"
-        );
-        assert_eq!(
-            running
-                .errors
-                .iter()
-                .filter(|finding| finding.key == "bars.left.start[1]")
-                .count(),
-            1,
-            "the running shell's report reads the overrides too, since they are what its other screens draw"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `config check` answers a script as well as a person: it fails on an error and only on one, and when there is nothing to report it says so and names what it read — the way `deps` says "nothing is missing" rather than printing nothing.
@@ -662,7 +598,7 @@ bse = "#2e3440"
             "a missing config is said to be missing, and is not created by asking: {absent}"
         );
 
-        std::fs::write(&path, "[bars.top]\ncenter = [\"clock\"]\n").expect("a config to check");
+        std::fs::write(&path, "[dashboard]\ntabs = [\"dash\"]\n").expect("a config to check");
         assert_eq!(
             command(&path),
             Ok(format!("nothing is wrong with {}\n", path.display())),
@@ -692,8 +628,7 @@ bse = "#2e3440"
         telar::set_locale("en");
         let report = check_text(
             Path::new("monitors/DP-1/config.toml"),
-            "[general]\nlanguage = \"es\"\n\n[bars.top]\ncenter = [\"clock\"]\n",
-            table(),
+            "[general]\nlanguage = \"es\"\n\n[dashboard]\ntabs = [\"dash\"]\n",
             Some(Path::new("config.toml")),
         );
 
@@ -707,12 +642,7 @@ bse = "#2e3440"
 
     #[test]
     fn a_file_that_does_not_parse_is_one_error_at_the_place_it_breaks() {
-        let report = check_text(
-            Path::new("config.toml"),
-            "[bars.top]\nsize = \"tall\"\n",
-            table(),
-            None,
-        );
+        let report = check_text(Path::new("config.toml"), "[shape]\ngap = \"tall\"\n", None);
 
         assert_eq!(report.errors.len(), 1, "{}", report.render());
         let finding = &report.errors[0];
@@ -848,7 +778,6 @@ bse = "#2e3440"
     fn a_parse_failure_shows_on_the_one_card_and_a_fix_takes_it_off_leaving_the_rest() {
         telar::set_locale("en");
         fresh_notice();
-        ui::descriptor::install(table());
         let dir = util::paths::isolated_root()
             .expect("a test process resolves under its scratch root")
             .join("check-unloaded");
@@ -856,10 +785,10 @@ bse = "#2e3440"
         std::fs::create_dir_all(dir.join("monitors/DP-1")).expect("a scratch directory");
         let path = dir.join("config.toml");
         let over = dir.join("monitors/DP-1/config.toml");
-        std::fs::write(&path, "[bars.top]\ncenter = [\"clock\"]\n").expect("a config");
-        std::fs::write(&over, "[bars.left]\nstart = [\"clokc\"]\n").expect("an override");
+        std::fs::write(&path, "[dashboard]\ntabs = [\"dash\"]\n").expect("a config");
+        std::fs::write(&over, "[utilities]\ntoggles = [\"clokc\"]\n").expect("an override");
         let last_good = Config::load(&path).expect("the last config that loaded");
-        std::fs::write(&path, "[bars.top\ncenter = ").expect("a broken save");
+        std::fs::write(&path, "[dashboard\ntabs = ").expect("a broken save");
         let failed = Config::load(&path).expect_err("a file that does not parse");
         let LoadError::Parse(error) = &failed else {
             panic!("a syntax error is a parse failure: {failed}");
@@ -884,7 +813,7 @@ bse = "#2e3440"
             "titled as the config not applied, and waiting to be read"
         );
 
-        std::fs::write(&path, "[bars.top]\ncenter = [\"clock\"]\n").expect("the fix");
+        std::fs::write(&path, "[dashboard]\ntabs = [\"dash\"]\n").expect("the fix");
         let fixed = Config::load(&path).expect("the fixed file loads");
         announce_to(&running(&fixed, &path, None), &mut daemon);
         assert_eq!(daemon.shown.len(), 1, "the fix redraws the same card");
@@ -918,10 +847,15 @@ bse = "#2e3440"
             assert_eq!(telar::t!("config.problems_title"), title);
             assert!(!telar::t!("config.problems_hint").is_empty());
             assert!(telar::t!("config.problems_more", count = 2).contains('2'));
-            assert!(telar::t!("config.unknown_module", id = "x").contains("'x'"));
-            assert!(telar::t!("config.module_without_chip", id = "x").contains("'x'"));
             assert!(telar::t!("config.global_only", section = "general").contains("[general]"));
-            assert!(telar::t!("config.corner_nowhere", id = "x").contains("'x'"));
+            assert!(
+                telar::t!(
+                    "config.moved_to_layout",
+                    key = "bars",
+                    layout = "layouts/custom.toml"
+                )
+                .contains("bars")
+            );
         }
         telar::set_locale("en");
     }

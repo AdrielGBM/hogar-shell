@@ -38,8 +38,6 @@ pub const GLOBAL_ONLY_SECTIONS: &[&str] = &[
     "general",
     "icons",
     "notifications",
-    // The column follows the focused screen rather than existing per output, so where it sits is one answer for the whole shell; a per-monitor `edge` would apply on whichever screen it last opened on.
-    "stack",
     "launcher",
     "paths",
     "audio",
@@ -57,7 +55,7 @@ pub(crate) fn monitor_config_path(path: &Path, output: impl AsRef<Path>) -> Path
 
 /// Deep-merges `over` into `base`: tables recurse key by key, everything else replaces.
 ///
-/// Arrays replace rather than concatenate on purpose. A bar's module list is an array, and "the global list plus this monitor's" has no sensible reading — a user overriding `start` means *this* is the start zone.
+/// Arrays replace rather than concatenate on purpose: "the global list plus this monitor's" has no reading a user could predict, so an override of a list is that list.
 pub(crate) fn merge_into(base: &mut toml::Value, over: toml::Value) {
     match (base, over) {
         (toml::Value::Table(base), toml::Value::Table(over)) => {

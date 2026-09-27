@@ -331,12 +331,8 @@ fn card(
 }
 
 /// The corner every box on this screen rounds by, so the lock screen belongs to the same set as the drawers rather than being the one surface with its own.
-///
-/// Read from the config here rather than through [`ui::scale`], whose base is the surface environment a lock surface deliberately does not install (D-35): without one that scale answers zero, and a square password field is not a decision anybody made. The area-scoped context that replaces the environment arrives with D-39.
 fn rounding() -> f32 {
-    config::config()
-        .map(|c| c.panel_radius(config::Edge::Top))
-        .unwrap_or(16.0)
+    ui::chrome::content_radius()
 }
 
 /// The whole of whatever box it is in, which for a lock surface is the whole output.

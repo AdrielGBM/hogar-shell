@@ -5,45 +5,67 @@ title: Bars
 summary: One per screen edge, all four at once if you like, on every monitor.
 status: stable
 compositor: any
-config: [bars, shape, corners, general]
-commands: [shell]
+config: [shape]
+commands: [shell, layout]
 deps: [wlr-layer-shell]
-see_also: [panels, per-monitor, shape]
+see_also: [panels, per-monitor, shape, compositor-rules]
 ---
 
 # Bars
 
 ## What it is
 
-A layer surface anchored to a screen edge, carrying modules in three zones. There is one per edge — top,
-bottom, left, right — and you can have all four at once, on every monitor.
+A `Bar` area: a strip along one edge, carrying modules in three zones. There is one per edge — top, bottom,
+left, right — and you can have all four at once, on every monitor. Every bar, whichever edge it hugs, is drawn
+inside the shell's **Top** layer window (`hogar-shell-top`) — see [Compositor rules](../../guides/compositor-rules.md)
+for what that means for a rule you write yourself.
 
-An empty bar collapses to nothing, which is why the default config is all-empty: you get only the bars you
-describe.
+Where a screen's bars are, and what is on them, is the **layout**, not a config key. An empty layout draws
+nothing: you get only the bars a layout describes.
 
 ## Zones
 
-```toml
-[bars.top]
-start  = ["workspaces", "spacer", "activewindow"]
-center = ["clock"]
-end    = ["statusicons", "tray", "battery"]
-```
-
-Three anchor points. [spacer](../modules/spacer.md) is what buys every arrangement in between.
-
-A module entry is a bare id in the common case, and a table when one instance needs settings of its own:
+A bar area is written in `~/.config/hogar-shell/layouts/<name>.toml`:
 
 ```toml
-center = [{ id = "clock", accent = "red" }]
+[[outputs]]
+match = "*"
+
+[outputs.layers.top]
+areas = [
+  { id = "top-bar", kind = "bar", edge = "top", thickness = 34, groups = [
+      { id = "start",  place = "zone", zone = "start",  children = [
+          { id = "workspaces", module = "workspaces" },
+          { id = "spacer",     module = "spacer" },
+          { id = "activewindow", module = "activewindow" },
+      ] },
+      { id = "center", place = "zone", zone = "center", children = [
+          { id = "clock", module = "clock" },
+      ] },
+      { id = "end",    place = "zone", zone = "end",    children = [
+          { id = "statusicons", module = "statusicons" },
+          { id = "tray",        module = "tray" },
+          { id = "battery",     module = "battery" },
+      ] },
+  ] },
+]
 ```
 
-The table form is what lets the same module appear on a bar twice looking different — a `[modules.<id>]`
-override is keyed by id, so it applies to every copy at once.
+Three anchor points inside the bar's groups: `start`, `center`, `end`. [spacer](../modules/spacer.md) is what
+buys every arrangement in between.
+
+`hogar-shell layout add <module> <area> [group]` is the same edit from a script or a keybind, and
+`hogar-shell layout show` prints a layout as it is stored. `instance.options` on a placed module is what a
+`[modules.<id>] accent = "red"`-style override used to be — see the
+[Layout reference](../../reference/layout.md) for the full shape.
+
+An id placed twice keeps its options independent — that is the whole reason an `Instance` has an id: two copies
+of `clock` can be styled differently, and each is addressed on its own by IPC and by an edit.
 
 ## Shapes
 
-`[shape] mode` decides what the bar looks like, and every module works in all three:
+`[shape] mode` (the global default) or a bar's own `shape` field decides what the bar looks like, and every
+module works in all three:
 
 | Mode | What it is |
 | --- | --- |
@@ -51,34 +73,34 @@ override is keyed by id, so it applies to every copy at once.
 | `sections` | the three zones as separate plates |
 | `chips` | a plate per module |
 
-`[shape] gap` floats the bar off the edge; `frame` draws a ring around the screen; `inactive_size` shrinks
-what is not focused. `[corners]` rounds the screen's own corners against it.
+`[shape] gap` floats the bar off the edge; `frame` draws a ring around the screen; `inactive_size` shrinks what
+is not focused.
 
-Each bar can override the global shape for itself — `[bars.<edge>.shape]` takes `mode`, `gap`, `spacing` and
-`radius`, all unset by default, so a top bar can be one solid strip while a left bar is chips.
+Each bar area can override the global shape for itself with its own `shape` table — `mode`, `gap`, `spacing`
+and `radius`, all unset by default, so a top bar can be one solid strip while a left bar is chips. See
+[`BarShape`](../../reference/layout.md) in the layout reference.
 
 ## Auto-hide
 
-`[bars.<edge>] persistent = false` gives a bar that is only on screen when it is wanted.
+An `autohide` table on a bar area is what makes it hide itself. Its absence is what "always on screen" means —
+there is no separate on/off key.
 
-It is not hidden by drawing it somewhere else — it is **moved**. The layer surface sits at a negative margin
-on its own anchored edge, far enough off that only `peek` logical pixels remain, and reveals itself by
-animating that margin back. Two things follow: the bar takes no input over the strip it is not occupying,
-because it is genuinely not there, and the peek strip is the bar's own edge rather than a second surface to
-keep in step.
+It is not hidden by drawing it somewhere else — it is **moved**. Its tree is translated toward its own anchored
+edge, far enough off that only `peek` logical pixels remain, and reveals itself by animating that offset back.
+Two things follow: the bar takes no input over the strip it is not occupying, because it is genuinely not
+there, and the peek strip is the bar's own edge rather than a second surface to keep in step.
 
-`show_on_hover` is what triggers the reveal.
+`on_hover` is what triggers the reveal on pointer contact; switched off, only a drag inward past
+`[panels] drag_threshold` brings it in.
 
 **Known limit:** it hides on pointer-leave unconditionally, including while a panel it opened is still up.
 Hiding only when a window would actually cover it needs `cosmic_overlap_notify_v1`, which is COSMIC-only today.
 
 ## Per monitor
 
-`[bars] excluded_screens` names outputs that get no bars at all, matched as `*` patterns against the connector
-name — so `HDMI-*` covers a port whose index moves between reboots.
-
-*Which* modules a screen shows is a per-monitor override rather than a key here. See
-[Per-monitor setup](../../guides/per-monitor.md).
+*Which* bars a screen has, and what is on them, is an `OutputRule` in the layout, matched by connector glob
+(`match = "DP-*"`) and merged by area id over the default — not a per-monitor config file. A screen with no
+bar area at all in its output rule simply has none. See [Per-monitor setup](../../guides/per-monitor.md).
 
 ## What it needs
 
@@ -92,4 +114,6 @@ more than one edge cannot say which edge its exclusive zone belongs to, and the 
 ## Related
 
 - [Panels](panels.md) — what a chip opens.
+- [Layout reference](../../reference/layout.md) — every area, group and style key a layout file holds.
+- [Compositor rules](../../guides/compositor-rules.md) — what a `layer_rule` reaches now.
 - [Modules](../modules/) — what goes in the zones.

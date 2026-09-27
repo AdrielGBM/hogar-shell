@@ -207,6 +207,11 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
 
     // One pass brings the screen in line with a layout — at startup, at every reload that applies one, and when the screens change — so there is one description of what should be on screen rather than an opening path and a reloading path that can disagree. It reports what it did itself, through tracing rather than `println!`, because this runs on the driver thread where a direct write to a pipe nobody is draining blocks forever. See `init_tracing`.
     let shell = Rc::new(RefCell::new(Shell::new()));
+    surfaces::area::set_stack_builder(modules::stack::area);
+    surfaces::transient::install(shell.borrow().windows().holder());
+    // Which screens are under a fullscreen window is read from the management protocol's own list, which only fills while something watches it.
+    platform_wayland::watch_managed_toplevels(&platform_wayland::Interest::new(), |_| {});
+    surfaces::transient::set_hidden_layers(hidden_under_fullscreen);
     let apply = {
         let shell = Rc::clone(&shell);
         let store = Rc::clone(&store);
@@ -230,6 +235,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
                 }
             }
             shell.borrow_mut().reconcile(&desktops, content);
+            modules::stack::reconcile_config();
         }
     };
 
@@ -266,8 +272,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
             refresh();
             apply(&config, Content::Rebuild);
             // What the user opened and the column of cards are not the surface pass's to rebuild, so they take the new config here, in the same pass.
-            surfaces::shell::rebuild_all(&seen, reload);
-            modules::stack::reconcile_config();
+            surfaces::transient::rebuild_all(&seen, reload);
             reloader.borrow_mut().applied(config, seen);
             modules::toast::config_reloaded();
         })
@@ -292,6 +297,17 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         let config = reloader.borrow().live();
         apply(&config, Content::Keep);
     });
+}
+
+/// Whether `layer` is out of sight on `output`: the top layer is, under a fullscreen window (F-6.2), so what hangs off a bar there opens over it instead.
+fn hidden_under_fullscreen(output: Option<&str>, layer: layout::LayerKind) -> bool {
+    layer == layout::LayerKind::Top
+        && platform_wayland::current_managed_toplevels()
+            .iter()
+            .any(|window| {
+                window.fullscreen
+                    && output.is_none_or(|output| window.outputs.iter().any(|on| on == output))
+            })
 }
 
 /// What the compositor says is on `output` right now, as much of it as a workspace rule can match on.
@@ -561,7 +577,7 @@ fn eager_subscriptions(
 /// Each is a case of something low in the stack needing something high in it: the config derives a palette from a wallpaper only the wallpaper *service* can name; a service that runs `[idle]` actions needs the command table, which lives with the socket above it; and the lock service owns *when* the session is locked, never what the covered screen draws. Installed before the first config is applied, since applying one derives a scheme and arms the idle stages.
 fn install_hooks() {
     config::set_wallpaper_source(|config| {
-        let focused = surfaces::shell::focused_output();
+        let focused = surfaces::transient::focused_output();
         services::wallpaper::current_image(config, focused.as_deref())
     });
     services::command::set_runner(
@@ -915,7 +931,7 @@ mod reloader_tests {
         std::fs::write(&path, SAVED).unwrap();
         std::fs::write(
             dir.join("monitors/DP-1/config.toml"),
-            "[bars.left]\nstart = [\"clokc\"]\n",
+            "[general]\nlanguage = \"es\"\n",
         )
         .unwrap();
         let startup = load_at_startup(&path);
@@ -935,7 +951,9 @@ mod reloader_tests {
         let override_problem = check::showing();
         assert_eq!(
             override_problem,
-            ["there is no module called 'clokc'"],
+            [
+                "[general] can only be set in config.toml, so a monitor override's copy of it is ignored"
+            ],
             "the override's problem is on the notice from the start"
         );
 

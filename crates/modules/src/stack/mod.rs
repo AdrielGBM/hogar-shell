@@ -1,19 +1,4 @@
-//! The column of cards the shell pins to a screen edge and takes away again.
-//!
-//! **Three surfaces became one.** A notification popup, an in-shell toast and the OSD a volume change flashes were three stacks with three `edge`s, three widths and three timeouts, and being three is what let them open in three different places, overlap each other on a narrow screen, and have no one of them able to know. They are one column now, in arrival order, and where it sits is `[stack]`.
-//!
-//! What stayed apart is what is actually different. Each card is still built by the module that owns it — a notification by the card with its actions and its swipe, a toast by its own, an OSD by its meter — and each still comes from its own source. This merges them; it knows nothing about what any of them mean.
-//!
-//! **Only two things vary per card**, and both used to be a whole config section each:
-//!
-//! - **Its key**, so a second reading about the same thing replaces the first in place rather than pushing a copy underneath it. A wheel spun ten notches is one OSD, not ten.
-//! - **Whether it expires**, which is not a second timeout: a `critical` notification under `critical_sticky` waits to be dealt with, and everything else goes at `[stack] timeout_ms`. Each source still times its own cards out — the daemon its notifications, the toaster its toasts — because the one thing they cannot rely on is a surface being up to do it for them.
-//!
-//! **Every card answers to the same gesture.** Dragged aside it goes; pressed, it does whatever it is *for* — a notification runs its action, and a toast and an OSD, which are reports rather than offers, do nothing. Taking the pointer was the third thing that varied, and no longer does: the rule used to be that an OSD must never be in the way of the click behind it, which made it the one card the user could not get rid of and made the column behave like three surfaces again depending on which card was on top. What that bought — a click passing through the OSD to the window underneath — was real, and is the price of this. `[stack] clear_threshold` switches the gesture off for every card if the trade is the wrong one.
-//!
-//! Only a notification carries a ✕, and only because it is the one card with somewhere else to be: swiping it puts it in the history, so there has to be a way to say "not there either". A toast and an OSD have no history to be kept out of.
-//!
-//! The surface exists only while the column has something in it — opened on the first card, dropped with the last — so an idle session carries no overlay at all. That is the toast host's old rule applied to the notification popup too, which used to stay mapped around the clock because the daemon owns the timing.
+//! The column notification popups, toasts and OSDs arrive in, drawn by the layout's `stack` areas. [`host`] holds the window of every stack with cards to show and lets it go once the last one has left, so an idle session keeps its overlay window closed.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -21,26 +6,33 @@ use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 
-use platform_wayland::{SurfaceHandle, timeout, watch};
-use telar::{LayoutError, LayoutItem, ReactiveList, signal, use_theme};
+use platform_wayland::{timeout, watch};
+use telar::{
+    Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, ReadSignal, Transition, signal,
+    use_theme,
+};
 
+use config::policy::Urgency;
 use config::theme::NordTheme;
-use config::{AnimationConfig, Config, StackConfig};
+use config::{Config, StackConfig};
+use layout::{
+    Anchor, AreaId, CardKind, LayerKind, ResolvedArea, ResolvedAreaKind, Route, StackOutputPolicy,
+};
+use services::hyprland::{self, ActiveWindow, Client};
 use services::notifications::{Notification, SharedSnapshot, Snapshot};
 use services::toaster::{self, Toast};
-use ui::panel::{PanelSurface, card_gap, content_radius};
-use ui::placement::Placement;
+use surfaces::area::Surround;
+use surfaces::layer_window::Hold;
+use surfaces::reconcile::{StackSite, stacks};
+use surfaces::transient;
+use ui::chrome::{card_gap, content_radius};
+use ui::descriptor::Built;
 use util::broadcast::Store;
 
 use crate::osd::OsdKind;
+use swipe::Column;
 
 pub(crate) mod swipe;
-pub(crate) mod transition;
-
-const NAMESPACE: &str = "hogar-shell-stack";
-
-/// The least the surface will ask for, when the compositor has not reported its output's size yet — one card's worth, so a column that opens before the first `wl_output` event is small rather than absent.
-const MIN_HEIGHT: u32 = 132;
 
 /// One card in the column, and the module that owns it.
 ///
@@ -87,29 +79,33 @@ impl Card {
             Card::Osd(_) => "osd",
         }
     }
+
+    fn kind(&self) -> CardKind {
+        match self {
+            Card::Notification(_) => CardKind::Notification,
+            Card::Toast(_) => CardKind::Toast,
+            Card::Osd(_) => CardKind::Osd,
+        }
+    }
 }
 
 /// The single-slot OSD, as a source the column can subscribe to like the other two.
 ///
-/// A store rather than a signal because the surface it feeds is opened and dropped as the column fills and empties, and a signal made inside a surface goes with it.
+/// A store rather than a signal because the windows it feeds come and go as the column fills and empties, and a signal made inside a window goes with it.
 static OSD: Store<Option<OsdKind>> = Store::new(|| None);
 
-/// Bumped when a card's exit has finished, so the column re-runs and stops drawing it.
-///
-/// A `Store` for the same reason [`OSD`] is one: the surface it wakes is opened and dropped as the column fills and empties, and a signal made inside a surface goes with it.
-static DEPARTURES: Store<u64> = Store::new(|| 0);
+/// A store for the same reason [`OSD`] is one.
+static FOCUSED: Store<Option<String>> = Store::new(|| None);
 
 thread_local! {
-    /// Bumped on every OSD trigger, so the expiry scheduled by the one that was replaced fires against a generation that no longer matches and does nothing. Cheaper than cancelling a timer, and the same arbitration the hover popout uses.
+    /// Bumped on every OSD trigger, so the expiry scheduled by the one that was replaced fires against a generation that no longer matches and does nothing.
     static OSD_GENERATION: Cell<u64> = const { Cell::new(0) };
-    /// Every slot the sources held last pass, so the next one can tell what has gone. Taken before the cap: a card queued behind `admit` is still alive, and treating it as gone would animate away a card that stayed.
-    static LAST_ALIVE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// The last card each slot held and where it was drawn, kept so a departing one can still be drawn — in its own place — after every source has dropped it. Pruned when its exit finishes.
-    static DEPARTED: RefCell<HashMap<String, (usize, Card)>> = RefCell::new(HashMap::new());
     static ARRIVALS: RefCell<Arrivals> = RefCell::new(Arrivals::default());
-    /// What the column is holding, as the host last saw it. The host has to answer "is there anything to show" while there is no surface to ask it on, and the daemon publishes rather than answers.
+    /// What the column is holding, as the host last saw it. The host has to answer "is there anything to show" while no window is drawing the column, and the daemon publishes rather than answers.
     static LIVE: RefCell<Live> = RefCell::new(Live::default());
-    static OPEN: RefCell<Option<Stack>> = const { RefCell::new(None) };
+    static HELD: RefCell<Vec<(Option<String>, LayerKind, Hold)>> = const { RefCell::new(Vec::new()) };
+    static FOCUS: RefCell<Option<String>> = const { RefCell::new(None) };
+    static COVER: RefCell<(Vec<Client>, String)> = const { RefCell::new((Vec::new(), String::new())) };
 }
 
 /// Takes the OSD off the column, for the swipe that dismisses it. The slot is this module's, so clearing it is too — the OSD card itself only knows that it was dragged aside.
@@ -163,7 +159,6 @@ impl Arrivals {
     }
 }
 
-/// What the three sources are saying, kept so the host can decide whether there is a column at all.
 #[derive(Default, Clone)]
 struct Live {
     snapshot: Arc<Snapshot>,
@@ -171,20 +166,8 @@ struct Live {
     osd: Option<OsdKind>,
 }
 
-/// Whether the column has anything at all — the only question the host asks, and deliberately not [`column`].
-///
-/// **Ordering is a side effect, and only the surface may cause it.** [`Arrivals`] stamps what is new and forgets what has gone, so a caller running it against a *different* view of the same sources re-stamps cards the other one can still see — and a re-stamped card is a card that jumps to the bottom of the column. The host and the surface each hold their own copies of three live sources and update on their own schedules, so they disagree constantly for a frame at a time. That is what made cards trade places while an OSD came and went. A card still playing its exit keeps the surface up, and that is the whole reason the last card's exit reaches the screen at all: drop the surface on the frame the source empties and there is nothing left to animate.
-fn has_cards(live: &Live, config: &Config) -> bool {
-    live.osd.is_some()
-        || !live.toasts.is_empty()
-        || !crate::notifications::popping(&live.snapshot, &config.notifications, false).is_empty()
-        || transition::anything_leaving()
-}
-
-/// Every card that should be on screen right now, in order and admitted per [`admit`].
-///
-/// "Right now" includes the ones on their way out. A card whose source has dropped it is still drawn until its exit has played, because the list disposes a row the instant it leaves the source and a card that vanishes mid-frame is one the user cannot tell apart from a card that was replaced. Holding it here — rather than asking `ReactiveList` for an exit hook it does not have — keeps the whole thing inside the column.
-fn column(live: &Live, covering: bool, config: &Config) -> Vec<Card> {
+/// Every card a column could show, unordered: [`column`]'s ordering is a side effect only a drawn column may cause.
+fn cards_now(live: &Live, covering: bool, config: &Config) -> Vec<Card> {
     let mut cards: Vec<Card> =
         crate::notifications::popping(&live.snapshot, &config.notifications, covering)
             .into_iter()
@@ -192,62 +175,23 @@ fn column(live: &Live, covering: bool, config: &Config) -> Vec<Card> {
             .collect();
     cards.extend(live.toasts.iter().cloned().map(Card::Toast));
     cards.extend(live.osd.map(Card::Osd));
-    let ordered = ARRIVALS.with(|arrivals| arrivals.borrow_mut().order(cards));
-    // What every source still holds, taken *before* the cap. A card queued behind [`admit`] has not gone anywhere — playing its exit would say it had, and the next pass would have to take it back.
-    let alive: Vec<String> = ordered.iter().map(Card::slot).collect();
-    let mut shown = admit(ordered, config.stack.visible());
-    reconcile_departures(&mut shown, &alive, &config.animation);
-    shown
+    cards
 }
 
-/// Starts the exit of everything that has gone since the last pass, and keeps drawing what has not finished — **in the place it held**, which is the whole difficulty.
-///
-/// A card removed from the middle leaves a hole, and putting its ghost back anywhere else says the wrong thing twice: the cards below it jump up to close the hole, and the exit then plays at the bottom of the column against a card that was never there. So each one is remembered with the index it was drawn at and re-inserted there, oldest position first, so a run of departures unwinds in the order it was drawn rather than in whatever order a hash map happens to iterate.
-///
-/// `alive` is every card the sources still hold, *before* the cap: what [`admit`] leaves out is queued, not gone, and animating it away would be a lie the next pass has to retract.
-///
-/// The previous pass's cards are remembered here rather than derived, because "gone" is a difference between two readings and only the surface takes them: the host holds its own copy of the same sources on its own schedule (see [`has_cards`]), so a departure it computed would disagree with this one for a frame at a time.
-fn reconcile_departures(shown: &mut Vec<Card>, alive: &[String], animation: &AnimationConfig) {
-    for slot in transition::settled() {
-        DEPARTED.with(|held| held.borrow_mut().remove(&slot));
-    }
-    for slot in alive {
-        transition::returning(slot);
-    }
-    let previous = LAST_ALIVE.with(|held| held.replace(alive.to_vec()));
-    for slot in previous.into_iter().filter(|slot| !alive.contains(slot)) {
-        if DEPARTED.with(|held| !held.borrow().contains_key(&slot)) {
-            continue;
-        }
-        let after = transition::leaving(&slot, animation);
-        if after.is_zero() {
-            continue;
-        }
-        // The list only rebuilds when its source re-runs, and nothing else will ask it to once the card is gone from every source — so the pass that drops the finished card has to be scheduled here.
-        timeout(after, || {
-            // Both, and for different reasons: the tick re-runs the column so it stops drawing the card, and the host has to be asked again whether there is anything left to keep the surface up for.
-            DEPARTURES.update(|tick| *tick = tick.wrapping_add(1));
-            reconcile();
-        });
-    }
-    // Kept whole rather than by slot: an exit draws the card, so the card has to outlive the source that had it.
-    DEPARTED.with(|held| {
-        let mut held = held.borrow_mut();
-        for (at, card) in shown.iter().enumerate() {
-            held.insert(card.slot(), (at, card.clone()));
-        }
-        let mut returning: Vec<(usize, Card)> = held
-            .iter()
-            .filter(|(slot, _)| transition::still_leaving(slot))
-            .map(|(_, (at, card))| (*at, card.clone()))
-            .collect();
-        returning.sort_by_key(|(at, _)| *at);
-        for (at, card) in returning {
-            shown.insert(at.min(shown.len()), card);
-        }
-    });
-    // After the ghosts are back in, so a card playing its exit counts as drawn: what is left over is what the cap kept out, and nothing will ever come back for it.
-    transition::retain(&shown.iter().map(Card::slot).collect::<Vec<_>>());
+/// Whether the focused window covers the screen, from the host's own reading of it.
+fn covering(config: &Config) -> bool {
+    config.notifications.fullscreen != config::FullscreenPopups::On
+        && COVER.with(|cover| {
+            let (clients, active) = &*cover.borrow();
+            !active.is_empty() && clients.iter().any(|c| c.address == *active && c.fullscreen)
+        })
+}
+
+/// A card that has left is not here: the column plays its exit as the list drops it.
+fn column(live: &Live, covering: bool, config: &Config) -> Vec<Card> {
+    let cards = cards_now(live, covering, config);
+    let ordered = ARRIVALS.with(|arrivals| arrivals.borrow_mut().order(cards));
+    admit(ordered, config.stack.visible())
 }
 
 /// Which of `ordered` fit on screen, and which wait.
@@ -282,18 +226,17 @@ fn admit(ordered: Vec<Card>, capacity: usize) -> Vec<Card> {
     shown
 }
 
-/// The open column: its surface, and the screen it opened on so a focus change can tell it has to move.
-struct Stack {
-    output: Option<String>,
-    /// Held for its `Drop` and read by nothing: dropping the handle is what unmaps the surface, which is how an empty column leaves no overlay behind.
-    #[allow(dead_code)]
-    handle: SurfaceHandle,
-}
-
-/// Brings the column up. Called once from `setup_shell`, on the driver thread, and long-lived: a config reload changes what the next surface looks like, not whether the shell is listening.
-///
-/// Three subscriptions of its own, beside the ones the surface's content makes. They answer a different question — *is there anything to show* — and it has to be answered while there is no surface to ask it on.
+/// Subscribes on its own, beside the stack areas, because whether there is anything to show has to be answered while no window is drawing the column.
 pub fn host() {
+    FOCUS.with(|focus| *focus.borrow_mut() = transient::focused_output());
+    watch(hyprland::subscribe_clients, |clients: Vec<Client>| {
+        COVER.with(|cover| cover.borrow_mut().0 = clients);
+        reconcile();
+    });
+    watch(hyprland::subscribe_active_window, |window: ActiveWindow| {
+        COVER.with(|cover| cover.borrow_mut().1 = window.address);
+        reconcile();
+    });
     watch(
         services::notifications::subscribe,
         |snap: SharedSnapshot| {
@@ -315,62 +258,76 @@ pub fn host() {
     follow_focus();
 }
 
-/// Opens the column when it has something to say and drops it when it does not.
-///
-/// The fullscreen policy is deliberately not asked here: it is a reactive reading the *content* re-evaluates, and a host that suppressed on it would need a second subscription to the compositor to answer a question whose only wrong answer is a surface that is up holding nothing — invisible, click-through, and gone on the next change anyway.
+pub fn reconcile_config() {
+    reconcile();
+}
+
+/// The fullscreen policy is deliberately not asked here: the column re-evaluates it, and a window held up with nothing in it is invisible and click-through.
 fn reconcile() {
-    let output = surfaces::shell::focused_output();
-    let config = config::config_for(output.as_deref());
-    let empty = LIVE.with(|live| !has_cards(&live.borrow(), &config));
-    OPEN.with(|open| {
-        let mut open = open.borrow_mut();
-        match (open.is_some(), empty) {
-            // Dropping the handle is what unmaps it, so an empty column leaves no overlay behind.
-            (true, true) => *open = None,
-            (false, false) => *open = Some(open_stack(output, &config)),
-            _ => {}
+    let sites = stacks();
+    let shown_on = shown_on(&sites, FOCUS.with(|focus| focus.borrow().clone()));
+    if FOCUSED.get() != shown_on {
+        FOCUSED.update(|focused| *focused = shown_on.clone());
+    }
+    let config = config::config_for(shown_on.as_deref());
+    let cards = LIVE.with(|live| cards_now(&live.borrow(), covering(&config), &config));
+    let mut wanted: Vec<(Option<String>, LayerKind)> = Vec::new();
+    if !cards.is_empty() {
+        for site in &sites {
+            let lands = cards
+                .iter()
+                .any(|card| first_accepting(card, &sites, &site.output) == Some(&site.area));
+            let showing =
+                lands && (site.policy != StackOutputPolicy::Focused || site.output == shown_on);
+            let at = (site.output.clone(), site.layer);
+            if showing && !wanted.contains(&at) {
+                wanted.push(at);
+            }
         }
+    } else if sites.is_empty() {
+        tracing::debug!("the layout has no stack area, so no card is shown");
+    }
+    let exit = config.animation.tween_ms(200, 2_000).duration;
+    let released: Vec<(Option<String>, LayerKind, Hold)> = HELD.with(|held| {
+        let mut held = held.borrow_mut();
+        let (keep, go) = std::mem::take(&mut *held)
+            .into_iter()
+            .partition(|(output, layer, _)| wanted.contains(&(output.clone(), *layer)));
+        *held = keep;
+        go
     });
+    for (output, layer, hold) in released {
+        transient::release(hold, output.as_deref(), layer, exit);
+    }
+    for (output, layer) in wanted {
+        let already = HELD.with(|held| {
+            held.borrow()
+                .iter()
+                .any(|(o, l, _)| *o == output && *l == layer)
+        });
+        if already {
+            continue;
+        }
+        if let Some(hold) = transient::hold(output.as_deref(), layer) {
+            HELD.with(|held| held.borrow_mut().push((output, layer, hold)));
+        }
+    }
 }
 
-fn open_stack(output: Option<String>, config: &Config) -> Stack {
-    let placement = placement(&config.stack, output.as_deref())
-        .margin(config.panel_margin(config.stack.edge))
-        .output(output.clone());
-    let handle = PanelSurface::new(placement, cards).open_handle();
-    Stack { output, handle }
-}
-
-/// Where the column sits, and the shape its cards lay out in. The surface and the column come from one placement so a column holding fewer cards than it is sized for still hugs the edge it is pinned to.
-fn placement(config: &StackConfig, output: Option<&str>) -> Placement {
-    Placement::stack(NAMESPACE, config.edge, config.align)
-        .size(config.width.max(120.0) as u32, room_along(config, output))
-}
-
-/// How much room the surface asks for along its edge: **all of it.**
-///
-/// A layer surface names its size before it knows what it will hold, so this used to be a guess — a per-card height times how many cards were allowed. A guess is the wrong shape of answer here, and it failed exactly where you would expect: a notification with a long body is taller than any number picked for the OSD's meter, so a full column overflowed the surface and the last card was clipped — or swapped in and out as the cards above it changed height.
-///
-/// Asking for the whole edge costs nothing, and that is the point: the surface carves its input region out of what the cards actually draw ([`Input::FromContent`]), so every pixel the column does not fill is click-through and belongs to the window underneath. It is the same trade the hover popout makes.
-///
-/// [`Input::FromContent`]: ui::placement::Input::FromContent
-fn room_along(config: &StackConfig, output: Option<&str>) -> u32 {
-    let outputs = platform_wayland::outputs();
-    let screen = match output {
-        Some(name) => outputs.iter().find(|o| o.name.as_deref() == Some(name)),
-        None => outputs.first(),
+fn shown_on(sites: &[StackSite], focused: Option<String>) -> Option<String> {
+    let following = || {
+        sites
+            .iter()
+            .filter(|site| site.policy == StackOutputPolicy::Focused)
     };
-    let along = screen.and_then(|o| o.logical_size).map(|(width, height)| {
-        if config.edge.is_horizontal() {
-            height
-        } else {
-            width
-        }
-    });
-    along.unwrap_or(MIN_HEIGHT as i32).max(MIN_HEIGHT as i32) as u32
+    match following().any(|site| site.output == focused) {
+        true => focused,
+        false => following()
+            .next()
+            .map_or(focused, |site| site.output.clone()),
+    }
 }
 
-/// A focus change moves the column, because a layer surface names its output when it is created — so following focus is opening it again somewhere else rather than moving what is there.
 fn follow_focus() {
     let dir = services::hyprland::socket_dir();
     watch(
@@ -390,65 +347,116 @@ fn follow_focus() {
             }
         },
         |monitor: String| {
-            let elsewhere = OPEN.with(|open| {
-                open.borrow()
-                    .as_ref()
-                    .is_some_and(|stack| stack.output.as_deref() != Some(monitor.as_str()))
-            });
-            if elsewhere {
-                OPEN.with(|open| *open.borrow_mut() = None);
-                reconcile();
-            }
+            FOCUS.with(|focus| *focus.borrow_mut() = Some(monitor));
+            reconcile();
         },
     );
 }
 
-/// Follows a config change: the column takes the new look where it stands, and is opened again if the edit moved it somewhere the compositor has to be told about.
-pub fn reconcile_config() {
-    OPEN.with(|open| *open.borrow_mut() = None);
-    reconcile();
+fn first_accepting<'a>(
+    card: &Card,
+    sites: &'a [StackSite],
+    output: &Option<String>,
+) -> Option<&'a AreaId> {
+    sites
+        .iter()
+        .filter(|site| site.output == *output)
+        .find(|site| accepts(&site.routes, card))
+        .map(|site| &site.area)
 }
 
-/// The live column, built on the surface's own thread. Each source is subscribed to again here, because these signals belong to this surface and die with it.
-fn cards(env: &config::SurfaceEnv) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = &env.config;
+fn accepts(routes: &[Route], card: &Card) -> bool {
+    routes.is_empty() || routes.iter().any(|route| route_takes(route, card))
+}
+
+fn route_takes(route: &Route, card: &Card) -> bool {
+    if route.kind.is_some_and(|kind| kind != card.kind()) {
+        return false;
+    }
+    let Card::Notification(notification) = card else {
+        return route.app.is_none() && route.urgency.is_none();
+    };
+    if route
+        .app
+        .as_deref()
+        .is_some_and(|app| !app.eq_ignore_ascii_case(&notification.app_name))
+    {
+        return false;
+    }
+    route
+        .urgency
+        .is_none_or(|urgency| urgency == urgency_of(notification.urgency))
+}
+
+fn urgency_of(urgency: Urgency) -> layout::Urgency {
+    match urgency {
+        Urgency::Low => layout::Urgency::Low,
+        Urgency::Normal => layout::Urgency::Normal,
+        Urgency::Critical => layout::Urgency::Critical,
+    }
+}
+
+/// A stack that follows focus draws only on the output the host shows it on, so moving it is the old column emptying card by card while the new one fills.
+pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
+    let ResolvedAreaKind::Stack {
+        anchor,
+        width,
+        output_policy,
+        ..
+    } = &area.kind
+    else {
+        return Err(LayoutError::Engine(format!(
+            "'{}' is a {} area, not a stack",
+            area.id,
+            area.kind.name()
+        )));
+    };
+    let config = Arc::clone(surround.config);
+    let output = surround.output.map(str::to_string);
+    let id = area.id.clone();
+    let follows = *output_policy == StackOutputPolicy::Focused;
+    let width = *width;
+    util::state::set_context(Column { width });
+
     let snapshot = signal(Arc::new(Snapshot::default()));
-    let sink = snapshot;
     watch(
         services::notifications::subscribe,
-        move |snap: SharedSnapshot| sink.set(snap),
+        move |snap: SharedSnapshot| snapshot.set(snap),
     );
     let toasts = signal(toaster::current());
-    let sink = toasts;
-    watch(toaster::subscribe, move |live: Vec<Toast>| sink.set(live));
+    watch(toaster::subscribe, move |live: Vec<Toast>| toasts.set(live));
     let osd = signal(OSD.get());
-    let sink = osd;
     watch(
         |tx| OSD.subscribe(tx),
-        move |live: Option<OsdKind>| sink.set(live),
+        move |live: Option<OsdKind>| osd.set(live),
     );
-    // The column re-runs when a card's exit is over, which no source can tell it: by then every one of them has already dropped the card.
-    let departures = signal(DEPARTURES.get());
-    let sink = departures;
+    let focused = signal(FOCUSED.get());
     watch(
-        |tx| DEPARTURES.subscribe(tx),
-        move |tick: u64| sink.set(tick),
+        |tx| FOCUSED.subscribe(tx),
+        move |live: Option<String>| focused.set(live),
     );
     let covering = crate::notifications::covering_focus(&config.notifications);
 
-    let theme = use_theme::<NordTheme>();
-    let radius = content_radius();
-    let owned = config.clone();
-    let built_with = Arc::clone(config);
+    let built_with = Arc::clone(&config);
     let source = move || {
-        let _ = departures.get();
+        if follows && focused.get() != output {
+            return Vec::new();
+        }
         let live = Live {
             snapshot: snapshot.get(),
             toasts: toasts.get(),
             osd: osd.get(),
         };
-        let cards = column(&live, covering.as_ref().is_some_and(|c| c.get()), &owned);
-        // This is the moment a notification is on screen, and so the moment its expiry may start. The daemon spends the arming on the first call, so a card that stays up is not handed a fresh clock on every repaint — and one that waited behind a full column gets its whole life when it finally arrives.
+        let sites = stacks();
+        let cards: Vec<Card> = column(
+            &live,
+            covering.as_ref().is_some_and(|c| c.get()),
+            &built_with,
+        )
+        .into_iter()
+        .filter(|card| first_accepting(card, &sites, &output) == Some(&id))
+        .collect();
+        // This is the moment a notification is on screen, and so the moment its expiry may start. The daemon spends the arming on the first call, so a card that stays up is not handed a fresh clock on every repaint.
         for card in &cards {
             if let Card::Notification(n) = card {
                 services::notifications::shown(n.id);
@@ -456,24 +464,111 @@ fn cards(env: &config::SurfaceEnv) -> Result<Box<dyn LayoutItem>, LayoutError> {
         }
         cards
     };
-    let list = ReactiveList::with_style(
-        placement(&config.stack, env.output.as_deref()).column(card_gap()),
-        source,
-        Card::key,
-        move |card: Card| build(card, &built_with, theme, radius),
-    )?;
-    Ok(Box::new(list))
+
+    let theme = use_theme::<NordTheme>();
+    let radius = content_radius();
+    let gap = card_gap();
+    let (from_end, slide_from) = packing(*anchor);
+    let tween = config.animation.tween_ms(200, 2_000);
+    let row_config = Arc::clone(&config);
+    let list = ReactiveList::keyed(source, Card::slot, move |card: ReadSignal<Card>| {
+        row(card, &row_config, theme, radius, gap, from_end)
+    })?
+    .with_transition(Transition::slide(slide_from, TRAVEL, tween))
+    .animate_layout(tween);
+
+    let bounds = surround.bounds;
+    let inset = transient::DEFAULT_GAP;
+    let height = (bounds.height - 2.0 * inset).max(0.0);
+    let x = match column_side(*anchor) {
+        Side::Start => bounds.x + inset,
+        Side::Middle => bounds.x + (bounds.width - width) / 2.0,
+        Side::End => bounds.x + bounds.width - width - inset,
+    };
+    let justify = match vertical_side(*anchor) {
+        Side::Start => telar::JustifyContent::START,
+        Side::Middle => telar::JustifyContent::CENTER,
+        Side::End => telar::JustifyContent::END,
+    };
+    Ok(Box::new(Container::new(
+        LayoutStyle::new()
+            .absolute()
+            .inset_start(x)
+            .inset_top(bounds.y + inset)
+            .width(width)
+            .height(height)
+            .flex_column()
+            .justify_content(justify),
+        vec![Box::new(list)],
+    )?))
 }
 
-/// One card, built by whichever module owns it. The column knows how to place a card and nothing about what is on it.
+/// Sideways, matching the swipe, so a card that arrives along the same axis reads as the same object.
+const TRAVEL: f32 = 28.0;
+
+/// One card slot: whatever card that slot now holds, built again when its contents change and kept when only its place does.
+fn row(
+    card: ReadSignal<Card>,
+    config: &Arc<Config>,
+    theme: NordTheme,
+    radius: f32,
+    gap: f32,
+    from_end: bool,
+) -> Built {
+    let config = Arc::clone(config);
+    let content = ReactiveList::with_style(
+        LayoutStyle::new().flex_column(),
+        move || vec![card.get()],
+        Card::key,
+        move |card: Card| build(card, &config, theme, radius),
+    )?;
+    let style = LayoutStyle::new().flex_column();
+    let style = match from_end {
+        true => style.padding_top(gap),
+        false => style.padding_bottom(gap),
+    };
+    Ok(Box::new(Container::new(style, vec![Box::new(content)])?))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Side {
+    Start,
+    Middle,
+    End,
+}
+
+fn column_side(anchor: Anchor) -> Side {
+    match anchor {
+        Anchor::TopLeft | Anchor::Left | Anchor::BottomLeft => Side::Start,
+        Anchor::Top | Anchor::Center | Anchor::Bottom => Side::Middle,
+        Anchor::TopRight | Anchor::Right | Anchor::BottomRight => Side::End,
+    }
+}
+
+fn vertical_side(anchor: Anchor) -> Side {
+    match anchor {
+        Anchor::TopLeft | Anchor::Top | Anchor::TopRight => Side::Start,
+        Anchor::Left | Anchor::Center | Anchor::Right => Side::Middle,
+        Anchor::BottomLeft | Anchor::Bottom | Anchor::BottomRight => Side::End,
+    }
+}
+
+fn packing(anchor: Anchor) -> (bool, telar::Edge) {
+    let from_end = vertical_side(anchor) == Side::End;
+    let edge = match column_side(anchor) {
+        Side::Start => telar::Edge::Left,
+        _ => telar::Edge::Right,
+    };
+    (from_end, edge)
+}
+
 fn build(
     card: Card,
     config: &Config,
     theme: NordTheme,
     radius: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let slot = card.slot();
-    let content = match card {
+    match card {
         Card::Notification(n) => crate::notifications::popup_card(
             &n,
             &config.notifications,
@@ -483,9 +578,7 @@ fn build(
         ),
         Card::Toast(t) => crate::toast::card(&t, theme, radius),
         Card::Osd(kind) => Ok(crate::osd::osd_content(kind, theme)),
-    }?;
-    // Here rather than in each of the three, so a notification, a toast and an OSD arrive and leave alike.
-    transition::arriving(&slot, content, &config.animation)
+    }
 }
 
 #[cfg(test)]
@@ -593,6 +686,73 @@ mod tests {
             admit(all, 1).len(),
             PROVIDERS,
             "one card each, cap or no cap"
+        );
+    }
+
+    fn site(output: &str, policy: StackOutputPolicy, routes: Vec<Route>) -> StackSite {
+        StackSite {
+            output: Some(output.to_string()),
+            layer: LayerKind::Overlay,
+            area: AreaId::new(format!("stack-{output}")),
+            policy,
+            routes,
+        }
+    }
+
+    #[test]
+    fn a_stack_that_follows_focus_lands_somewhere_when_nothing_says_where_focus_is() {
+        let sites = vec![
+            site("DP-1", StackOutputPolicy::Focused, Vec::new()),
+            site("HDMI-A-1", StackOutputPolicy::Focused, Vec::new()),
+        ];
+        assert_eq!(shown_on(&sites, None), Some("DP-1".to_string()));
+        assert_eq!(
+            shown_on(&sites, Some("HDMI-A-1".to_string())),
+            Some("HDMI-A-1".to_string())
+        );
+        assert_eq!(
+            shown_on(&sites, Some("eDP-1".to_string())),
+            Some("DP-1".to_string()),
+            "focus on a screen with no stack sends the column to one that has"
+        );
+    }
+
+    #[test]
+    fn a_card_lands_in_the_first_stack_whose_routes_take_it() {
+        let critical = Route {
+            kind: Some(CardKind::Notification),
+            urgency: Some(layout::Urgency::Critical),
+            ..Route::default()
+        };
+        let sites = vec![
+            site("DP-1", StackOutputPolicy::Here, vec![critical]),
+            StackSite {
+                area: AreaId::new("corner"),
+                ..site("DP-1", StackOutputPolicy::Here, Vec::new())
+            },
+        ];
+        let output = Some("DP-1".to_string());
+        let mut urgent = note(1);
+        if let Card::Notification(n) = &mut urgent {
+            n.urgency = Urgency::Critical;
+        }
+        assert_eq!(
+            first_accepting(&urgent, &sites, &output),
+            Some(&AreaId::new("stack-DP-1"))
+        );
+        assert_eq!(
+            first_accepting(&note(2), &sites, &output),
+            Some(&AreaId::new("corner"))
+        );
+        assert_eq!(
+            first_accepting(&toast(toaster::Event::Vpn, "VPN on"), &sites, &output),
+            Some(&AreaId::new("corner")),
+            "a route naming a kind turns every other kind away"
+        );
+        assert_eq!(
+            first_accepting(&note(3), &sites, &Some("HDMI-A-1".to_string())),
+            None,
+            "a screen with no stack shows no card"
         );
     }
 

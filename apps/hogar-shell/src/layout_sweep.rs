@@ -18,7 +18,7 @@ use telar::{
     reset_layout_runtime, set_theme,
 };
 
-use config::{BarConfig, Config, Edge, Shape};
+use config::{Config, Edge, Shape};
 use ui::descriptor::{ChipFrame, ModuleDescriptor};
 use ui::host::{Host, InstanceId, Representation, Size};
 
@@ -36,17 +36,6 @@ const MODES: [Shape; 3] = [Shape::Bar, Shape::Sections, Shape::Chips];
 fn seed_world(edge: Edge, mode: Shape, extra: Option<&str>) {
     let mut config = Config::starter();
     layout::set_running(Arc::new(swept_layout(edge, mode, extra)));
-    // `starter` puts its modules on the top bar and `drawn_edge` reports the first non-empty one, so moving them wholesale is what makes a chip believe it is on the edge under test.
-    let bar = std::mem::take(&mut config.bars.top);
-    *match edge {
-        Edge::Top => &mut config.bars.top,
-        Edge::Bottom => &mut config.bars.bottom,
-        Edge::Left => &mut config.bars.left,
-        Edge::Right => &mut config.bars.right,
-    } = bar;
-    if edge != Edge::Top {
-        config.bars.top = BarConfig::default();
-    }
     config.shape.mode = mode;
 
     let config = Arc::new(config);
@@ -173,23 +162,53 @@ fn previews() -> Vec<Subject> {
         .collect()
 }
 
-/// The bar the seeded world draws, and its thickness.
-fn drawn_bar() -> (Arc<Config>, Edge, f32) {
+fn drawn_bar() -> (Arc<Config>, Edge, f32, config::ResolvedShape) {
     let config = config::config().expect("the sweep published a config");
-    let edge = ui::panel::drawn_edge(&config);
-    let thickness = config.bars.get(edge).size as f32;
-    (config, edge, thickness)
+    let running = layout::running().expect("the sweep published a layout");
+    let (resolved, _) = layout::resolve(
+        &running,
+        &std::collections::BTreeMap::new(),
+        layout::NOMINAL_OUTPUT,
+        None,
+    );
+    let bar = resolved
+        .areas()
+        .find_map(|(_, area)| match area.kind {
+            layout::ResolvedAreaKind::Bar {
+                edge,
+                thickness,
+                shape,
+                ..
+            } => Some((edge, thickness, shape)),
+            _ => None,
+        })
+        .expect("the seeded layout has a bar");
+    let (edge, thickness, shape) = bar;
+    let shape = surfaces::bar::bar_shape(&config, shape);
+    (config, edge, thickness, shape)
 }
 
-/// A chip on the bar the seeded world draws; any other representation on a surface of its own the size [`module_surface`] declares.
+/// A chip on the bar the seeded world draws; any other representation hosted at the size [`module_surface`] declares.
 fn module_host(id: &str, representation: Representation) -> Host {
-    let (config, edge, _) = drawn_bar();
+    let (config, edge, thickness, shape) = drawn_bar();
     let theme = config.resolve_theme();
     match representation {
-        Representation::Chip => Host::chip(
+        Representation::Chip => Host::placed(
             InstanceId::of_module(id),
             config,
-            edge,
+            Representation::Chip,
+            match edge.is_vertical() {
+                true => Size {
+                    width: thickness,
+                    height: f32::INFINITY,
+                },
+                false => Size {
+                    width: f32::INFINITY,
+                    height: thickness,
+                },
+            },
+            Some(edge),
+            shape,
             theme.accent,
             ui::module::module_foreground(config::Variant::Default, theme.accent, theme),
             None,
@@ -206,7 +225,7 @@ fn module_host(id: &str, representation: Representation) -> Host {
 }
 
 fn module_surface(representation: Representation) -> PreviewSurface {
-    let (config, edge, thickness) = drawn_bar();
+    let (config, edge, thickness, _) = drawn_bar();
     match representation {
         Representation::Chip if edge.is_horizontal() => PreviewSurface::new(940.0, thickness),
         Representation::Chip => PreviewSurface::new(thickness, 940.0),

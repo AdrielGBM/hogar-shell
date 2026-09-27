@@ -8,7 +8,7 @@ compositor: any
 config: [visualiser, clock]
 commands: [layout]
 deps: [wlr-layer-shell, libpipewire]
-see_also: [wallpaper, clock, dynamic-scheme]
+see_also: [wallpaper, clock, dynamic-scheme, compositor-rules]
 ---
 
 # Desktop widgets
@@ -42,7 +42,8 @@ deliberately give one its own — and the face drops the seconds the chip keeps,
 second is a surface that repaints every second.
 
 **`background_blur` feathers the plate's own edge — it does not sample what is behind it.** For real blur an
-area asks the compositor, through `backdrop = "blur"` and `ext-background-effect-v1`.
+area asks the compositor, through `backdrop = "blur"` and `ext-background-effect-v1` — see
+[Compositor rules](../../guides/compositor-rules.md) for how that replaces a namespace-scoped `layer_rule`.
 
 ## Visualiser
 
@@ -69,3 +70,4 @@ of that, not a timer.
 
 - [Wallpaper layer](wallpaper.md) — the picture these are drawn over.
 - [Clock](../modules/clock.md) — the same tick, as a chip on a bar.
+- [Compositor rules](../../guides/compositor-rules.md) — the namespace this used to be, and where it is now.

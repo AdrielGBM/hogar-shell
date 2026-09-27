@@ -1,6 +1,6 @@
 //! `[background]` and `[wallpaper]`: the picture behind the desktop and the library it is picked from.
 //!
-//! What is *drawn over* it is `[widgets]`, on a surface of its own — see [`crate::sections::widgets`].
+//! What is *drawn over* it is the layout's desktop layer, not this config.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 

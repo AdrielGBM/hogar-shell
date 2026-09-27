@@ -8,7 +8,7 @@ compositor: any
 config: [panels]
 commands: [panel]
 deps: [wlr-layer-shell]
-see_also: [panels, floats, bars]
+see_also: [panels, floats, bars, compositor-rules]
 ---
 
 # Drawers
@@ -25,8 +25,16 @@ vertical one it lines up with the chip's top. Either way it is kept clear of the
 drawer never opens off the side.
 
 Opened with no chip in hand — `hogar-shell panel toggle`, a keybind — there is nothing to follow, and the drawer
-falls back to the zone the module is configured in (`start`, `end`, or centred for a module the config cannot
-place).
+falls back to wherever the layout placed that instance (`start`, `end`, or centred for a module the layout has
+not placed on any bar).
+
+## Where it lives
+
+A drawer is a node inside the layer window its chip already lives in — `hogar-shell-top` for a bar chip — laid
+out relative to the chip's own node rather than opened as a surface of its own. If that window's layer is not
+visible on this output (its bar is hidden under a fullscreen window), or the drawer has no chip to anchor to, it
+lives in `hogar-shell-overlay` instead. See [Compositor rules](../../guides/compositor-rules.md) for what that
+means for a `layer_rule` you write yourself.
 
 ## Configuring
 

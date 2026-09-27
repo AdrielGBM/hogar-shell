@@ -13,7 +13,7 @@ use telar::{
 
 use config::theme::{FontRole, NordTheme};
 use services::toaster::{self, Toast};
-use ui::panel::panel_fill;
+use ui::chrome::panel_fill;
 use ui::scale::space;
 
 const ICON: f32 = 22.0;
@@ -41,7 +41,7 @@ pub(crate) fn stack_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     Ok(Box::new(Container::new(
         LayoutStyle::new()
             .flex_column()
-            .gap(ui::panel::card_gap())
+            .gap(ui::chrome::card_gap())
             .width(SizeDimension::Percent(1.0)),
         cards,
     )?))
@@ -112,7 +112,7 @@ pub(crate) fn card(
         vec![icon, Box::new(text)],
     )?
     .hover_style(move |_| RectStyle::filled(theme.overlay, radius));
-    // Dragged aside, never pressed away. A toast reports something that already happened, so a click on it is a click the user meant for whatever it landed on top of — which pressing to dismiss would swallow.
+    // Dragged aside, never pressed away: a toast reports something that already happened, so a press on it does nothing. It still takes the pointer, which is the column's trade (see `crate::stack`).
     let Some(threshold) = crate::stack::swipe::column_threshold() else {
         return Ok(Box::new(card));
     };

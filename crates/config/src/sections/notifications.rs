@@ -6,17 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::sections::*;
 
-/// The column of cards the shell pins to a screen edge and takes away again (`[stack]`): notification popups, in-shell toasts, and the OSD a volume or brightness change flashes.
+/// How the column of cards behaves (`[stack]`): notification popups, in-shell toasts, and the OSD a volume or brightness change flashes. Where a column is and how wide it is are the layout's — a `stack` area — so one layout can put critical notifications in the middle of the screen and toasts in a corner.
 ///
-/// **One section because they are one column.** They were three, each with its own `edge`, `align`, `width` and timeout, and being three is what let them sit in three different places and overlap each other on a narrow screen with no one of them able to know. Where the column is, how wide it is and how many cards it shows at once are properties of the column; what each card *is* stays in `[notifications]` and `[toasts]`.
-///
-/// `timeout_ms` is one number for the same reason. Which is not to say every card goes: a `critical` notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with nothing left to say. Not expiring is a property of the card, not a second timeout.
+/// `timeout_ms` is one number because the column is one column: whatever is in it, popup or toast or OSD, lives and dies on the same clock. Which is not to say every card goes: a `critical` notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with nothing left to say. Not expiring is a property of the card, not a second timeout.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct StackConfig {
-    pub edge: Edge,
-    pub align: Align,
-    pub width: f32,
     /// How many cards show at once; the rest queue behind them.
     ///
     /// Not a hard ceiling, and the exception is the point: every source with something to say — a notification, a toast, an OSD — is guaranteed one card before this is shared out, so a brightness reading you asked for by pressing a key is never queued behind notifications you did not. With more sources speaking at once than this allows, the column is that many cards tall.
@@ -31,9 +26,6 @@ pub struct StackConfig {
 impl Default for StackConfig {
     fn default() -> Self {
         Self {
-            edge: Edge::Top,
-            align: Align::End,
-            width: 380.0,
             max_visible: 4,
             // Between the 5 s a notification used to get and the 1.2 s an OSD did: long enough to read a line of text that arrived unannounced, short enough that a volume nudge is gone before it is in the way.
             timeout_ms: 3000,

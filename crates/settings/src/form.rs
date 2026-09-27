@@ -15,14 +15,13 @@ use telar::{
 use config::fingerprint::{Fingerprint, Stamp};
 use config::theme::{FontRole, NordTheme};
 use config::{
-    Align, Capitalize, Config, Edge, FullscreenPopups, MediaDetail, MediaScroll,
-    NotificationDetail, OpenMode, Saved, Shape, TemperatureUnit, Variant,
+    Capitalize, Config, Edge, FullscreenPopups, MediaDetail, MediaScroll, NotificationDetail,
+    OpenMode, Saved, Shape, TemperatureUnit, Variant,
 };
 
 use crate::panel::MODULE;
 
 pub(crate) const EDGES: &[&str] = &["top", "bottom", "left", "right"];
-pub(crate) const ALIGNS: &[&str] = &["start", "center", "end"];
 pub(crate) const SHAPES: &[&str] = &["bar", "sections", "chips"];
 pub(crate) const LANGUAGES: &[&str] = &["en", "es"];
 pub(crate) const MEDIA_SCROLLS: &[&str] = &["volume", "track", "seek", "none"];
@@ -241,7 +240,7 @@ pub(crate) fn seeding_from(path: &Path) {
 /// Tells the shell this window shows `content`, so the reload its own write causes passes it by. Only ever handed the fingerprint of bytes the window has just put on disk itself, so the stamp names the content that reload will read.
 fn shows(content: Fingerprint) {
     SHOWING.with(|showing| showing.borrow_mut().record(content.clone()));
-    surfaces::shell::stamp(MODULE, content);
+    surfaces::transient::stamp(MODULE, content);
 }
 
 /// Puts `config.toml` back to how it was when this settings window opened, and lets the config watcher apply it — the Revert half of K14.
@@ -559,22 +558,6 @@ pub(crate) fn parse_fullscreen_popups(s: &str) -> FullscreenPopups {
     }
 }
 
-pub(crate) fn align_str(align: Align) -> &'static str {
-    match align {
-        Align::Start => "start",
-        Align::Center => "center",
-        Align::End => "end",
-    }
-}
-
-pub(crate) fn parse_align(s: &str) -> Align {
-    match s {
-        "start" => Align::Start,
-        "end" => Align::End,
-        _ => Align::Center,
-    }
-}
-
 pub(crate) fn shape_str(shape: Shape) -> &'static str {
     match shape {
         Shape::Bar => "bar",
@@ -689,14 +672,6 @@ mod tests {
         for e in Edge::ALL {
             assert_eq!(parse_edge(edge_str(e)), e);
         }
-        for (s, a) in [
-            ("start", Align::Start),
-            ("center", Align::Center),
-            ("end", Align::End),
-        ] {
-            assert_eq!(align_str(a), s);
-            assert_eq!(parse_align(s), a);
-        }
         for (s, sh) in [
             ("bar", Shape::Bar),
             ("sections", Shape::Sections),
@@ -752,22 +727,17 @@ mod tests {
         path
     }
 
-    /// Registers the settings window with a token that counts its rebuilds, the way opening the panel would.
-    fn open_window() -> Rc<std::cell::Cell<u32>> {
-        struct Counting(Rc<std::cell::Cell<u32>>);
-        impl telar::SurfaceControl for Counting {
-            fn close(&self) {}
-            fn is_closing(&self) -> bool {
-                false
-            }
-            fn rebuild(&self) {
-                self.0.set(self.0.get() + 1);
-            }
-        }
-        let rebuilds = Rc::new(std::cell::Cell::new(0));
-        let token = telar::SurfaceToken::new(Box::new(Counting(Rc::clone(&rebuilds))));
-        surfaces::shell::toggle_window(MODULE, || token);
-        rebuilds
+    /// Opens the settings window as a transient, the way opening the panel would, and hands back how to ask how many times a reload has rebuilt it.
+    fn open_window() -> impl Fn() -> u64 {
+        surfaces::transient::close_all();
+        surfaces::transient::open(surfaces::transient::Spec::new(
+            MODULE,
+            surfaces::transient::Place::Centred,
+            Rc::new(|_: &ui::chrome::Chrome| {
+                Ok(Box::new(telar::Container::new(LayoutStyle::new(), vec![])?) as _)
+            }),
+        ));
+        || surfaces::transient::rebuilds(MODULE).expect("the settings window is open")
     }
 
     fn clock(format: &str) -> toml::Table {
@@ -783,16 +753,16 @@ mod tests {
 
         persist(&path, "clock", &clock("%H:%M:%S"));
 
-        surfaces::shell::rebuild_all(
+        surfaces::transient::rebuild_all(
             &Fingerprint::read(&path),
             config::fingerprint::Reload::IfChanged,
         );
         assert_eq!(
-            rebuilds.get(),
+            rebuilds(),
             0,
             "the window already shows what it saved, and rebuilding it would take the caret out of the field"
         );
-        surfaces::shell::close(MODULE);
+        surfaces::transient::close(MODULE);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
@@ -810,16 +780,16 @@ mod tests {
         .unwrap();
         persist(&path, "clock", &clock("%H:%M:%S"));
 
-        surfaces::shell::rebuild_all(
+        surfaces::transient::rebuild_all(
             &Fingerprint::read(&path),
             config::fingerprint::Reload::IfChanged,
         );
         assert_eq!(
-            rebuilds.get(),
+            rebuilds(),
             1,
             "the file holds a theme the window never showed, so the reload has to rebuild it"
         );
-        surfaces::shell::close(MODULE);
+        surfaces::transient::close(MODULE);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
@@ -840,16 +810,16 @@ mod tests {
         std::fs::write(&path, &seeded).unwrap();
         vouch_for(&path, &saved);
 
-        surfaces::shell::rebuild_all(
+        surfaces::transient::rebuild_all(
             &Fingerprint::with_config(&path, Some(&saved.written)),
             config::fingerprint::Reload::IfChanged,
         );
         assert_eq!(
-            rebuilds.get(),
+            rebuilds(),
             1,
             "the save carried a theme the window never showed, so the reload of what it wrote has to rebuild it"
         );
-        surfaces::shell::close(MODULE);
+        surfaces::transient::close(MODULE);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
@@ -868,16 +838,16 @@ mod tests {
         .unwrap();
         vouch_for(&path, &saved);
 
-        surfaces::shell::rebuild_all(
+        surfaces::transient::rebuild_all(
             &Fingerprint::read(&path),
             config::fingerprint::Reload::IfChanged,
         );
         assert_eq!(
-            rebuilds.get(),
+            rebuilds(),
             1,
             "the edit behind the save is not what the window shows, so its reload rebuilds the window"
         );
-        surfaces::shell::close(MODULE);
+        surfaces::transient::close(MODULE);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

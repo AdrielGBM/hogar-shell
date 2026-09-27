@@ -1,6 +1,6 @@
-//! A benchmark of the window model: does one fullscreen layer-shell window per layer repaint and present only what changed, at a cost comparable to today's one surface per bar, drawer and popup?
+//! A benchmark of the window model: does one fullscreen layer-shell window per layer repaint and present only what changed?
 //!
-//! `run` plays one scripted scene in one window model and records what it measured in-process; its stderr, run under `WAYLAND_DEBUG=1`, is the protocol log of what the compositor was actually sent. `report` reads both runs of a phase and judges them against the plan's criteria. `nix/spike.sh` drives the phases.
+//! `run` plays one scripted scene and records what it measured in-process; its stderr, run under `WAYLAND_DEBUG=1`, is the protocol log of what the compositor was actually sent. `report` reads a run and judges it against the plan's criteria. `nix/spike.sh` drives the phases.
 
 mod analysis;
 mod director;
@@ -16,18 +16,18 @@ mod wire;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use director::{Mode, RunArgs};
+use director::RunArgs;
 
 const USAGE: &str = "\
 hogar-shell-spike — the window-model benchmark (T-0.4, re-run under DEC-11 as T-0.5)
 
 Usage:
-  hogar-shell-spike run --mode <per-surface|merged> --out <dir> [--output <name>] [--clicks] [--note <text>]
+  hogar-shell-spike run --out <dir> [--output <name>] [--clicks] [--note <text>]
       Maps the scene and plays every scenario (about a minute), recording to <dir>/timeline.tsv.
       Run it under WAYLAND_DEBUG=1 TELAR_PERF=1 with stderr sent to <dir>/wayland.log: that log is
       the compositor-visible half of the evidence.
-  hogar-shell-spike report <phase-dir>
-      Judges <phase-dir>/per-surface and <phase-dir>/merged against the plan's criteria.
+  hogar-shell-spike report <run-dir>
+      Judges the run in <run-dir> against the plan's criteria.
 
 nix/spike.sh runs the phases end to end.
 ";
@@ -44,7 +44,6 @@ fn cap_malloc_arenas() {
 fn cap_malloc_arenas() {}
 
 fn parse_run(args: &[String]) -> Result<RunArgs, String> {
-    let mut mode = None;
     let mut out = None;
     let mut output = None;
     let mut clicks = false;
@@ -53,9 +52,6 @@ fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().cloned().ok_or(format!("{flag} needs a value"));
         match flag.as_str() {
-            "--mode" => {
-                mode = Some(Mode::parse(&value()?).ok_or("--mode is per-surface or merged")?)
-            }
             "--out" => out = Some(PathBuf::from(value()?)),
             "--output" => output = Some(value()?),
             "--note" => note = Some(value()?),
@@ -64,7 +60,6 @@ fn parse_run(args: &[String]) -> Result<RunArgs, String> {
         }
     }
     Ok(RunArgs {
-        mode: mode.ok_or("--mode is required")?,
         out: out.ok_or("--out is required")?,
         output,
         clicks,

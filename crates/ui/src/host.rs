@@ -7,7 +7,9 @@ use platform_wayland::EventSender;
 
 use telar::{Color, LayoutError};
 
-use config::{Config, Edge, ModuleOptions, ResolvedShape, SurfaceEnv};
+use config::{Config, Edge, ModuleOptions, ResolvedShape};
+
+use crate::chrome::Chrome;
 
 use crate::descriptor::FieldDef;
 
@@ -196,16 +198,16 @@ pub struct Host {
 }
 
 impl Host {
-    /// A chip on `edge`'s bar as `config` draws it.
+    /// A chip on a bar `thickness` across along `edge`, shaped by the global `[shape]`: what a chip is when nothing but the edge and the thickness is known about the bar it is on.
     pub fn chip(
         instance: InstanceId,
         config: Arc<Config>,
         edge: Edge,
+        thickness: f32,
         accent: Color,
         foreground: Color,
         output: Option<String>,
     ) -> Self {
-        let thickness = config.bars.get(edge).size as f32;
         let extent = if edge.is_vertical() {
             Size {
                 width: thickness,
@@ -222,7 +224,7 @@ impl Host {
             representation: Representation::Chip,
             extent,
             axis: Some(edge),
-            shape: config.shape_for(edge),
+            shape: config.shape_from(None, None, None, None),
             accent,
             foreground,
             output,
@@ -233,7 +235,7 @@ impl Host {
 
     /// A representation placed inside an area of the layout, with its box and its shape already decided.
     ///
-    /// [`Host::chip`] answers the same question by reading `config.bars.get(edge).size` and `config.shape_for(edge)`, which only works while a bar's thickness and shape are config keys addressed by edge. An area carries both itself, and several areas can share an edge, so the caller passes what it resolved instead of naming an edge for this to look up. `config` stays, because it is what `host.options()` and every behaviour key are read from.
+    /// An area carries its own box and shape, and several areas can share an edge, so the caller passes what it resolved. `config` stays, because it is what `host.options()` and every behaviour key are read from.
     #[allow(clippy::too_many_arguments)]
     pub fn placed(
         instance: InstanceId,
@@ -260,25 +262,24 @@ impl Host {
         }
     }
 
-    /// A representation that fills a surface of its own — a panel, a popout card — `extent` across, on the surface `env` describes.
-    pub fn on_surface(
+    pub fn in_chrome(
         instance: InstanceId,
         representation: Representation,
-        env: &SurfaceEnv,
+        chrome: &Chrome,
         extent: Size,
     ) -> Self {
-        let theme = env.config.resolve_theme();
+        let theme = chrome.config.resolve_theme();
         Self {
             instance,
             representation,
             extent,
             axis: None,
-            shape: env.config.shape_for(env.edge),
+            shape: chrome.shape,
             accent: theme.accent,
             foreground: theme.text,
-            output: env.output.clone(),
+            output: chrome.output.clone(),
             audience: Audience::Owner,
-            config: Arc::clone(&env.config),
+            config: Arc::clone(&chrome.config),
         }
     }
 
@@ -387,16 +388,13 @@ mod tests {
     use crate::descriptor::Privacy;
 
     fn chip(edge: Edge, thickness: u32) -> Host {
-        let mut config: Config =
+        let config: Config =
             toml::from_str("[shape]\nmode=\"chips\"\ngap=0\nspacing=8\nradius=12\n").unwrap();
-        config.bars.top.size = thickness;
-        config.bars.bottom.size = thickness;
-        config.bars.left.size = thickness;
-        config.bars.right.size = thickness;
         Host::chip(
             InstanceId::new("clock"),
             Arc::new(config),
             edge,
+            thickness as f32,
             Color::TRANSPARENT,
             Color::TRANSPARENT,
             None,
@@ -430,6 +428,7 @@ mod tests {
             InstanceId::new("clock"),
             Arc::new(config),
             Edge::Top,
+            34.0,
             Color::TRANSPARENT,
             Color::TRANSPARENT,
             None,

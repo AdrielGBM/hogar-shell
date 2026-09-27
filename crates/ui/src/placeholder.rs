@@ -182,6 +182,7 @@ mod tests {
             crate::host::InstanceId::new("clokc"),
             std::sync::Arc::new(config::Config::starter()),
             config::Edge::Top,
+            34.0,
             fill(NordTheme::new()),
             ink(NordTheme::new()),
             None,

@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use ui::scale::{paint, space};
 
-use platform_wayland::{SurfaceHandle, request_close};
+use platform_wayland::KeyboardMode;
 use telar::{
     AlignItems, Canvas, Color, Container, Image, ImageData, JustifyContent, Key, LayoutError,
     LayoutItem, LayoutStyle, NamedKey, ObjectFit, PathData, PathStyle, Point, Raster, Rect,
@@ -24,8 +24,8 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use services::hyprland::{self, Client};
 use services::screenshot::{self, Area};
-use ui::panel::PanelSurface;
-use ui::placement::Placement;
+use surfaces::transient::{self, Place, Slot, Spec};
+use ui::chrome::Chrome;
 
 /// How close an edge has to come to a window's own before it snaps to it, in logical pixels. Generous enough that a hand-drawn box lands flush, small enough that it never pulls a deliberate selection off target.
 const SNAP: f32 = 12.0;
@@ -42,17 +42,11 @@ pub struct Picked {
     pub frozen: Option<screenshot::Image>,
 }
 
-thread_local! {
-    /// The open picker. Single-slot: a second one would leave two overlays fighting for the pointer, and the first one's selection would land after the second had already covered the screen.
-    static OPEN: RefCell<Option<SurfaceHandle>> = const { RefCell::new(None) };
-}
+/// The picker's id. Single-slot: a second one would leave two overlays fighting for the pointer, and the first one's selection would land after the second had already covered the screen.
+const ID: &str = "picker";
 
 pub fn is_open() -> bool {
-    OPEN.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .is_some_and(|handle| !handle.is_closing())
-    })
+    transient::is_open(ID)
 }
 
 /// Opens the picker on the focused screen and calls `then` with the selection. Cancelling — Escape, or a right-click — closes the overlay and calls nothing.
@@ -60,39 +54,40 @@ pub fn pick(then: impl Fn(Picked) + 'static) {
     if is_open() {
         return;
     }
-    let output = surfaces::shell::focused_output();
+    let output = surfaces::transient::focused_output();
     let config = config::config_for(output.as_deref());
     let screen = output_box(output.as_deref());
-    // Taken before the surface exists, which is the only moment that answers "what was on screen when the user asked". Held on the app rather than in the tree, so it also survives a rebuild — a config change while a selection is being drawn must not throw away the picture the selection is being drawn on.
+    // Taken before the picker's transient opens, which is the only moment that answers "what was on screen when the user asked".
     let frozen = config
         .screenshot
         .freeze
         .then(|| output.as_deref().and_then(frozen_output))
         .flatten();
 
-    // Held on the surface rather than in the tree, so both survive a rebuild: a config change while a selection is being drawn must not throw away the picture it is being drawn on, nor who is waiting for it.
+    // Held in this closure's captures rather than in the tree, so both survive a rebuild: a config change while a selection is being drawn must not throw away the picture it is being drawn on, nor who is waiting for it.
     let frozen = Rc::new(RefCell::new(frozen));
     let then: Rc<dyn Fn(Picked)> = Rc::new(then);
-    let handle = PanelSurface::new(placement(output), move |env| {
-        overlay(
-            env.config.resolve_theme(),
-            screen,
-            Rc::clone(&frozen),
-            Rc::clone(&then),
-        )
-    })
-    .open_handle();
-    OPEN.with(|slot| *slot.borrow_mut() = Some(handle));
+    let spec = Spec::new(
+        ID,
+        Place::Whole,
+        Rc::new(move |chrome: &Chrome| {
+            overlay(
+                chrome.config.resolve_theme(),
+                screen,
+                Rc::clone(&frozen),
+                Rc::clone(&then),
+            )
+        }),
+    )
+    .slot(Slot::Free)
+    .output(output)
+    .keyboard(KeyboardMode::Exclusive);
+    transient::open(spec);
 }
 
 /// Closes whatever picker is up (`hogar-shell screenshot cancel`, or a second request replacing the first).
 pub fn close() {
-    OPEN.with(|slot| *slot.borrow_mut() = None);
-}
-
-/// The whole screen, over everything — including a fullscreen window, because the user asked to select a region of what they can *see* — and holding the keyboard, so Escape arrives without the overlay having to be clicked into first. Both are what [`Placement::screen`] means.
-fn placement(output: Option<String>) -> Placement {
-    Placement::screen("hogar-shell-picker").output(output)
+    transient::close(ID);
 }
 
 /// Where the picker's screen is and how big it is, in the compositor's logical coordinates. The origin is what turns a surface-local selection into the global rectangle every consumer takes; the size is what a click on empty desktop selects, and what says how many image pixels one logical pixel is.
@@ -190,10 +185,10 @@ fn overlay(
             .unwrap_or_else(|| whole_output(&click_windows));
         commit_on_click(area);
     })
-    .on_alt_press(|_button| request_close())
+    .on_alt_press(|_button| close())
     .on_key(|key: &Key| {
         if matches!(key, Key::Named(NamedKey::Escape)) {
-            request_close();
+            close();
         }
     });
     Ok(Box::new(root))
@@ -201,7 +196,7 @@ fn overlay(
 
 /// Crops the still (when there is one), closes the overlay, and hands the selection on.
 ///
-/// The order matters even with a still: the consumer may be the recorder, which starts capturing the screen for real, and it must not start while the overlay is still mapped. `request_close` only asks — the driver tears the surface down on its next turn — so the callback is deferred past that turn.
+/// The order matters even with a still: the consumer may be the recorder, which starts capturing the screen for real, and it must not start while the overlay is still mapped. `close` only asks — the node is removed from the overlay window on its next turn — so the callback is deferred past that turn.
 fn finish(
     area: Area,
     screen: Screen,
@@ -209,7 +204,7 @@ fn finish(
     then: &Rc<dyn Fn(Picked)>,
 ) {
     if area.is_empty() {
-        request_close();
+        close();
         return;
     }
     let global = Area {
@@ -231,7 +226,7 @@ fn finish(
         )
         .ok()
     });
-    request_close();
+    close();
     let then = Rc::clone(then);
     platform_wayland::timeout(std::time::Duration::from_millis(80), move || {
         then(Picked {
@@ -432,7 +427,6 @@ fn snapped(drawn: Area, rects: &[Area]) -> Area {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use platform_wayland::{KeyboardInteractivity, Layer};
 
     fn rects() -> Vec<Area> {
         vec![
@@ -522,21 +516,6 @@ mod tests {
                 height: 1080
             }
         );
-    }
-
-    #[test]
-    fn the_overlay_covers_the_whole_screen_and_takes_the_keyboard() {
-        let layer = placement(Some("DP-1".to_string())).layer_config();
-        assert_eq!(
-            layer.exclusive_zone, -1,
-            "a picker ignores the bars' reserved space: the user is selecting what they can see"
-        );
-        assert!(matches!(layer.layer, Layer::Overlay));
-        assert!(matches!(
-            layer.keyboard_interactivity,
-            KeyboardInteractivity::Exclusive
-        ));
-        assert!(!layer.input_transparent, "the drag has to land somewhere");
     }
 
     #[test]

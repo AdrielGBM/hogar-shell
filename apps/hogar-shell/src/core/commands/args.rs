@@ -1,6 +1,6 @@
 //! Turning a command line into what it acts on: the arguments, the monitor it names, and the readings a reply prints.
 use services::pipewire::NodeKind;
-use surfaces::shell;
+use surfaces::transient;
 
 pub(crate) fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
@@ -69,7 +69,7 @@ pub(crate) fn target_output(named: Option<&str>) -> Result<Option<String>, Strin
 pub(crate) fn reading_output(named: Option<&str>) -> Result<Option<String>, String> {
     match named {
         Some(name) => validated(name).map(Some),
-        None => Ok(shell::focused_output()),
+        None => Ok(transient::focused_output()),
     }
 }
 

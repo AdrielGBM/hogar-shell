@@ -265,14 +265,14 @@ mod tests {
 
         let over = Config::monitor_dir(&path).join("DP-1").join("config.toml");
         std::fs::create_dir_all(over.parent().unwrap()).unwrap();
-        std::fs::write(&over, "[bars.left]\nsize = 48\n").unwrap();
+        std::fs::write(&over, "[clock]\nformat = \"%H\"\n").unwrap();
         let overridden = Fingerprint::read(&path);
         assert_ne!(
             overridden, bare,
-            "a new override changes what a bar on that screen is built from"
+            "a new override changes what that screen is built from"
         );
 
-        std::fs::write(&over, "[bars.left]\nsize = 40\n").unwrap();
+        std::fs::write(&over, "[clock]\nformat = \"%M\"\n").unwrap();
         assert_ne!(
             Fingerprint::read(&path),
             overridden,

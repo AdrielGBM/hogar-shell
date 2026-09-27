@@ -5,10 +5,10 @@ title: Shape and motion
 summary: Bar shape, screen corners, and how much the shell animates.
 status: stable
 compositor: any
-config: [shape, corners, animation, keynav, panels]
-commands: []
+config: [shape, animation, keynav, panels]
+commands: [layout]
 deps: []
-see_also: [bars, panels, palettes]
+see_also: [bars, panels, palettes, widgets]
 ---
 
 # Shape and motion
@@ -24,16 +24,18 @@ they fall back to the theme's values.
 
 `gap` defaults to 0 — an edge-to-edge bar. Floating is opt-in.
 
-**Per bar**, `[bars.<edge>.shape]` overrides `mode`, `gap`, `spacing` and `radius` for one edge only. All four
-are unset by default, so a bar follows `[shape]` until it says otherwise.
+**Per bar**, a `Bar` area's own `shape` table overrides `mode`, `gap`, `spacing` and `radius` for that area
+alone. All four are unset by default, so a bar follows `[shape]` until its layout entry says otherwise — see
+[`BarShape`](../../reference/layout.md) in the layout reference.
 
 `frame` draws a ring around the screen, which is what makes a floating bar look intentional rather than
 detached.
 
-## Screen corners
+## A widget in a screen corner
 
-`[corners]` — `top_left`, `top_right`, `bottom_left`, `bottom_right`. Each names a corner treatment
-independently, so a bar on one edge can round into the screen without the opposite corners following.
+There is no separate corner config any more. A widget pinned to a screen corner — the clock face, say — is a
+`Grid` area whose `anchor` is one of the nine places, the same mechanism [Desktop widgets](../surfaces/widgets.md)
+places the clock and the visualiser with.
 
 ## Motion
 

@@ -22,10 +22,8 @@ pub struct Config {
     #[serde(skip)]
     pub tokens: TokenOverrides,
     pub general: GeneralConfig,
-    pub bars: BarsConfig,
     pub theme: ThemeConfig,
     pub shape: ShapeConfig,
-    pub corners: CornersConfig,
     pub panels: PanelsConfig,
     pub popouts: PopoutsConfig,
     pub icons: IconsConfig,
@@ -65,77 +63,6 @@ pub struct Config {
     pub modules: HashMap<String, ModuleOverride>,
 }
 
-/// One bar per screen edge; empty bars collapse to zero. Default is all-empty by design (serde fills missing fields), so configs get only what they specify — see [`Config::starter`] for the initial setup.
-///
-/// `excluded_screens` names outputs that get no bars at all — a TV, a projector, a monitor that only ever shows one fullscreen thing. Each entry matches the connector name (`DP-1`) as a `*` pattern, so `HDMI-*` covers a port whose index moves between reboots. *Which* modules a screen shows is a per-monitor config override (`monitors/<output>/config.toml`) rather than a key here: it is the same `[bars.<edge>]` shape, so there is nothing new to learn and nothing to keep in step.
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
-#[serde(default)]
-pub struct BarsConfig {
-    pub excluded_screens: Vec<String>,
-    pub top: BarConfig,
-    pub bottom: BarConfig,
-    pub left: BarConfig,
-    pub right: BarConfig,
-}
-
-impl BarsConfig {
-    pub fn get(&self, edge: Edge) -> &BarConfig {
-        match edge {
-            Edge::Top => &self.top,
-            Edge::Bottom => &self.bottom,
-            Edge::Left => &self.left,
-            Edge::Right => &self.right,
-        }
-    }
-
-    /// Whether this output should carry no bars. An output the compositor gave no name to is never excluded — there is nothing to match it by, and dropping the bars off an unnameable screen would look like a bug.
-    pub fn excludes(&self, output: Option<&str>) -> bool {
-        let Some(output) = output else {
-            return false;
-        };
-        self.excluded_screens
-            .iter()
-            .any(|pattern| glob_matches(pattern, output))
-    }
-}
-
-#[derive(Deserialize, Serialize, Clone, Debug)]
-#[serde(default)]
-pub struct BarConfig {
-    pub size: u32,
-    pub start: Vec<ModuleEntry>,
-    pub center: Vec<ModuleEntry>,
-    pub end: Vec<ModuleEntry>,
-    pub shape: BarShape,
-    /// Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-    pub persistent: bool,
-    /// Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-    pub show_on_hover: bool,
-    /// How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-    pub peek: u32,
-}
-
-impl BarConfig {
-    pub fn is_empty(&self) -> bool {
-        self.start.is_empty() && self.center.is_empty() && self.end.is_empty()
-    }
-}
-
-impl Default for BarConfig {
-    fn default() -> Self {
-        Self {
-            size: 34,
-            start: Vec::new(),
-            center: Vec::new(),
-            end: Vec::new(),
-            shape: BarShape::default(),
-            persistent: true,
-            show_on_hover: true,
-            peek: 2,
-        }
-    }
-}
-
 impl Config {
     /// How long a wallpaper transition actually runs, after `[animation]` has had its say. Zero when animation is off or the transition is `none`, which is what makes "wait for the picture to settle" a no-op there instead of a pause with nothing happening in it.
     pub fn wallpaper_transition(&self) -> Duration {
@@ -158,62 +85,9 @@ impl Config {
         (mode, self.theme.requested_variant())
     }
 
-    /// Fresh-install starter config (distinct from `Default`, which is all-empty and backs serde's missing-field fill).
+    /// The config a fresh install is seeded with. Every default: what the shell draws where is the layout's, and the built-in layout is what a fresh install shows.
     pub fn starter() -> Self {
-        Self {
-            tokens: TokenOverrides::default(),
-            bars: BarsConfig {
-                top: BarConfig {
-                    size: 34,
-                    start: vec![ModuleEntry::bare("workspaces")],
-                    center: vec![ModuleEntry::bare("clock")],
-                    end: vec![ModuleEntry::bare("notes")],
-                    ..BarConfig::default()
-                },
-                ..BarsConfig::default()
-            },
-            theme: ThemeConfig::default(),
-            shape: ShapeConfig::default(),
-            corners: CornersConfig::default(),
-            panels: PanelsConfig::default(),
-            popouts: PopoutsConfig::default(),
-            icons: IconsConfig::default(),
-            stack: StackConfig::default(),
-            notifications: NotificationsConfig::default(),
-            toasts: ToastsConfig::default(),
-            screenshot: ScreenshotConfig::default(),
-            recorder: RecorderConfig::default(),
-            utilities: UtilitiesConfig::default(),
-            sidebar: SidebarConfig::default(),
-            background: BackgroundConfig::default(),
-            wallpaper: WallpaperConfig::default(),
-            active_window: ActiveWindowConfig::default(),
-            clock: ClockConfig::default(),
-            media: MediaConfig::default(),
-            lyrics: LyricsConfig::default(),
-            workspaces: WorkspacesConfig::default(),
-            launcher: LauncherConfig::default(),
-            audio: AudioConfig::default(),
-            visualiser: VisualiserConfig::default(),
-            brightness: BrightnessConfig::default(),
-            temperature: TemperatureConfig::default(),
-            battery: BatteryConfig::default(),
-            lock_status: LockStatusConfig::default(),
-            lock: LockConfig::default(),
-            idle: IdleConfig::default(),
-            status_icons: StatusIconsConfig::default(),
-            network: NetworkConfig::default(),
-            bluetooth: BluetoothConfig::default(),
-            gpu: GpuConfig::default(),
-            weather: WeatherConfig::default(),
-            dashboard: DashboardConfig::default(),
-            paths: PathsConfig::default(),
-            tray: TrayConfig::default(),
-            animation: AnimationConfig::default(),
-            keynav: KeyNavConfig::default(),
-            modules: HashMap::new(),
-            general: GeneralConfig::default(),
-        }
+        Self::default()
     }
 
     /// The command for a well-known helper application: `[general.apps]`, else the legacy `[general] terminal` for the terminal, else the built-in fallback. Resolved here rather than at each call site so every affordance that opens a real application agrees on which one that is.
@@ -336,41 +210,7 @@ impl Config {
         (surface - SETTINGS_CHROME).max(160.0)
     }
 
-    /// Which zone (start/center/end) a module occupies on `edge`, for deriving its drawer's alignment. A module placed twice answers with the first zone it appears in — the panel is keyed by module id, so there is only one of it to align.
-    pub fn zone_of(&self, edge: Edge, module_id: &str) -> Option<Zone> {
-        let bar = self.bars.get(edge);
-        let holds = |entries: &[ModuleEntry]| entries.iter().any(|m| m.id == module_id);
-        if holds(&bar.start) {
-            Some(Zone::Start)
-        } else if holds(&bar.center) {
-            Some(Zone::Center)
-        } else if holds(&bar.end) {
-            Some(Zone::End)
-        } else {
-            None
-        }
-    }
-
-    /// The container variant for a bar entry: its own `variant`, else the module's `[modules.<id>]` override.
-    pub fn entry_variant(&self, entry: &ModuleEntry) -> Variant {
-        entry.variant.unwrap_or_else(|| self.variant_for(&entry.id))
-    }
-
-    /// The accent-token name for a bar entry: its own `accent`, else the module's, else the global one.
-    pub fn entry_accent_name<'a>(&'a self, entry: &'a ModuleEntry) -> &'a str {
-        match entry.accent.as_deref() {
-            Some(accent) => accent,
-            None => self.accent_name_for(&entry.id),
-        }
-    }
-
-    /// Effective shape for edge: per-bar override → global `[shape]` → (for spacing/radius) the theme.
-    pub fn shape_for(&self, edge: Edge) -> ResolvedShape {
-        let b = &self.bars.get(edge).shape;
-        self.shape_from(b.mode, b.gap, b.spacing, b.radius)
-    }
-
-    /// The same three-step fallback — what was asked for, then global `[shape]`, then the theme — against overrides that came from somewhere other than `[bars.<edge>.shape]`.
+    /// The same three-step fallback — what was asked for, then global `[shape]`, then the theme — against the overrides an area of the layout writes on itself.
     ///
     /// Taken as four loose options rather than as a struct because the layout model owns the struct these now come from, and `crates/config` is below it: a parameter of that type here would invert the dependency and make the config crate need the model that is built on top of it.
     pub fn shape_from(
@@ -458,83 +298,12 @@ impl Config {
         theme
     }
 
-    /// The corner radius for `edge`: per-bar override → global `[shape] radius` → the theme's `radius`.
-    pub fn resolved_radius(&self, edge: Edge) -> f32 {
-        let b = &self.bars.get(edge).shape;
-        b.radius
-            .or(self.shape.radius)
-            .map(|r| r as f32)
-            .unwrap_or_else(|| self.resolve_theme().radius)
-    }
-
-    /// The module spacing for `edge`: per-bar override → global `[shape] spacing` → the theme's `spacing`.
-    pub fn resolved_spacing(&self, edge: Edge) -> f32 {
-        let b = &self.bars.get(edge).shape;
-        b.spacing
-            .or(self.shape.spacing)
-            .map(|s| s as f32)
-            .unwrap_or_else(|| self.resolve_theme().spacing)
-    }
-
-    /// Whether a bar hugs its edge; frame forces hug, otherwise only at gap == 0.
-    pub fn hugs(&self, edge: Edge) -> bool {
-        self.shape.frame || self.shape_for(edge).gap == 0
-    }
-
-    /// The bar's effective outer gap on `edge`: 0 when it hugs (frame or gap == 0), else its configured gap.
-    pub fn edge_gap(&self, edge: Edge) -> u32 {
-        if self.hugs(edge) {
-            0
-        } else {
-            self.shape_for(edge).gap
+    /// How far an area of `shape` stands off its edge: nothing under `[shape] frame`, whose ring every bar is part of, and its own gap otherwise.
+    pub fn gap_of(&self, shape: &ResolvedShape) -> u32 {
+        match self.shape.frame {
+            true => 0,
+            false => shape.gap,
         }
-    }
-
-    /// Space the bar reserves from its edge — its outer gap plus thickness — i.e. how far a panel or app must sit from the edge to clear it.
-    ///
-    /// An auto-hidden bar reserves nothing *of its own*, which is the whole meaning of `persistent = false`: a bar that is not there most of the time must not carve a strip out of every window's idea of the screen. Its peek strip is deliberately not counted either — reserving four pixels would tile every window four pixels short for a sliver the user asked to be able to ignore.
-    ///
-    /// But the `[shape] frame` ring is not the bar. It is drawn on the background layer, so it is only visible where no window covers it, and it is asked for on *every* edge at once. Reserving nothing at all for an auto-hiding edge tiled the windows straight over that edge's ring — three sides framed and one not. So an auto-hidden edge reserves exactly what it would with no bar on it at all.
-    pub fn edge_reserved(&self, edge: Edge) -> u32 {
-        if !self.bar_is_persistent(edge) {
-            return match self.shape.frame {
-                true => self.edge_gap(edge) + self.shape.inactive_size,
-                false => 0,
-            };
-        }
-        self.edge_gap(edge) + self.edge_thickness(edge)
-    }
-
-    /// Whether `edge`'s bar stays on screen. A bar with nothing on it is persistent by definition — there is no bar to hide — so this only ever answers `false` for an edge that actually carries one.
-    pub fn bar_is_persistent(&self, edge: Edge) -> bool {
-        !self.edge_present(edge) || self.bars.get(edge).persistent
-    }
-
-    /// How many logical pixels of a hidden bar stay on screen. Floored at 1: a strip the pointer cannot land on is a bar with no way back.
-    pub fn bar_peek(&self, edge: Edge) -> u32 {
-        self.bars.get(edge).peek.max(1)
-    }
-
-    /// The margin an auto-hidden bar sits at on its own anchored edge, so that exactly [`bar_peek`] pixels of it are on screen. Negative, and measured from the screen edge rather than from the bar's usual gap: a bar that is hiding has no gap to keep.
-    ///
-    /// [`bar_peek`]: Self::bar_peek
-    pub fn bar_hidden_offset(&self, edge: Edge) -> i32 {
-        self.bar_peek(edge) as i32 - self.edge_thickness(edge) as i32
-    }
-
-    /// The gap every panel keeps from the bar and the screen edges: the bar's own outer gap when it floats, so panels float in step with it, else a default so a hugging bar's panels still breathe. This is the "gaps_out"-style spacing that keeps a panel off the bar and off the corners.
-    ///
-    /// Derived, with no key to override it. There is no third case — a panel at a distance the bar is not at is not a preference, it is the shell losing its spacing.
-    pub fn panel_gap(&self, edge: Edge) -> u32 {
-        match self.edge_gap(edge) {
-            0 => DEFAULT_PANEL_GAP,
-            gap => gap,
-        }
-    }
-
-    /// The corner radius a panel uses: the same as the bar on `edge` (its resolved `radius`, which itself falls back to the theme), so a drawer, float, OSD and notification card all carry the bar's rounding instead of a per-panel value.
-    pub fn panel_radius(&self, edge: Edge) -> f32 {
-        self.resolved_radius(edge)
     }
 
     /// The space between two stacked cards — a run of toasts, a run of notification popups.
@@ -549,13 +318,7 @@ impl Config {
 
     /// How opaque the shell paints itself, `0.2`–`1` — every bar, panel, card and flash, from `[theme] opacity`. One key rather than one per surface: a shell whose drawer is translucent and whose bar is not is not a preference anybody holds, it is two settings that drifted.
     ///
-    /// This is also the half of "a blurred shell" that belongs here. The blur itself is the compositor's — hogar-shell names every surface it opens, so Hyprland can be told to blur them:
-    ///
-    /// ```text
-    /// layer_rule = blur, ^hogar-shell
-    /// ```
-    ///
-    /// Drawing it here instead would mean copying the screen behind every surface each frame and blurring it on the CPU, to reproduce what the compositor is already doing on the GPU. What the compositor cannot do is see through an opaque surface, which is what this key is for: without it the rule above blurs a region nothing shows.
+    /// This is also the half of "a blurred shell" that belongs here: the blur is the compositor's, asked for per area through `ext-background-effect-v1`, and it cannot see through an opaque paint.
     ///
     /// Floored well above transparent, and clamped rather than trusted: a shell painted at `0` is one whose panels are invisible and whose clicks land on them anyway, which reads as the whole thing being broken. A non-finite value in the file falls back to solid instead of poisoning every colour it touches.
     pub fn opacity(&self) -> f32 {
@@ -569,65 +332,6 @@ impl Config {
     /// The background every panel paints: the theme's surface token at the shell's opacity.
     pub fn panel_fill(&self) -> Color {
         self.resolve_theme().surface.with_alpha(self.opacity())
-    }
-
-    /// A panel's margin `(top, right, bottom, left)` off the screen edges: uniformly the [`panel_gap`](Self::panel_gap). A panel surface uses `exclusive_zone = 0`, so the compositor already positions it past every bar's reserved zone (the reservation strip's exclusive zone); the panel only adds the standard gap beyond that — re-adding the bar's thickness here would double the distance off the bar. The one distance rule every panel shares, so a drawer, an OSD and a notification stack all clear the bar by the same config-controlled gap.
-    pub fn panel_margin(&self, edge: Edge) -> (i32, i32, i32, i32) {
-        let g = self.panel_gap(edge) as i32;
-        (g, g, g, g)
-    }
-
-    /// Thickness of the surface on edge: bar size if active, inactive_size strip under frame, else 0.
-    pub fn edge_thickness(&self, edge: Edge) -> u32 {
-        let bar = self.bars.get(edge);
-        if !bar.is_empty() {
-            bar.size
-        } else if self.shape.frame {
-            self.shape.inactive_size
-        } else {
-            0
-        }
-    }
-
-    pub fn edge_present(&self, edge: Edge) -> bool {
-        self.edge_thickness(edge) > 0
-    }
-
-    /// The edge that owns corner (horizontal preferred over vertical); None if neither is active.
-    pub fn corner_owner(&self, corner: Corner) -> Option<Edge> {
-        let h = corner.horizontal_edge();
-        let v = corner.vertical_edge();
-        if self.edge_present(h) {
-            Some(h)
-        } else if self.edge_present(v) {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    /// Corner modules for edge's leading and trailing ends (routed via start/end zones, no separate surfaces).
-    pub fn corner_modules_for(&self, edge: Edge) -> (Option<&str>, Option<&str>) {
-        let (lead, trail) = edge.corners();
-        let owned = |c: Corner| {
-            if self.corner_owner(c) == Some(edge) {
-                self.corners.get(c)
-            } else {
-                None
-            }
-        };
-        (owned(lead), owned(trail))
-    }
-
-    /// Whether the bar surface is fully opaque, which is what lets it be cleared to a solid colour and declared non-transparent to the compositor. Only a hugging `bar` at full opacity, with no frame, qualifies.
-    ///
-    /// **Both exclusions are things that used to be invisible.** A bar below full opacity cleared to a solid colour is a bar whose opacity does nothing — the clear paints over what the alpha was for. And a framed bar paints no background of its own at all, because the frame's ring already covers the strip; clearing it solid puts that background back and darkens where the two overlap.
-    pub fn bar_surface_opaque(&self, edge: Edge) -> bool {
-        if self.shape.frame || self.opacity() < 1.0 {
-            return false;
-        }
-        let s = self.shape_for(edge);
-        s.mode == Shape::Bar && s.gap == 0 && s.radius == 0.0
     }
 
     /// Reads and parses `config.toml`, writing the starter config on a fresh install. Parse failures are returned rather than swallowed — a typo must not silently replace a user's whole setup with the starter bar, which is what discarding the error would do — and the caller decides what runs instead: a reload keeps the last config that loaded, and startup, which has none, falls back to the starter config; both say why.
@@ -656,7 +360,7 @@ impl Config {
 
     /// The config as `output` sees it: `config.toml` with `monitors/<output>/config.toml` deep-merged over it.
     ///
-    /// A merge rather than a replacement, so a per-monitor file says only what differs — a vertical bar on the second screen is four lines, not a copy of the whole config that then drifts. Tables merge key by key; anything else (a scalar, an array, a module list) replaces outright, because a half-overridden array is not something a user can predict.
+    /// A merge rather than a replacement, so a per-monitor file says only what differs rather than being a copy of the whole config that then drifts. Tables merge key by key; anything else (a scalar, an array) replaces outright, because a half-overridden array is not something a user can predict.
     ///
     /// Sections in [`GLOBAL_ONLY_SECTIONS`] are dropped from the override without a word here: one process owns them, so honouring them per monitor would be a setting that silently did nothing on every screen but one. Saying so is the config report's job — it names the section at the line the override sets it, once, where a log line here would repeat it at every merge.
     pub fn for_output(path: &Path, output: Option<&str>) -> Result<Self, LoadError> {

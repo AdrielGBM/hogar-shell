@@ -12,7 +12,7 @@ use telar::{
 };
 
 use super::{icon_collection, icon_view};
-use config::surface_env;
+use crate::chrome::Chrome;
 use config::theme::{FontRole, NordTheme};
 use util::asset::Load;
 use util::search;
@@ -35,8 +35,8 @@ pub fn icon_picker_overlay(
     on_select: impl Fn(String) + 'static,
     on_close: impl Fn() + 'static,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    if let Some(env) = surface_env() {
-        services::locale::attach(env.config.language());
+    if let Some(chrome) = Chrome::current() {
+        services::locale::attach(chrome.config.language());
     }
     let theme = use_theme::<NordTheme>();
     let on_close: Rc<dyn Fn()> = Rc::new(on_close);
@@ -344,8 +344,8 @@ fn message(
 }
 
 fn default_set() -> String {
-    surface_env()
-        .map(|e| e.config.icons.default_set.clone())
+    Chrome::current()
+        .map(|chrome| chrome.config.icons.default_set.clone())
         .unwrap_or_else(|| "lucide".to_string())
 }
 

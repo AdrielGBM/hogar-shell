@@ -2,6 +2,20 @@ pub use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity
 
 use crate::link::SurfaceUpdate;
 
+/// How much of the keyboard a surface needs.
+///
+/// The distinction decides who receives a keystroke *before* any click. Asking for more than is needed is not free: a surface holding the keyboard takes it from the focused window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyboardMode {
+    /// Display-only; never takes keyboard focus.
+    #[default]
+    None,
+    /// May be given focus on interaction, e.g. a click into a text field.
+    OnDemand,
+    /// Holds the keyboard for as long as it is mapped.
+    Exclusive,
+}
+
 #[derive(Clone)]
 pub struct LayerConfig {
     pub output: Option<String>,
@@ -14,10 +28,6 @@ pub struct LayerConfig {
     pub namespace: String,
     /// Layer surface reserves exclusive_zone only once mapped (needs a buffer).
     pub reserve_only: bool,
-    /// Empty input region routes pointer/touch through to surfaces beneath.
-    pub input_transparent: bool,
-    /// Carves the input region from the surface's interactive widgets each frame (via `telar::interactive_rects`): pointer input lands on pressable content, everything else falls through. For click-through overlays with tappable parts, such as notification popups. Takes precedence over `input_transparent`.
-    pub interactive_input_region: bool,
 }
 
 impl LayerConfig {
@@ -73,7 +83,7 @@ impl LayerConfig {
         }
     }
 
-    /// A layer window: anchored to all four edges at the compositor's size, and opted out of every exclusive zone, so every window on an output shares one coordinate space. How its input region is decided is not read from here — a layer window always carves it from its drawn content.
+    /// A layer window: anchored to all four edges at the compositor's size, and opted out of every exclusive zone, so every window on an output shares one coordinate space. Its input region is always carved from its drawn content.
     pub(crate) fn whole_output(output: Option<String>, layer: Layer, namespace: String) -> Self {
         Self {
             output,
@@ -85,8 +95,6 @@ impl LayerConfig {
             keyboard_interactivity: KeyboardInteractivity::None,
             namespace,
             reserve_only: false,
-            input_transparent: false,
-            interactive_input_region: false,
         }
     }
 }
@@ -103,8 +111,6 @@ impl Default for LayerConfig {
             keyboard_interactivity: KeyboardInteractivity::None,
             namespace: String::from("hogar-shell"),
             reserve_only: false,
-            input_transparent: false,
-            interactive_input_region: false,
         }
     }
 }
@@ -192,10 +198,6 @@ mod tests {
         assert_eq!(window.size, (0, 0), "both axes are the compositor's");
         assert_eq!(window.exclusive_zone, -1);
         assert_eq!(window.margin, (0, 0, 0, 0));
-        assert!(
-            !window.input_transparent && !window.interactive_input_region,
-            "a layer window's input region is never a creation-time choice"
-        );
         assert!(!window.reserve_only);
     }
 }

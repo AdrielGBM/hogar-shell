@@ -4,7 +4,7 @@ use crate::osd::{OsdKind, current_osd_kind, current_osd_radius};
 use ::config::theme::NordTheme;
 use ::services::{brightness, volume};
 use ::ui::glyph;
-use ::ui::panel::panel_fill;
+use ::ui::chrome::panel_fill;
 
 const TRACK_W: f32 = 172.0;
 const TRACK_H: f32 = 6.0;

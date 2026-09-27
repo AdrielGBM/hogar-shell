@@ -2,7 +2,7 @@
 
 use super::args::*;
 use super::{Command, Target};
-use surfaces::shell;
+use surfaces::transient;
 
 pub(crate) const PANEL: Target = Target {
     name: "panel",
@@ -40,8 +40,8 @@ pub(crate) const PANEL: Target = Target {
         Command {
             name: "list",
             args: "",
-            help: "which panels are open right now",
-            run: |_| Ok(shell::open_ids().join("\t")),
+            help: "which transients are open right now — a panel, but also the drawer, popout, tray menu, float, launcher, notification centre or region picker",
+            run: |_| Ok(transient::open_ids().join("\t")),
         },
     ],
 };
@@ -72,7 +72,7 @@ pub(crate) const LAUNCHER: Target = Target {
             args: "",
             help: "close the launcher",
             run: |_| {
-                surfaces::shell::close(modules::launcher::ID);
+                surfaces::transient::close(modules::launcher::ID);
                 Ok("closed".to_string())
             },
         },

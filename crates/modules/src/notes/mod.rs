@@ -11,9 +11,9 @@ use telar::{
 
 use config::theme::{FontRole, NordTheme};
 use services::notes::{self, Note};
+use ui::chrome::content_radius;
 use ui::host::Host;
 use ui::icon::{icon_picker_overlay, icon_view};
-use ui::panel::content_radius;
 use ui::scale::{corner, space};
 
 /// How long after the last edit to a note before it is written to disk (trailing-edge debounce).

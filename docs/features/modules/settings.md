@@ -22,7 +22,7 @@ search box over **every** key, including the ones no form displays.
 | Page | Covers |
 | --- | --- |
 | Appearance | `[theme]`, `[theme.colors]` |
-| Bars | `[bars]`, `[modules.*]`, `[[battery.warn_levels]]` |
+| Bars | `[modules.*]`, `[[battery.warn_levels]]` — not what is on a bar, or where: that is a layout edit, see [Bars](../surfaces/bars.md) |
 | Audio | `[audio]`, `[media]`, `[media.aliases]` |
 | Network | `[network]` |
 | Bluetooth | `[bluetooth]` |

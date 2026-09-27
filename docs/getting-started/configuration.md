@@ -16,10 +16,11 @@ see_also: [first-run, per-monitor, tokens]
 
 | Path | What it is |
 | --- | --- |
-| `~/.config/hogar-shell/config.toml` | everything; hot-reloaded when a save changes it |
+| `~/.config/hogar-shell/config.toml` | behaviour, theme and module defaults; hot-reloaded when a save changes it |
+| `~/.config/hogar-shell/layouts/<name>.toml` | what is drawn and where — bars, desktop widgets, the notification stack, per-output arrangement; see [Bars](../features/surfaces/bars.md) and the [Layout reference](../reference/layout.md) |
 | `~/.config/hogar-shell/tokens.toml` | design-token overrides — see [Tokens](../features/theming/tokens.md); hot-reloaded too |
-| `~/.config/hogar-shell/monitors/<output>/config.toml` | per-monitor overrides, same shape as the global file; hot-reloaded too |
-| `$XDG_STATE_HOME/hogar-shell/state.json` | runtime state the shell owns, not settings |
+| `~/.config/hogar-shell/monitors/<output>/config.toml` | per-monitor behaviour and theme overrides, same shape as the global file; hot-reloaded too |
+| `$XDG_STATE_HOME/hogar-shell/state.json` | runtime state the shell owns, not settings, including which layout is active |
 
 `XDG_CONFIG_HOME` moves the first three; `hogar-shell config path` prints where the shell is actually reading
 from.
@@ -70,9 +71,12 @@ hogar-shell config check
 
 Reads `config.toml` and every monitor override beside it, and names — by file, line and key — what they ask for
 that the shell cannot do: a module, dashboard page, utilities toggle or status icon it has no such id for; a
-theme, accent or `[theme.colors]` token it has no such name for; a `[corners]` module on a corner no bar runs
-along; and a section an override may not set. It exits non-zero when there is an error, so a script can run it
-before putting a config in place, and it works whether or not the shell is running.
+theme, accent or `[theme.colors]` token it has no such name for; a section an override may not set; and a key
+that moved to the layout — the old `bars`, `corners` and `widgets` sections, `general`'s old
+`show_over_fullscreen` switch, and the stack's old `edge`/`align`/`width` — naming the layout file to write it
+in instead. It exits non-zero when there
+is an error, so a script can run it before putting a config in place, and it works whether or not the shell is
+running. `hogar-shell layout check [name]` is the same idea for a layout file.
 
 The running shell keeps a notice up while a problem lasts: one card listing what is wrong with the files now,
 redrawn in place when that changes and withdrawn once nothing is left. A file that does not load is one of the
@@ -81,10 +85,10 @@ read. The shell also draws an unknown module or toggle as a placeholder where it
 leaving it out.
 
 `config check` fails only on an error — something asked for that the shell cannot do: a module, dashboard page,
-utilities toggle, status icon or colour token it has no such name for, or a file that does not load. What the
-shell does *instead* of what was asked is a warning: `nord` for an unknown theme, the palette's own accent for an
-unknown accent, every dashboard page when no page listed is one it has, a corner module no bar draws, and a
-section an override may not set.
+utilities toggle, status icon or colour token it has no such name for, a key that moved to the layout, or a
+file that does not load. What the shell does *instead* of what was asked is a warning: `nord` for an unknown
+theme, the palette's own accent for an unknown accent, every dashboard page when no page listed is one it has,
+and a section an override may not set.
 
 ## Sections and what they belong to
 
@@ -95,7 +99,9 @@ to "which section" is the page, and the route from "what can I set" to "what doe
 
 Three sections are cross-cutting rather than one feature's:
 
-- `[general]` — language, the terminal and default applications, whether surfaces show over fullscreen windows.
+- `[general]` — language, the terminal and default applications. Whether something stays over a fullscreen
+  window is a per-area `above_fullscreen` flag in the layout now, not a global switch — see the
+  [Layout reference](../reference/layout.md).
 - `[paths]` — where wallpapers, screenshots, recordings, lyrics and assets live.
 - `[modules.<id>]` — per-module presentation overrides (variant, accent, whether its panel opens as a drawer or
   a float, and that float's size). Keyed by module id, so it applies to every copy of that module on every bar.

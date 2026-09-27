@@ -38,7 +38,7 @@ pub fn current_osd_kind() -> OsdKind {
 
 /// The corner radius the OSD being built uses — the bar's, like every other panel's; read by `osd.rsx`.
 pub fn current_osd_radius() -> f32 {
-    ui::panel::content_radius()
+    ui::chrome::content_radius()
 }
 
 /// Builds the OSD's content tree for `kind`/`theme` (declared in `osd.rsx`), putting both in scope for it first — which is why the surface calls this rather than the component directly.

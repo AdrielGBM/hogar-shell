@@ -20,7 +20,7 @@ pub fn entries() -> Vec<PreviewEntry> {
             preview_name: "Popup stack",
             build: crate::notifications::popups_preview,
             surface: Some(PreviewSurface::new(
-                ::config::StackConfig::default().width,
+                crate::stack::swipe::DEFAULT_WIDTH,
                 360.0,
             )),
         },

@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use telar::{PreviewEntry, PreviewSurface};
 
-use config::{Config, SurfaceEnv, Variant, set_surface_env};
+use config::{Config, Edge, Variant};
 
+use crate::chrome::Chrome;
 use crate::host::{Host, InstanceId, Representation, Size};
 use crate::module::module_foreground;
-use crate::panel::drawn_edge;
+
+const BAR: f32 = 34.0;
 
 /// The previews this crate registers by hand, because what they draw is built by a Rust function and a `[preview]` block needs a `.rsx` component to hang off. The app collects these next to every generated `telar_all_preview_entries()`, so `cargo telar preview`/`test` sees no difference between the two.
 ///
@@ -47,20 +49,24 @@ pub fn bar_chip() -> Host {
     bar_chip_with(|_| {})
 }
 
-/// Puts the bar surface the running config draws in scope, for a preview that builds a surface — the bar itself, or a panel hanging off it — rather than one chip.
-pub fn bar_surface() -> SurfaceEnv {
-    bar_surface_with(|_| {})
+pub fn chrome() -> Chrome {
+    chrome_with(|_| {})
 }
 
 /// [`bar_chip`] with the bar's config edited first, for a preview whose module reads a setting that decides whether it draws anything at all. The edited config is the host's, and is published as the running one too, for whatever the chip reads outside its host.
 pub fn bar_chip_with(edit: impl FnOnce(&mut Config)) -> Host {
-    let env = bar_surface_with(edit);
-    let config = &env.config;
-    let theme = config.resolve_theme();
-    let host = Host::chip(
+    let chrome = chrome_with(edit);
+    let theme = chrome.config.resolve_theme();
+    let host = Host::placed(
         InstanceId::new("preview"),
-        Arc::clone(config),
-        env.edge,
+        Arc::clone(&chrome.config),
+        Representation::Chip,
+        Size {
+            width: f32::INFINITY,
+            height: BAR,
+        },
+        Some(Edge::Top),
+        chrome.shape,
         theme.accent,
         module_foreground(Variant::Default, theme.accent, theme),
         None,
@@ -69,19 +75,19 @@ pub fn bar_chip_with(edit: impl FnOnce(&mut Config)) -> Host {
     host
 }
 
-fn bar_surface_with(edit: impl FnOnce(&mut Config)) -> SurfaceEnv {
+fn chrome_with(edit: impl FnOnce(&mut Config)) -> Chrome {
     let mut config = config::config()
         .map(|live| (*live).clone())
         .unwrap_or_else(Config::starter);
     edit(&mut config);
     let config = Arc::new(config);
     config::set_config(Arc::clone(&config));
-    let env = SurfaceEnv::for_edge(Arc::clone(&config), drawn_edge(&config), None);
-    set_surface_env(env.clone());
-    env
+    let chrome = Chrome::global(config, None);
+    chrome.provide();
+    chrome
 }
 
-/// A host for `module` shown as `representation` on a surface of its own, `extent` across, resolved against the running config — or the starter config where nothing runs. Nothing is put in scope: the caller builds under the host it is handed.
+/// A host for `module` shown as `representation`, `extent` across, resolved against the running config — or the starter config where nothing runs. Nothing is put in scope: the caller builds under the host it is handed.
 pub fn surface_host(module: &str, representation: Representation, extent: Size) -> Host {
     let config = config::config().unwrap_or_else(|| Arc::new(Config::starter()));
     host_on(config, module, representation, extent)
@@ -94,8 +100,12 @@ pub fn host_on(
     representation: Representation,
     extent: Size,
 ) -> Host {
-    let env = SurfaceEnv::for_edge(Arc::clone(&config), drawn_edge(&config), None);
-    Host::on_surface(InstanceId::of_module(module), representation, &env, extent)
+    Host::in_chrome(
+        InstanceId::of_module(module),
+        representation,
+        &Chrome::global(config, None),
+        extent,
+    )
 }
 
 /// [`host_on`] for a representation an area hands an edge to — a dock's row of bars, which stands on the edge its area hugs rather than on one of its own.

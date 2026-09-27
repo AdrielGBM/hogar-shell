@@ -10,8 +10,8 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use util::reactive::{Live, fixed, fixed_text};
 
+use crate::chrome::{content_radius, panel_fill};
 use crate::icon::icon_view;
-use crate::panel::{content_radius, panel_fill};
 use crate::scale::space;
 use crate::widget;
 

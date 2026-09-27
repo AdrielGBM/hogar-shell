@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use telar::{ImageData, SvgData};
 
-use config::surface_env;
+use crate::chrome::Chrome;
 
 /// The desktop icon size a notification card asks the theme for; the card renders it at 36px, so a 48px source downscales cleanly, and scalable (SVG) entries match regardless.
 const REQUEST_SIZE: u32 = 48;
@@ -31,8 +31,8 @@ pub fn resolve_app_icon(reference: &str) -> Option<AppIcon> {
     if let Some(hit) = CACHE.with(|c| c.borrow().get(reference).cloned()) {
         return hit;
     }
-    let theme = surface_env()
-        .map(|env| env.config.icons.app_icon_theme.clone())
+    let theme = Chrome::current()
+        .map(|chrome| chrome.config.icons.app_icon_theme.clone())
         .unwrap_or_default();
     let icon = locate(reference, &theme).and_then(|path| load(&path));
     CACHE.with(|c| c.borrow_mut().insert(reference.to_string(), icon.clone()));

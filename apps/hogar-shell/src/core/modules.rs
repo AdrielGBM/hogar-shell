@@ -776,12 +776,14 @@ mod tests {
         ui::descriptor::lookup(MODULES, id).unwrap_or_else(|| panic!("'{id}' is not in the table"))
     }
 
+    const BAR: f32 = 34.0;
+
     /// The box a representation is measured in: a bar's strip for a chip, the surface it opens on for the rest.
     fn extent(config: &Config, representation: Representation) -> Size {
         match representation {
             Representation::Chip => Size {
                 width: 600.0,
-                height: config.bars.top.size as f32,
+                height: BAR,
             },
             Representation::Popout => Size {
                 width: config.popouts.card_width(),
@@ -802,6 +804,7 @@ mod tests {
                 InstanceId::of_module(id),
                 Arc::clone(config),
                 Edge::Top,
+                BAR,
                 theme.accent,
                 theme.text,
                 None,

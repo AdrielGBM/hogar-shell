@@ -12,14 +12,16 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use telar::{
-    App, Color, Component, Container, LayoutError, LayoutItem, LayoutStyle, Rect, SizeDimension,
-    WindowConfig, WindowRoot, box_item, effect, reset_layout_runtime, set_context, set_theme,
-    track_layout,
+    App, Color, Component, Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, Rect,
+    RwSignal, ScopedTheme, SizeDimension, WindowConfig, WindowRoot, box_item, effect,
+    provide_theme, reset_layout_runtime, set_context, signal, track_layout,
 };
 
 use config::theme::NordTheme;
 use config::{Config, Edge, LiveConfig};
-use layout::{Backdrop, LayerKind, Resolved, ResolvedArea, ResolvedLayer, Within};
+use layout::{
+    Backdrop, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedLayer, Within,
+};
 use platform_wayland::{
     KeyboardInteractivity, KeyboardMode, Layer, LayerWindowHandle, background_effect_supported,
     open_layer_window,
@@ -61,12 +63,27 @@ pub struct Reserved {
 impl Reserved {
     /// What `resolved` takes off each edge of the output it describes.
     ///
-    /// The config is here for the one part of the answer the model cannot give: a bar floats at `[shape] gap` from its edge, and a bar that floats reserves that air too, or a window would tile under it. The gap is a `[shape]` fallback as often as it is written on the area, so it is resolved where the config is rather than baked into a layout that would then stop following it.
+    /// The config is here for the one part of the answer the model cannot give: a bar floats at its gap from its edge, and a bar that floats reserves that air too, or a window would tile under it. The gap falls back to `[shape] gap` as often as it is written on the area, so it is resolved where the config is rather than baked into a layout that would then stop following it.
+    ///
+    /// Only an output-level area may reserve, so the bars read here are the ones every workspace on the screen shares.
     pub fn of(resolved: &Resolved, config: &Config) -> Self {
+        let air = |edge: Edge| {
+            resolved
+                .areas()
+                .filter_map(|(_, area)| match area.kind {
+                    ResolvedAreaKind::Bar {
+                        edge: on, shape, ..
+                    } if on == edge && area.reserve => {
+                        Some(config.gap_of(&crate::bar::bar_shape(config, shape)) as f32)
+                    }
+                    _ => None,
+                })
+                .fold(0.0, f32::max)
+        };
         let on = |edge: Edge| {
             let depth = resolved.reserved(edge);
             match depth > 0.0 {
-                true => depth + config.edge_gap(edge) as f32,
+                true => depth + air(edge),
                 false => 0.0,
             }
         };
@@ -124,6 +141,7 @@ pub struct Reconciled {
 pub struct LayerWindows {
     areas: Rc<dyn Areas>,
     live: Vec<(WindowKey, Window)>,
+    holder: Holder,
 }
 
 impl LayerWindows {
@@ -132,7 +150,12 @@ impl LayerWindows {
         Self {
             areas,
             live: Vec::new(),
+            holder: Holder::default(),
         }
+    }
+
+    pub fn holder(&self) -> Holder {
+        self.holder.clone()
     }
 
     /// Brings the windows in line with `plans`: hands each one its layer's new arrangement, rebuilds it where the content changed, opens the windows a newly plugged monitor needs and closes the ones an unplugged monitor left behind.
@@ -173,6 +196,19 @@ impl LayerWindows {
             .iter()
             .filter(|(_, window)| window.presence.is_mapped())
             .count();
+        self.holder.set(
+            self.live
+                .iter()
+                .map(|(key, window)| (key.clone(), Rc::downgrade(&window.presence)))
+                .collect(),
+        );
+        crate::transient::prune(
+            &self
+                .live
+                .iter()
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>(),
+        );
         tracing::debug!(
             opened = done.opened,
             closed = done.closed,
@@ -247,6 +283,8 @@ impl LayerWindows {
             size: plan.size,
             reserved: plan.reserved,
         }));
+        let generation = Generation::default();
+        let shown = ScreenFeed::default();
         let surface = {
             let kind = key.layer;
             let output = key.output.clone();
@@ -254,6 +292,8 @@ impl LayerWindows {
             let config = config.clone();
             let demands = Rc::clone(&demands);
             let screen = Rc::clone(&screen);
+            let generation = generation.clone();
+            let shown = shown.clone();
             let areas = Rc::clone(&self.areas);
             move || {
                 let handle = Rc::new(open_layer_window(
@@ -267,6 +307,8 @@ impl LayerWindows {
                         config: config.clone(),
                         demands: Rc::clone(&demands),
                         screen: Rc::clone(&screen),
+                        generation: generation.clone(),
+                        shown: shown.clone(),
                         areas: Rc::clone(&areas),
                     },
                 ));
@@ -284,6 +326,8 @@ impl LayerWindows {
                 config,
                 demands,
                 screen,
+                generation,
+                shown,
                 presence,
             },
         ));
@@ -297,6 +341,8 @@ struct Window {
     demands: Rc<Demands>,
     /// Shared with the window: this output's size and reserved edges, both of which change under a window that stays and neither of which one layer can work out on its own.
     screen: Rc<Cell<Screen>>,
+    generation: Generation,
+    shown: ScreenFeed,
     presence: Rc<Presence>,
 }
 
@@ -314,8 +360,9 @@ impl Window {
             size: plan.size,
             reserved: plan.reserved,
         });
+        self.shown.set(self.screen.get());
         if content == Content::Rebuild {
-            self.presence.rebuild();
+            self.generation.bump();
             done.rebuilt += 1;
         }
         self.presence.set_draws(layer_draws(&self.layer.get()));
@@ -422,13 +469,6 @@ impl Presence {
         self.settle();
     }
 
-    /// A rebuild asked for while the window is closed is dropped, not queued: the surface that reopens builds from the cells as it mounts, so it is already what the rebuild was about.
-    fn rebuild(&self) {
-        if let Some(window) = self.window.borrow().as_ref() {
-            window.rebuild();
-        }
-    }
-
     fn shut(&self) {
         self.shut.set(true);
         self.on_screen.set(false);
@@ -477,6 +517,63 @@ impl Drop for Hold {
     fn drop(&mut self) {
         self.0.holds.set(self.0.holds.get().saturating_sub(1));
         self.0.settle();
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct Holder(Rc<RefCell<Vec<LiveWindow>>>);
+
+type LiveWindow = (WindowKey, Weak<Presence>);
+
+impl Holder {
+    fn set(&self, live: Vec<LiveWindow>) {
+        *self.0.borrow_mut() = live;
+    }
+
+    pub fn hold(&self, key: &WindowKey) -> Option<Hold> {
+        let presence = self
+            .0
+            .borrow()
+            .iter()
+            .find(|(live, _)| live == key)
+            .and_then(|(_, presence)| presence.upgrade())?;
+        (!presence.shut.get()).then(|| Hold::new(&presence))
+    }
+
+    pub fn keys(&self) -> Vec<WindowKey> {
+        self.0.borrow().iter().map(|(key, _)| key.clone()).collect()
+    }
+}
+
+/// The screen a live window covers, as a signal its transients place themselves by: a layout edit that moves a reserving bar changes the box a drawer is kept inside without rebuilding it.
+#[derive(Clone, Default)]
+struct ScreenFeed(Rc<Cell<Option<RwSignal<Screen>>>>);
+
+impl ScreenFeed {
+    fn set(&self, screen: Screen) {
+        if let Some(signal) = self.0.get().filter(RwSignal::is_alive) {
+            signal.set(screen);
+        }
+    }
+
+    fn attach(&self, signal: RwSignal<Screen>) {
+        self.0.set(Some(signal));
+    }
+}
+
+/// Which build of its areas a window is on. Bumping it rebuilds the areas and nothing else, so a layout edit leaves the transients above them — and whatever the user is doing in one — exactly as they were.
+#[derive(Clone, Default)]
+struct Generation(Rc<Cell<Option<RwSignal<u64>>>>);
+
+impl Generation {
+    fn bump(&self) {
+        if let Some(signal) = self.0.get().filter(RwSignal::is_alive) {
+            signal.update(|n| *n = n.wrapping_add(1));
+        }
+    }
+
+    fn attach(&self, signal: RwSignal<u64>) {
+        self.0.set(Some(signal));
     }
 }
 
@@ -692,41 +789,98 @@ struct LayerApp {
     demands: Rc<Demands>,
     /// This output's reserved edges and logical size, shared with the host because both are facts about the whole screen that one layer cannot see, and both change under a window that stays.
     screen: Rc<Cell<Screen>>,
+    generation: Generation,
+    shown: ScreenFeed,
     areas: Rc<dyn Areas>,
 }
 
 /// What a window needs to know about the output it covers in order to place the areas on it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct Screen {
-    size: (f32, f32),
-    reserved: Reserved,
+pub(crate) struct Screen {
+    pub(crate) size: (f32, f32),
+    pub(crate) reserved: Reserved,
 }
 
 impl LayerApp {
-    /// Keeps the window's blur region in step with where layout actually put the areas that asked to blur.
-    ///
-    /// An effect rather than a value read during the build, because at build time nothing has been laid out yet and every rectangle is still zero. It belongs to the owner of the build that registered it, so a rebuild disposes it and the next one takes over with whatever areas blur now. The region therefore lands one frame behind the layout that moved it — the same frame the input region already costs, and for the same reason.
-    ///
-    /// A zero-area rectangle is dropped rather than sent: it adds nothing to a `wl_region`, and before the first layout it is what every area reports.
-    fn watch_blur(&self, areas: Vec<telar::RwSignal<Rect>>) {
-        let demands = Rc::clone(&self.demands);
-        effect(move || {
-            let rects = areas
-                .iter()
-                .map(|area| area.get())
-                .filter(|rect| rect.width > 0.0 && rect.height > 0.0)
-                .collect();
-            demands.set_area_blur(rects);
-        });
+    fn build_areas(
+        &self,
+        theme: ScopedTheme,
+    ) -> impl Fn() -> Result<Box<dyn LayoutItem>, LayoutError> + 'static {
+        let (kind, output) = (self.kind, self.output.clone());
+        let (layer, config) = (self.layer.clone(), self.config.clone());
+        let (screen, demands) = (Rc::clone(&self.screen), Rc::clone(&self.demands));
+        let areas = Rc::clone(&self.areas);
+        move || {
+            let config = config.get();
+            let resolved = config.resolve_theme();
+            theme.set(resolved);
+            services::locale::attach(config.language());
+            let layer = layer.get();
+            let screen = screen.get();
+            let blur_available = background_effect_supported();
+            let mut nodes = Vec::with_capacity(layer.areas.len());
+            let mut blurring = Vec::new();
+            for area in &layer.areas {
+                // Its own owner, so the chrome an area provides — the global one here, a bar's own shape inside it — reaches only that area.
+                let _area = telar::owner_scope();
+                ui::chrome::Chrome::global(Arc::clone(&config), output.clone()).provide();
+                let built = areas.build(&AreaContext {
+                    area,
+                    layer: kind,
+                    output: output.as_deref(),
+                    config: &config,
+                    theme: resolved,
+                    bounds: screen.reserved.box_of(area.within, screen.size),
+                    reserved: screen.reserved,
+                    blur_available,
+                    demands: &demands,
+                    output_size: screen.size,
+                });
+                let node = match built {
+                    Ok(node) => node,
+                    Err(error) => {
+                        tracing::error!(
+                            area = %area.id,
+                            layer = %kind,
+                            "the area failed to build: {error}"
+                        );
+                        continue;
+                    }
+                };
+                if blurs(area)
+                    && let Some(rect) = track_layout(node.layout_node())
+                {
+                    blurring.push(rect);
+                }
+                nodes.push(node);
+            }
+            watch_blur(Rc::clone(&demands), blurring);
+            Container::new(whole_window(), nodes).map(box_item)
+        }
     }
+}
+
+/// Keeps the window's blur region in step with where layout actually put the areas that asked to blur.
+///
+/// An effect rather than a value read during the build, because at build time nothing has been laid out yet and every rectangle is still zero. It belongs to the owner of the build that registered it, so a rebuild disposes it and the next one takes over with whatever areas blur now. The region therefore lands one frame behind the layout that moved it — the same frame the input region already costs, and for the same reason.
+///
+/// A zero-area rectangle is dropped rather than sent: it adds nothing to a `wl_region`, and before the first layout it is what every area reports.
+fn watch_blur(demands: Rc<Demands>, areas: Vec<RwSignal<Rect>>) {
+    effect(move || {
+        let rects = areas
+            .iter()
+            .map(|area| area.get())
+            .filter(|rect| rect.width > 0.0 && rect.height > 0.0)
+            .collect();
+        demands.set_area_blur(rects);
+    });
 }
 
 impl App for LayerApp {
     fn root(&self) -> Box<dyn Component> {
         reset_layout_runtime();
         let config = self.config.get();
-        let theme = config.resolve_theme();
-        set_theme(theme);
+        let theme = ScopedTheme::new(config.resolve_theme());
         services::locale::attach(config.language());
         set_context(LayerWindowContext {
             layer: self.kind,
@@ -734,48 +888,32 @@ impl App for LayerApp {
             demands: Rc::clone(&self.demands),
         });
 
-        let layer = self.layer.get();
-        let screen = self.screen.get();
-        let blur_available = background_effect_supported();
-        let mut nodes = Vec::with_capacity(layer.areas.len());
-        let mut blurring = Vec::new();
-        for area in &layer.areas {
-            let built = self.areas.build(&AreaContext {
-                area,
-                layer: self.kind,
-                output: self.output.as_deref(),
-                config: &config,
-                theme,
-                bounds: screen.reserved.box_of(area.within, screen.size),
-                reserved: screen.reserved,
-                blur_available,
-                demands: &self.demands,
-                output_size: screen.size,
-            });
-            let node = match built {
-                Ok(node) => node,
-                Err(error) => {
-                    tracing::error!(
-                        area = %area.id,
-                        layer = %self.kind,
-                        "the area failed to build: {error}"
-                    );
-                    continue;
-                }
-            };
-            if blurs(area)
-                && let Some(rect) = track_layout(node.layout_node())
-            {
-                blurring.push(rect);
-            }
-            nodes.push(node);
-        }
-        self.watch_blur(blurring);
-
-        let root = ui::panel::or_empty(
-            self.kind.as_str(),
-            Container::new(whole_window(), nodes).map(box_item),
-        );
+        let generation = signal(0u64);
+        self.generation.attach(generation);
+        let build = self.build_areas(theme);
+        let screen = signal(self.screen.get());
+        self.shown.attach(screen);
+        let key = WindowKey {
+            output: self.output.clone(),
+            layer: self.kind,
+        };
+        let frame = crate::transient::Frame {
+            screen: screen.read_only(),
+            demands: Rc::clone(&self.demands),
+        };
+        let content = provide_theme(theme, move || {
+            let areas = ReactiveList::with_style(
+                whole_window(),
+                move || vec![generation.get()],
+                |build: &u64| *build,
+                move |_| build(),
+            )?;
+            let transients =
+                ui::chrome::or_empty("transient layer", crate::transient::layer(key, frame));
+            Container::new(whole_window(), vec![Box::new(areas), transients]).map(box_item)
+        })
+        .map(box_item);
+        let root = ui::chrome::or_empty(self.kind.as_str(), content);
         Box::new(WindowRoot::new(root))
     }
 
@@ -814,6 +952,7 @@ mod tests {
         AreaId, AreaStyle, BarShape, Expr, Extent, GroupId, GroupKind, InstanceId, Representation,
         ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Zone,
     };
+    use telar::set_theme;
     use ui::scale::paint;
 
     use super::*;
@@ -1283,6 +1422,222 @@ mod tests {
         );
     }
 
+    struct Counting(Rc<Cell<u32>>);
+
+    impl Areas for Counting {
+        fn build(&self, _: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+            self.0.set(self.0.get() + 1);
+            Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?))
+        }
+    }
+
+    /// The standing rule that hot reload is non-destructive: a layout edit builds the window's areas again and leaves a transient open in it — and whatever the user was doing there — as it was.
+    #[test]
+    fn a_layout_edit_rebuilds_the_areas_and_leaves_an_open_transient_alone() {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        crate::transient::close_all();
+        let areas = Rc::new(Cell::new(0));
+        let app = LayerApp {
+            kind: LayerKind::Top,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(layer(vec![bar("bar-top", &["clock"])])),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::default()),
+            screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(Counting(Rc::clone(&areas))),
+        };
+        let content = Rc::new(Cell::new(0));
+        let counted = Rc::clone(&content);
+        crate::transient::open(crate::transient::Spec::new(
+            "probe",
+            crate::transient::Place::Beside(crate::transient::Anchor {
+                output: Some(SCREEN.to_string()),
+                layer: LayerKind::Top,
+                edge: Edge::Top,
+                rect: Rect::new(10.0, 0.0, 20.0, 20.0),
+                chrome: ui::chrome::Chrome::global(config(), None),
+                gap: 8.0,
+            }),
+            Rc::new(move |_: &ui::chrome::Chrome| {
+                counted.set(counted.get() + 1);
+                Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?) as _)
+            }),
+        ));
+
+        let _root = app.root();
+        assert_eq!((areas.get(), content.get()), (1, 1));
+
+        app.generation.bump();
+        assert_eq!(areas.get(), 2, "the edit reached the areas");
+        assert_eq!(
+            content.get(),
+            1,
+            "the transient kept the tree it had: a rebuild would put the caret back at the start of whatever was being typed"
+        );
+        crate::transient::close_all();
+    }
+
+    struct Pressable(Rc<Cell<u32>>);
+
+    impl Areas for Pressable {
+        fn build(&self, _: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+            let pressed = Rc::clone(&self.0);
+            Ok(box_item(
+                StyledContainer::new(
+                    super::whole_window(),
+                    paint::md(Color::from_rgb_u8(40, 40, 40)),
+                    Vec::new(),
+                )?
+                .input_opaque()
+                .on_press(move || pressed.set(pressed.get() + 1)),
+            ))
+        }
+    }
+
+    /// The transient layer covers the whole window above the areas, and dispatch stops at the first sibling that covers a point — so a layer that took the pointer would leave every area under it dead to presses and hover, open transient or not.
+    #[test]
+    fn a_press_beside_an_open_transient_reaches_the_area_under_the_transient_layer() {
+        use telar::{Event, PointerButton, PointerSource};
+
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        crate::transient::close_all();
+        let pressed = Rc::new(Cell::new(0));
+        let app = LayerApp {
+            kind: LayerKind::Top,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(layer(vec![bar("bar-top", &["clock"])])),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::default()),
+            screen: Rc::new(Cell::new(Screen {
+                size: (400.0, 300.0),
+                reserved: Reserved::default(),
+            })),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(Pressable(Rc::clone(&pressed))),
+        };
+        crate::transient::open(crate::transient::Spec::new(
+            "card",
+            crate::transient::Place::Beside(crate::transient::Anchor {
+                output: Some(SCREEN.to_string()),
+                layer: LayerKind::Top,
+                edge: Edge::Top,
+                rect: Rect::new(10.0, 0.0, 20.0, 20.0),
+                chrome: ui::chrome::Chrome::global(config(), None),
+                gap: 8.0,
+            }),
+            Rc::new(|_: &ui::chrome::Chrome| {
+                Ok(box_item(StyledContainer::new(
+                    LayoutStyle::new().width(40.0).height(40.0),
+                    paint::md(Color::from_rgb_u8(200, 40, 40)),
+                    Vec::new(),
+                )?))
+            }),
+        ));
+
+        let mut root = app.root();
+        root.on_event(&Event::WindowResized {
+            width: 400,
+            height: 300,
+        });
+        let press = |x: f64, y: f64| Event::PointerPressed {
+            x,
+            y,
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        };
+        let release = |x: f64, y: f64| Event::PointerReleased {
+            x,
+            y,
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        };
+        root.on_event(&press(300.0, 250.0));
+        root.on_event(&release(300.0, 250.0));
+        assert_eq!(
+            pressed.get(),
+            1,
+            "a press where no transient draws belongs to the area under the transient layer"
+        );
+        crate::transient::close_all();
+    }
+
+    /// One window per layer per output is the whole surface model: a transient is a node in one of them, so nothing outside this host and the reservation strips may open a layer surface of its own.
+    #[test]
+    fn only_layer_windows_and_reservation_strips_open_layer_surfaces() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("the workspace root is two levels above this crate")
+            .to_path_buf();
+        let allowed = [
+            (
+                concat!("open_", "layer_window("),
+                "crates/surfaces/src/layer_window.rs",
+            ),
+            (concat!("open_", "layer_window("), "apps/spike/"),
+            (
+                concat!("open_", "reservation("),
+                "crates/surfaces/src/reconcile.rs",
+            ),
+        ];
+        let mut offenders = Vec::new();
+        let mut stack = vec![root.join("crates"), root.join("apps")];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = dir.read_dir() else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.file_name().and_then(|n| n.to_str()) != Some(".telar") {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                let is_source = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e == "rs" || e == "rsx");
+                if !is_source || relative.starts_with("crates/platform-wayland/") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                for (call, _) in allowed {
+                    let at_home = allowed
+                        .iter()
+                        .any(|(allowed, home)| *allowed == call && relative.starts_with(home));
+                    if text.contains(call)
+                        && !at_home
+                        && !offenders.contains(&format!("{relative}: {call}"))
+                    {
+                        offenders.push(format!("{relative}: {call}"));
+                    }
+                }
+                let opened = concat!("open_", "surface(");
+                if text.contains(opened) {
+                    offenders.push(format!("{relative}: {opened}"));
+                }
+            }
+        }
+        offenders.sort();
+        assert!(
+            offenders.is_empty(),
+            "a layer surface opened outside the layer-window host and the reservation strips: {offenders:#?}"
+        );
+    }
+
     /// An area builder that fills its window, so a captured frame says whether the window mounted anything at all.
     struct Solid(Color);
 
@@ -1306,6 +1661,8 @@ mod tests {
             config: LiveConfig::new(config()),
             demands: Rc::new(Demands::default()),
             screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
             areas: Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
         }
     }
@@ -1324,6 +1681,8 @@ mod tests {
             config: LiveConfig::new(config()),
             demands: Rc::clone(&demands),
             screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
             areas: Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
         };
 

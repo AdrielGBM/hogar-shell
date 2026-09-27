@@ -15,7 +15,7 @@ see_also: [dynamic-scheme, launcher, widgets]
 
 One surface per monitor, at the bottom of the background layer. It paints the image this screen should show,
 cover-cropped over the theme's base colour, and nothing else — a clock or a visualiser on the desktop is
-[Desktop widgets](widgets.md), on a surface of its own.
+[Desktop widgets](widgets.md), drawn on the desktop layer instead.
 
 ## Choosing an image
 

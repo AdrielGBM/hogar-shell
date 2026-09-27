@@ -1,10 +1,9 @@
 //! The control channel between a live surface and whoever holds it.
 //!
-//! A layer surface used to be something the driver decided on its own: configured once when it was created and never renegotiated, and closed by a flag that tore it down on the next loop turn. All of it is here instead. A [`SurfaceLink`] is shared by the driver's surface entry and the `SurfaceHandle` its opener holds — one side asks, the other applies on its next turn — carrying three kinds of request: the [`SurfaceUpdate`] that renegotiates the surface's own state, a rebuild of its content, and the close. An [`ExitPlan`] is what the surface's own content registered for the moment it is asked to close, together with how long the driver must keep it mapped for that to be seen.
+//! A layer surface used to be something the driver decided on its own: configured once when it was created and never renegotiated, and closed by a flag that tore it down on the next loop turn. All of it is here instead. A [`SurfaceLink`] is shared by the driver's surface entry and the `SurfaceHandle` its opener holds — one side asks, the other applies on its next turn — carrying three kinds of request: the [`SurfaceUpdate`] that renegotiates the surface's own state, a rebuild of its content, and the close.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use telar::Rect;
 
@@ -29,6 +28,7 @@ pub struct SurfaceUpdate {
 }
 
 impl SurfaceUpdate {
+    #[cfg(test)]
     pub fn size(width: u32, height: u32) -> Self {
         Self {
             size: Some((width, height)),
@@ -36,6 +36,7 @@ impl SurfaceUpdate {
         }
     }
 
+    #[cfg(test)]
     pub fn margin(margin: (i32, i32, i32, i32)) -> Self {
         Self {
             margin: Some(margin),
@@ -43,6 +44,7 @@ impl SurfaceUpdate {
         }
     }
 
+    #[cfg(test)]
     pub fn exclusive_zone(zone: i32) -> Self {
         Self {
             exclusive_zone: Some(zone),
@@ -145,37 +147,6 @@ impl SurfaceLink {
     }
 }
 
-/// What a surface does when it is asked to close, and how long the driver holds it mapped afterwards so that reaction reaches the screen.
-///
-/// Registered from inside the surface's own build, by whatever wants an exit transition — which is more than one thing per surface: the hosted scaffold fades its scrim while the panel content slides back toward its bar edge. So reactions accumulate and the linger is the longest of them, rather than the last registration replacing the first.
-#[derive(Default)]
-pub(crate) struct ExitPlan {
-    linger: Duration,
-    reactions: Vec<Box<dyn FnOnce()>>,
-}
-
-impl ExitPlan {
-    pub(crate) fn push(&mut self, linger: Duration, reaction: Box<dyn FnOnce()>) {
-        self.linger = self.linger.max(linger);
-        self.reactions.push(reaction);
-    }
-
-    pub(crate) fn linger(&self) -> Duration {
-        self.linger
-    }
-
-    /// Whether this plan asks the driver for anything at all. An empty one — no reaction, or a zero duration because the user switched animation off — means the surface goes now, exactly as it did before any of this existed.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.linger.is_zero() || self.reactions.is_empty()
-    }
-
-    pub(crate) fn run(self) {
-        for reaction in self.reactions {
-            reaction();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,39 +246,6 @@ mod tests {
         assert!(
             !link.take_rebuild(),
             "and it is not asked for again on its own"
-        );
-    }
-
-    #[test]
-    fn an_exit_plan_keeps_every_reaction_and_the_longest_linger() {
-        let fired = std::rc::Rc::new(std::cell::Cell::new(0u32));
-        let mut plan = ExitPlan::default();
-        assert!(
-            plan.is_empty(),
-            "nothing registered means the surface goes now"
-        );
-
-        for linger in [Duration::from_millis(120), Duration::from_millis(200)] {
-            let sink = std::rc::Rc::clone(&fired);
-            plan.push(linger, Box::new(move || sink.set(sink.get() + 1)));
-        }
-        assert_eq!(
-            plan.linger(),
-            Duration::from_millis(200),
-            "the surface has to outlive the slowest half of its exit, not the last one registered"
-        );
-        assert!(!plan.is_empty());
-        plan.run();
-        assert_eq!(fired.get(), 2, "both halves of the exit run");
-    }
-
-    #[test]
-    fn a_zero_duration_exit_is_no_exit() {
-        let mut plan = ExitPlan::default();
-        plan.push(Duration::ZERO, Box::new(|| {}));
-        assert!(
-            plan.is_empty(),
-            "animation switched off must tear the surface down on the next turn, as it always did"
         );
     }
 }

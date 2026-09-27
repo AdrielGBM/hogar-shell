@@ -2,7 +2,7 @@
 //!
 //! An area carries its own geometry, so a builder here takes the area and nothing else about where it was found: a [`ResolvedAreaKind::Grid`] decides how big its cells are, a [`ResolvedAreaKind::Dock`] how deep its strip is, a [`ResolvedAreaKind::WallpaperRegion`] which picture is showing and how it fades, a [`ResolvedAreaKind::Texture`] what paints over whatever is behind it. What every area shares is what surrounds it — the config an instance reads its options from, the theme it takes its colours from and the monitor it is on — and that is [`Surround`].
 //!
-//! This is why the instances here are built through [`Host::placed`] and not [`ui::host::Host::chip`]: a chip's box is `[bars.<edge>] size` looked up by edge, which only answers while one edge means one bar. An area answers for its own box, and several areas can share an edge.
+//! This is why the instances here are built through [`Host::placed`]: an area answers for its own box and shape, and several areas can share an edge.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -69,6 +69,18 @@ impl Areas for ShellAreas {
     }
 }
 
+/// What builds a stack area. The column is a module's — it draws notification, toast and OSD cards — so it is handed in rather than known here.
+pub type StackBuilder = for<'a> fn(&ResolvedArea, Surround<'a>) -> Built;
+
+thread_local! {
+    static STACK: Cell<Option<StackBuilder>> = const { Cell::new(None) };
+}
+
+/// Installs what builds a stack area. Set once at startup; until it is, a stack area draws nothing.
+pub fn set_stack_builder(build: StackBuilder) {
+    STACK.with(|stack| stack.set(Some(build)));
+}
+
 /// The node `area` draws, or `None` for a kind no builder answers for yet, so a layer draws the areas it can rather than failing whole over the one it cannot.
 pub fn build(area: &ResolvedArea, surround: Surround) -> Option<Built> {
     match &area.kind {
@@ -87,6 +99,9 @@ pub fn build(area: &ResolvedArea, surround: Surround) -> Option<Built> {
         ResolvedAreaKind::WallpaperRegion { .. } => Some(wallpaper_region(area, surround)),
         ResolvedAreaKind::Texture { .. } => Some(texture(area, surround)),
         ResolvedAreaKind::Free { rect } => Some(free(area, *rect, surround)),
+        ResolvedAreaKind::Stack { .. } => STACK
+            .with(|stack| stack.get())
+            .map(|build| build(area, surround)),
         _ => None,
     }
 }

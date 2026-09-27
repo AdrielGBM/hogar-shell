@@ -94,12 +94,12 @@ impl LayerWindowHandle {
         self.link.request_update(SurfaceUpdate::layer(layer));
     }
 
-    /// Asks the compositor to blur what is behind `rects`, in logical window coordinates — the union of the nodes styled to blur their backdrop. See [`crate::request_blur_region`].
+    /// Asks the compositor to blur what is behind `rects`, in logical window coordinates — the union of the nodes styled to blur their backdrop.
     pub fn set_blur_region(&self, rects: Vec<telar::Rect>) {
         self.link.request_update(SurfaceUpdate::blur_region(rects));
     }
 
-    /// Builds the window's content again in place, dropping what the outgoing tree registered on the loop. Asked for while the window is hidden, it happens when the window is shown. See [`crate::SurfaceHandle::rebuild`].
+    /// Builds the window's content again in place, dropping what the outgoing tree registered on the loop. Asked for while the window is hidden, it happens when the window is shown.
     pub fn rebuild(&self) {
         self.link.request_rebuild();
     }

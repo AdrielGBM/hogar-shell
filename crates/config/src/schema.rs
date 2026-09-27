@@ -15,10 +15,8 @@ include!(concat!(env!("OUT_DIR"), "/config_docs.rs"));
 fn section_structs() -> HashMap<&'static str, &'static str> {
     [
         ("general", "GeneralConfig"),
-        ("bars", "BarsConfig"),
         ("theme", "ThemeConfig"),
         ("shape", "ShapeConfig"),
-        ("corners", "CornersConfig"),
         ("panels", "PanelsConfig"),
         ("popouts", "PopoutsConfig"),
         ("icons", "IconsConfig"),
@@ -309,7 +307,7 @@ fn table_array(entry: &toml::Value) -> Option<&[toml::Value]> {
 ///
 /// An `Option` with no value serializes to nothing, so a reference built from the defaults alone would silently omit every optional key — `[clock] format` is a documented option a reader would never learn exists.
 ///
-/// Walked over every field rather than over the documented ones: `[corners] top_left` and `[background] image` carry no doc comment and are still keys, and a reference that lists a key only when somebody remembered to explain it is one where forgetting a comment deletes the key.
+/// Walked over every field rather than over the documented ones: `[background] image` carries no doc comment and are still keys, and a reference that lists a key only when somebody remembered to explain it is one where forgetting a comment deletes the key.
 fn unset(table: &toml::map::Map<String, toml::Value>, structure: &str) -> Vec<Entry> {
     CONFIG_FIELDS
         .iter()

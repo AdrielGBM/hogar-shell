@@ -5,7 +5,7 @@ title: Scripting
 summary: Driving the shell from a script, and reading its answers.
 status: stable
 compositor: any
-commands: [shell, apps, audio, notifs, wallpaper, scheme]
+commands: [shell, apps, audio, notifs, wallpaper, scheme, layout]
 deps: []
 see_also: [ipc, keybinds]
 ---
@@ -47,6 +47,30 @@ hogar-shell scheme colors          # every palette token, name and hex
 
 `scheme colors` is the one worth knowing about: it is how a script themes something the export files do not
 cover.
+
+## Editing the layout
+
+`layout` is a target like any other, so a script can read or change what the shell draws the same way it reads
+or changes anything else:
+
+```sh
+hogar-shell layout list                       # every layout this shell can use
+hogar-shell layout show [name]                 # print one as it is stored
+hogar-shell layout check [name]                # what is wrong with one, without applying it
+hogar-shell layout use <name>                  # draw this layout from now on
+hogar-shell layout add <module> <area> [group] # place a module in an area of the layout being drawn
+hogar-shell layout remove <id>                 # take a placed module, or a whole area, out
+hogar-shell layout move <id> <group> [index]   # put a placed module in another group, or elsewhere in its own
+hogar-shell layout set <instance> <key> <value> # change one property of a placed module
+hogar-shell layout reset <id|layer|all>        # put a part of the layout back to the built-in one
+hogar-shell layout undo                        # take back the last edit, whatever made it
+hogar-shell layout redo                        # make the edit that was last taken back again
+```
+
+Every edit — `add`, `remove`, `move`, `set`, `reset` — is one transaction, so `layout undo` takes back one
+command whatever else made the edit before it: a gesture, a popover, or another line of a script. There is no
+`layout edit` verb yet — that is the mode switch a future edit-mode framework owns, not this table. See the
+[Layout reference](../reference/layout.md) for what a layout file holds.
 
 ## Saying something
 

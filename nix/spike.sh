@@ -1,5 +1,5 @@
 #!/bin/sh
-# The window-model benchmark: one surface per piece, as today, versus one fullscreen window per layer.
+# The window-model benchmark: one fullscreen window per layer, judged as a regression check.
 #
 # Usage: nix/spike.sh [1|2|3|all]
 #   1    live session, software renderer, this machine's output, with the click test
@@ -69,16 +69,16 @@ build() {
     cp "$repo/target/$target_dir/hogar-shell-spike" "$out/bin/spike-$variant"
 }
 
-# Runs one mode against $run_display, with $run_libraries as the loader path.
-run_mode() {
-    bin=$1 dir=$2 mode=$3
-    shift 3
-    mkdir -p "$dir/$mode"
-    say "  $mode run — its protocol log goes to $dir/$mode/wayland.log"
+# Runs the benchmark against $run_display, with $run_libraries as the loader path.
+run_once() {
+    bin=$1 dir=$2
+    shift 2
+    mkdir -p "$dir"
+    say "  run — its protocol log goes to $dir/wayland.log"
     if ! env WAYLAND_DISPLAY="$run_display" LD_LIBRARY_PATH="$run_libraries" WAYLAND_DEBUG=1 NO_COLOR=1 TELAR_PERF=1 \
-        "$bin" run --mode "$mode" --out "$dir/$mode" "$@" 2>"$dir/$mode/wayland.log"; then
-        say "  the $mode run exited with an error; the last lines of its stderr:"
-        tail -n 5 "$dir/$mode/wayland.log"
+        "$bin" run --out "$dir" "$@" 2>"$dir/wayland.log"; then
+        say "  the run exited with an error; the last lines of its stderr:"
+        tail -n 5 "$dir/wayland.log"
     fi
 }
 
@@ -183,9 +183,7 @@ phase1() {
     fi
     confirm "Phase 1 — live session ($WAYLAND_DISPLAY), software renderer, the output the compositor picks.
   It maps these over your current desktop:
-    per-surface run (about a minute): two 36 px bars (Top layer), then a notification stack and a drawer
-      (Overlay layer) while they are needed.
-    merged run (about a minute, then the click test): one fullscreen transparent Top-layer window that only
+    one run (about a minute, then the click test): one fullscreen transparent Top-layer window that only
       takes input on its bars. Then a fullscreen Bottom-layer catcher appears with yellow B targets
       (bar background) and green E targets (empty space): click B targets 20 times in total and
       E targets 20 times in total. It ends by itself once both reach 20, or after 5 minutes.
@@ -195,8 +193,7 @@ phase1() {
         say "phase 1 skipped"
         return 0
     }
-    run_mode "$bin" "$dir" per-surface --note "phase 1: live session, software"
-    run_mode "$bin" "$dir" merged --clicks --note "phase 1: live session, software"
+    run_once "$bin" "$dir" --clicks --note "phase 1: live session, software"
     report "$bin" "$dir"
 }
 
@@ -222,9 +219,9 @@ overrides where it is looked for."
     confirm "Phase $number — nested Hyprland, one headless $nested_output output at $nested_mode, scale 1, $variant renderer.
   It starts a second Hyprland inside this session with a minimal config of its own (not yours:
   nothing is autostarted), adds the headless output with 'hyprctl output create headless', and runs
-  both modes against it (about a minute each). A small window for the nest's own WAYLAND-1 output appears on
+  the benchmark against it (about a minute). A small window for the nest's own WAYLAND-1 output appears on
   your desktop; the spike maps nothing on it. No clicks: a headless output cannot be clicked, so
-  criterion 8 is judged only on the input region the merged window declares.
+  criterion 8 is judged only on the input region the window declares.
   The nest is stopped when the phase ends. Results go to $dir." || {
         say "phase $number skipped"
         return 0
@@ -233,9 +230,7 @@ overrides where it is looked for."
     note="phase $number: nested Hyprland, headless $nested_output $nested_mode scale 1, $variant"
     run_display=$nested_socket
     run_libraries=$library_path
-    for mode in per-surface merged; do
-        run_mode "$bin" "$dir" "$mode" --output "$nested_output" --note "$note"
-    done
+    run_once "$bin" "$dir" --output "$nested_output" --note "$note"
     nested_stop
     report "$bin" "$dir"
 }

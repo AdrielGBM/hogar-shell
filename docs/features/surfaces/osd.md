@@ -6,7 +6,7 @@ summary: The overlay that shows a level while you are changing it.
 status: partial
 compositor: any
 config: [stack]
-commands: [volume, mic, brightness]
+commands: [volume, mic, brightness, layout]
 deps: [wlr-layer-shell]
 see_also: [toasts, volume, brightness]
 ---
@@ -24,8 +24,12 @@ text, an OSD carries a bar.
 
 ## Configuring
 
-An OSD is a card in the shell's one column, so where it appears and how long it stays are the column's:
-`[stack]` — `edge`, `align`, `width`, `max_visible`, `timeout_ms`. See [Toasts](toasts.md) for the column itself.
+An OSD is a card in the shell's one column: a `Stack` area in the layout, by default an area in the overlay
+layer, pinned to the top right. Where it is, how wide it is and which outputs it appears on are that area's
+`anchor`, `width` and `output_policy` — a layout edit, not a config key — and `hogar-shell layout show` prints
+where the running layout put it. How the column behaves — `[stack]` — `max_visible`, `timeout_ms`,
+`clear_threshold` — is unchanged. See [Toasts](toasts.md) for the column itself, and the
+[Layout reference](../../reference/layout.md#areakindstack) for `AreaKind::Stack`.
 
 ## Showing one without changing anything
 
@@ -35,7 +39,8 @@ gesture for "what is it at". There is **no IPC command** that does the same thin
 
 ## What it needs
 
-`wlr-layer-shell`. The surface exists only while an OSD is up.
+`wlr-layer-shell`. An OSD is a card in the stack column, and the overlay window it lives in is held open only
+while the column has cards.
 
 ## Related
 

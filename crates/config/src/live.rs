@@ -1,6 +1,6 @@
 //! The config the shell is currently running, and the per-surface slice of it.
 //!
-//! The context is what lets code reached from outside a surface — an IPC call, a keybind, a service thread — still answer "which config?". It lives here rather than beside the surface registry because a *producer* has no surfaces and still needs the answer: a poll interval or a backend the user configured would otherwise never take effect, with nothing to show for it.
+//! The context is what lets code reached from outside a surface — an IPC call, a keybind, a service thread — still answer "which config?". It lives here rather than beside the transient registry because a *producer* has no surface of its own and still needs the answer: a poll interval or a backend the user configured would otherwise never take effect, with nothing to show for it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{Config, Edge};
+use crate::Config;
 
 thread_local! {
     static CONTEXT: RefCell<Option<Arc<Config>>> = const { RefCell::new(None) };
@@ -124,33 +124,4 @@ impl From<Arc<Config>> for LiveConfig {
     fn from(config: Arc<Config>) -> Self {
         Self::new(config)
     }
-}
-
-/// What a module needs to know about its bar; carried into the parameterless `.rsx` module entrypoints as per-surface context (rsx `provide`/`inject`, scoped to each surface) with no prop plumbing.
-#[derive(Clone)]
-pub struct SurfaceEnv {
-    pub edge: Edge,
-    /// The monitor this bar lives on, so panels it opens (drawer/float/OSD) land on the same screen; `None` = the compositor's active/default output.
-    pub output: Option<String>,
-    pub config: Arc<Config>,
-}
-
-impl SurfaceEnv {
-    /// The surface `config` draws against `edge`'s bar on `output`.
-    pub fn for_edge(config: Arc<Config>, edge: Edge, output: Option<String>) -> Self {
-        Self {
-            edge,
-            output,
-            config,
-        }
-    }
-}
-
-/// Per-surface context: resolves against this surface's own scope, so a module reading [`surface_env`] — including from an effect — gets THIS bar's env even though all surfaces share one UI thread under M3 (the reactive flush re-enters the surface). Written on every build, so a rebuilt bar's modules read the config the edit produced rather than the one the surface opened under.
-pub fn set_surface_env(env: SurfaceEnv) {
-    util::state::set_context(env);
-}
-
-pub fn surface_env() -> Option<SurfaceEnv> {
-    util::state::context::<SurfaceEnv>()
 }

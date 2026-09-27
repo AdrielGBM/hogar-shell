@@ -5,35 +5,40 @@ title: First run
 summary: What the first start writes, and the first three things worth changing.
 status: stable
 compositor: any
-config: [general, bars, theme]
-commands: [config, scheme]
-see_also: [install, configuration]
+config: [general, theme]
+commands: [config, scheme, layout]
+see_also: [install, configuration, per-monitor]
 ---
 
 # First run
 
-The first start writes an annotated `~/.config/hogar-shell/config.toml` and puts a bar on screen. Nothing else is
-created until something needs it.
+The first start writes an annotated `~/.config/hogar-shell/config.toml` and draws the built-in layout, which
+puts a bar on screen. Nothing else is created until something needs it.
 
 ## What is on screen
 
 A top bar with a default set of modules, the wallpaper layer, and nothing else. Panels, the launcher, the OSD
-and the toast stack are surfaces that exist only while they are open — an idle session carries no overlay.
+and the toast stack are nodes that exist only while they are open — an idle session carries no overlay.
 
 ## The first three changes
 
-**1. Put the modules you want on the bar.** `[bars.top]` has three zones — `start`, `center`, `end` — each a
-list of module ids:
+**1. Put the modules you want on the bar.** That is a layout edit, not a config key. The quickest way in is the
+IPC verbs:
 
-```toml
-[bars.top]
-start  = ["workspaces", "activewindow"]
-center = ["clock"]
-end    = ["statusicons", "tray", "battery", "session"]
+```sh
+hogar-shell layout add activewindow top-bar start
+hogar-shell layout add clock top-bar center
+hogar-shell layout remove statusicons
 ```
 
-Every id is a page under [features/modules](../features/modules/). An id the build does not know is drawn as a
-placeholder where you wrote it rather than failing the bar, and `hogar-shell config check` says which one.
+or hand-edit `~/.config/hogar-shell/layouts/default.toml` directly — the first edit forks a copy of the built-in
+layout, which stays read-only so there is always one that works. `hogar-shell layout show` prints it as it is
+stored, and `hogar-shell layout check` says what is wrong with one before it applies. See
+[Bars](../features/surfaces/bars.md) and the [Layout reference](../reference/layout.md) for the full shape.
+
+Every module id is a page under [features/modules](../features/modules/). An id the build does not know is
+drawn as a placeholder where you placed it rather than failing the bar, and `hogar-shell layout check` says
+which one.
 
 **2. Pick a shape.** `[shape] mode` is `bar`, `sections` or `chips` — one solid bar, grouped zones, or a chip
 per module. Every module works in all three; see [Bars](../features/surfaces/bars.md).

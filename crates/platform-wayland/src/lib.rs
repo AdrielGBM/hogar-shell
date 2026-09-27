@@ -9,7 +9,6 @@ mod layer_window;
 mod link;
 mod lock;
 mod lock_notify;
-mod placement;
 mod platform;
 mod power;
 mod toplevel_control;
@@ -23,7 +22,9 @@ pub use capture::{
     capture_toplevel, toplevel_capture_supported,
 };
 pub use clipboard::{clipboard_supported, set_selection};
-pub use config::{Anchor, KeyboardInteractivity, Layer, LayerConfig, OutputDescriptor};
+pub use config::{
+    Anchor, KeyboardInteractivity, KeyboardMode, Layer, LayerConfig, OutputDescriptor,
+};
 pub use gamma::{
     GAMMA_INTERFACE, MAX_TEMPERATURE, MIN_TEMPERATURE, NEUTRAL_TEMPERATURE,
     current as current_temperature, gamma_supported, neutral as neutral_gamma, warm,
@@ -35,14 +36,10 @@ pub use layer_window::LayerWindowHandle;
 pub use link::SurfaceUpdate;
 pub use lock::{LockHandle, lock_session, lock_supported, session_is_locked};
 pub use lock_notify::{CompositorLock, LOCK_NOTIFIER_INTERFACE, compositor_lock};
-pub use placement::{
-    KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
-};
 pub use platform::{
     EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken, app_watch,
-    background_effect_supported, detached, enumerate_outputs, interval, live_surfaces, on_close,
-    on_outputs_changed, open_layer_window, open_reservation, open_surface, outputs,
-    request_blur_region, request_close, request_margin, request_size, run_on_start,
+    background_effect_supported, detached, enumerate_outputs, interval, live_surfaces,
+    on_outputs_changed, open_layer_window, open_reservation, outputs, run_on_start,
     set_surface_fonts, timeout, unwatch, watch,
 };
 pub use power::{

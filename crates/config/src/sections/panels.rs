@@ -1,4 +1,4 @@
-//! `[bars]`, `[panels]`, and every `[toml]` section a chip on a bar reads.
+//! `[panels]`, and every `[toml]` section a chip on a bar reads.
 //!
 //! One type per `[toml]` table, each with the defaults the shell falls back to. The doc comment on a field is what `hogar-shell config schema` prints for it, so it is written for a user reading the reference.
 
@@ -8,9 +8,6 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::sections::*;
-
-/// Fallback gap a panel keeps from a hugging bar (one with no outer gap of its own) and from the screen edges.
-pub const DEFAULT_PANEL_GAP: u32 = 8;
 
 /// What the settings application spends on its own title bar, search row and padding before any form is drawn. Subtracted from the surface height to size the scrolling page area — see [`Config::settings_page_height`].
 pub(crate) const SETTINGS_CHROME: f32 = 108.0;
@@ -55,15 +52,6 @@ impl Edge {
             Edge::Right => "right",
         }
     }
-
-    pub fn corners(self) -> (Corner, Corner) {
-        match self {
-            Edge::Top => (Corner::TopLeft, Corner::TopRight),
-            Edge::Bottom => (Corner::BottomLeft, Corner::BottomRight),
-            Edge::Left => (Corner::TopLeft, Corner::BottomLeft),
-            Edge::Right => (Corner::TopRight, Corner::BottomRight),
-        }
-    }
 }
 
 /// How a module's panel opens: a drawer hanging off the bar edge (default), or a centred floating window with a title bar and close button.
@@ -86,86 +74,6 @@ pub struct ModuleOverride {
     pub width: Option<u32>,
     /// Overrides `[panels.float] height` for this module's float, in logical px.
     pub height: Option<u32>,
-}
-
-/// Which bar zone a module sits in; a drawer derives its cross-axis alignment from this.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Zone {
-    Start,
-    Center,
-    End,
-}
-
-/// One module placed on a bar.
-///
-/// Written as a bare id in the common case (`start = ["clock", "workspaces"]`) and as a table when an instance needs settings of its own (`{ id = "clock", accent = "red" }`). The table form is what lets the same module appear on a bar twice looking different — a `[modules.<id>]` override is keyed by id and so applies to every copy at once.
-///
-/// Deliberately presentation-only. `open` stays under `[modules.<id>]` because a panel is toggled by module id from three places — a chip, `hogar-shell panel toggle`, a keybind — and only one of them has an entry in hand; an entry-scoped answer would make the same panel open differently depending on how you asked for it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ModuleEntry {
-    pub id: String,
-    pub variant: Option<Variant>,
-    pub accent: Option<String>,
-}
-
-impl ModuleEntry {
-    pub fn bare(id: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            variant: None,
-            accent: None,
-        }
-    }
-
-    /// Whether the entry carries nothing beyond its id, and so writes back as a plain string.
-    fn is_bare(&self) -> bool {
-        self.variant.is_none() && self.accent.is_none()
-    }
-}
-
-/// The table form, and the shape a non-bare entry serialises to.
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
-#[serde(default)]
-pub(crate) struct ModuleEntryTable {
-    id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    variant: Option<Variant>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    accent: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-pub(crate) enum RawModuleEntry {
-    Bare(String),
-    Table(ModuleEntryTable),
-}
-
-impl<'de> Deserialize<'de> for ModuleEntry {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(match RawModuleEntry::deserialize(deserializer)? {
-            RawModuleEntry::Bare(id) => Self::bare(id),
-            RawModuleEntry::Table(t) => Self {
-                id: t.id,
-                variant: t.variant,
-                accent: t.accent,
-            },
-        })
-    }
-}
-impl Serialize for ModuleEntry {
-    /// A bare entry writes back as the string it was read from, so a config that never used the table form round-trips through the settings panel unchanged.
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.is_bare() {
-            return serializer.serialize_str(&self.id);
-        }
-        ModuleEntryTable {
-            id: self.id.clone(),
-            variant: self.variant,
-            accent: self.accent.clone(),
-        }
-        .serialize(serializer)
-    }
 }
 
 /// The drawer panel's size (§4): a fixed width and a max height its content scrolls within.
@@ -231,14 +139,14 @@ impl Default for StatusIconsConfig {
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
 #[serde(default)]
 pub struct PopoutsConfig {
-    /// Off costs nothing: no chip tracks the pointer and no surface is ever opened.
+    /// Off costs nothing: no chip tracks the pointer and no transient is ever opened.
     pub enabled: bool,
     /// How long the pointer must rest on a chip before its popout opens, in ms.
     pub open_delay: u64,
     /// How long the popout survives after the pointer leaves, in ms.
     pub close_delay: u64,
     pub width: f32,
-    /// The tallest a popout may grow. Its surface is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
+    /// The tallest a popout may grow. Its transient is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
     pub max_height: f32,
 }
 

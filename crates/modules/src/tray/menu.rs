@@ -1,48 +1,48 @@
 //! The popup menu behind a tray icon.
 //!
-//! A real layer-shell surface rather than an in-surface overlay: a bar is only its own thickness tall, so a menu drawn inside it would be clipped to a sliver. The anchoring is [`shared::anchor`](ui::anchor), shared with the hover popouts.
+//! A transient hanging off the icon that opened it, in the window of the bar that icon is on, placed the way a drawer and a hover card are.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use telar::{
-    AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, Rect, RectStyle,
-    SizeDimension, StyledContainer, Text, box_item,
+    AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension,
+    StyledContainer, Text, box_item,
 };
 
-use config::SurfaceEnv;
 use config::theme::{FontRole, NordTheme};
 use services::dbusmenu::{self, MenuItem, Toggle};
 use services::tray::TrayItem;
+use surfaces::transient::{self, Anchor, Motion, Place, Spec};
+use ui::chrome::{Chrome, content_radius, panel_fill};
 use ui::icon::{app_icon_view, icon_view};
-use ui::panel::{PanelSurface, content_radius, panel_fill};
-use ui::placement::{OffChip, Placement};
 use ui::scale::{corner, space};
 
-/// The shell's id for the menu surface. One at a time: a second tray menu on screen would be two context menus at once, which no desktop does.
-const SURFACE_ID: &str = "tray-menu";
+/// The shell's id for the menu transient. One at a time: a second tray menu on screen would be two context menus at once, which no desktop does.
+const ID: &str = "tray-menu";
 
-/// Fixed rather than content-derived, so the anchoring maths knows the width before the menu is laid out and can keep it on screen. A tray menu is a list of short labels; letting it size to its longest one would make every application's menu a different width.
+/// Fixed rather than content-derived, so every application's tray menu reads as the same shape instead of a different width per app.
 const MENU_WIDTH: f32 = 260.0;
 
 const ROW_HEIGHT: f32 = 30.0;
 const SEPARATOR_HEIGHT: f32 = 9.0;
 
 thread_local! {
-    /// Which item's menu is showing, so a second click on the same chip closes it while a click on another chip switches. Driver-thread only, like the rest of the surface bookkeeping.
+    /// Which item's menu is showing, so a second click on the same chip closes it while a click on another chip switches. Driver-thread only, like the rest of this module's state.
     static OPEN_FOR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 pub fn close() {
     OPEN_FOR.with(|o| *o.borrow_mut() = None);
-    surfaces::shell::close(SURFACE_ID);
+    transient::close(ID);
 }
 
 /// Opens `item`'s menu under its chip, or closes it if that same menu is already up.
 ///
-/// The layout is fetched on a worker thread and the surface opened from the handler, which [`platform_wayland::watch`] runs on the driver thread — the only place a surface may be opened. Doing the round trip inline would stall the frame on however long another application takes to answer.
-pub fn toggle(item: &TrayItem, chip: Rect, env: SurfaceEnv) {
+/// The layout is fetched on a worker thread and the transient opened from the handler, which [`platform_wayland::watch`] runs on the driver thread — the only place a transient may be opened. Doing the round trip inline would stall the frame on however long another application takes to answer.
+pub fn toggle(item: &TrayItem, anchor: Anchor) {
     // Both halves matter: `OPEN_FOR` alone would still name this item after the menu was dismissed by a click outside it, and the next click on the same chip would read as "close" and do nothing.
-    let already_open = surfaces::shell::window_is_open(SURFACE_ID)
+    let already_open = transient::is_open(ID)
         && OPEN_FOR.with(|o| o.borrow().as_deref() == Some(item.key.as_str()));
     close();
     if already_open || item.menu.trim().is_empty() {
@@ -69,23 +69,26 @@ pub fn toggle(item: &TrayItem, chip: Rect, env: SurfaceEnv) {
                 OPEN_FOR.with(|o| *o.borrow_mut() = None);
                 return;
             };
-            // Along a horizontal bar the menu's extent is its fixed width; along a vertical one it would be its height, which is content-derived and unknown before layout.
-            let span = (!env.edge.is_vertical()).then_some(MENU_WIDTH);
-            // The placement is built from the bar's own env, so the menu already resolves against the bar its chip sits on — its radius and fill match the drawer that chip would have opened.
-            let placement = Placement::off_chip(OffChip::Panel, &env, Some(chip), span);
             let (bus, path) = (event_bus.clone(), event_path.clone());
-            surfaces::shell::toggle_window(SURFACE_ID, move || {
-                PanelSurface::new(placement, move |env| {
-                    menu_view(
-                        &root,
-                        &bus,
-                        &path,
-                        env.config.resolve_theme(),
-                        content_radius(),
-                    )
-                })
-                .open()
-            });
+            let edge = anchor.edge;
+            transient::open(
+                Spec::new(
+                    ID,
+                    Place::Beside(anchor.clone()),
+                    Rc::new(move |chrome: &Chrome| {
+                        menu_view(
+                            &root,
+                            &bus,
+                            &path,
+                            chrome.config.resolve_theme(),
+                            content_radius(),
+                        )
+                    }),
+                )
+                .dismiss_on_outside()
+                .motion(Motion::Slide(edge))
+                .on_close(|| OPEN_FOR.with(|o| *o.borrow_mut() = None)),
+            );
         },
     );
 }

@@ -11,60 +11,9 @@ use telar::Color;
 
 use crate::config::Config;
 use crate::scheme;
-use crate::sections::*;
 use crate::theme::NordTheme;
 use util::paths;
 use util::report::{Finding, Report};
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub enum Corner {
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
-}
-
-impl Corner {
-    pub const ALL: [Corner; 4] = [
-        Corner::TopLeft,
-        Corner::TopRight,
-        Corner::BottomLeft,
-        Corner::BottomRight,
-    ];
-
-    pub fn horizontal_edge(self) -> Edge {
-        match self {
-            Corner::TopLeft | Corner::TopRight => Edge::Top,
-            Corner::BottomLeft | Corner::BottomRight => Edge::Bottom,
-        }
-    }
-
-    pub fn vertical_edge(self) -> Edge {
-        match self {
-            Corner::TopLeft | Corner::BottomLeft => Edge::Left,
-            Corner::TopRight | Corner::BottomRight => Edge::Right,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Corner::TopLeft => "top-left",
-            Corner::TopRight => "top-right",
-            Corner::BottomLeft => "bottom-left",
-            Corner::BottomRight => "bottom-right",
-        }
-    }
-
-    /// The key this corner is written under in `[corners]` — [`CornersConfig`]'s field for it.
-    pub fn key(self) -> &'static str {
-        match self {
-            Corner::TopLeft => "top_left",
-            Corner::TopRight => "top_right",
-            Corner::BottomLeft => "bottom_left",
-            Corner::BottomRight => "bottom_right",
-        }
-    }
-}
 
 /// Background granularity (`Bar`/`Sections`/`Chips`); visual appearance (hug/float/rounding) is controlled by gap/spacing/radius, not mode.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -101,15 +50,6 @@ impl Default for ShapeConfig {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default)]
-#[serde(default)]
-pub struct BarShape {
-    pub mode: Option<Shape>,
-    pub gap: Option<u32>,
-    pub spacing: Option<u32>,
-    pub radius: Option<u32>,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct ResolvedShape {
     pub mode: Shape,
@@ -128,26 +68,6 @@ impl ResolvedShape {
     /// Chip radius shrunk to nest inside a unit.
     pub fn chip_radius(self) -> f32 {
         (self.radius - self.padding()).max(0.0)
-    }
-}
-
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
-#[serde(default)]
-pub struct CornersConfig {
-    pub top_left: Option<String>,
-    pub top_right: Option<String>,
-    pub bottom_left: Option<String>,
-    pub bottom_right: Option<String>,
-}
-
-impl CornersConfig {
-    pub fn get(&self, corner: Corner) -> Option<&str> {
-        match corner {
-            Corner::TopLeft => self.top_left.as_deref(),
-            Corner::TopRight => self.top_right.as_deref(),
-            Corner::BottomLeft => self.bottom_left.as_deref(),
-            Corner::BottomRight => self.bottom_right.as_deref(),
-        }
     }
 }
 
@@ -432,7 +352,7 @@ pub struct ThemeConfig {
     pub icon_stroke: Option<f32>,
     /// How opaque every surface the shell paints is, from `0.2` to `1.0` — bars, panels, cards and flashes alike. One key for the whole shell and no way to break it apart: a drawer at an opacity the bar it hangs off does not share is not a look anybody chooses, it is two settings that drifted.
     ///
-    /// **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job — a `layer_rule = blur, ^hogar-shell`, which needs no code here — and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
+    /// **This is the half `backdrop = "blur"` cannot supply.** An area asks for blur behind it through `ext-background-effect-v1` (see [Compositor rules](../guides/compositor-rules.md) for what moved off per-namespace compositor rules), and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
     pub opacity: f32,
     pub scale: ScaleConfig,
     pub fonts: FontsConfig,
@@ -560,29 +480,5 @@ impl ThemeConfig {
             ));
         }
         report
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A corner's key is only worth having if it is the one the file uses: the report points at `corners.<key>`, and a key that drifted from the field would point at a line that is not there.
-    #[test]
-    fn every_corner_s_key_is_the_field_corners_reads_it_from() {
-        let named = CornersConfig {
-            top_left: Some(Corner::TopLeft.key().to_string()),
-            top_right: Some(Corner::TopRight.key().to_string()),
-            bottom_left: Some(Corner::BottomLeft.key().to_string()),
-            bottom_right: Some(Corner::BottomRight.key().to_string()),
-        };
-        let table = toml::Table::try_from(&named).expect("the corners serialise");
-        for corner in Corner::ALL {
-            assert_eq!(
-                table.get(corner.key()).and_then(toml::Value::as_str),
-                Some(corner.key()),
-                "{corner:?} is written under its own key"
-            );
-        }
     }
 }

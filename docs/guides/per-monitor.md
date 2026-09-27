@@ -5,10 +5,10 @@ title: Per-monitor setup
 summary: Different bars, wallpapers and workspaces on different screens.
 status: stable
 compositor: any
-config: [bars, background, workspaces]
-commands: [shell, wallpaper, brightness]
+config: [background, workspaces]
+commands: [shell, layout, wallpaper, brightness]
 deps: []
-see_also: [bars, wallpaper, configuration]
+see_also: [bars, wallpaper, configuration, compositor-rules]
 ---
 
 # Per-monitor setup
@@ -22,38 +22,59 @@ hogar-shell shell screens     # with mode, scale and make
 
 Everything below matches on the connector name — `DP-2`, `HDMI-A-1`, `eDP-1`.
 
-## A different bar per screen
+## A different arrangement per screen
 
-Per-monitor overrides live in a file of their own, with **the same shape as the global config**:
-
-```
-~/.config/hogar-shell/monitors/DP-2/config.toml
-```
+*Which* bars a screen has, and what is on them, is an `OutputRule` in the active layout, not a per-monitor
+config file:
 
 ```toml
-# monitors/DP-2/config.toml
-[bars.top]
-start  = ["workspaces"]
-center = []
-end    = ["clock"]
+# ~/.config/hogar-shell/layouts/default.toml
+[[outputs]]
+match = "*"
+# the base every output starts from
+
+[[outputs]]
+match = "DP-2"
+# refines it for this connector only
+
+[outputs.layers.top]
+areas = [
+  { id = "top-bar", kind = "bar", edge = "top", groups = [
+      { id = "start", place = "zone", zone = "start", children = [
+          { id = "workspaces", module = "workspaces" },
+      ] },
+  ] },
+]
 ```
 
-It is merged over the global file, so you write only the differences. There is nothing new to learn: if you
-know where a key goes in `config.toml`, you know where it goes here.
-
-A few sections are global-only — the ones that describe the shell rather than a screen. `config schema` is the
-place to check when in doubt.
+Output rules apply in file order, most-specific glob last, so a `*` rule is the base and a named monitor
+refines it — merged **by area id**, so a monitor rule says only what it changes rather than repeating the
+whole bar. `hogar-shell layout show` prints a layout as it is stored, and `hogar-shell layout check` reports
+what is wrong with one before it is drawn. See the [Layout reference](../reference/layout.md) for `OutputRule`
+and every area kind, and [Bars](../features/surfaces/bars.md) for the bar area itself.
 
 ## No bars at all on a screen
 
+An output rule that places no bar area gives that screen none. There is no `excluded_screens`-style switch
+any more — an empty `OutputRule.layers.top` (or one that never matches the output) is what an excluded screen
+looks like.
+
+## Monitor override files
+
+`~/.config/hogar-shell/monitors/<output>/config.toml` still exists, with the same shape as the global
+`config.toml`, but it is narrower than it used to be: what used to place a screen's bars and widgets is the
+layout now, so a monitor override is for **behaviour and theme**, not placement — a lower `[shape] radius`, a
+different `[theme]` accent, or a wallpaper set below.
+
 ```toml
-[bars]
-excluded_screens = ["HDMI-*"]
+# monitors/DP-2/config.toml
+[theme]
+accent = "red"
 ```
 
-Matched as `*` patterns, so `HDMI-*` covers a port whose index moves between reboots. An output the compositor
-gave no name to is never excluded — there would be nothing to match it by, and dropping the bars off an
-unnameable screen would look like a bug.
+A few sections are global-only — the ones that describe the shell rather than a screen. `config schema` is the
+place to check when in doubt. Writing a layout key here — the old `bars`, `corners` or `widgets` sections and
+the rest — is a validation error naming the layout file to write it in instead; see `hogar-shell config check`.
 
 ## Wallpapers
 
@@ -90,8 +111,8 @@ An unnamed target means the **primary panel**, not every screen — see
 
 ## Hotplug
 
-Surfaces are created for outputs as they appear and released when they go. A per-monitor config for a screen
-that is not connected simply does not apply.
+Layer windows are created for outputs as they appear and released when they go. An `OutputRule` for a screen
+that is not connected simply does not apply, the same as a monitor override for one.
 
 ## Known limit
 
@@ -101,3 +122,5 @@ compositor's business. `zwlr-output-management` is unbound.
 ## Related
 
 - [Bars](../features/surfaces/bars.md), [Wallpaper layer](../features/surfaces/wallpaper.md).
+- [Layout reference](../reference/layout.md) — `OutputRule`, `WorkspaceRule` and every area kind.
+- [Compositor rules](compositor-rules.md) — what a `layer_rule` reaches on a layout with several outputs.

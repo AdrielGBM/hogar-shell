@@ -1,8 +1,6 @@
-//! The synthetic scene both modes draw, built from telar's primitives.
+//! The synthetic scene the benchmark draws, built from telar's primitives.
 //!
-//! Two bars of forty chips between them, a 1 Hz clock inside a rounded chip, a chip whose rounded clip widens and narrows with its label, a stack notification cards arrive in at the top, and a drawer that slides and fades. The shell's own modules are deliberately absent: they bring services, config and a surface environment that would each add frames and memory of their own, and the question is what the *window model* costs. The `ui` crate's chip and card helpers are skipped for the same reason — they resolve their radii and spacing through the surface environment a real bar installs — so this builds straight from the primitives those helpers lower to: `StyledContainer` boxes painted with `RectStyle::filled`, `Text`, a rounded `ClippedItem`, a keyed `ReactiveList`.
-//!
-//! Every builder produces the same subtree whichever mode mounts it. What differs is only what surrounds it: its own layer surface in the per-surface model (today), or an absolutely placed box inside one fullscreen Top window. That is what makes the two runs comparable.
+//! Two bars of forty chips between them, a 1 Hz clock inside a rounded chip, a chip whose rounded clip widens and narrows with its label, a stack notification cards arrive in at the top, and a drawer that slides and fades. The shell's own modules are deliberately absent: they bring services, config and a chrome environment that would each add frames and memory of their own, and the question is what the *window model* costs. The `ui` crate's chip and card helpers are skipped for the same reason — they resolve their radii and spacing through the chrome environment a real bar installs — so this builds straight from the primitives those helpers lower to: `StyledContainer` boxes painted with `RectStyle::filled`, `Text`, a rounded `ClippedItem`, a keyed `ReactiveList`.
 //!
 //! The builders publish the layout rects of whatever the director is going to change — the clock, the widening chip, each card — so that when it changes something it can read, from the layout itself, which rects that change should repaint.
 
@@ -24,10 +22,9 @@ use crate::timeline::LogicalRect;
 pub const BAR_HEIGHT: f32 = 36.0;
 pub const GAP: f32 = 8.0;
 pub const STACK_WIDTH: f32 = 380.0;
-pub const STACK_HEIGHT: f32 = 480.0;
 pub const DRAWER_WIDTH: f32 = 420.0;
 pub const DRAWER_HEIGHT: f32 = 600.0;
-/// How far the drawer travels while it fades — telar's own surface transition distance, so the drawer moves exactly as today's drawer surfaces do.
+/// How far the drawer travels while it fades — telar's own surface transition distance.
 const DRAWER_SLIDE: f32 = 24.0;
 const DRAWER_MOTION: Duration = Duration::from_millis(200);
 const CLOCK_WIDTH: f32 = 104.0;
@@ -54,13 +51,9 @@ const CATCHER: Color = Color::rgba(0.180, 0.204, 0.251, 0.35);
 /// Which surface a tree is mounted on. Its namespace is how the report tells the surfaces apart in the protocol log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
-    /// The one fullscreen Top window of the merged model, holding everything.
+    /// The one fullscreen Top window, holding everything.
     Top,
-    BarTop,
-    BarBottom,
-    Stack,
-    Drawer,
-    /// A fullscreen Bottom-layer surface that counts the clicks the Top window lets through.
+    /// A fullscreen Bottom-layer window that counts the clicks the Top window lets through. Its whole tree claims the pointer, which is how a layer window declares an input region.
     Catcher,
 }
 
@@ -70,10 +63,6 @@ impl Role {
     pub fn name(self) -> &'static str {
         match self {
             Role::Top => "top",
-            Role::BarTop => "bar-top",
-            Role::BarBottom => "bar-bottom",
-            Role::Stack => "stack",
-            Role::Drawer => "drawer",
             Role::Catcher => "catcher",
         }
     }
@@ -143,7 +132,7 @@ pub struct Scene {
     pub clock: RwSignal<String>,
     pub wide: RwSignal<String>,
     pub cards: RwSignal<Vec<Card>>,
-    /// Holds one entry while the merged window's drawer is mounted, none while it is not — the in-tree counterpart of opening and closing a drawer surface.
+    /// Holds one entry while the merged window's drawer is mounted, none while it is not.
     pub drawer_slot: RwSignal<Vec<u8>>,
     pub drawer: Animated<f32>,
     pub targets: RwSignal<Vec<Target>>,
@@ -212,7 +201,7 @@ impl Scene {
         }
     }
 
-    /// Where the user is asked to click: the middle of every stretch of bar with nothing on it, and four spots of open desktop clear of the bars, the stack and the drawer. Only meaningful in the merged window, whose coordinates are the output's.
+    /// Where the user is asked to click: the middle of every stretch of bar with nothing on it, and four spots of open desktop clear of the bars, the stack and the drawer.
     pub fn click_targets(&self) -> Vec<Target> {
         let published = self.published.borrow();
         let mut targets = Vec::new();
@@ -439,7 +428,7 @@ fn drawer_row(index: usize) -> Built {
     )?))
 }
 
-/// The drawer panel, sliding in from the left edge while it fades, driven by one shared progress value exactly as telar's `SurfaceTransition` drives a drawer surface today.
+/// The drawer panel, sliding in from the left edge while it fades, driven by one shared progress value.
 pub fn drawer(scene: &Scene, outer: LayoutStyle) -> Built {
     let rows = (1..=10).map(drawer_row).collect::<Result<Vec<_>, _>>()?;
     let progress = scene.drawer;
@@ -483,7 +472,7 @@ fn target_marker(target: Target) -> Built {
     )?))
 }
 
-/// The merged model's single fullscreen tree: both bars, the stack and the drawer placed where their surfaces sit today, plus the click targets and the tally shown only while the user is asked to click.
+/// The single fullscreen tree: both bars, the stack and the drawer, plus the click targets and the tally shown only while the user is asked to click.
 fn merged(scene: &Rc<Scene>) -> Built {
     let fill = || LayoutStyle::new().absolute();
     let top = bar(
@@ -565,7 +554,8 @@ fn catcher() -> Built {
             14.0,
             TEXT,
         )?],
-    )?))
+    )?
+    .input_opaque()))
 }
 
 /// Counts every press a surface's tree receives before handing the event on, whether or not anything in the tree answers it: the question is where the compositor sent the click, not what the scene did with it.
@@ -603,13 +593,6 @@ impl SurfaceApp {
         let scene = &self.scene;
         Ok(match self.role {
             Role::Top => Box::new(WindowRoot::new(merged(scene)?)),
-            Role::BarTop => Box::new(WindowRoot::new(bar(scene, Edge::Top, whole())?)),
-            Role::BarBottom => Box::new(WindowRoot::new(bar(scene, Edge::Bottom, whole())?)),
-            Role::Stack => Box::new(WindowRoot::wrapping(stack(
-                scene,
-                LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-            )?)?),
-            Role::Drawer => Box::new(WindowRoot::new(drawer(scene, whole())?)),
             Role::Catcher => Box::new(WindowRoot::new(catcher()?)),
         })
     }

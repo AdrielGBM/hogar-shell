@@ -5,17 +5,12 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::placement::{
-    KeyboardMode, SurfaceAlign, SurfaceAnchor, SurfacePlacement, SurfaceRole, SurfaceSize,
-};
 use telar::{
-    AlignItems, App, Color, Component, Cursor, Edge, Event, EventHandler, Key, LocalApp,
-    ModifiersState, MultiSurfacePlatform, NamedKey, PlatformError, PointerButton, PointerSource,
-    ScrollDelta, SurfaceContent, SurfaceControl, SurfaceHost, SurfaceId, WindowRoot,
-    SurfaceScaffold, SurfaceToken, SurfaceTransition, Window, WindowConfig, begin_batch,
-    build_surface_handler, end_batch, reset_layout_runtime, set_surface_host,
+    App, Cursor, Event, EventHandler, Key, LocalApp, ModifiersState, MultiSurfacePlatform, NamedKey,
+    PlatformError, PointerButton, PointerSource, ScrollDelta, SurfaceId, Window, WindowConfig,
+    begin_batch, build_surface_handler, end_batch,
 };
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
@@ -67,31 +62,24 @@ use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buff
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 
-use crate::config::{Anchor, KeyboardInteractivity, Layer, LayerConfig, OutputDescriptor};
+use crate::config::{Layer, LayerConfig, OutputDescriptor};
 use crate::layer_window::{LayerWindowHandle, Mapping, Transition};
-use crate::link::{ExitPlan, SurfaceLink, SurfaceUpdate};
+use crate::link::{SurfaceLink, SurfaceUpdate};
 use crate::lock::LockSession;
 use crate::lock_notify::CompositorLock;
 use crate::window::LayerWindow;
 
-/// The type driven every surface handler is boxed to, so one loop holds statically-declared bars and runtime-opened drawers/OSDs in one `Vec` (the blanket `EventHandler for Box<dyn EventHandler>` makes the box callable). All surfaces share this UI thread; isolation is the handler's own `ui_core::Surface`.
+/// The type driven every surface handler is boxed to, so one loop holds every layer window, reservation strip and lock surface in one `Vec` (the blanket `EventHandler for Box<dyn EventHandler>` makes the box callable). All surfaces share this UI thread; isolation is the handler's own `ui_core::Surface`.
 pub(crate) type BoxedHandler = Box<dyn EventHandler<LayerWindow>>;
 
 /// The calloop sources (timers, channels) a surface registered while its handler ran, removed together when the surface is torn down. Shared by `Rc` so `with_current` can hand the sink to `interval`/`watch` without borrowing the driver's `SurfaceEntry`.
 type SourceSink = Rc<RefCell<Vec<RegistrationToken>>>;
 
-/// Where `on_close` files a surface's exit transition while its handler runs, on the same terms as [`SourceSink`]: shared by `Rc` so the driver can read the plan back without borrowing its entry.
-type ExitSink = Rc<RefCell<ExitPlan>>;
-
 thread_local! {
     static LOOP_HANDLE: RefCell<Option<LoopHandle<'static, Driver>>> = const { RefCell::new(None) };
-    // The control channel of the surface whose handler is currently running, so `request_close` and `request_geometry` target it (a surface opened by `open_surface` has one; a lock surface does not). Set by the driver around each handler call.
-    static CURRENT_LINK: RefCell<Option<Arc<SurfaceLink>>> = const { RefCell::new(None) };
     // Where `interval`/`watch` file their registration tokens while a surface's handler runs, so the driver can drop them with that surface. `None` outside a surface (app-level setup), where sources are process-lived.
     static CURRENT_SOURCES: RefCell<Option<SourceSink>> = const { RefCell::new(None) };
-    // Where `on_close` files what the current surface does on its way out. `None` outside a surface.
-    static CURRENT_EXIT: RefCell<Option<ExitSink>> = const { RefCell::new(None) };
-    // Dynamic surfaces requested via `open_surface` on the UI thread; the driver drains and mounts them.
+    // Surfaces opened on the UI thread (layer windows and reservation strips); the driver drains and mounts them.
     static DYN_QUEUE: RefCell<Vec<PendingSurface>> = const { RefCell::new(Vec::new()) };
     // App-level setup to run once on the driver thread after the loop is up (see `run_on_start`).
     static STARTUP: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
@@ -103,26 +91,42 @@ thread_local! {
     static CURSOR_SHAPE_DEVICE: RefCell<Option<WpCursorShapeDeviceV1>> = const { RefCell::new(None) };
     // The serial of the pointer's last `enter`, which `set_shape` must echo back or be ignored (the protocol's own rule, not a guess this crate makes).
     static LAST_POINTER_SERIAL: Cell<u32> = const { Cell::new(0) };
+    // Set while `app_watch` registers, so a source meant to outlive whatever build asked for it is not tied to that build's owner.
+    static APP_LEVEL: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Files `token` against the surface currently being driven, so its teardown removes the source. Outside a surface the token is dropped: app-level sources (the config watcher) live as long as the process.
+/// Files `token` against the surface currently being driven, so its teardown removes the source, and against the reactive owner building it, so a part of the tree rebuilt inside a surface that stays takes its sources with it. Outside a surface the token is dropped: app-level sources (the config watcher) live as long as the process.
 fn track_source(token: RegistrationToken) {
-    CURRENT_SOURCES.with(|s| {
-        if let Some(sink) = s.borrow().as_ref() {
-            sink.borrow_mut().push(token);
+    let sink = CURRENT_SOURCES.with(|s| s.borrow().clone());
+    if let Some(sink) = &sink {
+        sink.borrow_mut().push(token);
+    }
+    if APP_LEVEL.with(Cell::get) {
+        return;
+    }
+    // Tied to the owner whether or not a surface pass is running: a row built in the loop's closing batch flush registers outside one, and its sources must still go when it does. Tokens are versioned, so removing one the surface already removed is harmless.
+    let filed = sink.as_ref().map(Rc::downgrade);
+    telar::on_cleanup(move || {
+        if let Some(filed) = filed.and_then(|filed| filed.upgrade()) {
+            filed.borrow_mut().retain(|kept| *kept != token);
         }
+        LOOP_HANDLE.with(|h| {
+            if let Some(handle) = h.borrow().as_ref() {
+                handle.remove(token);
+            }
+        });
     });
 }
 
 /// Wayland surfaces the driver is holding, refreshed once a turn. An atomic rather than a thread-local because the point is to be readable as a number without being on the driver thread, which is what makes a surface leak observable from a script instead of from `top`.
 static LIVE_SURFACES: AtomicUsize = AtomicUsize::new(0);
 
-/// How many surfaces the driver holds right now, mapped or not — every bar, panel, drawer, popup and layer window, not just the ones a user opened. Reported by `shell status`.
+/// How many surfaces the driver holds right now, mapped or not — every layer window, reservation strip and lock surface. Reported by `shell status`.
 pub fn live_surfaces() -> usize {
     LIVE_SURFACES.load(Ordering::Relaxed)
 }
 
-/// Registers a closure to run once on the driver thread just after its loop is set up (its `LOOP_HANDLE` and `SurfaceHost` installed), so app-level setup that needs `watch`/`open_surface` — e.g. the notification popup host — runs on the right thread. Call it before `run_multi_with_platform` (same thread as the driver).
+/// Registers a closure to run once on the driver thread just after its loop is set up (its `LOOP_HANDLE` installed), so app-level setup that needs `watch` or opens a window runs on the right thread. Call it before `run_multi_with_platform` (same thread as the driver).
 pub fn run_on_start(task: impl FnOnce() + 'static) {
     STARTUP.with(|s| s.borrow_mut().push(Box::new(task)));
 }
@@ -132,36 +136,23 @@ struct PendingSurface {
     // `None` for a reservation-only strip (no rsx handler, just its exclusive zone).
     handler: Option<BoxedHandler>,
     link: Arc<SurfaceLink>,
-    /// The input region is carved from the input-opaque rects the content draws, whatever `config` says — a layer window's only input policy.
-    drawn_input: bool,
 }
 
-/// Runs the handler closure with the current surface's worlds installed: `link` so `request_close` and `request_geometry` reach the right surface, `sources` as the sink `interval`/`watch` file their registration tokens into (so the surface's timers and channels die with it), and `exit` as the one `on_close` files its exit transition into. All three are restored afterwards.
-fn with_current<R>(
-    link: &Option<Arc<SurfaceLink>>,
-    sources: &SourceSink,
-    exit: &ExitSink,
-    f: impl FnOnce() -> R,
-) -> R {
-    CURRENT_LINK.with(|c| *c.borrow_mut() = link.clone());
+/// Runs the handler closure with the current surface's sink installed, which is where `interval`/`watch` file their registration tokens so the surface's timers and channels die with it. Restored afterwards.
+fn with_current<R>(sources: &SourceSink, f: impl FnOnce() -> R) -> R {
     CURRENT_SOURCES.with(|s| *s.borrow_mut() = Some(Rc::clone(sources)));
-    CURRENT_EXIT.with(|e| *e.borrow_mut() = Some(Rc::clone(exit)));
     let result = f();
-    CURRENT_LINK.with(|c| *c.borrow_mut() = None);
     CURRENT_SOURCES.with(|s| *s.borrow_mut() = None);
-    CURRENT_EXIT.with(|e| *e.borrow_mut() = None);
     result
 }
 
-/// Starts a surface's renderer, inside one reactive batch and with the surface's worlds installed: the first resume mounts the tree, and a later one presents the tree the suspend kept. `false` means the renderer could not be built.
+/// Starts a surface's renderer, inside one reactive batch and with the surface's sink installed: the first resume mounts the tree, and a later one presents the tree the suspend kept. `false` means the renderer could not be built.
 fn resume_handler<W: Window>(
     handler: &mut dyn EventHandler<W>,
     window: &W,
-    link: &Option<Arc<SurfaceLink>>,
     sources: &SourceSink,
-    exit: &ExitSink,
 ) -> bool {
-    with_current(link, sources, exit, || {
+    with_current(sources, || {
         handler.new_events();
         let resumed = handler.on_resume(window);
         handler.about_to_wait();
@@ -170,61 +161,11 @@ fn resume_handler<W: Window>(
 }
 
 /// Stops a surface's renderer, joining its thread, and keeps the handler with its app and tree.
-fn suspend_handler<W: Window>(
-    handler: &mut dyn EventHandler<W>,
-    link: &Option<Arc<SurfaceLink>>,
-    sources: &SourceSink,
-    exit: &ExitSink,
-) {
-    with_current(link, sources, exit, || handler.on_suspend());
+fn suspend_handler<W: Window>(handler: &mut dyn EventHandler<W>, sources: &SourceSink) {
+    with_current(sources, || handler.on_suspend());
 }
 
-fn with_current_link(read: impl FnOnce(&Arc<SurfaceLink>)) {
-    CURRENT_LINK.with(|c| {
-        if let Some(link) = c.borrow().as_ref() {
-            read(link);
-        }
-    });
-}
-
-/// Asks the *current* surface to close — for a dynamic surface (drawer/OSD), flips its close flag so the driver tears it down on the next loop turn, or plays out the exit transition it registered with [`on_close`] first. No-op on a surface the driver mounted itself (a lock surface), which has no control channel.
-pub fn request_close() {
-    with_current_link(|link| link.request_close());
-}
-
-/// Asks the compositor to renegotiate the *current* surface's size, from inside its own handler — the drag of a float's resize grip, say. Layer-shell sizes are logical pixels; `0` on an axis hands that axis back to the compositor.
-pub fn request_size(width: u32, height: u32) {
-    with_current_link(|link| link.request_update(SurfaceUpdate::size(width, height)));
-}
-
-/// Asks the compositor to move the *current* surface relative to the edges it is anchored to, as `(top, right, bottom, left)` logical pixels. A margin only takes effect on an edge the surface is anchored to, and a negative one pushes it off that edge — which is how an auto-hidden bar leaves only a hover strip on screen.
-pub fn request_margin(margin: (i32, i32, i32, i32)) {
-    with_current_link(|link| link.request_update(SurfaceUpdate::margin(margin)));
-}
-
-/// Asks the compositor to blur what is behind `rects` on the *current* surface, in logical surface coordinates — the one effect a client-side renderer cannot produce for itself, since the pixels it would need are the ones it is drawing over.
-///
-/// The set is absolute rather than additive: each call replaces the last, and an empty one gives the blur up. Asking for the same rects again on the next frame costs nothing, which is what lets this be called unconditionally from a layout pass.
-///
-/// Silently does nothing where the compositor has no `ext-background-effect-v1`, or where it has withdrawn the `blur` capability — ask [`background_effect_supported`] first if the content should look different when there will be no blur behind it.
-pub fn request_blur_region(rects: Vec<telar::Rect>) {
-    with_current_link(|link| link.request_update(SurfaceUpdate::blur_region(rects)));
-}
-
-/// Registers what the *current* surface does when it is asked to close, and how long the driver keeps it mapped afterwards so that reaction can be seen — an exit transition, in other words.
-///
-/// Call it while the surface's content is being built, which is the one time the surface is current. More than one caller per surface is expected and additive: the hosted scaffold fades its scrim out while the panel content slides back toward its bar edge, and the driver waits for the longer of the two.
-///
-/// A zero `linger`, or no registration at all, is the original behaviour — the surface goes on the driver's next loop turn.
-pub fn on_close(linger: Duration, react: impl FnOnce() + 'static) {
-    CURRENT_EXIT.with(|e| {
-        if let Some(sink) = e.borrow().as_ref() {
-            sink.borrow_mut().push(linger, Box::new(react));
-        }
-    });
-}
-
-/// Repeats `callback` every `period` on the shared loop. Bound to the surface that registered it: when that surface is torn down (a drawer closing, a bar replaced on config reload) the timer is removed with it, so a reopened panel never stacks a second ticker on the first.
+/// Repeats `callback` every `period` on the shared loop. Bound to the surface that registered it: when that surface is torn down, or the reactive owner that registered it is disposed, the timer is removed with it, so a rebuilt tree never stacks a second ticker on the first.
 pub fn interval(period: Duration, mut callback: impl FnMut() + 'static) {
     LOOP_HANDLE.with(|h| {
         if let Some(handle) = h.borrow().as_ref() {
@@ -352,7 +293,9 @@ where
     F: FnMut(T) + 'static,
 {
     let surface = CURRENT_SOURCES.with(|s| s.borrow_mut().take());
+    let lived = APP_LEVEL.with(|app| app.replace(true));
     let token = watch(producer, on_event);
+    APP_LEVEL.with(|app| app.set(lived));
     CURRENT_SOURCES.with(|s| *s.borrow_mut() = surface);
     token
 }
@@ -455,16 +398,13 @@ pub(crate) struct SurfaceEntry {
     handler: Option<BoxedHandler>,
     // `Some` for a surface opened through a `SurfaceHandle` (its close flag and geometry channel); `None` for one the driver mounted itself — a lock surface — which only goes on the shared shutdown.
     link: Option<Arc<SurfaceLink>>,
-    /// Timers and channel sources this surface registered (via `interval`/`watch`), removed from the loop when it is torn down so a closed drawer stops ticking instead of outliving its own signals.
+    /// Timers and channel sources this surface registered (via `interval`/`watch`), removed from the loop when it is torn down so a closed surface stops ticking instead of outliving its own signals.
     sources: SourceSink,
-    /// What this surface's content asked to happen on its way out (via `on_close`), and for how long.
-    exit: ExitSink,
-    /// When a started exit transition runs out and the surface is torn down. `None` until it is asked to close.
-    exit_deadline: Option<Instant>,
     /// The layer-shell namespace, so a diagnostic can name which surface an event reached.
     namespace: String,
     reserve_only: bool,
-    interactive_input_region: bool,
+    /// Whether the input region is carved from what the content draws: a layer window's only input policy. A reservation strip keeps an empty region and a lock surface has none to carve.
+    drawn_input: bool,
     /// Whether the owner wants the surface on screen, and whether a configure may be presented on.
     mapping: Mapping,
     /// The layer-shell state this surface last asked for, which re-arming after an unmap asks for again. `None` for a lock surface, which has none.
@@ -526,11 +466,9 @@ impl SurfaceEntry {
             handler,
             link,
             sources: SourceSink::default(),
-            exit: ExitSink::default(),
-            exit_deadline: None,
             namespace,
             reserve_only: false,
-            interactive_input_region: false,
+            drawn_input: false,
             mapping: Mapping::default(),
             layer_state: None,
             scale_120: scale.max(1) as u32 * 120,
@@ -673,7 +611,7 @@ impl SurfaceEntry {
         if self.resumed
             && let Some(handler) = self.handler.as_mut()
         {
-            suspend_handler(handler.as_mut(), &self.link, &self.sources, &self.exit);
+            suspend_handler(handler.as_mut(), &self.sources);
         }
         self.resumed = false;
         self.configured = false;
@@ -742,43 +680,15 @@ impl SurfaceEntry {
 
     /// Builds this surface's content again on the surface it is already on, and drops everything the outgoing content had registered against the loop.
     ///
-    /// Those registrations are the whole reason a rebuild is more than one call: `interval` and `watch` file their sources against the surface, and the tree being replaced is about to register its own — so a rebuild that kept them would leave a clock ticking twice and a service feeding a tree nobody draws. Same for the exit transition, whose reactions animate widgets that no longer exist.
+    /// Those registrations are the whole reason a rebuild is more than one call: `interval` and `watch` file their sources against the surface, and the tree being replaced is about to register its own — so a rebuild that kept them would leave a clock ticking twice and a service feeding a tree nobody draws.
     fn rebuild(&mut self, window: &LayerWindow, loop_handle: &LoopHandle<'static, Driver>) {
         for token in self.sources.borrow_mut().drain(..) {
             loop_handle.remove(token);
         }
-        *self.exit.borrow_mut() = ExitPlan::default();
-        let link = self.link.clone();
         let sources = Rc::clone(&self.sources);
-        let exit = Rc::clone(&self.exit);
         if let Some(handler) = self.handler.as_mut() {
-            with_current(&link, &sources, &exit, || handler.remount(window));
+            with_current(&sources, || handler.remount(window));
         }
-    }
-
-    /// Whether a surface that has been asked to close should be torn down *now*.
-    ///
-    /// The first call is what starts its exit transition: the reactions its content registered with `on_close` run, and the surface stays mapped until their linger is up. Without one — nothing registered, or the user has animation switched off — this answers `true` immediately, which is what the driver did before any exit transition existed.
-    fn exit_elapsed(&mut self) -> bool {
-        if let Some(deadline) = self.exit_deadline {
-            return Instant::now() >= deadline;
-        }
-        let plan = std::mem::take(&mut *self.exit.borrow_mut());
-        if plan.is_empty() {
-            return true;
-        }
-        self.exit_deadline = Some(Instant::now() + plan.linger());
-        let link = self.link.clone();
-        let sources = Rc::clone(&self.sources);
-        let exit = Rc::clone(&self.exit);
-        with_current(&link, &sources, &exit, || plan.run());
-        false
-    }
-
-    /// How long the driver may sleep while this surface is on its way out. An exit is usually carried by an animation, which paces the loop on its own — but one that settles early (or never starts, because the reaction moved nothing) would otherwise let the loop sleep straight past the deadline and leave a closed surface on screen.
-    fn exit_timeout(&self) -> Option<Duration> {
-        self.exit_deadline
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
     }
 }
 
@@ -986,9 +896,8 @@ fn create_surface_entry(
     config: &LayerConfig,
     handler: Option<BoxedHandler>,
     link: Option<Arc<SurfaceLink>>,
-    drawn_input: bool,
 ) {
-    let drawn_input = drawn_input || config.interactive_input_region;
+    let drawn_input = handler.is_some();
     let output = config.output.as_deref().and_then(|name| {
         driver
             .output_state
@@ -1016,10 +925,8 @@ fn create_surface_entry(
     let (mt, mr, mb, ml) = config.margin;
     layer.set_margin(mt, mr, mb, ml);
     layer.set_keyboard_interactivity(config.keyboard_interactivity);
-    // A fully click-through surface, and one carving its region from its content before its first frame computes it, both start with an empty input region so they never steal clicks from windows beneath.
-    if (config.input_transparent || drawn_input)
-        && let Ok(region) = Region::new(compositor)
-    {
+    // Every surface starts with an empty input region: a reservation strip keeps it, and a window carving its region from its content has not computed one before its first frame, so neither steals a click from what is beneath.
+    if let Ok(region) = Region::new(compositor) {
         layer
             .wl_surface()
             .set_input_region(Some(region.wl_region()));
@@ -1036,7 +943,7 @@ fn create_surface_entry(
         (config.size.0.max(1), config.size.1.max(1)),
     );
     entry.reserve_only = config.reserve_only;
-    entry.interactive_input_region = drawn_input;
+    entry.drawn_input = drawn_input;
     entry.layer_state = Some(config.clone());
     // Before the first commit, so the surface is never mapped under a mapping it is about to replace.
     driver.attach_scaling(&mut entry, qh);
@@ -1141,7 +1048,6 @@ where
         .map_err(|e| PlatformError(format!("ping source insert failed: {e}")))?;
 
     LOOP_HANDLE.with(|h| *h.borrow_mut() = Some(loop_handle.clone()));
-    set_surface_host(LayerShellSurfaceHost);
 
     // Prime the registry so outputs are known before matching `config.output` on surface creation.
     for _ in 0..3 {
@@ -1173,11 +1079,10 @@ where
             &config,
             handler,
             None,
-            false,
         );
     }
 
-    // App-level setup that needs the driver thread (LOOP_HANDLE + SurfaceHost now installed): the popup host.
+    // App-level setup that needs the driver thread, now that LOOP_HANDLE is installed.
     for task in STARTUP.with(|s| std::mem::take(&mut *s.borrow_mut())) {
         task();
     }
@@ -1187,7 +1092,7 @@ where
         // Before the surface pass, so a lock taken during the last dispatch has its surfaces mounted — and an unlock has them torn down — in this same turn rather than one frame late.
         crate::lock::poll(&mut driver, &compositor, &qh, &conn, &loop_handle);
 
-        // Mount any dynamic surfaces requested since the last turn (drawers/OSDs opened via `open_surface`).
+        // Mount the layer windows and reservation strips opened since the last turn.
         let pending: Vec<PendingSurface> = DYN_QUEUE.with(|q| std::mem::take(&mut *q.borrow_mut()));
         for p in pending {
             create_surface_entry(
@@ -1198,7 +1103,6 @@ where
                 &p.config,
                 p.handler,
                 Some(p.link),
-                p.drawn_input,
             );
         }
 
@@ -1225,12 +1129,7 @@ where
         } = &mut driver;
         let single_pixel = single_pixel.as_ref();
         for (index, entry) in surfaces.iter_mut().enumerate() {
-            // The compositor closing the surface leaves nothing to play an exit onto, so that path skips the transition entirely: as far as the compositor is concerned the surface is already gone.
-            if entry.closed {
-                remove.push(index);
-                continue;
-            }
-            if entry.link.as_ref().is_some_and(|link| link.is_closing()) && entry.exit_elapsed() {
+            if entry.closed || entry.link.as_ref().is_some_and(|link| link.is_closing()) {
                 remove.push(index);
                 continue;
             }
@@ -1276,14 +1175,12 @@ where
                 entry.link.as_ref().is_some_and(|link| link.take_rebuild()) && entry.mounted;
 
             if !entry.resumed {
-                let link = entry.link.clone();
                 let sources = Rc::clone(&entry.sources);
-                let exit = Rc::clone(&entry.exit);
                 let handler = entry
                     .handler
                     .as_mut()
                     .expect("rendering surface has a handler");
-                let ok = resume_handler(handler.as_mut(), &window, &link, &sources, &exit);
+                let ok = resume_handler(handler.as_mut(), &window, &sources);
                 if !ok {
                     tracing::error!("layer surface on_resume failed (renderer init)");
                     remove.push(index);
@@ -1300,11 +1197,9 @@ where
                 }
             }
 
-            let link = entry.link.clone();
             let sources = Rc::clone(&entry.sources);
-            let exit = Rc::clone(&entry.exit);
             let events = std::mem::take(&mut entry.events);
-            entry.timeout = with_current(&link, &sources, &exit, || {
+            entry.timeout = with_current(&sources, || {
                 let handler = entry
                     .handler
                     .as_mut()
@@ -1316,7 +1211,7 @@ where
                 handler.on_redraw(&window);
                 handler.about_to_wait()
             });
-            if entry.interactive_input_region {
+            if entry.drawn_input {
                 let rects = entry
                     .handler
                     .as_ref()
@@ -1333,7 +1228,6 @@ where
                 }
             }
             min_timeout = merge_timeout(min_timeout, entry.timeout);
-            min_timeout = merge_timeout(min_timeout, entry.exit_timeout());
         }
 
         for index in remove.into_iter().rev() {
@@ -1355,8 +1249,7 @@ where
 pub(crate) fn tear_down(mut entry: SurfaceEntry, loop_handle: &LoopHandle<'static, Driver>) {
     if let Some(mut handler) = entry.handler.take() {
         let sources = Rc::clone(&entry.sources);
-        let exit = Rc::clone(&entry.exit);
-        with_current(&entry.link, &sources, &exit, || handler.on_suspend());
+        with_current(&sources, || handler.on_suspend());
     }
     for token in entry.sources.borrow_mut().drain(..) {
         loop_handle.remove(token);
@@ -1515,53 +1408,15 @@ fn region_change(
     (rects != last).then_some(rects)
 }
 
-/// A live dynamically-opened surface. Dropping it — or calling [`close`](Self::close) — asks the driver to tear it down.
+/// A live reservation strip. Dropping it asks the driver to tear it down on its next loop turn.
 pub struct SurfaceHandle {
     link: Arc<SurfaceLink>,
 }
 
 impl SurfaceHandle {
-    /// Asks the surface to close. Returns immediately; the driver tears it down on its next loop turn, or once the exit transition the surface registered with [`on_close`] has played out. Deliberately non-blocking so a UI event handler can close a drawer without stalling.
-    pub fn close(&self) {
-        self.link.request_close();
-    }
-
-    /// Whether this surface has been asked to close (by `close`, drop, or the surface closing itself via `request_close`). Lets the owner reconcile its own toggle state after a self-close.
-    pub fn is_closing(&self) -> bool {
-        self.link.is_closing()
-    }
-
-    /// Builds the surface's content again, in place: the window, its renderer and its position are kept, and only the tree is built anew — from whatever the app reads now.
-    ///
-    /// This is how a surface follows something that changed underneath it (a config file the user edited) without being replaced by a new one. Non-blocking, and coalesced: several requests between two loop turns are one rebuild.
-    pub fn rebuild(&self) {
-        self.link.request_rebuild();
-    }
-
-    /// Renegotiates any part of the surface's layer-shell state in one commit — the shape a caller reconciling a surface against a changed configuration wants, rather than one request per field.
+    /// Renegotiates any part of the strip's layer-shell state in one commit — the shape a caller reconciling a strip against a changed arrangement wants, rather than one request per field.
     pub fn update(&self, change: SurfaceUpdate) {
         self.link.request_update(change);
-    }
-
-    /// Asks the compositor to renegotiate the surface's size. `0` on an axis hands that axis back to it.
-    pub fn set_size(&self, width: u32, height: u32) {
-        self.link.request_update(SurfaceUpdate::size(width, height));
-    }
-
-    /// Moves the surface relative to the edges it is anchored to, as `(top, right, bottom, left)` logical pixels. Only an edge the surface is anchored to honours its margin; a negative value pushes it off that edge, which is how an auto-hidden bar keeps a hover strip on screen and nothing else.
-    pub fn set_margin(&self, margin: (i32, i32, i32, i32)) {
-        self.link.request_update(SurfaceUpdate::margin(margin));
-    }
-
-    /// Changes how much of the screen the surface reserves for itself. `0` reserves nothing (windows tile under it), `-1` opts out of every other surface's reservation, and a positive value is a logical-pixel strip.
-    pub fn set_exclusive_zone(&self, zone: i32) {
-        self.link
-            .request_update(SurfaceUpdate::exclusive_zone(zone));
-    }
-
-    /// Asks the compositor to blur what is behind `rects`, in logical surface coordinates. See [`request_blur_region`], which is the same request made from inside the surface's own content — where a layout-derived region comes from — rather than by whoever holds the surface.
-    pub fn set_blur_region(&self, rects: Vec<telar::Rect>) {
-        self.link.request_update(SurfaceUpdate::blur_region(rects));
     }
 }
 
@@ -1569,38 +1424,6 @@ impl Drop for SurfaceHandle {
     fn drop(&mut self) {
         self.link.request_close();
     }
-}
-
-impl SurfaceControl for SurfaceHandle {
-    fn close(&self) {
-        SurfaceHandle::close(self);
-    }
-    fn is_closing(&self) -> bool {
-        SurfaceHandle::is_closing(self)
-    }
-    fn rebuild(&self) {
-        SurfaceHandle::rebuild(self);
-    }
-}
-
-/// Opens a new layer-shell surface at runtime. Builds the handler on the UI thread and enqueues it for the driver to mount on its next loop turn — no new thread, so it shares the one reactive runtime (M3).
-pub fn open_surface<A: App + 'static>(spec: LayerConfig, app: A) -> SurfaceHandle {
-    let link = Arc::new(SurfaceLink::default());
-    let handler = build_surface_handler::<LayerWindow, _>(
-        LocalApp(app),
-        std::sync::Arc::new(telar::NoPaths),
-        "hogar-shell",
-        surface_fonts(),
-    );
-    DYN_QUEUE.with(|q| {
-        q.borrow_mut().push(PendingSurface {
-            config: spec,
-            handler: Some(handler),
-            link: Arc::clone(&link),
-            drawn_input: false,
-        })
-    });
-    SurfaceHandle { link }
 }
 
 /// Opens the window of one layer on one output: the whole output, at the compositor's size, ignoring every exclusive zone, drawn by `app`; call [`LayerWindowHandle::set_mapped`] before the driver's next turn to open it hidden, at no cost beyond the layer surface itself.
@@ -1622,13 +1445,12 @@ pub fn open_layer_window<A: App + 'static>(
             config: LayerConfig::whole_output(output, layer, namespace.into()),
             handler: Some(handler),
             link: Arc::clone(&link),
-            drawn_input: true,
         })
     });
     LayerWindowHandle::new(link)
 }
 
-/// Opens a reservation-only strip (no rsx content — just its exclusive zone, an invisible transparent buffer), closeable like any dynamic surface. Used to reserve bar space so the strip and the visible bar are independent surfaces (see the bar/reservation split), reconcilable on config reload without a full teardown.
+/// Opens a reservation-only strip (no rsx content — just its exclusive zone, an invisible transparent buffer), dropped to close. The strip and the window that draws what reserves are independent surfaces, so a strip is reconciled on its own without a teardown.
 pub fn open_reservation(spec: LayerConfig) -> SurfaceHandle {
     let link = Arc::new(SurfaceLink::default());
     DYN_QUEUE.with(|q| {
@@ -1636,159 +1458,16 @@ pub fn open_reservation(spec: LayerConfig) -> SurfaceHandle {
             config: spec,
             handler: None,
             link: Arc::clone(&link),
-            drawn_input: false,
         })
     });
     SurfaceHandle { link }
 }
 
-/// Maps rsx's backend-agnostic [`SurfaceAnchor`] to layer-shell edge flags. `Center` anchors to no edge, so the compositor centres the surface.
-fn anchor_flags(anchor: SurfaceAnchor) -> Anchor {
-    match anchor {
-        SurfaceAnchor::Top => Anchor::TOP,
-        SurfaceAnchor::Bottom => Anchor::BOTTOM,
-        SurfaceAnchor::Left => Anchor::LEFT,
-        SurfaceAnchor::Right => Anchor::RIGHT,
-        SurfaceAnchor::Center => Anchor::empty(),
-    }
-}
-
-/// Derives the layer-shell surface config from a [`SurfacePlacement`]. A placement needing a scaffold (scrim or outside-dismiss) becomes a full-screen surface the `SurfaceScaffold` positions its panel within; a directly-anchored one is sized and anchored by the compositor.
-fn layer_config_for(placement: &SurfacePlacement) -> LayerConfig {
-    let namespace = match placement.role {
-        SurfaceRole::Drawer => "hogar-shell-drawer",
-        SurfaceRole::Popup => "hogar-shell-popup",
-        SurfaceRole::Osd => "hogar-shell-osd",
-        SurfaceRole::Float => "hogar-shell-float",
-        SurfaceRole::Overlay => "hogar-shell-overlay",
-    }
-    .to_string();
-    // `exclusive` is an input grab, not merely a keyboard one: while such a surface is up the compositor stops delivering pointer events to every other surface, the shell's own bar included. Only a surface selecting part of the screen wants that — see `Placement::modal` for the launcher, which does not.
-    let keyboard_interactivity = match placement.keyboard {
-        KeyboardMode::None => KeyboardInteractivity::None,
-        KeyboardMode::OnDemand => KeyboardInteractivity::OnDemand,
-        KeyboardMode::Exclusive => KeyboardInteractivity::Exclusive,
-    };
-    if placement.needs_scaffold() {
-        LayerConfig {
-            output: placement.output.clone(),
-            layer: Layer::Overlay,
-            anchor: Anchor::TOP
-                .union(Anchor::BOTTOM)
-                .union(Anchor::LEFT)
-                .union(Anchor::RIGHT),
-            exclusive_zone: 0,
-            size: (0, 0),
-            margin: (0, 0, 0, 0),
-            keyboard_interactivity,
-            namespace,
-            reserve_only: false,
-            input_transparent: false,
-            interactive_input_region: false,
-        }
-    } else {
-        let size = match placement.size {
-            SurfaceSize::Fixed(w, h) => (w, h),
-            SurfaceSize::Auto => (0, 0),
-        };
-        LayerConfig {
-            output: placement.output.clone(),
-            layer: Layer::Overlay,
-            anchor: anchor_flags(placement.anchor),
-            exclusive_zone: 0,
-            size,
-            margin: placement.margin,
-            keyboard_interactivity,
-            namespace,
-            reserve_only: false,
-            input_transparent: placement.input_transparent,
-            interactive_input_region: false,
-        }
-    }
-}
-
-/// The internal rsx app for a hosted secondary surface: builds the content, wraps it in the placement's scaffold (scrim + outside-dismiss) or a plain full-surface root, and arms an auto-dismiss timer when the placement asks for one. The auto-dismiss captures this surface's own close flag directly, so it fires regardless of which surface is current when the timer elapses.
-///
-/// What is held here rather than built per call is what belongs to the *surface* rather than to one build of its content, and it is what makes a rebuild a rebuild: the app outlives the tree, so an entrance played once stays played and a dismissal armed once stays armed.
-struct HostedSurfaceApp {
-    placement: SurfacePlacement,
-    content: SurfaceContent,
-    link: Arc<SurfaceLink>,
-    transition: RefCell<Option<SurfaceTransition>>,
-    dismiss_armed: std::cell::Cell<bool>,
-}
-
-impl App for HostedSurfaceApp {
-    fn root(&self) -> Box<dyn Component> {
-        reset_layout_runtime();
-        let content = (self.content)();
-        // Armed once for the surface, not once per build: a rebuilt OSD still goes away when it was always going to, rather than starting its countdown over — or running two.
-        if let Some(delay) = self.placement.timeout
-            && !self.dismiss_armed.replace(true)
-        {
-            let link = Arc::clone(&self.link);
-            timeout(delay, move || link.request_close());
-        }
-        // One transition drives both halves: it runs to 1 as the surface opens, and `on_close` runs it back to 0 while the driver holds the surface mapped for exactly as long as that takes.
-        //
-        // Kept across rebuilds, because rebuilding content is not a second arrival: a fresh transition would replay the slide-in, so every edit to the config would look like the panel closing and opening.
-        let transition = self
-            .transition
-            .borrow_mut()
-            .get_or_insert_with(SurfaceTransition::enter)
-            .clone();
-        on_close(transition.duration(), {
-            let transition = transition.clone();
-            move || transition.leave()
-        });
-        if self.placement.needs_scaffold() {
-            let dismiss: Option<Rc<dyn Fn()>> = self.placement.dismiss_on_outside.then(|| {
-                let link = Arc::clone(&self.link);
-                Rc::new(move || link.request_close()) as Rc<dyn Fn()>
-            });
-            Box::new(
-                SurfaceScaffold::new(
-                    scaffold_edge(self.placement.anchor),
-                    scaffold_align(self.placement.align),
-                    self.placement.margin,
-                    self.placement.scrim.then_some(telar::DEFAULT_SCRIM),
-                    dismiss,
-                    content,
-                )
-                .expect("surface scaffold build failed")
-                .animate(transition),
-            )
-        } else {
-            Box::new(
-                WindowRoot::wrapping(content)
-                    .expect("surface root build failed")
-                    .animate(transition),
-            )
-        }
-    }
-
-    fn window_config(&self) -> Option<WindowConfig> {
-        // The scaffold paints its own scrim; the surface itself stays transparent so the compositor blends it.
-        Some(WindowConfig {
-            is_transparent: true,
-            ..WindowConfig::default()
-        })
-    }
-
-    fn clear_color(&self) -> Option<Color> {
-        None
-    }
-}
-
-/// Installed once so the shell's rsx world can open drawers/OSDs/popups via `telar::open_surface`.
-struct LayerShellSurfaceHost;
-
 thread_local! {
     /// What every surface this shell opens shapes its text in.
     ///
     /// Telar's process-wide font family is gone — a family belongs to a surface's own configuration — but
-    /// this crate is below `config` and cannot read the live one, and `SurfaceHost::open` is a trait method
-    /// with no room for a parameter. So the shell sets it here, wherever it sets its theme, and every
+    /// this crate is below `config` and cannot read the live one. So the shell sets it here, wherever it sets its theme, and every
     /// surface opened afterwards carries it. A *shell's* default rather than a framework's, which is the
     /// difference that matters: it is one application deciding for its own windows.
     static SURFACE_FONTS: std::cell::RefCell<telar::AppConfig> =
@@ -1807,54 +1486,6 @@ fn surface_fonts() -> telar::AppConfig {
 
 pub(crate) fn surface_fonts_for_lock() -> telar::AppConfig {
     surface_fonts()
-}
-
-/// Lowers this backend's own anchor/align onto what the framework scaffold takes.
-fn scaffold_edge(anchor: SurfaceAnchor) -> Edge {
-    match anchor {
-        SurfaceAnchor::Top => Edge::Top,
-        SurfaceAnchor::Bottom => Edge::Bottom,
-        SurfaceAnchor::Left => Edge::Left,
-        SurfaceAnchor::Right => Edge::Right,
-        SurfaceAnchor::Center => Edge::Center,
-    }
-}
-
-fn scaffold_align(align: SurfaceAlign) -> AlignItems {
-    match align {
-        SurfaceAlign::Start => AlignItems::START,
-        SurfaceAlign::Center => AlignItems::CENTER,
-        SurfaceAlign::End => AlignItems::END,
-    }
-}
-
-impl SurfaceHost<SurfacePlacement> for LayerShellSurfaceHost {
-    fn open(&self, placement: SurfacePlacement, content: SurfaceContent) -> SurfaceToken {
-        let config = layer_config_for(&placement);
-        let link = Arc::new(SurfaceLink::default());
-        let app = HostedSurfaceApp {
-            placement,
-            content,
-            link: Arc::clone(&link),
-            transition: RefCell::new(None),
-            dismiss_armed: std::cell::Cell::new(false),
-        };
-        let handler = build_surface_handler::<LayerWindow, _>(
-            LocalApp(app),
-            std::sync::Arc::new(telar::NoPaths),
-            "hogar-shell",
-            surface_fonts(),
-        );
-        DYN_QUEUE.with(|q| {
-            q.borrow_mut().push(PendingSurface {
-                config,
-                handler: Some(handler),
-                link: Arc::clone(&link),
-                drawn_input: false,
-            })
-        });
-        SurfaceToken::new(Box::new(SurfaceHandle { link }))
-    }
 }
 
 /// Maps a box's resolved [`Cursor`] (F-5.10 picks one winner per surface) onto the shape `wp-cursor-shape-v1` shows for it. Every variant has a namesake in the protocol's `shape` enum, including the resize and grab shapes an edit-mode handle needs (T-2.3): `EwResize`/`NsResize` for a straight edge, `NwseResize`/`NeswResize` for a corner, `Move` for a handle that moves freely in both axes.
@@ -2421,45 +2052,6 @@ pub fn enumerate_outputs() -> Vec<OutputDescriptor> {
 mod tests {
     use super::*;
 
-    /// `on_close`, `request_close` and `request_size` all name "the current surface", and outside one there is no such thing. A silent no-op is the right answer — a preview render, a unit test and app-level setup all run this code with no surface installed — but it has to be a no-op rather than a panic, and an exit registered outside a surface must not leak into whichever surface runs next.
-    #[test]
-    fn asking_the_current_surface_for_anything_outside_one_does_nothing() {
-        request_close();
-        request_size(400, 300);
-        request_margin((0, 0, 0, 0));
-        request_blur_region(vec![telar::Rect::new(0.0, 0.0, 40.0, 40.0)]);
-        on_close(Duration::from_millis(200), || {
-            panic!("an exit registered outside a surface has nothing to belong to")
-        });
-
-        let exit = ExitSink::default();
-        with_current(&None, &SourceSink::default(), &exit, || {});
-        assert!(
-            exit.borrow().is_empty(),
-            "the reaction registered before any surface was current must not be picked up by one"
-        );
-    }
-
-    /// Both halves of a hosted surface's exit — the scaffold fading its scrim, the panel content sliding back toward its bar edge — register against the same surface, and the driver has to wait for the longer.
-    #[test]
-    fn every_exit_a_surface_registers_reaches_its_plan() {
-        let fired = Rc::new(RefCell::new(Vec::new()));
-        let exit = ExitSink::default();
-        with_current(&None, &SourceSink::default(), &exit, || {
-            for (name, ms) in [("scaffold", 200u64), ("panel", 320)] {
-                let fired = Rc::clone(&fired);
-                on_close(Duration::from_millis(ms), move || {
-                    fired.borrow_mut().push(name)
-                });
-            }
-        });
-
-        let plan = std::mem::take(&mut *exit.borrow_mut());
-        assert_eq!(plan.linger(), Duration::from_millis(320));
-        plan.run();
-        assert_eq!(*fired.borrow(), vec!["scaffold", "panel"]);
-    }
-
     /// A headless window that counts the frames asked of it, so a test can tell a hidden surface that stays quiet from one that asks to be drawn.
     #[derive(Clone)]
     struct CountingWindow {
@@ -2520,29 +2112,24 @@ mod tests {
         }
     }
 
-    /// A layer window's app whose tree owns what the app never sees — a signal made in `root`, a node, a ticker on the loop and an exit reaction — and reports each of them, so a kept tree can be told from a rebuilt one.
+    /// A layer window's app whose tree owns what the app never sees — a signal made in `root`, a node and a ticker on the loop — and reports each of them, so a kept tree can be told from a rebuilt one.
     #[derive(Default)]
     struct Tracked {
         roots: Rc<std::cell::Cell<u32>>,
         local: Rc<std::cell::Cell<Option<telar::RwSignal<u32>>>>,
         node: Rc<std::cell::Cell<Option<telar::NodeId>>>,
         tree: Rc<RefCell<std::rc::Weak<()>>>,
-        exits: Rc<std::cell::Cell<u32>>,
     }
 
     impl App for Tracked {
-        fn root(&self) -> Box<dyn Component> {
+        fn root(&self) -> Box<dyn telar::Component> {
             use telar::LayoutItem;
 
-            reset_layout_runtime();
+            telar::reset_layout_runtime();
             self.roots.set(self.roots.get() + 1);
             let local = telar::signal(0u32);
             self.local.set(Some(local));
             interval(Duration::from_secs(3600), || {});
-            let exits = Rc::clone(&self.exits);
-            on_close(Duration::from_millis(100), move || {
-                exits.set(exits.get() + 1)
-            });
             let alive = Rc::new(());
             *self.tree.borrow_mut() = Rc::downgrade(&alive);
             let tint = telar::Rectangle::new(
@@ -2550,14 +2137,14 @@ mod tests {
                 move || {
                     let _tree = &alive;
                     telar::RectStyle::filled(
-                        Color::rgba(local.get() as f32 / 10.0, 0.0, 0.0, 1.0),
+                        telar::Color::rgba(local.get() as f32 / 10.0, 0.0, 0.0, 1.0),
                         0.0,
                     )
                 },
             )
             .expect("a rectangle lays out");
             self.node.set(Some(tint.layout_node()));
-            Box::new(WindowRoot::new(telar::box_item(tint)))
+            Box::new(telar::WindowRoot::new(telar::box_item(tint)))
         }
 
         fn window_config(&self) -> Option<WindowConfig> {
@@ -2568,7 +2155,7 @@ mod tests {
         }
     }
 
-    /// Hiding a layer window and showing it again runs exactly the handler calls the driver makes — suspend to hide, resume to show — on one handler, against a real telar app over a headless window: the handler and the tree survive — no second build, the tree's own signal keeps its value, its node keeps its identity, its ticker and exit reaction stay registered once — while the renderer is gone for as long as the window is hidden and nothing asks the hidden window for a frame.
+    /// Hiding a layer window and showing it again runs exactly the handler calls the driver makes — suspend to hide, resume to show — on one handler, against a real telar app over a headless window: the handler and the tree survive — no second build, the tree's own signal keeps its value, its node keeps its identity, its ticker stays registered once — while the renderer is gone for as long as the window is hidden and nothing asks the hidden window for a frame.
     #[test]
     fn a_hidden_and_shown_layer_window_keeps_its_handler_and_tree() {
         use smithay_client_toolkit::reexports::calloop::EventLoop;
@@ -2578,12 +2165,11 @@ mod tests {
         LOOP_HANDLE.with(|h| *h.borrow_mut() = Some(event_loop.handle()));
 
         let app = Tracked::default();
-        let (roots, local, node, tree, exits) = (
+        let (roots, local, node, tree) = (
             Rc::clone(&app.roots),
             Rc::clone(&app.local),
             Rc::clone(&app.node),
             Rc::clone(&app.tree),
-            Rc::clone(&app.exits),
         );
         let window = CountingWindow::new(320, 200);
         let mut handler = build_surface_handler::<CountingWindow, _>(
@@ -2592,24 +2178,16 @@ mod tests {
             "hogar-shell-test",
             telar::AppConfig::default(),
         );
-        let link = Some(Arc::new(SurfaceLink::default()));
         let sources = SourceSink::default();
-        let exit = ExitSink::default();
         let draw = |handler: &mut BoxedCountingHandler| {
-            with_current(&link, &sources, &exit, || {
+            with_current(&sources, || {
                 handler.new_events();
                 handler.on_redraw(&window);
                 handler.about_to_wait();
             });
         };
 
-        assert!(resume_handler(
-            handler.as_mut(),
-            &window,
-            &link,
-            &sources,
-            &exit
-        ));
+        assert!(resume_handler(handler.as_mut(), &window, &sources));
         draw(&mut handler);
         assert!(
             handler.last_frame_rgba().is_some(),
@@ -2629,7 +2207,7 @@ mod tests {
         assert_eq!(roots.get(), 1);
         assert_eq!(sources.borrow().len(), 1, "the tree's ticker");
 
-        suspend_handler(handler.as_mut(), &link, &sources, &exit);
+        suspend_handler(handler.as_mut(), &sources);
         assert!(
             handler.last_frame_rgba().is_none(),
             "a hidden window holds no renderer, and with it nothing it drew into"
@@ -2644,13 +2222,7 @@ mod tests {
             "the tree changing while hidden asks the hidden window for no frame"
         );
 
-        assert!(resume_handler(
-            handler.as_mut(),
-            &window,
-            &link,
-            &sources,
-            &exit
-        ));
+        assert!(resume_handler(handler.as_mut(), &window, &sources));
         assert_eq!(roots.get(), 1, "showing the window built no second tree");
         assert_eq!(
             local.get().map(|signal| signal.peek()),
@@ -2671,8 +2243,6 @@ mod tests {
             1,
             "the ticker stayed registered once, neither dropped nor doubled"
         );
-        std::mem::take(&mut *exit.borrow_mut()).run();
-        assert_eq!(exits.get(), 1, "and the exit reaction is registered once");
 
         draw(&mut handler);
         assert!(

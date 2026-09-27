@@ -2,7 +2,7 @@
 //!
 //! It is built in code rather than read from a file so that it cannot go missing, cannot fail to parse, and is there to fall back to when the user's own layout does not resolve. It is read-only: the first edit to it forks a copy under a name of the user's own ([`crate::store::LayoutStore::fork`]).
 //!
-//! It is deliberately the smallest arrangement that is still a usable desktop — one top bar with the workspaces, the clock and notes, which is what a fresh install has shown since before layouts existed. Anything more would be a preference the shell had decided on the user's behalf and that every new user would have to undo.
+//! It is deliberately the smallest arrangement that is still a usable desktop — one top bar with the workspaces, the clock and notes, and the column notifications arrive in, which is what a fresh install has shown since before layouts existed. Anything more would be a preference the shell had decided on the user's behalf and that every new user would have to undo.
 //!
 //! The lock layer is the one place that is not minimal, and for the same reason: the clock, the user and what is playing are what this shell's lock screen has shown since before it had a layout, and a fresh install that lost them would be a regression dressed as a default.
 
@@ -24,6 +24,10 @@ pub fn layout() -> Layout {
                 },
                 top: Layer {
                     areas: vec![top_bar()],
+                    remove: Vec::new(),
+                },
+                overlay: Layer {
+                    areas: vec![stack()],
                     remove: Vec::new(),
                 },
                 lock: Layer {
@@ -70,6 +74,21 @@ fn top_bar() -> Area {
             zone("center", Zone::Center, &[("clock", "clock")]),
             zone("end", Zone::End, &[("notes", "notes")]),
         ],
+        ..Area::default()
+    }
+}
+
+/// Where notifications, toasts and OSDs are drawn: a column in the top right corner of what the bars leave, on whichever screen has focus.
+fn stack() -> Area {
+    Area {
+        id: AreaId::new("stack"),
+        kind: Some(AreaKind::Stack {
+            anchor: Some(Anchor::TopRight),
+            width: Some(380.0),
+            output_policy: Some(StackOutputPolicy::Focused),
+            routes: Vec::new(),
+        }),
+        within: Some(Within::Usable),
         ..Area::default()
     }
 }

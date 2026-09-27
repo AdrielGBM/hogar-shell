@@ -5,8 +5,8 @@ title: Spacer
 summary: An empty module that takes up whatever room is left.
 status: stable
 compositor: any
-config: [bars]
-commands: []
+config: []
+commands: [layout]
 deps: []
 see_also: [bars]
 ---
@@ -24,11 +24,14 @@ than an empty chip.
 
 ## Configuring
 
-Put it in a zone like any other id, as many times as you need:
+Put it in a zone's `children` like any other module, as many times as you need:
 
 ```toml
-[bars.top]
-start = ["workspaces", "spacer", "activewindow"]
+{ id = "start", place = "zone", zone = "start", children = [
+    { id = "workspaces", module = "workspaces" },
+    { id = "gap",        module = "spacer" },
+    { id = "activewindow", module = "activewindow" },
+] }
 ```
 
 ## What it needs

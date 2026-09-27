@@ -12,7 +12,7 @@ use telar::{
 };
 use util::asset::{Load, Loader, Retry};
 
-use config::surface_env;
+use crate::chrome::Chrome;
 use config::theme::NordTheme;
 
 mod freedesktop;
@@ -248,12 +248,12 @@ pub(crate) fn icon_state(name: &str) -> AssetState<Arc<SvgData>> {
     }
 }
 
-/// The `[icons]` config to resolve against: the bar surface in scope, else the config the shell is running.
+/// The `[icons]` config to resolve against: the chrome in scope, else the config the shell is running.
 ///
-/// Falling back to `IconsConfig::default()` here would be wrong, not merely imprecise. A panel, OSD or popup has no `SurfaceEnv`, so with a customised `[icons]` it would disagree with the bar about the store's config and [`ensure_store`] would tear the store down and rebuild it on every panel open — cancelling every in-flight download in the process.
+/// Falling back to `IconsConfig::default()` here would be wrong, not merely imprecise. Something built outside any area has no chrome in scope, so with a customised `[icons]` it would disagree with the bar about the store's config and [`ensure_store`] would tear the store down and rebuild it on every panel open — cancelling every in-flight download in the process.
 fn icons_config() -> config::IconsConfig {
-    surface_env()
-        .map(|env| env.config.icons.clone())
+    Chrome::current()
+        .map(|chrome| chrome.config.icons.clone())
         .or_else(|| config::config().map(|c| c.icons.clone()))
         .unwrap_or_default()
 }

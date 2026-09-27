@@ -112,14 +112,6 @@ pub const PAGES: &[Page] = &[
                 crate::sections::shape::ShapeProps::props().build(),
                 telar::Children::default(),
             )),
-            section!(
-                "corners",
-                ["corners"],
-                || crate::sections::corners::corners(
-                    crate::sections::corners::CornersProps::props().build(),
-                    telar::Children::default(),
-                )
-            ),
             section!("icons", ["icons"], || crate::sections::icons::icons(
                 crate::sections::icons::IconsProps::props().build(),
                 telar::Children::default(),
@@ -136,11 +128,10 @@ pub const PAGES: &[Page] = &[
         label: "bars",
         icon: "layout-panel-top",
         sections: &[
-            section!("bars", ["bars"], crate::sections::bars::bars_section),
             section!(
                 "modules",
                 ["modules"],
-                crate::sections::bars::module_overrides_section
+                crate::sections::overrides::module_overrides_section
             ),
             section!("panels", ["panels"], || crate::sections::panels::panels(
                 crate::sections::panels::PanelsProps::props().build(),
@@ -195,7 +186,7 @@ pub const PAGES: &[Page] = &[
             section!(
                 "battery_warnings",
                 ["battery"],
-                crate::sections::bars::battery_warnings_section
+                crate::sections::overrides::battery_warnings_section
             ),
             section!("lock_status", ["lock_status"], || {
                 crate::sections::lock_status::lock_status(

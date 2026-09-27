@@ -2,7 +2,7 @@
 
 use telar::{LayoutError, LayoutItem, PreviewEntry, PreviewSurface};
 
-/// The float this application opens in (`ui::placement::window`), so both previews are laid out at the size the user actually reads them at.
+/// The float this application opens in (`Config::float_size_for`), so both previews are laid out at the size the user actually reads them at.
 const FLOAT: PreviewSurface = PreviewSurface {
     width: 920.0,
     height: 680.0,

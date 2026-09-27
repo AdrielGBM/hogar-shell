@@ -2,21 +2,22 @@
 id: floats
 kind: surface
 title: Floats
-summary: A panel as a free-standing window you can move and resize.
+summary: A panel as a free-standing, centred window with a title bar and close button.
 status: stable
 compositor: any
 config: [panels, modules]
 commands: [panel]
 deps: [wlr-layer-shell]
-see_also: [panels, drawers]
+see_also: [panels, drawers, compositor-rules]
 ---
 
 # Floats
 
 ## What it is
 
-The other presentation for a panel: a free-standing surface with a frame, a drag region and a resize grip in
-its corner.
+The other presentation for a panel: a free-standing, centred window with a frame, a title bar and a close
+button. It is not moved or resized — it always opens centred, at the size `[modules.<id>]` or `[panels.float]`
+gives it.
 
 Opening one closes the drawer, which it would otherwise open underneath. Nothing closes it back: opening a
 drawer, pressing a chip, opening the notification centre or opening a second float all leave it where it is.
@@ -30,30 +31,25 @@ width  = 520
 height = 640
 ```
 
-## Interacting
+## Sizing
 
-| Gesture | What happens |
-| --- | --- |
-| Drag the frame | moves it |
-| Drag the corner grip | resizes it |
+The size that shows is `[modules.<id>] width` / `height`, or `[panels.float]` where the module sets none. Set
+it there — there is no drag to resize with.
 
-`[panels] drag_threshold` is how far the pointer must travel before a press becomes a drag rather than a
-click — the same distinction a click inside the panel depends on.
+## Where it lives
 
-## A resize is not saved
-
-**A float resized by its grip keeps that size only while it is open.** It deliberately does not write back,
-because that would be a config write and a config reload *per drag*.
-
-The size that persists is `[modules.<id>] width` / `height`, or `[panels.float]` where the module sets none.
-Set it there once rather than dragging every time.
+A float has no chip to anchor to, so it is a node inside the shell's **Overlay** layer window
+(`hogar-shell-overlay`) alongside the launcher, the notification centre and the region picker — never its own
+`xdg-shell` toplevel, which is why it can be placed exactly and why it is unaffected by your window rules. See
+[Compositor rules](../../guides/compositor-rules.md) for the namespace this used to have of its own, and where
+a rule against it reaches now.
 
 ## What it needs
 
-`wlr-layer-shell`. A float is still a layer surface — hogar-shell opens no `xdg-shell` toplevels at all — which
-is why it can be placed exactly and why it is unaffected by your window rules.
+`wlr-layer-shell`.
 
 ## Related
 
 - [Drawers](drawers.md) — the default, anchored to its chip.
 - [Panels](panels.md).
+- [Compositor rules](../../guides/compositor-rules.md).

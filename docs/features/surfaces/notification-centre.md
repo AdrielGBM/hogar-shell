@@ -8,7 +8,7 @@ compositor: any
 config: [sidebar, notifications, utilities]
 commands: [notifs]
 deps: [wlr-layer-shell]
-see_also: [notifications, utilities, notifications-daemon]
+see_also: [notifications, utilities, notifications-daemon, compositor-rules]
 ---
 
 # Notification centre
@@ -51,6 +51,13 @@ Both halves are switchable: `[sidebar] show_history` and `show_toggles`.
 The toggles themselves come from `[utilities] toggles`; the history's grouping and thresholds from
 `[notifications]`.
 
+## Where it lives
+
+The centre is a node rather than a surface of its own, and it does not anchor to a chip: it always opens in
+`hogar-shell-overlay` on the focused output, whether it was reached from the bell, `notifs center toggle` or a
+keybind. See [Compositor rules](../../guides/compositor-rules.md) for the namespace this used to have of its
+own, and where a rule against it reaches now.
+
 ## What it needs
 
 `wlr-layer-shell`, plus whatever each toggle needs.
@@ -59,3 +66,4 @@ The toggles themselves come from `[utilities] toggles`; the history's grouping a
 
 - [Notification daemon](../system/notifications-daemon.md) — where the history comes from.
 - [utilities](../modules/utilities.md) — the toggles, and where they are configured.
+- [Compositor rules](../../guides/compositor-rules.md).

@@ -8,7 +8,7 @@ compositor: any
 config: [launcher, general]
 commands: [launcher, apps]
 deps: [wlr-layer-shell, qalc, wlr-foreign-toplevel-management]
-see_also: [apps, palettes, wallpaper]
+see_also: [apps, palettes, wallpaper, compositor-rules]
 ---
 
 # Launcher
@@ -80,6 +80,13 @@ dates; without it those queries simply do not resolve. `[launcher] calculator` a
 `[launcher]` — `width`, `height`, `max_results`, `fuzzy`, `calculator`, `qalc`, `actions`,
 `favourites`, `hidden`, `enable_dangerous_actions`, plus `[launcher.icons]`.
 
+## Where it lives
+
+The launcher has no chip to anchor to, so it is a node in the shell's shared **Overlay** layer window
+(`hogar-shell-overlay`) alongside a float, the notification centre and the region picker — never a surface of
+its own. See [Compositor rules](../../guides/compositor-rules.md) for what a rule against the old
+`hogar-shell-overlay` namespace (the launcher's alone, before DEC-14) reaches now.
+
 ## What it needs
 
 Nothing to open, and nothing to install to launch with. What you start from the launcher is put in a session of
@@ -95,3 +102,4 @@ a mode over machinery that already exists, and none is built yet.
 
 - [Palettes](../theming/palettes.md) — what `#` lists.
 - [Wallpaper](wallpaper.md) — what `@` lists.
+- [Compositor rules](../../guides/compositor-rules.md).

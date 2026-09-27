@@ -69,118 +69,6 @@ Full-screen wallpaper behind everything, one surface per monitor. Off by default
 
 ### `[background.monitors]`
 
-## `[bars]`
-
-One bar per screen edge; empty bars collapse to zero. Default is all-empty by design (serde fills missing fields), so configs get only what they specify — see [`Config::starter`] for the initial setup.
-
-`excluded_screens` names outputs that get no bars at all — a TV, a projector, a monitor that only ever shows one fullscreen thing. Each entry matches the connector name (`DP-1`) as a `*` pattern, so `HDMI-*` covers a port whose index moves between reboots. *Which* modules a screen shows is a per-monitor config override (`monitors/<output>/config.toml`) rather than a key here: it is the same `[bars.<edge>]` shape, so there is nothing new to learn and nothing to keep in step.
-
-- **`excluded_screens`** · default `[]`
-
-### `[bars.bottom]`
-
-- **`center`** · default `[]`
-- **`end`** · default `[]`
-- **`peek`** · default `2`
-
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-
-- **`persistent`** · default `true`
-
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-
-- **`show_on_hover`** · default `true`
-
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-
-- **`size`** · default `34`
-- **`start`** · default `[]`
-
-#### `[bars.bottom.shape]`
-
-- **`mode`** · unset by default
-- **`gap`** · unset by default
-- **`spacing`** · unset by default
-- **`radius`** · unset by default
-
-### `[bars.left]`
-
-- **`center`** · default `[]`
-- **`end`** · default `[]`
-- **`peek`** · default `2`
-
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-
-- **`persistent`** · default `true`
-
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-
-- **`show_on_hover`** · default `true`
-
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-
-- **`size`** · default `34`
-- **`start`** · default `[]`
-
-#### `[bars.left.shape]`
-
-- **`mode`** · unset by default
-- **`gap`** · unset by default
-- **`spacing`** · unset by default
-- **`radius`** · unset by default
-
-### `[bars.right]`
-
-- **`center`** · default `[]`
-- **`end`** · default `[]`
-- **`peek`** · default `2`
-
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-
-- **`persistent`** · default `true`
-
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-
-- **`show_on_hover`** · default `true`
-
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-
-- **`size`** · default `34`
-- **`start`** · default `[]`
-
-#### `[bars.right.shape]`
-
-- **`mode`** · unset by default
-- **`gap`** · unset by default
-- **`spacing`** · unset by default
-- **`radius`** · unset by default
-
-### `[bars.top]`
-
-- **`center`** · default `["clock"]`
-- **`end`** · default `["notes"]`
-- **`peek`** · default `2`
-
-  How many logical pixels of a hidden bar stay on screen, as the strip that reveals it. Too thin to hit is worse than absent, so this is floored at 1.
-
-- **`persistent`** · default `true`
-
-  Keep the bar on screen at all times (the default). Switched off, it reserves no space and sits off its own edge with only `peek` pixels showing, sliding in when the pointer reaches that strip and back out when the pointer leaves.
-
-- **`show_on_hover`** · default `true`
-
-  Reveal a non-persistent bar when the pointer reaches its peek strip. Switched off, only a drag inward past `[panels] drag_threshold` brings it in — which is what a touch screen wants, and what a pointer that keeps brushing the screen edge on its way somewhere else does not.
-
-- **`size`** · default `34`
-- **`start`** · default `["workspaces"]`
-
-#### `[bars.top.shape]`
-
-- **`mode`** · unset by default
-- **`gap`** · unset by default
-- **`spacing`** · unset by default
-- **`radius`** · unset by default
-
 ## `[battery]`
 
 Low-battery behaviour (`[battery]`): the levels that raise a notification, and the action to take once the charge is low enough that the machine should put itself away. On a desktop none of it ever fires, since there is no battery to read.
@@ -290,13 +178,6 @@ How a face placed on the desktop is drawn, as against the chip these other keys 
 - **`date_format`** · unset by default
 
   Overrides `[clock] date_format` for the desktop face only.
-
-## `[corners]`
-
-- **`top_left`** · unset by default
-- **`top_right`** · unset by default
-- **`bottom_left`** · unset by default
-- **`bottom_right`** · unset by default
 
 ## `[dashboard]`
 
@@ -630,11 +511,11 @@ The delays are what separate a popout from a flicker. Without `open_delay`, drag
 
 - **`enabled`** · default `true`
 
-  Off costs nothing: no chip tracks the pointer and no surface is ever opened.
+  Off costs nothing: no chip tracks the pointer and no transient is ever opened.
 
 - **`max_height`** · default `300.0`
 
-  The tallest a popout may grow. Its surface is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
+  The tallest a popout may grow. Its transient is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
 
 - **`open_delay`** · default `280`
 
@@ -720,20 +601,16 @@ Distinct from the bell drawer, which is a glance: this is where a user goes to *
 
 ## `[stack]`
 
-The column of cards the shell pins to a screen edge and takes away again (`[stack]`): notification popups, in-shell toasts, and the OSD a volume or brightness change flashes.
+How the column of cards behaves (`[stack]`): notification popups, in-shell toasts, and the OSD a volume or brightness change flashes. Where a column is and how wide it is are the layout's — a `stack` area — so one layout can put critical notifications in the middle of the screen and toasts in a corner.
 
-**One section because they are one column.** They were three, each with its own `edge`, `align`, `width` and timeout, and being three is what let them sit in three different places and overlap each other on a narrow screen with no one of them able to know. Where the column is, how wide it is and how many cards it shows at once are properties of the column; what each card *is* stays in `[notifications]` and `[toasts]`.
+`timeout_ms` is one number because the column is one column: whatever is in it, popup or toast or OSD, lives and dies on the same clock. Which is not to say every card goes: a `critical` notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with nothing left to say. Not expiring is a property of the card, not a second timeout.
 
-`timeout_ms` is one number for the same reason. Which is not to say every card goes: a `critical` notification under `[notifications] critical_sticky` stays until it is dealt with, and so does an OSD with nothing left to say. Not expiring is a property of the card, not a second timeout.
-
-- **`align`** · default `"end"`
 - **`clear_threshold`** · default `0.35`
 
   How far sideways a card must be dragged before letting go retires it, as a fraction of its width. `0` switches the gesture off, which is what a touchpad user who keeps catching it wants.
 
   The column's, not any one card's: a notification, a toast and an OSD are dismissed by the same gesture, and a threshold that differed between them would make the column feel like three surfaces again.
 
-- **`edge`** · default `"top"`
 - **`max_visible`** · default `4`
 
   How many cards show at once; the rest queue behind them.
@@ -741,7 +618,6 @@ The column of cards the shell pins to a screen edge and takes away again (`[stac
   Not a hard ceiling, and the exception is the point: every source with something to say — a notification, a toast, an OSD — is guaranteed one card before this is shared out, so a brightness reading you asked for by pressing a key is never queued behind notifications you did not. With more sources speaking at once than this allows, the column is that many cards tall.
 
 - **`timeout_ms`** · default `3000`
-- **`width`** · default `380.0`
 
 ## `[status_icons]`
 
@@ -781,7 +657,7 @@ Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dy
 
   How opaque every surface the shell paints is, from `0.2` to `1.0` — bars, panels, cards and flashes alike. One key for the whole shell and no way to break it apart: a drawer at an opacity the bar it hangs off does not share is not a look anybody chooses, it is two settings that drifted.
 
-  **This is the half a compositor cannot supply.** Blur behind a surface is the compositor's job — a `layer_rule = blur, ^hogar-shell`, which needs no code here — and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
+  **This is the half `backdrop = "blur"` cannot supply.** An area asks for blur behind it through `ext-background-effect-v1` (see [Compositor rules](../guides/compositor-rules.md) for what moved off per-namespace compositor rules), and it shows nothing through a surface painted opaque. Lowering this is what gives it something to blur.
 
 - **`variant`** · default `"vibrant"`
 

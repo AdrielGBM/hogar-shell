@@ -422,7 +422,7 @@ fn card(
             .gap(space::md())
             .padding_all(space::lg())
             .width(SizeDimension::Percent(1.0)),
-        move |_| RectStyle::filled(theme.base, ui::panel::content_radius()),
+        move |_| RectStyle::filled(theme.base, ui::chrome::content_radius()),
         children,
     )?))
 }

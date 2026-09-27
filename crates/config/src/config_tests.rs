@@ -11,60 +11,6 @@ mod tests {
     use crate::theme::NordTheme;
     use crate::*;
 
-    fn ids(entries: &[ModuleEntry]) -> Vec<&str> {
-        entries.iter().map(|e| e.id.as_str()).collect()
-    }
-
-    #[test]
-    fn a_zone_reads_bare_ids_and_tables_side_by_side() {
-        let cfg: Config = toml::from_str(
-            r#"
-[bars.top]
-start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant = "filled" }]
-"#,
-        )
-        .expect("both entry forms parse in one array");
-        assert_eq!(ids(&cfg.bars.top.start), ["workspaces", "clock", "clock"]);
-        assert_eq!(cfg.bars.top.start[1].accent.as_deref(), Some("red"));
-        assert_eq!(cfg.bars.top.start[2].variant, Some(Variant::Filled));
-
-        // The point of the table form: a `[modules.<id>]` override is keyed by id, so it could only paint both copies the same.
-        assert_eq!(cfg.entry_accent_name(&cfg.bars.top.start[1]), "red");
-        assert_eq!(
-            cfg.entry_variant(&cfg.bars.top.start[2]),
-            Variant::Filled,
-            "an entry's own variant wins"
-        );
-        assert_eq!(
-            cfg.entry_variant(&cfg.bars.top.start[1]),
-            Variant::Default,
-            "and an entry that names none falls back rather than inheriting its neighbour's"
-        );
-    }
-
-    #[test]
-    fn a_bare_entry_writes_back_as_the_string_it_was_read_from() {
-        let cfg: Config =
-            toml::from_str("[bars.top]\nstart = [\"clock\"]\n").expect("config parses");
-        let written = toml::to_string_pretty(&cfg.bars.top).expect("serialises");
-        assert!(
-            written.contains("start = [\"clock\"]"),
-            "a bare entry gained a table it never asked for: {written}"
-        );
-        let back: BarConfig = toml::from_str(&written).expect("round-trips");
-        assert_eq!(ids(&back.start), ["clock"]);
-    }
-
-    #[test]
-    fn an_entry_with_settings_round_trips_through_toml() {
-        let cfg: Config =
-            toml::from_str("[bars.top]\nstart = [{ id = \"clock\", accent = \"red\" }]\n")
-                .expect("config parses");
-        let written = toml::to_string_pretty(&cfg.bars.top).expect("serialises");
-        let back: BarConfig = toml::from_str(&written).expect("round-trips");
-        assert_eq!(back.start, cfg.bars.top.start);
-    }
-
     /// `[launcher]` carries both an array of tables (`actions`) and a map (`icons`), and TOML requires every scalar to be emitted before either. Field order on the struct is what decides that, so a key added in the wrong place turns every launcher save into a serialize error the user only sees in the log.
     #[test]
     fn a_launcher_with_actions_and_icon_overrides_still_serialises() {
@@ -178,7 +124,7 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
 
     #[test]
     fn saving_a_section_keeps_its_sub_tables_under_it_instead_of_scattering_them() {
-        // What this catches is not a parse failure — the scattered file still parses, which is why nothing saw it. Saving `[theme]` printed `[theme.export]` between `[panels]` and `[bars.top]`, put `[theme.fonts.title]` inside the bar definitions, and left `[theme]` itself *after* its own children. For a function whose whole promise is "preserving every other section, key order, and comment", that is the failure.
+        // What this catches is not a parse failure — the scattered file still parses, which is why nothing saw it. Saving `[theme]` printed `[theme.export]` between unrelated sections, put `[theme.fonts.title]` inside another section's tables, and left `[theme]` itself *after* its own children. For a function whose whole promise is "preserving every other section, key order, and comment", that is the failure.
         let dir =
             std::env::temp_dir().join(format!("hogar-shell-save-order-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -223,35 +169,6 @@ start = ["workspaces", { id = "clock", accent = "red" }, { id = "clock", variant
     }
 
     #[test]
-    fn starter_shows_only_a_top_bar() {
-        let cfg = Config::starter();
-        assert_eq!(ids(&cfg.bars.top.start), ["workspaces"]);
-        assert_eq!(ids(&cfg.bars.top.center), ["clock"]);
-        assert!(cfg.bars.bottom.is_empty());
-        assert!(cfg.bars.left.is_empty());
-        assert!(cfg.bars.right.is_empty());
-    }
-
-    #[test]
-    fn plain_default_is_all_empty() {
-        let cfg = Config::default();
-        assert!(cfg.bars.top.is_empty() && cfg.bars.left.is_empty());
-    }
-
-    #[test]
-    fn partial_config_leaves_unlisted_edges_empty() {
-        let toml = r#"
-[bars.left]
-size = 44
-start = ["workspaces"]
-"#;
-        let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.bars.left.size, 44);
-        assert_eq!(ids(&cfg.bars.left.start), ["workspaces"]);
-        assert!(cfg.bars.top.is_empty());
-    }
-
-    #[test]
     fn edge_orientation() {
         assert!(Edge::Top.is_horizontal() && Edge::Bottom.is_horizontal());
         assert!(Edge::Left.is_vertical() && Edge::Right.is_vertical());
@@ -259,7 +176,7 @@ start = ["workspaces"]
 
     #[test]
     fn shape_defaults_reproduce_todays_bar() {
-        let cfg: Config = toml::from_str("[bars.top]\nstart = [\"clock\"]\n").unwrap();
+        let cfg: Config = toml::from_str("").unwrap();
         assert_eq!(cfg.shape.mode, Shape::Bar);
         assert!(!cfg.shape.frame);
         assert_eq!(cfg.shape.gap, 0);
@@ -267,33 +184,16 @@ start = ["workspaces"]
             cfg.shape.radius, None,
             "unset radius falls back to the theme"
         );
-        let top = cfg.shape_for(Edge::Top);
-        assert_eq!(top.mode, Shape::Bar);
-        assert_eq!(top.gap, 0);
-        assert_eq!(top.radius, 0.0, "the nord theme's default radius is 0");
-        assert!(cfg.hugs(Edge::Top));
-        assert!(cfg.bar_surface_opaque(Edge::Top));
-    }
-
-    #[test]
-    fn zone_of_reflects_bar_zones() {
-        let toml = r#"
-[bars.top]
-start = ["workspaces"]
-center = ["clock"]
-end = ["battery", "volume"]
-"#;
-        let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.zone_of(Edge::Top, "workspaces"), Some(Zone::Start));
-        assert_eq!(cfg.zone_of(Edge::Top, "clock"), Some(Zone::Center));
-        assert_eq!(cfg.zone_of(Edge::Top, "volume"), Some(Zone::End));
-        assert_eq!(cfg.zone_of(Edge::Top, "missing"), None);
-        assert_eq!(cfg.zone_of(Edge::Bottom, "clock"), None);
+        let shape = cfg.shape_from(None, None, None, None);
+        assert_eq!(shape.mode, Shape::Bar);
+        assert_eq!(shape.gap, 0);
+        assert_eq!(shape.radius, 0.0, "the nord theme's default radius is 0");
+        assert_eq!(cfg.gap_of(&shape), 0);
     }
 
     #[test]
     fn panels_and_open_mode_defaults() {
-        let cfg: Config = toml::from_str("[bars.top]\ncenter = [\"clock\"]\n").unwrap();
+        let cfg: Config = toml::from_str("").unwrap();
         assert_eq!(cfg.panels.drawer.width, 320.0);
         assert_eq!(cfg.panels.float.width, 360);
         assert_eq!(cfg.panels.float.height, 240);
@@ -376,7 +276,7 @@ end = ["battery", "volume"]
         // An unset token keeps the built-in value.
         assert_eq!(theme.text, NordTheme::new().text);
         // The [theme] number override also backs the shape resolution.
-        assert_eq!(cfg.resolved_radius(Edge::Top), 12.0);
+        assert_eq!(cfg.shape_from(None, None, None, None).radius, 12.0);
     }
 
     #[test]
@@ -396,74 +296,15 @@ end = ["battery", "volume"]
     #[test]
     fn spacing_and_radius_fall_back_to_the_theme_then_config_overrides() {
         let theme = NordTheme::new();
-        // Nothing set anywhere → the theme's numeric tokens.
-        let bare: Config = toml::from_str("[bars.top]\ncenter=[\"clock\"]\n").unwrap();
-        assert_eq!(bare.resolved_radius(Edge::Top), theme.radius);
-        assert_eq!(bare.resolved_spacing(Edge::Top), theme.spacing);
-        // Per-bar wins over [shape], which wins over the theme.
-        let cfg: Config = toml::from_str(
-            "[shape]\nradius=10\nspacing=4\n[bars.top]\ncenter=[\"clock\"]\n[bars.top.shape]\nradius=2\n[bars.bottom]\nstart=[\"clock\"]\n",
-        )
-        .unwrap();
-        assert_eq!(cfg.resolved_radius(Edge::Top), 2.0, "per-bar override wins");
-        assert_eq!(
-            cfg.resolved_spacing(Edge::Top),
-            4.0,
-            "spacing falls to [shape]"
-        );
-        assert_eq!(
-            cfg.resolved_radius(Edge::Bottom),
-            10.0,
-            "bottom takes [shape]"
-        );
-    }
-
-    #[test]
-    fn panel_radius_matches_the_bar_on_each_edge() {
-        // Per-bar radius override on top, global (0) elsewhere: panels inherit the radius of the bar they hang off.
-        let cfg: Config = toml::from_str(
-            "[shape]\nradius=0\n[bars.top]\ncenter=[\"clock\"]\n[bars.top.shape]\nradius=8\n[bars.left]\nstart=[\"clock\"]\n",
-        )
-        .unwrap();
-        assert_eq!(cfg.panel_radius(Edge::Top), 8.0);
-        assert_eq!(
-            cfg.panel_radius(Edge::Left),
-            0.0,
-            "left inherits the global radius"
-        );
-    }
-
-    #[test]
-    fn panel_margin_is_a_uniform_gap_and_never_double_counts_the_bar() {
-        // The reservation strip already offsets a panel (exclusive_zone=0) past the bar, so the margin is just the gap — adding the bar's reserved thickness here too would put the panel at double the distance.
-        let floating: Config =
-            toml::from_str("[shape]\ngap=8\n[bars.top]\nsize=34\ncenter=[\"clock\"]\n").unwrap();
-        assert_eq!(floating.panel_gap(Edge::Top), 8);
-        assert_eq!(floating.panel_margin(Edge::Top), (8, 8, 8, 8));
-
-        // Hugging bar with no configured gap still gets the default breathing gap, uniformly.
-        let hug: Config = toml::from_str("[bars.top]\nsize=34\ncenter=[\"clock\"]\n").unwrap();
-        let d = DEFAULT_PANEL_GAP as i32;
-        assert_eq!(hug.panel_margin(Edge::Top), (d, d, d, d));
-    }
-
-    #[test]
-    fn a_panel_keeps_the_gap_its_bar_floats_at_and_there_is_no_key_to_break_that() {
-        let derived: Config =
-            toml::from_str("[shape]\ngap=20\n[bars.top]\ncenter=[\"clock\"]\n").unwrap();
-        assert_eq!(
-            derived.panel_gap(Edge::Top),
-            20,
-            "a panel floats off the bar by exactly what the bar floats off the screen"
-        );
-
-        // `[panels] gap` used to pin a fixed distance regardless of the bar. It is gone, and a file that still names it changes nothing: the derivation is the whole rule.
-        let pinned: Config = toml::from_str(
-            "[shape]\ngap=20\n[panels]\ngap=4\n[bars.top]\ncenter=[\"clock\"]\n[bars.bottom]\nstart=[\"clock\"]\n",
-        )
-        .unwrap();
-        assert_eq!(pinned.panel_gap(Edge::Top), 20);
-        assert_eq!(pinned.panel_gap(Edge::Bottom), 20);
+        let bare: Config = toml::from_str("").unwrap();
+        let unset = bare.shape_from(None, None, None, None);
+        assert_eq!(unset.radius, theme.radius);
+        assert_eq!(unset.spacing, theme.spacing);
+        let cfg: Config = toml::from_str("[shape]\nradius=10\nspacing=4\n").unwrap();
+        let area = cfg.shape_from(None, None, None, Some(2));
+        assert_eq!(area.radius, 2.0, "the area's own radius wins");
+        assert_eq!(area.spacing, 4.0, "spacing falls to [shape]");
+        assert_eq!(cfg.shape_from(None, None, None, None).radius, 10.0);
     }
 
     #[test]
@@ -782,18 +623,18 @@ end = ["battery", "volume"]
         let dir = std::env::temp_dir().join(format!("hogar-shell-load-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
-        std::fs::write(&path, "[bars.top\nstart = [\"clock\"]\n").unwrap();
+        std::fs::write(&path, "[clock\nformat = \"%H\"\n").unwrap();
 
         let error = Config::load(&path).expect_err("a malformed file must not parse");
         assert!(
             matches!(error, LoadError::Parse(_)),
             "the caller needs to distinguish a typo from a missing file"
         );
-        // `load_or_default` is the lossy convenience wrapper — it answers a typo with the starter bar, throwing the user's layout away. That is exactly why the running shell uses `load`: so it can keep the last config that worked and report the error instead.
+        // `load_or_default` is the lossy convenience wrapper — it answers a typo with the starter config, throwing the user's settings away. That is exactly why the running shell uses `load`: so it can keep the last config that worked and report the error instead.
         let lossy = Config::load_or_default(&path);
         assert_eq!(
-            lossy.bars.top.start,
-            Config::starter().bars.top.start,
+            lossy.clock.format,
+            Config::starter().clock.format,
             "the wrapper substitutes the starter, losing whatever the user had"
         );
 
@@ -807,7 +648,7 @@ end = ["battery", "volume"]
         let path = dir.join("config.toml");
 
         let seeded = Config::load(&path).expect("a fresh install is not an error");
-        assert_eq!(ids(&seeded.bars.top.start), ["workspaces"]);
+        assert_eq!(seeded.clock.format, Config::starter().clock.format);
         assert!(path.exists(), "the starter is written for the user to edit");
         assert!(
             Config::load(&path).is_ok(),
@@ -818,18 +659,13 @@ end = ["battery", "volume"]
     }
 
     #[test]
-    fn the_stack_defaults_to_top_right_with_sensible_limits() {
+    fn the_stack_defaults_to_sensible_limits() {
         let d: Config = toml::from_str("").unwrap();
-        assert_eq!(d.stack.edge, Edge::Top);
-        assert_eq!(d.stack.align, Align::End, "align=end is the right side");
         assert_eq!(d.stack.max_visible, 4);
         assert!(d.notifications.critical_sticky);
 
-        let cfg: Config =
-            toml::from_str("[stack]\nmax_visible = 2\ntimeout_ms = 400\nedge = \"bottom\"\n")
-                .unwrap();
+        let cfg: Config = toml::from_str("[stack]\nmax_visible = 2\ntimeout_ms = 400\n").unwrap();
         assert_eq!(cfg.stack.max_visible, 2);
-        assert_eq!(cfg.stack.edge, Edge::Bottom);
         assert!(
             cfg.notifications.critical_sticky,
             "unset fields keep defaults"
@@ -920,10 +756,10 @@ end = ["battery", "volume"]
         let dir = config_dir(
             "monitor-merge",
             r#"
-[bars.top]
-size = 34
-start = ["workspaces"]
-center = ["clock"]
+[tray]
+enabled = true
+compact = true
+hidden = ["spotify"]
 
 [theme]
 accent = "cyan"
@@ -932,9 +768,9 @@ name = "nord"
             Some((
                 "DP-2",
                 r#"
-[bars.top]
-size = 44
-start = ["cpu", "memory"]
+[tray]
+enabled = false
+hidden = ["spotify", "discord"]
 
 [theme]
 accent = "orange"
@@ -944,20 +780,19 @@ accent = "orange"
         let path = dir.join("config.toml");
 
         let global = Config::for_output(&path, None).unwrap();
-        assert_eq!(global.bars.top.size, 34);
-        assert_eq!(ids(&global.bars.top.start), ["workspaces"]);
+        assert!(global.tray.enabled);
+        assert_eq!(global.tray.hidden, ["spotify"]);
         assert_eq!(global.theme.accent, "cyan");
 
         let overridden = Config::for_output(&path, Some("DP-2")).unwrap();
-        assert_eq!(overridden.bars.top.size, 44, "the override wins");
+        assert!(!overridden.tray.enabled, "the override wins");
         assert_eq!(
-            ids(&overridden.bars.top.start),
-            ["cpu", "memory"],
+            overridden.tray.hidden,
+            ["spotify", "discord"],
             "an array replaces rather than concatenating"
         );
-        assert_eq!(
-            ids(&overridden.bars.top.center),
-            ["clock"],
+        assert!(
+            overridden.tray.compact,
             "a key the override never mentions keeps the global value"
         );
         assert_eq!(overridden.theme.accent, "orange");
@@ -967,8 +802,8 @@ accent = "orange"
         );
 
         let unknown = Config::for_output(&path, Some("HDMI-A-1")).unwrap();
-        assert_eq!(
-            unknown.bars.top.size, 34,
+        assert!(
+            unknown.tray.enabled,
             "a screen with no file is the global config"
         );
 
@@ -982,7 +817,7 @@ accent = "orange"
             "[general]\nlanguage = \"en\"\n\n[shape]\ngap = 0\n",
             Some((
                 "DP-1",
-                "[general]\nlanguage = \"es\"\n\n[stack]\nmax_visible = 99\n\n[shape]\ngap = 12\n",
+                "[general]\nlanguage = \"es\"\n\n[audio]\nmax_volume = 200\n\n[shape]\ngap = 12\n",
             )),
         );
         let path = dir.join("config.toml");
@@ -990,34 +825,15 @@ accent = "orange"
 
         assert_eq!(cfg.general.language, "en", "[general] is global-only");
         assert_eq!(
-            cfg.stack.max_visible,
-            StackConfig::default().max_visible,
-            "[stack] is global-only — the column follows the focused screen rather than existing per output"
+            cfg.audio.max_volume,
+            AudioConfig::default().max_volume,
+            "[audio] is global-only — one volume service is shared across every output"
         );
         assert_eq!(
             cfg.shape.gap, 12,
             "a visual section is still the monitor's to set"
         );
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn excluded_screens_match_as_patterns_and_never_catch_an_unnamed_output() {
-        let bars = BarsConfig {
-            excluded_screens: vec!["HDMI-*".to_string(), "DP-3".to_string()],
-            ..BarsConfig::default()
-        };
-        assert!(bars.excludes(Some("HDMI-A-1")));
-        assert!(bars.excludes(Some("DP-3")));
-        assert!(!bars.excludes(Some("DP-1")));
-        assert!(
-            !bars.excludes(None),
-            "an output the compositor did not name has nothing to match, so it keeps its bars"
-        );
-        assert!(
-            !BarsConfig::default().excludes(Some("DP-1")),
-            "no exclusions is every screen"
-        );
     }
 
     #[test]
@@ -1158,33 +974,6 @@ accent = "orange"
                 .expect("a removed key is ignored, not an error");
         assert_eq!(old.opacity(), 1.0);
         assert_eq!(old.panel_fill().a, 1.0);
-    }
-
-    #[test]
-    fn a_bar_is_solid_by_default() {
-        assert_eq!(Config::starter().opacity(), 1.0);
-    }
-
-    /// A surface declared opaque is cleared to a solid colour before anything draws, so declaring it while the bar is translucent — or while a frame is painting the strip instead — is how an opacity setting does nothing at all. Both cases were reachable: a side bar in `bar` mode under a frame stayed solid however the opacity was set.
-    #[test]
-    fn a_bar_that_is_not_solid_never_declares_an_opaque_surface() {
-        let hugging = |toml: &str| toml::from_str::<Config>(toml).unwrap();
-
-        let solid = hugging("[shape]\nmode = \"bar\"\ngap = 0\nradius = 0\n");
-        assert!(
-            solid.bar_surface_opaque(Edge::Left),
-            "a hugging bar at full opacity is the one case that may be cleared solid"
-        );
-
-        let translucent =
-            hugging("[shape]\nmode = \"bar\"\ngap = 0\nradius = 0\n[theme]\nopacity = 0.5\n");
-        assert!(!translucent.bar_surface_opaque(Edge::Left));
-
-        let framed = hugging("[shape]\nmode = \"bar\"\ngap = 0\nradius = 0\nframe = true\n");
-        assert!(
-            !framed.bar_surface_opaque(Edge::Left),
-            "the frame's ring covers this strip, so the bar clearing it solid paints the background twice"
-        );
     }
 
     #[test]
@@ -1415,56 +1204,16 @@ mode = "bar"
 gap = 0
 spacing = 6
 radius = 10
-
-[bars.top]
-center = ["clock"]
-[bars.top.shape]
-mode = "sections"
-gap = 8
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        let top = cfg.shape_for(Edge::Top);
-        assert_eq!(top.mode, Shape::Sections);
-        assert_eq!(top.gap, 8, "gap overridden");
-        assert_eq!(top.spacing, 6.0, "spacing inherits the global");
-        assert_eq!(top.radius, 10.0, "radius inherits the global");
-        let bottom = cfg.shape_for(Edge::Bottom);
-        assert_eq!(bottom.mode, Shape::Bar);
-        assert_eq!(bottom.gap, 0);
-    }
-
-    #[test]
-    fn hug_and_opacity_track_gap_and_frame() {
-        let toml = r#"
-[shape]
-gap = 8
-radius = 12
-[bars.top]
-center = ["clock"]
-[bars.bottom]
-start = ["clock"]
-[bars.bottom.shape]
-gap = 0
-radius = 0
-"#;
-        let cfg: Config = toml::from_str(toml).unwrap();
-        assert!(!cfg.hugs(Edge::Top));
-        assert!(!cfg.bar_surface_opaque(Edge::Top));
-        assert!(cfg.hugs(Edge::Bottom));
-        assert!(cfg.bar_surface_opaque(Edge::Bottom));
-    }
-
-    #[test]
-    fn frame_forces_hug_on_every_edge() {
-        let toml = r#"
-[shape]
-frame = true
-gap = 8
-[bars.top]
-center = ["clock"]
-"#;
-        let cfg: Config = toml::from_str(toml).unwrap();
-        assert!(cfg.hugs(Edge::Top), "frame forces hug even at gap>0");
+        let overridden = cfg.shape_from(Some(Shape::Sections), Some(8), None, None);
+        assert_eq!(overridden.mode, Shape::Sections, "mode overridden");
+        assert_eq!(overridden.gap, 8, "gap overridden");
+        assert_eq!(overridden.spacing, 6.0, "spacing inherits the global");
+        assert_eq!(overridden.radius, 10.0, "radius inherits the global");
+        let plain = cfg.shape_from(None, None, None, None);
+        assert_eq!(plain.mode, Shape::Bar);
+        assert_eq!(plain.gap, 0);
     }
 
     #[test]
@@ -1492,100 +1241,11 @@ center = ["clock"]
 
     #[test]
     fn module_override_parses_variant_and_accent() {
-        let cfg: Config = toml::from_str(
-            "[bars.top]\ncenter=[\"clock\"]\n[modules.battery]\nvariant=\"filled\"\naccent=\"orange\"\n",
-        )
-        .unwrap();
+        let cfg: Config =
+            toml::from_str("[modules.battery]\nvariant=\"filled\"\naccent=\"orange\"\n").unwrap();
         assert_eq!(cfg.variant_for("battery"), Variant::Filled);
         assert_eq!(cfg.accent_name_for("battery"), "orange");
         assert_eq!(cfg.variant_for("clock"), Variant::Default);
         assert_eq!(cfg.accent_name_for("clock"), "cyan");
-    }
-
-    #[test]
-    fn corner_owner_prefers_horizontal_then_vertical() {
-        let cfg: Config =
-            toml::from_str("[bars.top]\ncenter=[\"clock\"]\n[bars.left]\nstart=[\"workspaces\"]\n")
-                .unwrap();
-        assert_eq!(
-            cfg.corner_owner(Corner::TopLeft),
-            Some(Edge::Top),
-            "top wins over left"
-        );
-        assert_eq!(cfg.corner_owner(Corner::BottomLeft), Some(Edge::Left));
-        assert_eq!(cfg.corner_owner(Corner::BottomRight), None);
-    }
-
-    #[test]
-    fn corner_modules_route_to_owning_bar_ends() {
-        let cfg: Config = toml::from_str(
-            "[bars.top]\ncenter=[\"clock\"]\n[bars.right]\nstart=[\"ws\"]\n\
-             [corners]\ntop_left=\"logo\"\nbottom_right=\"tray\"\n",
-        )
-        .unwrap();
-        assert_eq!(cfg.corner_modules_for(Edge::Top), (Some("logo"), None));
-        assert_eq!(cfg.corner_modules_for(Edge::Right), (None, Some("tray")));
-        assert_eq!(cfg.corner_modules_for(Edge::Left), (None, None));
-    }
-
-    #[test]
-    fn panel_gap_tracks_the_bar_gap_and_falls_back_when_hugging() {
-        let floating: Config =
-            toml::from_str("[shape]\ngap=12\n[bars.top]\ncenter=[\"clock\"]\n").unwrap();
-        assert_eq!(floating.edge_gap(Edge::Top), 12);
-        assert_eq!(
-            floating.panel_gap(Edge::Top),
-            12,
-            "a floating bar's panels float in step"
-        );
-        assert_eq!(
-            floating.edge_reserved(Edge::Top),
-            12 + 34,
-            "reserved = outer gap + thickness"
-        );
-
-        let hugging: Config = toml::from_str("[bars.top]\ncenter=[\"clock\"]\n").unwrap();
-        assert_eq!(hugging.edge_gap(Edge::Top), 0);
-        assert_eq!(
-            hugging.panel_gap(Edge::Top),
-            DEFAULT_PANEL_GAP,
-            "a hugging bar's panels still get a breathing gap"
-        );
-        assert_eq!(hugging.edge_reserved(Edge::Top), 34);
-    }
-
-    #[test]
-    fn frame_edge_reserves_thickness_without_a_gap() {
-        let cfg: Config =
-            toml::from_str("[shape]\nframe=true\ngap=8\n[bars.top]\ncenter=[\"clock\"]\n").unwrap();
-        assert_eq!(
-            cfg.edge_gap(Edge::Top),
-            0,
-            "frame forces a hug, so no outer gap"
-        );
-        assert_eq!(cfg.edge_reserved(Edge::Top), 34);
-        assert_eq!(cfg.panel_gap(Edge::Top), DEFAULT_PANEL_GAP);
-    }
-
-    #[test]
-    fn frame_gives_empty_edges_inactive_strips() {
-        let toml = r#"
-[shape]
-frame = true
-inactive_size = 6
-[bars.top]
-center = ["clock"]
-"#;
-        let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(
-            cfg.edge_thickness(Edge::Top),
-            34,
-            "active edge keeps its size"
-        );
-        assert_eq!(
-            cfg.edge_thickness(Edge::Bottom),
-            6,
-            "empty edge becomes an inactive strip under frame"
-        );
     }
 }

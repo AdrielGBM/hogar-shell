@@ -229,7 +229,7 @@ pub struct ModuleDescriptor {
     pub name: &'static str,
     /// The glyph a palette or a popover shows the module by.
     pub icon: &'static str,
-    /// The sections it reads, its own first; empty for a module with nothing to configure. More than one when what it draws is also configured elsewhere — the desktop clock face by `[widgets]`, a temperature by `[temperature] unit`.
+    /// The sections it reads, its own first; empty for a module with nothing to configure. More than one when what it draws is also configured elsewhere — the desktop clock face by `[clock.face]`, a temperature by `[temperature] unit`.
     pub options: &'static [OptionsType],
     pub representations: Representations,
     pub actions: &'static [ActionDef],
@@ -545,6 +545,7 @@ mod tests {
             InstanceId::of_module("probe"),
             Arc::new(config::Config::default()),
             config::Edge::Top,
+            34.0,
             telar::Color::TRANSPARENT,
             telar::Color::TRANSPARENT,
             None,

@@ -39,6 +39,15 @@ pub(crate) fn dir() -> PathBuf {
     util::paths::config_dir().join("layouts")
 }
 
+/// The layout file an edit written by hand belongs in: the active layout's, or the one the first edit of the built-in layout forks to. Named without reading the store, so `config check` can say it with no shell running.
+pub(crate) fn file_for_edits() -> PathBuf {
+    let name = services::state::get()
+        .layout
+        .filter(|name| name != BUILT_IN)
+        .unwrap_or_else(|| FORKED.to_string());
+    dir().join(format!("{name}.toml"))
+}
+
 /// Reads the store the shell is drawing from. `None` outside the shell process, where there is none.
 pub(crate) fn read<R>(f: impl FnOnce(&LayoutStore) -> R) -> Option<R> {
     let store = LIVE.with(|live| live.borrow().as_ref().map(|it| Rc::clone(&it.store)))?;

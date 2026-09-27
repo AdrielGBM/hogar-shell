@@ -30,6 +30,8 @@ pub struct Props {
     pub drag_open: Option<DragOpen> = None,
 }
 
+let output = crate::host::Host::current().ok().and_then(|host| host.output.clone());
+let dragged_on = output.clone();
 let theme = use_theme::<NordTheme>();
 let radius = props.radius;
 let accent = props.accent;
@@ -58,7 +60,13 @@ let chip = signal(Rect::default());
 let pressed = chip.clone();
 let press = props
     .on_press
-    .map(|press| move || from_chip(pressed.get(), || press()));
+    .map(|press| {
+        let output = output.clone();
+        move || {
+            let chip = crate::module::Pressed { rect: pressed.get(), output: output.clone() };
+            from_chip(chip, || press())
+        }
+    });
 let scroll = props.on_scroll;
 
 let dragged = chip.clone();
@@ -74,7 +82,8 @@ let settle = drag.map(|drag| {
     move |x: f32, y: f32| {
         let from = released.borrow_mut().take().unwrap_or((x, y));
         if drag.travel(from, (x, y)) >= drag.threshold {
-            from_chip(dragged.get(), || open_panel(&drag.module));
+            let chip = crate::module::Pressed { rect: dragged.get(), output: dragged_on.clone() };
+            from_chip(chip, || open_panel(&drag.module));
         }
     }
 });

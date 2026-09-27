@@ -14,8 +14,8 @@ use config::theme::{FontRole, NordTheme};
 use config::{FullscreenPopups, NotificationsConfig, StackConfig};
 use services::hyprland::{self, ActiveWindow, Client};
 use services::notifications::{self, Notification, SharedSnapshot, Snapshot, Urgency};
+use ui::chrome::{card_gap, panel_fill};
 use ui::host::Host;
-use ui::panel::{card_gap, panel_fill};
 use ui::scale::space;
 
 /// Parses the freedesktop notification body's limited HTML markup into one string and the byte ranges of it
@@ -189,7 +189,7 @@ fn decode_entities(text: &str) -> String {
 
 /// The width a card is drawn at inside the history panel, which is what the swipe threshold is a fraction of.
 ///
-/// The panel's own, not the column's: a card in the bell drawer is as wide as the drawer, and the column it also appears in is sized by `[stack] width`. One number could only be right in one of the two places.
+/// The panel's own, not the column's: a card in the bell drawer is as wide as the drawer, and the column it also appears in is sized by its layout `stack` area's width. One number could only be right in one of the two places.
 const PANEL_CARD_WIDTH: f32 = 380.0;
 
 fn urgency_color(urgency: Urgency, theme: &NordTheme) -> Color {
@@ -263,7 +263,7 @@ struct CardStyle {
     radius: f32,
     /// What the card paints behind itself.
     ///
-    /// Two answers, because a card is two different things. On the popup surface it *is* the panel — nothing else is on that surface — so it takes `[panels] opacity` and the compositor's blur has something to show through. In the history it sits inside a panel that is already translucent, and a second translucent layer over the first would only make the card harder to read than the drawer under it.
+    /// Two answers, because a card is two different things. In the popup stack it *is* the panel — nothing else is in that area — so it takes `[theme] opacity` and the compositor's blur has something to show through. In the history it sits inside a panel that is already translucent, and a second translucent layer over the first would only make the card harder to read than the drawer under it.
     fill: Color,
     /// The body's line cap, or `None` for the whole body (`open_expanded`).
     body_lines: Option<u16>,
@@ -526,7 +526,14 @@ pub(crate) fn popup_card(
     theme: NordTheme,
     radius: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let style = CardStyle::new(cfg, stack, stack.width, theme, radius).standalone();
+    let style = CardStyle::new(
+        cfg,
+        stack,
+        crate::stack::swipe::column_width(),
+        theme,
+        radius,
+    )
+    .standalone();
     notification_card(
         notification,
         SizeDimension::Percent(1.0),
@@ -609,7 +616,7 @@ pub fn bell_view(
     let read = snapshot.read_only();
 
     // The cards sit inside the panel (drawer or float), so they carry its (bar-matching) radius.
-    let radius = ui::panel::content_radius();
+    let radius = ui::chrome::content_radius();
     let header = panel_header(read, theme)?;
     let list = history_list(read, cfg, stack, theme, radius)?;
     let panel = Container::new(

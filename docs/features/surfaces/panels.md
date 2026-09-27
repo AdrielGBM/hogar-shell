@@ -8,7 +8,7 @@ compositor: any
 config: [panels, modules]
 commands: [panel]
 deps: [wlr-layer-shell]
-see_also: [drawers, floats, popouts]
+see_also: [drawers, floats, popouts, compositor-rules]
 ---
 
 # Panels
@@ -19,7 +19,7 @@ The surface behind a module. Thirteen modules have one: clock, dashboard, batter
 notifications, notes, settings, utilities, windowinfo, session and logo.
 
 A panel is reached three ways — a chip click, `hogar-shell panel toggle <module>`, or a keybind — and all three
-reach the **same** surface rather than stacking three copies of it.
+reach the **same** node rather than stacking three copies of it.
 
 ```sh
 hogar-shell panel toggle settings
@@ -58,6 +58,14 @@ Per module, `[modules.<id>]` overrides `width` and `height` for that module's fl
 Most panels are display-only and take no keyboard focus, so the window behind them keeps it. Three take
 focus because they have fields: **notes**, **settings** and **session**.
 
+## Where it lives
+
+Neither presentation opens a layer-shell surface of its own. A drawer is a node in the window of the chip it
+hangs off (`hogar-shell-top` for a bar chip), and a float — having no chip to anchor to — is a node in
+`hogar-shell-overlay` alongside the launcher and the notification centre. See
+[Compositor rules](../../guides/compositor-rules.md) for what a `layer_rule` written against the old
+per-panel namespaces reaches now.
+
 ## What it needs
 
 `wlr-layer-shell`.
@@ -67,9 +75,10 @@ focus because they have fields: **notes**, **settings** and **session**.
 Pressing the chip again, `hogar-shell panel close <module>`, and — for a drawer — a press outside it.
 
 **A drawer is also closed by any window opening**: the [launcher](launcher.md), a float, the
-[notification centre](notification-centre.md). A drawer is a glance, and while it is up its surface covers the
-whole usable area — that is how a press beside it dismisses it — so a window opening underneath is a window that
-is painted, unreachable, and dismissed rather than used by the first press that goes near it.
+[notification centre](notification-centre.md). A drawer is a glance, and while it is up its window's input
+region covers the whole usable area — that is how a press beside it dismisses it — so a window opening
+underneath is a window that is painted, unreachable, and dismissed rather than used by the first press that
+goes near it.
 
 **Nothing closes a float.** It is the presentation you choose when you want a panel to stay put, so opening a
 drawer, pressing a chip, opening the notification centre or opening a second float all leave it exactly where it
@@ -82,10 +91,11 @@ you opened the picker to photograph.
 
 ## Lifecycle
 
-A panel that has never been opened does not exist. What the *config* describes — bars, the wallpaper, the frame
-— is reconciled on every reload; what the *user* opened is tracked separately, which is what keeps a reload
-from closing what you had open.
+A panel that has never been opened does not exist. What the *layout* describes — bars, the wallpaper, desktop
+widgets — is reconciled on every reload; what the *user* opened is tracked separately, which is what keeps a
+reload from closing what you had open.
 
 ## Related
 
-- [Popouts](popouts.md) — the hover card, which is a different surface with different rules.
+- [Popouts](popouts.md) — the hover card, which is a different node with different rules.
+- [Compositor rules](../../guides/compositor-rules.md).

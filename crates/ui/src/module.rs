@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 use telar::{Color, Rect};
 
@@ -6,24 +6,31 @@ use config::theme::NordTheme;
 use config::{Edge, Variant};
 
 thread_local! {
-    static PRESSED_CHIP: Cell<Option<Rect>> = const { Cell::new(None) };
+    static PRESSED_CHIP: RefCell<Option<Pressed>> = const { RefCell::new(None) };
 }
 
 /// Runs `act` — a chip's press or drag-open handler — with the chip's own laid-out rect in scope.
 ///
-/// The rect is what a drawer hangs off, on the same terms as the card a hover opens over the same chip, and only the chip knows it. What travelled here before was the *zone* the chip sat in, which could say no more than which end of the bar to align to — and could not always say that: an id placed in more than one zone resolves to whichever the config search reaches first, and a `[corners]` module sits in no zone at all despite being laid out at a very definite end of its bar. A rect answers both without asking the config anything.
+/// The rect is what a drawer hangs off, on the same terms as the card a hover opens over the same chip, and only the chip knows it. What travelled here before was the *zone* the chip sat in, which could say no more than which end of the bar to align to — and could not always say that: an id placed in more than one zone resolves to whichever the config search reaches first, and a module the layout places on the desktop grid sits in no bar zone at all despite being laid out at a very definite place on screen. A rect answers both without asking the config anything.
 ///
 /// Ambient rather than a parameter because the handler that reads it may be a `ModuleClick::Action` — a bare `fn()` that opens someone else's panel — which no signature change reaches. Scoped strictly to the synchronous dispatch, so nothing can read a stale rect afterwards.
-pub fn from_chip<R>(chip: Rect, act: impl FnOnce() -> R) -> R {
+/// The chip a press or a drag came from: its rect, and the output it is on, which two identical bars on two identical screens need to tell apart.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pressed {
+    pub rect: Rect,
+    pub output: Option<String>,
+}
+
+pub fn from_chip<R>(chip: Pressed, act: impl FnOnce() -> R) -> R {
     let previous = PRESSED_CHIP.with(|pressed| pressed.replace(Some(chip)));
     let done = act();
-    PRESSED_CHIP.with(|pressed| pressed.set(previous));
+    PRESSED_CHIP.with(|pressed| *pressed.borrow_mut() = previous);
     done
 }
 
 /// The rect of the chip whose press is being dispatched, if a press is what is running. `None` for a panel reached from anywhere else — IPC, a keybind — where there is no chip to hang off.
-pub fn pressed_chip() -> Option<Rect> {
-    PRESSED_CHIP.with(|pressed| pressed.get())
+pub fn pressed_chip() -> Option<Pressed> {
+    PRESSED_CHIP.with(|pressed| pressed.borrow().clone())
 }
 
 /// How a chip opens its module's panel.

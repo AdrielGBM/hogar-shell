@@ -1,53 +1,42 @@
 use std::rc::Rc;
 use ui::scale::paint;
 
-use platform_wayland::request_close;
 use telar::{
-    Color, LayoutError, LayoutItem, LayoutStyle, StyledContainer, SurfaceFrameStyle, SurfaceToken,
+    Color, Container, LayoutError, LayoutItem, LayoutStyle, StyledContainer, SurfaceFrameStyle,
     box_item, use_theme, window_frame,
 };
 
-use config::SurfaceEnv;
 use config::theme::{FontRole, NordTheme};
-use ui::descriptor::wants_keyboard;
+use ui::chrome::{Chrome, content_radius};
+use ui::descriptor::Built;
 use ui::host::{Host, InstanceId, Representation, Size};
-use ui::panel::PanelSurface;
-use ui::panel::content_radius;
-use ui::placement::{Centred, Placement};
 
-/// Opens `module_id`'s panel as a centred, titled, closable window on the bar's own monitor, sized per its `[modules.<id>]` override or `[panels.float]`; the shell only declares the placement, the rsx surface host and `window_frame` realize the window chrome. Toggle/close is the caller's job ([`crate::panel::toggle_panel`]) via the returned token.
-///
-/// `[modules.<id>]` (or `[panels.float]`) is the size the window opens at, and for now the size it keeps.
-///
-/// **The corner grip is gone until this is an xdg toplevel.** Dragging one costs a swapchain rebuild per step, and a rebuild is a `vkDeviceWaitIdle` on the device every surface shares — measured at ~11 ms against ~1.5 ms to draw the frame. Making that cheaper means not rebuilding on every step, which means holding the layout still for a moment; and a layer surface has no interactive-resize protocol, so the grip is the client's own — it reads laid-out rects, and the pointer only reaches it through an input region built from that same laid-out tree. Holding the layout holds the pointer, and the drag then advances at the throttle's pace rather than the cursor's. `xdg_toplevel.resize` gives the grab and the sizing to the compositor, which unties it.
-pub(crate) fn open_float(env: &SurfaceEnv, module_id: &str) -> SurfaceToken {
+/// There is no resize grip: a layer surface has no interactive-resize protocol, and a client-drawn grip reads the laid-out rects the input region is carved from, so throttling it throttles the pointer.
+pub(crate) fn content(module_id: &str, chrome: &Chrome) -> Built {
+    let theme = use_theme::<NordTheme>();
+    let (width, height) = chrome.config.float_size_for(module_id);
+    let host = Host::in_chrome(
+        InstanceId::of_module(module_id),
+        Representation::Panel,
+        chrome,
+        Size {
+            width: width as f32,
+            height: height as f32,
+        },
+    );
+    let body = ui::descriptor::build_panel(&host)?;
+    let style = frame_style(theme, chrome.config.panel_fill(), content_radius());
     let module = module_id.to_string();
-    let (width, height) = env.config.float_size_for(module_id);
-    let placement = Placement::centred(Centred::Float)
-        .size(width, height)
-        .keyboard(wants_keyboard(module_id))
-        .output(env.output.clone());
-    // A float hangs off no edge of its own, so it reads the bar its chip lives on — which is what makes its radius, gaps and opacity match the drawer showing the very same panel.
-    PanelSurface::new(placement, move |env| {
-        let theme = use_theme::<NordTheme>();
-        let host = Host::on_surface(
-            InstanceId::of_module(&module),
-            Representation::Panel,
-            env,
-            Size {
-                width: width as f32,
-                height: height as f32,
-            },
-        );
-        let body = ui::descriptor::build_panel(&host)?;
-        let style = frame_style(theme, env.config.panel_fill(), content_radius());
-        let close: Rc<dyn Fn()> = Rc::new(request_close);
-        window_frame(module.clone(), None, style, close, body, None)
-    })
-    .edge(env.edge)
-    .open()
+    let close: Rc<dyn Fn()> = Rc::new(move || crate::transient::close(&module));
+    let frame = window_frame(module_id.to_string(), None, style, close, body, None)?;
+    Ok(box_item(Container::new(
+        LayoutStyle::new()
+            .flex_column()
+            .width(width as f32)
+            .height(height as f32),
+        vec![frame],
+    )?))
 }
-
 fn frame_style(theme: NordTheme, background: Color, radius: f32) -> SurfaceFrameStyle {
     SurfaceFrameStyle {
         background,

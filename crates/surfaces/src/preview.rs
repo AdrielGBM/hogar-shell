@@ -133,6 +133,6 @@ pub fn bar_strip() -> Option<Rect> {
 
 /// Which module the drawer is showing, which is decided by the chip that opened it and so has to be put in scope before the panel builds. `clock` because it needs nothing from the machine to draw.
 pub fn drawer() {
-    let env = ui::preview::bar_surface();
-    crate::drawer::set_drawer_host("clock", &env);
+    let chrome = ui::preview::chrome();
+    crate::drawer::set_drawer_host("clock", &chrome);
 }

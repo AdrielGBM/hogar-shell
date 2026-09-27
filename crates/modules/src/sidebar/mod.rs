@@ -1,60 +1,62 @@
-//! The notification centre: a full-height surface that is the home for what has arrived and what can be switched.
+//! The notification centre: a full-height transient that is the home for what has arrived and what can be switched.
 //!
 //! The bell drawer is a *glance* — it hangs off its chip, it is as tall as its content, and it closes when you look away. This is the other thing: it takes the whole edge, it scrolls, and it is where a user goes to work through a morning's notifications. It hosts the utilities panel's own toggles rather than a second set of them, which is the whole reason the two were built together: two independent copies of "turn Wi-Fi off" would drift the day one of them gained a toggle.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use telar::{
     AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutScrollArea, LayoutStyle,
-    RectStyle, SizeDimension, StyledContainer, SurfaceToken, Text, box_item, use_theme,
+    RectStyle, SizeDimension, StyledContainer, Text, box_item, use_theme,
 };
 
 use config::Config;
 use config::theme::{FontRole, NordTheme};
-use ui::panel::PanelSurface;
-use ui::placement::Placement;
+use surfaces::transient::{self, Motion, Place, Slot, Spec};
+use ui::chrome::Chrome;
 use ui::scale::{corner, space};
 
 pub const ID: &str = "sidebar";
 
-/// Opens the centre, or closes it if it is up. Registered with the shell's surface registry under [`ID`], so a press on the bell, `hogar-shell notifs center` and a keybind all reach the same surface rather than stacking copies of it.
+/// Opens the centre, or closes it if it is up. Registered with the shell's transient registry under [`ID`], so a press on the bell, `hogar-shell notifs center` and a keybind all reach the same transient rather than stacking copies of it.
 ///
 /// A standing window, not a glance: opening it takes the screen from whatever drawer was up — including the bell's own, which is the same notifications seen the other way — and nothing takes it away again but the user. Opening a drawer afterwards leaves it exactly where it was.
 pub fn toggle() {
-    surfaces::shell::toggle_standing_window(ID, open_sidebar);
+    transient::toggle(spec());
 }
 
 pub fn open() {
-    if !surfaces::shell::window_is_open(ID) {
+    if !is_open() {
         toggle();
     }
 }
 
 pub fn close() {
-    surfaces::shell::close(ID);
+    transient::close(ID);
 }
 
 pub fn is_open() -> bool {
-    surfaces::shell::window_is_open(ID)
+    transient::is_open(ID)
 }
 
-fn open_sidebar() -> SurfaceToken {
-    let config = config::config().unwrap_or_else(|| Arc::new(Config::default()));
-    let output = surfaces::shell::focused_output();
-    PanelSurface::new(placement(&config, output), |env| body(&env.config)).open()
-}
-
-/// A dock: spans its edge over the windows, at the shared panel margin off them. The zone a dock takes is zero, not -1 — the compositor has already cleared the bars, and the margin is the only extra distance a panel of any kind puts between itself and them.
-fn placement(config: &Config, output: Option<String>) -> Placement {
-    let sidebar = &config.sidebar;
-    Placement::dock("hogar-shell-sidebar", sidebar.edge, sidebar.thickness())
-        .margin(config.panel_margin(sidebar.edge))
-        .output(output)
+fn spec() -> Spec {
+    let output = transient::focused_output();
+    let sidebar = config::config_for(output.as_deref()).sidebar.clone();
+    Spec::new(
+        ID,
+        Place::Docked {
+            edge: sidebar.edge,
+            thickness: sidebar.thickness() as f32,
+        },
+        Rc::new(|chrome: &Chrome| body(&chrome.config)),
+    )
+    .slot(Slot::Standing)
+    .output(output)
+    .motion(Motion::Slide(sidebar.edge))
 }
 
 fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let radius = config.panel_radius(config.sidebar.edge);
+    let radius = ui::chrome::content_radius();
 
     let mut children: Vec<Box<dyn LayoutItem>> = vec![header(theme)?];
     if config.sidebar.show_toggles {
@@ -74,7 +76,7 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
             .width(SizeDimension::Percent(1.0)),
         children,
     )?;
-    // Scrolled, because a morning's notifications are taller than any screen — the one thing the bell drawer, which sizes to its content, cannot do. Kept: this surface is rebuilt by any config edit, and a history that jumped back to the newest card each time would lose whatever the reader had scrolled down to.
+    // Scrolled, because a morning's notifications are taller than any screen — the one thing the bell drawer, which sizes to its content, cannot do. Kept: this transient is rebuilt by any config edit, and a history that jumped back to the newest card each time would lose whatever the reader had scrolled down to.
     let scroll = LayoutScrollArea::new_kept(
         "sidebar.history",
         LayoutStyle::new()
@@ -88,14 +90,14 @@ fn body(config: &Config) -> Result<Box<dyn LayoutItem>, LayoutError> {
             .padding_all(space::xl())
             .width(SizeDimension::Percent(1.0))
             .height(SizeDimension::Percent(1.0)),
-        move |_| RectStyle::filled(ui::panel::panel_fill(), radius),
+        move |_| RectStyle::filled(ui::chrome::panel_fill(), radius),
         vec![Box::new(scroll)],
     )?))
 }
 
 /// The title and the way out.
 ///
-/// The close button is not decoration: a surface docked to an edge has no "outside" for a press to land in, and this one takes no keyboard on purpose — a centre held open while the user works must not keep focus away from what they are typing in — so Escape never reaches it either. Without the ✕ the only way to dismiss it is the IPC command that opened it, which is not a way a user has.
+/// The close button is not decoration: a transient docked to an edge has no "outside" for a press to land in, and this one takes no keyboard on purpose — a centre held open while the user works must not keep focus away from what they are typing in — so Escape never reaches it either. Without the ✕ the only way to dismiss it is the IPC command that opened it, which is not a way a user has.
 fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let title = Text::new(
         || telar::t!("sidebar.title"),
@@ -118,7 +120,7 @@ fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
         vec![glyph],
     )?
     .hover_style(move |_| RectStyle::filled(theme.overlay, rounded))
-    // Through the registry rather than `request_close`, so `panel list` and a second `notifs center` agree with what is on screen the moment the button is pressed.
+    // Through the registry rather than closing the node directly, so `panel list` and a second `notifs center` agree with what is on screen the moment the button is pressed.
     .on_press(close);
 
     Ok(Box::new(Container::new(
@@ -134,37 +136,6 @@ fn header(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::Edge;
-    use platform_wayland::KeyboardInteractivity;
-
-    fn config(edge: Edge) -> Config {
-        Config {
-            sidebar: config::SidebarConfig {
-                edge,
-                ..config::SidebarConfig::default()
-            },
-            ..Config::default()
-        }
-    }
-
-    #[test]
-    fn the_centre_docks_full_length_on_every_edge() {
-        for edge in Edge::ALL {
-            let layer = placement(&config(edge), None).layer_config();
-            let (across, along) = if edge.is_vertical() {
-                (layer.size.0, layer.size.1)
-            } else {
-                (layer.size.1, layer.size.0)
-            };
-            assert_eq!(across, 400, "{edge:?} is as thick as it was configured");
-            assert_eq!(along, 0, "{edge:?} spans the whole edge");
-            assert_eq!(
-                layer.exclusive_zone, 0,
-                "the compositor has already cleared the bars; reserving again would double the gap"
-            );
-        }
-    }
-
     #[test]
     fn a_hand_edited_size_cannot_cover_the_screen_or_vanish() {
         let tiny = config::SidebarConfig {
@@ -183,9 +154,8 @@ mod tests {
         telar::set_theme(NordTheme::new());
         assert!(header(NordTheme::new()).is_ok());
 
-        let layer = placement(&config(Edge::Right), None).layer_config();
         assert!(
-            matches!(layer.keyboard_interactivity, KeyboardInteractivity::None),
+            matches!(spec().keyboard, platform_wayland::KeyboardMode::None),
             "a centre held open while the user types must not hold their keyboard — which is exactly why it \
              cannot rely on Escape and needs the button above"
         );

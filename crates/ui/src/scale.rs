@@ -12,11 +12,11 @@
 ///
 /// The ratios are `telar::ThemeTokens`' own (`radius_lg` / `radius_md` / `radius_sm`), so a catalogue widget dropped next to a card rounds by the same rule rather than by a second scale invented here. What stays the shell's is the *base*: these resolve against the surface's configured radius (per-bar override → `[shape] radius` → the theme), which a theme token cannot see.
 ///
-/// **Resolve these once per build and capture the number.** A style closure runs on every paint, and the lookup behind [`content_radius`](crate::panel::content_radius) is a context read, not a constant.
+/// **Resolve these once per build and capture the number.** A style closure runs on every paint, and the lookup behind [`content_radius`](crate::chrome::content_radius) is a context read, not a constant.
 pub mod corner {
     /// A surface's own corner: a panel, a card that *is* the panel, a window.
     pub fn xl() -> f32 {
-        crate::panel::content_radius()
+        crate::chrome::content_radius()
     }
 
     /// What sits inside a panel — a card, a row, a button.
@@ -62,9 +62,9 @@ pub mod paint {
 ///
 /// [`md`] is the base on purpose, where the radius base is the *largest* step: "how round is the biggest thing" and "what is the default gap" are different questions. The four middle ratios are `telar::ThemeTokens`' own (`spacing_sm` / `spacing_md` / `spacing_lg` / `spacing_xl`), so a catalogue widget dropped next to a shell row is spaced by the same rule rather than by a second scale invented here; [`xs`] and [`xxl`] extend it past what the theme names. What stays the shell's is the *base*: these resolve against the surface's configured spacing (per-bar override → `[shape] spacing` → the theme), which a theme token cannot see.
 ///
-/// **Resolve these once per build and capture the number**, the same rule the [`corner`] scale carries: the lookup behind [`content_spacing`](crate::panel::content_spacing) is a context read, not a constant.
+/// **Resolve these once per build and capture the number**, the same rule the [`corner`] scale carries: the lookup behind [`content_spacing`](crate::chrome::content_spacing) is a context read, not a constant.
 pub mod space {
-    use crate::panel::content_spacing;
+    use crate::chrome::content_spacing;
 
     /// Hairline. Between rows of a dense list, where the point is separation rather than air.
     pub fn xs() -> f32 {

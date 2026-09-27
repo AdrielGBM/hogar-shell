@@ -146,7 +146,7 @@ mod tests {
     /// A column is where a person looks, so it counts what they see: an accented id earlier on the line would otherwise push the caret one column right for every accent, onto a character that is not the start of anything.
     #[test]
     fn a_column_counts_characters_not_bytes() {
-        let text = "[bars.top]\ncenter = [\"reloj-más\", \"clokc\"]\n";
+        let text = "[clock]\ncenter = [\"reloj-más\", \"clokc\"]\n";
         let at = text.find("\"clokc\"").expect("the fixture has the id");
 
         let span = Span::locate(text, at..at + 7);

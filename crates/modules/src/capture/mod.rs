@@ -23,7 +23,7 @@ pub fn screenshot_screen() {
 
 /// The focused screen. Falls back to the whole desktop when the compositor names no focused output — which is one screen's worth on a single-monitor session anyway.
 pub fn screenshot_output() {
-    let target = match surfaces::shell::focused_output() {
+    let target = match surfaces::transient::focused_output() {
         Some(name) => Target::Output(name),
         None => Target::Screen,
     };
@@ -32,7 +32,7 @@ pub fn screenshot_output() {
 
 /// A region the user draws.
 ///
-/// The frozen still the picker was drawn over *is* the capture when there is one — see `picker`. Without one the request goes back to the compositor for the selected rectangle, which is why the picker defers the callback until its own surface is gone.
+/// The frozen still the picker was drawn over *is* the capture when there is one — see `picker`. Without one the request goes back to the compositor for the selected rectangle, which is why the picker defers the callback until its own node is gone from the overlay window.
 pub fn screenshot_region() {
     let config = config();
     pick(move |picked: Picked| {
@@ -54,7 +54,7 @@ pub fn record_screen() {
 }
 
 pub fn record_output() {
-    let scope = match surfaces::shell::focused_output() {
+    let scope = match surfaces::transient::focused_output() {
         Some(name) => Scope::Output(name),
         None => Scope::Screen,
     };

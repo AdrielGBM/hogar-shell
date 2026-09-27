@@ -8,7 +8,7 @@ compositor: any
 config: [popouts]
 commands: []
 deps: [wlr-layer-shell]
-see_also: [panels, statusicons]
+see_also: [panels, statusicons, compositor-rules]
 ---
 
 # Popouts
@@ -28,16 +28,25 @@ A chip with no card is never given a hover target, so nothing ever opens empty.
 
 - **Delays.** The pointer has to rest on a chip before anything opens, and the card survives long enough after
   you leave for the pointer to reach it.
-- **One surface.** Moving from chip to chip replaces the card rather than stacking a second one.
-- **A carved input region.** The surface is sized to the tallest card a popout may be, and everything the card
+- **One node.** Moving from chip to chip replaces the card rather than stacking a second one.
+- **A carved input region.** The card's node is sized to the tallest card a popout may be, and everything it
   does not cover is click-through — so an invisible rectangle never eats a click meant for the window behind.
+
+## Where it lives
+
+A popout is a node inside the layer window its chip already lives in — `hogar-shell-top` for a bar chip — laid
+out relative to the chip's own node by the same arithmetic a [drawer](drawers.md) is placed by, rather than a
+surface of its own. If that window's layer is hidden on this output — under fullscreen, say — the popout still
+opens: it is anchored, so it routes into `hogar-shell-overlay` instead and is laid out there against the same
+chip rect. See [Compositor rules](../../guides/compositor-rules.md) for the namespace this used to be, and
+where a rule against it reaches now.
 
 ## Live, not a snapshot
 
 Every card subscribes to the service it reads, so it follows the value while it is up. Hovering the volume chip
 and scrolling it is one gesture, and a card frozen at the level it opened with would be worse than no card.
 
-Nothing polls: each subscription is bound to the popout surface and dies with it.
+Nothing polls: each subscription is bound to the popout's node and dies with it.
 
 ## Configuring
 
@@ -50,3 +59,5 @@ Nothing polls: each subscription is bound to the popout surface and dies with it
 ## Related
 
 - [Panels](panels.md) — what a click opens instead.
+- [Drawers](drawers.md) — placed by the same chip arithmetic.
+- [Compositor rules](../../guides/compositor-rules.md).

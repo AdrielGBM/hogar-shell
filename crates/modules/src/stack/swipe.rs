@@ -7,10 +7,22 @@ use std::rc::Rc;
 
 use telar::{ReadSignal, RwSignal, StyledContainer, signal};
 
+#[derive(Clone, Copy)]
+pub(crate) struct Column {
+    pub width: f32,
+}
+
+/// The width a stack area draws its cards at, as the area being built put it in scope; a card drawn anywhere else is drawn at the width a stack has by default.
+pub(crate) fn column_width() -> f32 {
+    util::state::context::<Column>().map_or(DEFAULT_WIDTH, |column| column.width)
+}
+
+pub(crate) const DEFAULT_WIDTH: f32 = 380.0;
+
 /// The column's swipe distance for a card drawn at its full width, or `None` with the gesture switched off.
 pub(crate) fn column_threshold() -> Option<f32> {
     let stack = ::config::config().map(|c| c.stack).unwrap_or_default();
-    stack.swipe_distance(stack.width)
+    stack.swipe_distance(column_width())
 }
 
 /// Makes `card` follow a sideways drag and run `retire` if it is let go past `threshold`.
