@@ -668,3 +668,322 @@ fn kind(command: &DrawCommand) -> &'static str {
         _ => "a draw",
     }
 }
+
+/// The screens every area kind is laid out on: a common laptop, a large landscape monitor and a portrait one, so an area that only fits one aspect ratio shows.
+const MONITORS: [(f32, f32); 3] = [(1920.0, 1080.0), (2560.0, 1440.0), (1080.0, 1920.0)];
+
+fn instance(module: &str, representation: layout::Representation) -> layout::ResolvedInstance {
+    layout::ResolvedInstance {
+        id: layout::InstanceId::new(module),
+        module: module.to_string(),
+        representation,
+        options: toml::Table::new(),
+        bindings: std::collections::BTreeMap::new(),
+        actions: std::collections::BTreeMap::new(),
+    }
+}
+
+fn group(
+    kind: layout::GroupKind,
+    children: Vec<layout::ResolvedInstance>,
+) -> layout::ResolvedGroup {
+    layout::ResolvedGroup {
+        id: layout::GroupId::new("swept"),
+        kind,
+        children,
+    }
+}
+
+fn area_of(
+    id: String,
+    kind: layout::ResolvedAreaKind,
+    groups: Vec<layout::ResolvedGroup>,
+) -> layout::ResolvedArea {
+    let reserve = matches!(kind, layout::ResolvedAreaKind::Bar { .. });
+    layout::ResolvedArea {
+        id: layout::AreaId::new(id),
+        kind,
+        reserve,
+        above_fullscreen: false,
+        within: layout::Within::Output,
+        style: layout::AreaStyle::default(),
+        visible: None,
+        groups,
+    }
+}
+
+fn every_area() -> Vec<layout::ResolvedArea> {
+    use layout::{Anchor, GroupKind, Representation as Placed, ResolvedAreaKind, Zone};
+    let chips = || {
+        vec![
+            group(
+                GroupKind::Zone { zone: Zone::Start },
+                vec![instance("workspaces", Placed::Chip)],
+            ),
+            group(
+                GroupKind::Zone { zone: Zone::Center },
+                vec![instance("clock", Placed::Chip)],
+            ),
+            group(
+                GroupKind::Zone { zone: Zone::End },
+                vec![instance("notes", Placed::Chip)],
+            ),
+        ]
+    };
+    let widget = || {
+        vec![group(
+            GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 1,
+                row_span: 1,
+            },
+            vec![instance("clock", Placed::WidgetM)],
+        )]
+    };
+    let mut areas = Vec::new();
+    for edge in Edge::ALL {
+        areas.push(area_of(
+            format!("bar-{edge:?}"),
+            ResolvedAreaKind::Bar {
+                edge,
+                thickness: 34.0,
+                length: layout::Extent::Fill,
+                offset: 0.0,
+                shape: layout::BarShape::default(),
+                autohide: None,
+            },
+            chips(),
+        ));
+        areas.push(area_of(
+            format!("dock-{edge:?}"),
+            ResolvedAreaKind::Dock {
+                edge,
+                thickness: 60.0,
+            },
+            chips(),
+        ));
+    }
+    for anchor in Anchor::ALL {
+        areas.push(area_of(
+            format!("grid-{anchor:?}"),
+            ResolvedAreaKind::Grid {
+                rect: layout::Rect::default(),
+                cell: 80.0,
+                gap: 16.0,
+                anchor,
+            },
+            widget(),
+        ));
+        areas.push(area_of(
+            format!("stack-{anchor:?}"),
+            ResolvedAreaKind::Stack {
+                anchor,
+                width: 380.0,
+                output_policy: layout::StackOutputPolicy::Here,
+                routes: Vec::new(),
+            },
+            Vec::new(),
+        ));
+    }
+    areas.push(area_of(
+        "free".into(),
+        ResolvedAreaKind::Free {
+            rect: layout::Rect {
+                x: 0.7,
+                y: 0.7,
+                w: 0.25,
+                h: 0.25,
+            },
+        },
+        vec![group(
+            GroupKind::SmartStack,
+            vec![instance("clock", Placed::Card)],
+        )],
+    ));
+    areas.push(area_of(
+        "wallpaper".into(),
+        ResolvedAreaKind::WallpaperRegion {
+            rect: layout::Rect::default(),
+            source: String::new(),
+            fit: layout::Fit::Cover,
+            transition: layout::Transition::Fade,
+        },
+        Vec::new(),
+    ));
+    areas.push(area_of(
+        "texture".into(),
+        ResolvedAreaKind::Texture {
+            rect: layout::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 0.5,
+            },
+            paint: layout::Paint::Gradient(layout::Gradient {
+                angle: 90.0,
+                stops: vec![
+                    layout::GradientStop {
+                        at: 0.0,
+                        color: "surface".into(),
+                    },
+                    layout::GradientStop {
+                        at: 1.0,
+                        color: "accent".into(),
+                    },
+                ],
+            }),
+            tile: layout::Tile::None,
+            blend: layout::Blend::Normal,
+            opacity: 1.0,
+        },
+        Vec::new(),
+    ));
+    areas
+}
+
+/// What of each inked rect in `commands` is left once every clip around it has cut it: the ink that actually reaches the screen. A label past the end of a bar and a wallpaper larger than its region are cut by the clip they are drawn in, and are not ink anybody sees.
+fn visible_ink(commands: &[DrawCommand]) -> Vec<Rect> {
+    let mut clips: Vec<Option<Rect>> = Vec::new();
+    let mut ink = Vec::new();
+    for (command, at) in under_transform(commands) {
+        match command {
+            DrawCommand::PushClip { rect, .. } => {
+                let clip = in_surface_space(*rect, at);
+                let within = match clips.last() {
+                    Some(Some(outer)) => clip.intersect(*outer),
+                    Some(None) => None,
+                    None => Some(clip),
+                };
+                clips.push(within);
+            }
+            DrawCommand::PopClip => {
+                clips.pop();
+            }
+            _ => {
+                let Some(rect) = inked_rect(command, at) else {
+                    continue;
+                };
+                let seen = match clips.last() {
+                    Some(Some(clip)) => rect.intersect(*clip),
+                    Some(None) => None,
+                    None => Some(rect),
+                };
+                ink.extend(seen.filter(|rect| rect.width >= SLACK && rect.height >= SLACK));
+            }
+        }
+    }
+    ink
+}
+
+fn off_screen(commands: &[DrawCommand], size: (f32, f32)) -> Vec<Rect> {
+    let screen = Rect::new(-SLACK, -SLACK, size.0 + 2.0 * SLACK, size.1 + 2.0 * SLACK);
+    visible_ink(commands)
+        .into_iter()
+        .filter(|rect| rect.intersect(screen) != Some(*rect))
+        .collect()
+}
+
+fn measure_area(
+    area: &layout::ResolvedArea,
+    size: (f32, f32),
+) -> Result<Vec<DrawCommand>, LayoutError> {
+    let config = config::config().expect("the sweep published a config");
+    let resolved = layout::Resolved::of(
+        "SWEPT-1",
+        [(
+            layout::LayerKind::Desktop,
+            layout::ResolvedLayer {
+                areas: vec![area.clone()],
+            },
+        )],
+    );
+    surfaces::reconcile::publish_stacks(&[surfaces::reconcile::Desktop {
+        output: Some("SWEPT-1".into()),
+        config: Arc::clone(&config),
+        resolved: resolved.clone(),
+        reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
+        size,
+    }]);
+    let surround = surfaces::area::Surround {
+        config: &config,
+        theme: config.resolve_theme(),
+        output: Some("SWEPT-1"),
+        bounds: Rect::new(0.0, 0.0, size.0, size.1),
+        reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
+        audience: ui::host::Audience::Owner,
+    };
+    let built = telar::batch(|| surfaces::area::build(area, surround))
+        .unwrap_or_else(|| Err(LayoutError::Engine("nothing builds this area".into())))?;
+    let page = || LayoutStyle::new().width(size.0).height(size.1);
+    let root_node = new_container(page(), &[built.layout_node()])?;
+    let tree = ComponentList::new(Container::new(page(), vec![built])?);
+    compute_layout(
+        root_node,
+        AvailableSpace::Definite(size.0),
+        AvailableSpace::Definite(size.1),
+    )?;
+    Ok(tree.commands().to_vec())
+}
+
+/// **Every area kind works everywhere it can be put** — the standing rule, taken literally: a bar and a dock on all four edges, a grid, a stack and a free area at all nine anchors, a wallpaper and a texture, on a laptop, a large monitor and a portrait one, in `bar`, `sections` and `chips`. Each has to lay out, draw something, and draw all of it on the screen it was placed on.
+///
+/// The stack is shown an OSD so it has a card to place: an empty column draws nothing, and nothing drawn is nothing measured.
+#[test]
+fn every_area_kind_lays_out_on_screen_on_every_edge_anchor_and_monitor() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut faults = Vec::new();
+    for mode in MODES {
+        for size in MONITORS {
+            for area in every_area() {
+                reset_layout_runtime();
+                seed_world(Edge::Top, mode, None);
+                surfaces::area::set_stack_builder(modules::stack::area);
+                modules::stack::show_osd(modules::osd::OsdKind::Brightness);
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let measured = measure_area(&area, size);
+                drop(scope);
+                let at = format!("{} on {}x{} in {mode:?}", area.id, size.0, size.1);
+                match measured {
+                    Err(error) => faults.push(format!("{at}: {error}")),
+                    Ok(commands) => {
+                        if !commands.iter().any(paints) {
+                            faults.push(format!("{at}: drew nothing"));
+                        }
+                        for rect in off_screen(&commands, size) {
+                            faults.push(format!(
+                                "{at}: {}x{} at {},{} is off the screen",
+                                rect.width, rect.height, rect.x, rect.y
+                            ));
+                        }
+                    }
+                }
+                telar::dispose_owner(owner);
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} area placement(s) broke the standing rule:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
+/// The check above has to be able to fail: ink past any edge of the screen is reported, and ink on it is not.
+#[test]
+fn ink_past_the_edge_of_the_screen_is_reported() {
+    let on = DrawCommand::Rect {
+        rect: Rect::new(10.0, 10.0, 100.0, 40.0),
+        style: telar::RectStyle::filled(telar::Color::from_rgb_u8(255, 0, 0), 0.0).into(),
+    };
+    let past = DrawCommand::Rect {
+        rect: Rect::new(1900.0, 10.0, 100.0, 40.0),
+        style: telar::RectStyle::filled(telar::Color::from_rgb_u8(255, 0, 0), 0.0).into(),
+    };
+    assert!(off_screen(std::slice::from_ref(&on), (1920.0, 1080.0)).is_empty());
+    assert_eq!(off_screen(&[on, past], (1920.0, 1080.0)).len(), 1);
+}
