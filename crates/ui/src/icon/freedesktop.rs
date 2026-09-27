@@ -160,15 +160,13 @@ fn lookup_in_theme(name: &str, size: u32, bases: &[PathBuf], theme: &str) -> Opt
         let Some(props) = index.get(subdir) else {
             continue;
         };
-        if !directory_matches_size(props, size) {
-            continue;
-        }
+        let exact = directory_matches_size(props, size);
         let distance = directory_size_distance(props, size);
         for base in bases {
             let Some(hit) = icon_in_dir(&base.join(theme).join(subdir), name) else {
                 continue;
             };
-            if distance == 0 {
+            if exact {
                 if hit.extension().and_then(|e| e.to_str()) == Some("svg") {
                     return Some(hit);
                 }
@@ -386,6 +384,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(loose, root.join("loose.png"));
+
+        // An icon a theme holds only at other fixed sizes still resolves, at the nearest one: a tray icon like `battery-050` lives only in a theme's small panel sizes.
+        let panel = root.join("Panel");
+        for size in [16, 24] {
+            let dir = panel.join(format!("{size}/panel"));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("battery-050.svg"), b"<svg/>").unwrap();
+        }
+        fs::write(
+            panel.join("index.theme"),
+            "[Icon Theme]\nDirectories=16/panel,24/panel\n\n[16/panel]\nSize=16\nType=Fixed\n\n[24/panel]\nSize=24\nType=Fixed\n",
+        )
+        .unwrap();
+        let nearest = lookup(
+            "battery-050",
+            48,
+            std::slice::from_ref(&root),
+            &["Panel".to_string()],
+        );
+        assert_eq!(nearest, Some(panel.join("24/panel/battery-050.svg")));
 
         assert!(
             lookup(
