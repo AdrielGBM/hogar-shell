@@ -1567,15 +1567,20 @@ fn map_button(code: u32) -> Option<PointerButton> {
 }
 
 fn map_key(event: &KeyEvent) -> Option<Key> {
+    key_of(event.keysym, event.utf8.as_deref())
+}
+
+fn key_of(keysym: Keysym, utf8: Option<&str>) -> Option<Key> {
     // Editing keys carry a control-char `utf8` (or none), so they must be resolved from the keysym — the printable `utf8` path below drops them.
-    if let Some(named) = named_from_keysym(event.keysym) {
+    if let Some(named) = named_from_keysym(keysym) {
         return Some(Key::Named(named));
     }
-    // Printable characters: take the resolved UTF-8, dropping any remaining control char.
-    let ch = event.utf8.as_deref()?.chars().next()?;
-    if ch.is_control() {
-        return None;
-    }
+    let ch = utf8?.chars().next()?;
+    // xkb turns a letter held with Ctrl into a control char (Ctrl+Z is U+001A); the chord's key is the keysym's own character, which is what `Key::Char` means on every other backend.
+    let ch = match ch.is_control() {
+        true => keysym.key_char().filter(|ch| !ch.is_control())?,
+        false => ch,
+    };
     Some(Key::Char(ch))
 }
 
@@ -1596,6 +1601,19 @@ fn named_from_keysym(keysym: Keysym) -> Option<NamedKey> {
         Keysym::Page_Up => Some(NamedKey::PageUp),
         Keysym::Page_Down => Some(NamedKey::PageDown),
         Keysym::Insert => Some(NamedKey::Insert),
+        Keysym::Menu => Some(NamedKey::ContextMenu),
+        Keysym::F1 => Some(NamedKey::F1),
+        Keysym::F2 => Some(NamedKey::F2),
+        Keysym::F3 => Some(NamedKey::F3),
+        Keysym::F4 => Some(NamedKey::F4),
+        Keysym::F5 => Some(NamedKey::F5),
+        Keysym::F6 => Some(NamedKey::F6),
+        Keysym::F7 => Some(NamedKey::F7),
+        Keysym::F8 => Some(NamedKey::F8),
+        Keysym::F9 => Some(NamedKey::F9),
+        Keysym::F10 => Some(NamedKey::F10),
+        Keysym::F11 => Some(NamedKey::F11),
+        Keysym::F12 => Some(NamedKey::F12),
         _ => None,
     }
 }
@@ -2375,6 +2393,25 @@ mod tests {
             !grants_blur(WEnum::Unknown(0b10)),
             "an effect this build does not know is not blur"
         );
+    }
+
+    /// Ctrl+Z reaches a key handler as `z` with Ctrl held, not as nothing: the control char xkb hands for the chord is answered from the keysym, and a key with no text at all stays silent.
+    #[test]
+    fn a_ctrl_chord_arrives_as_the_character_it_was_typed_on() {
+        assert_eq!(key_of(Keysym::z, Some("\u{1a}")), Some(Key::Char('z')));
+        assert_eq!(key_of(Keysym::Z, Some("\u{1a}")), Some(Key::Char('Z')));
+        assert_eq!(key_of(Keysym::y, Some("y")), Some(Key::Char('y')));
+        assert_eq!(key_of(Keysym::Shift_L, None), None);
+    }
+
+    /// The two ways a keyboard opens a context menu — the menu key, and Shift+F10 — arrive as keys rather than as nothing.
+    #[test]
+    fn the_keys_that_open_a_context_menu_are_named() {
+        assert_eq!(
+            key_of(Keysym::Menu, None),
+            Some(Key::Named(NamedKey::ContextMenu))
+        );
+        assert_eq!(key_of(Keysym::F10, None), Some(Key::Named(NamedKey::F10)));
     }
 
     #[test]
