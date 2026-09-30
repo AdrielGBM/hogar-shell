@@ -4,10 +4,11 @@
 //!
 //! The protocol is one request line in and one reply out, so `hogar-shell panel toggle clock` is also `printf 'panel toggle clock\n' | socat - UNIX-CONNECT:$sock`. Replies are prefixed `ok` or `err` so a script can branch without parsing prose. A reply is usually one line but need not be — a census, a palette or a list of monitors is a table — so its end is marked by the shell closing its side, not by a newline.
 
+use std::fs::{File, TryLockError};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
-use std::sync::mpsc;
+use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, mpsc};
 use std::time::Duration;
 
 use platform_wayland::EventSender;
@@ -55,7 +56,7 @@ pub use services::command::Request;
 pub fn serve(tx: EventSender<Request>) {
     let path = socket_path();
     paths::ensure_dir(path.parent().map(PathBuf::from).unwrap_or_default());
-    // A socket left behind by a killed shell would refuse the bind; the caller has already established that nothing is listening on it (see `another_instance_is_running`), so removing it is safe here.
+    // A socket left behind by a killed shell would refuse the bind; this process holds the instance lock (see `claim_instance`), so nothing else is listening on it and removing it is safe.
     let _ = std::fs::remove_file(&path);
     let listener = match UnixListener::bind(&path) {
         Ok(listener) => listener,
@@ -124,14 +125,56 @@ fn call_at(path: &std::path::Path, line: &str) -> std::io::Result<String> {
     Ok(reply.trim_end().to_string())
 }
 
-/// Whether a shell is already listening on this session's socket. A stale socket file from a killed process fails to connect, so this answers "is one actually running", not "does the file exist".
-pub fn another_instance_is_running() -> bool {
-    UnixStream::connect(socket_path()).is_ok()
+/// Makes this process the one shell for its compositor instance, or answers `false` when another already is.
+///
+/// Asking whether the socket answers and binding it later left a window in which two shells started together — a hot-reloading dev watcher restarting beside another — both saw nothing listening and both came up, reserving every edge twice. An exclusive `flock` is taken atomically and released by the kernel when the process dies, so a killed shell leaves nothing that refuses the next one.
+pub fn claim_instance() -> bool {
+    static CLAIM: OnceLock<File> = OnceLock::new();
+    if CLAIM.get().is_some() {
+        return true;
+    }
+    match claim_at(&socket_path().with_extension("lock")) {
+        Ok(Some(lock)) => CLAIM.set(lock).is_ok(),
+        Ok(None) => false,
+        Err(e) => {
+            tracing::warn!("cannot take the single-instance lock: {e}; starting without it");
+            true
+        }
+    }
+}
+
+fn claim_at(path: &Path) -> std::io::Result<Option<File>> {
+    paths::ensure_dir(path.parent().map(PathBuf::from).unwrap_or_default());
+    let lock = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    match lock.try_lock() {
+        Ok(()) => Ok(Some(lock)),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(e)) => Err(e),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_shell_cannot_claim_the_instance_until_the_first_lets_go() {
+        let path = paths::runtime_dir().join("claim-test.lock");
+        let first = claim_at(&path).unwrap().expect("nothing holds it yet");
+        assert!(
+            claim_at(&path).unwrap().is_none(),
+            "a second claim while the first is held is refused"
+        );
+        drop(first);
+        assert!(
+            claim_at(&path).unwrap().is_some(),
+            "the lock goes with the process that held it, so a killed shell never blocks the next"
+        );
+    }
 
     #[test]
     fn socket_name_is_scoped_to_the_compositor_instance() {

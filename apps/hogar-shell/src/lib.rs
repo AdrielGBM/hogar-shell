@@ -135,9 +135,9 @@ pub fn run(layouts: Layouts) {
     }
     Reach::of(None).open();
     // One shell per compositor instance: a second one would fight over the notification bus name and the IPC socket, and the user would see two of every bar. Checked before anything is opened so the failure is a clean message rather than a half-started shell.
-    if crate::core::ipc::another_instance_is_running() {
+    if !crate::core::ipc::claim_instance() {
         eprintln!(
-            "hogar-shell: already running (IPC socket {} is live). Use `hogar-shell shell quit` to stop it.",
+            "hogar-shell: already running for this compositor (IPC socket {}). Use `hogar-shell shell quit` to stop it.",
             crate::core::ipc::socket_path().display()
         );
         std::process::exit(1);
