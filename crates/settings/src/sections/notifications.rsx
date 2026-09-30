@@ -1,8 +1,8 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
-use crate::text_row::{text_row, TextRowProps};
-use crate::enum_row::{enum_row, EnumRowProps};
+use ::ui::form::toggle_row::{toggle_row, ToggleRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
+use ::ui::form::enum_row::{enum_row, EnumRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     FULLSCREEN_POPUPS, fullscreen_popups_str, parse_f32, parse_fullscreen_popups, parse_u32,
@@ -47,6 +47,7 @@ let save: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
             body_lines: parse_u32(&body_lines.peek(), base.body_lines),
             open_expanded: open_expanded.peek(),
             sound: sound.peek(),
+            sidebar_size: base.sidebar_size,
         };
         persist(&path, "notifications", &value);
     }

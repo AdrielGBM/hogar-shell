@@ -26,6 +26,9 @@ pub struct Props {
     /// Gives up width when the bar is short of it, instead of holding the chip's content width. Only for a chip whose label elides — otherwise it hides its own tail with nothing to say so.
     pub elastic: bool = false,
     pub on_press: Option<Rc<dyn Fn()>> = None,
+    pub on_long_press: Option<Rc<dyn Fn()>> = None,
+    /// A middle or secondary press, told which.
+    pub on_alt_press: Option<Rc<dyn Fn(::telar::PointerButton)>> = None,
     pub on_scroll: Option<Rc<dyn Fn(f32, f32)>> = None,
     pub drag_open: Option<DragOpen> = None,
 }
@@ -68,6 +71,8 @@ let press = props
         }
     });
 let scroll = props.on_scroll;
+let long_press = props.on_long_press;
+let alt_press = props.on_alt_press;
 
 let dragged = chip.clone();
 let drag = props.drag_open;
@@ -90,7 +95,7 @@ let settle = drag.map(|drag| {
 
 [view]
 // Both halves of the drag sit on the pressable box itself, not on a wrapper: a child hit-tests first, so a drag armed outside it would never see the press.
-row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shrink:shrink min_width:floor fill:base radius:radius input_opaque hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_drag:arm on_drag_end:settle
+row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shrink:shrink min_width:floor fill:base radius:radius input_opaque hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_long_press:(long_press.map(|f| move || f())) on_alt_press:(alt_press.map(|f| move |button| f(button))) on_drag:arm on_drag_end:settle
     children
 
 [preview "Module chip" fixture:crate::preview::bar_chip]

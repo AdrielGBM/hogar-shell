@@ -1,6 +1,6 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
+use ::ui::form::toggle_row::{toggle_row, ToggleRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source};
 use ::config::LockStatusConfig;

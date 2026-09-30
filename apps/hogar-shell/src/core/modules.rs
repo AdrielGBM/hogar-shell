@@ -72,8 +72,8 @@ fn session_panel(_host: &Host) -> Built {
     modules::session::session_panel()
 }
 
-fn settings_panel(_host: &Host) -> Built {
-    settings::panel::settings_panel()
+fn settings_panel(host: &Host) -> Built {
+    settings::panel::settings_panel(host.extent.height)
 }
 
 pub static MODULES: &[ModuleDescriptor] = &[
@@ -768,7 +768,7 @@ mod tests {
     use config::{Config, Edge};
     use telar::{LayoutItem, reset_layout_runtime, set_theme};
     use ui::descriptor::input_answer;
-    use ui::host::{Audience, InstanceId, Representation, Size};
+    use ui::host::{Audience, Instance, Representation, Size};
 
     use super::*;
 
@@ -778,17 +778,19 @@ mod tests {
 
     const BAR: f32 = 34.0;
 
-    /// The box a representation is measured in: a bar's strip for a chip, the surface it opens on for the rest.
-    fn extent(config: &Config, representation: Representation) -> Size {
+    /// The box a representation of `module` is measured in: a bar's strip for a chip, the surface it opens on for the rest.
+    fn extent(config: &Config, module: &str, representation: Representation) -> Size {
         match representation {
             Representation::Chip => Size {
                 width: 600.0,
                 height: BAR,
             },
-            Representation::Popout => Size {
-                width: config.popouts.card_width(),
-                height: config.popouts.card_height(),
-            },
+            Representation::Popout => {
+                let (width, height) = config
+                    .presentation(module, &toml::Table::new())
+                    .popout_size();
+                Size { width, height }
+            }
             Representation::Widget(size) => size.extent(),
             Representation::Card | Representation::Panel => Size {
                 width: 420.0,
@@ -801,7 +803,7 @@ mod tests {
         let theme = config.resolve_theme();
         match representation {
             Representation::Chip => Host::chip(
-                InstanceId::of_module(id),
+                Instance::of_module(id),
                 Arc::clone(config),
                 Edge::Top,
                 BAR,
@@ -809,7 +811,7 @@ mod tests {
                 theme.text,
                 None,
             ),
-            other => ui::preview::surface_host(id, other, extent(config, other)),
+            other => ui::preview::surface_host(id, other, extent(config, id, other)),
         }
     }
 
@@ -830,7 +832,7 @@ mod tests {
             let item = telar::batch(|| module.build(&host))
                 .ok_or_else(|| "declared but not built".to_string())?
                 .map_err(|e| e.to_string())?;
-            let Size { width, height } = extent(&config, representation);
+            let Size { width, height } = extent(&config, module.id, representation);
             input_answer(item, width, height).map_err(|e| e.to_string())
         })();
         drop(scope);
@@ -1022,6 +1024,7 @@ mod tests {
                 config: &config,
                 theme: config.resolve_theme(),
                 output: None,
+                layer: layout::LayerKind::Desktop,
                 bounds: telar::Rect::new(0.0, 0.0, 1920.0, 1080.0),
                 reserved: surfaces::layer_window::Reserved::default(),
                 audience: Audience::Owner,
@@ -1075,11 +1078,13 @@ mod tests {
             within: layout::Within::Usable,
             style: layout::AreaStyle::default(),
             visible: None,
+            actions: Default::default(),
             groups: vec![layout::ResolvedGroup {
                 id: layout::GroupId::new(module),
                 kind: layout::GroupKind::Zone {
                     zone: layout::Zone::Center,
                 },
+                stacked: false,
                 children: vec![layout::ResolvedInstance {
                     id: layout::InstanceId::new(module),
                     module: module.to_string(),
@@ -1180,6 +1185,22 @@ mod tests {
         }
     }
 
+    /// A module's actions are rows of its context menu (T-6.4), so each one has a name there in every language the shell speaks.
+    #[test]
+    fn every_module_action_is_named_in_the_context_menu() {
+        for module in MODULES {
+            for action in module.actions {
+                assert!(
+                    editor::context::names_action(action.id),
+                    "{}'s action `{}` has no `editor.action.{}` label",
+                    module.id,
+                    action.id,
+                    action.id
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_options_type_is_a_section_the_schema_documents_named_once() {
         for module in MODULES {
@@ -1199,6 +1220,137 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The inspector (T-6.5) draws a control per option an instance can set, read off the same declaration the schema prints: so every option of every module is typed, every enum lists what it may be, and no module declares a key its presentation already has, which one instance option could not tell apart.
+    #[test]
+    fn every_module_option_carries_a_control_the_inspector_can_draw() {
+        use config::fields::Control;
+        fn untyped(field: &config::fields::OptionField) -> Option<String> {
+            match &field.control {
+                Control::Unknown(declared) => Some(format!("{} ({declared})", field.key)),
+                Control::Enum(variants) if variants.is_empty() => {
+                    Some(format!("{} lists no variants", field.key))
+                }
+                Control::List(element) | Control::Map(element) => match element.as_ref() {
+                    Control::Unknown(declared) => Some(format!("{} ({declared})", field.key)),
+                    _ => None,
+                },
+                Control::Table(inner) => inner.iter().find_map(untyped),
+                _ => None,
+            }
+        }
+        let presentation: BTreeSet<String> = config::fields::presentation()
+            .into_iter()
+            .map(|field| field.key)
+            .collect();
+        let mut typed = 0;
+        for module in MODULES {
+            let fields = module.option_fields();
+            for field in &fields {
+                typed += 1;
+                assert_eq!(untyped(field), None, "`{}`", module.id);
+            }
+            if let Some(own) = module.options.first() {
+                let clashes: Vec<String> = config::fields::section(own.section)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|field| field.key)
+                    .filter(|key| presentation.contains(key))
+                    .collect();
+                assert!(
+                    clashes.is_empty(),
+                    "`[{}]` declares {clashes:?}, which every module's presentation already has",
+                    own.section
+                );
+            }
+        }
+        assert!(typed > 100, "only {typed} options were typed");
+
+        let keys = |id: &str| -> Vec<String> {
+            descriptor(id)
+                .option_fields()
+                .into_iter()
+                .map(|field| field.key)
+                .collect()
+        };
+        let clock = keys("clock");
+        assert!(clock.contains(&"face.scale".to_string()), "{clock:?}");
+        assert!(
+            clock.contains(&"drawer_width".to_string()),
+            "a panel's size: {clock:?}"
+        );
+        assert!(keys("notifications").contains(&"sidebar_size".to_string()));
+        let volume = keys("volume");
+        assert!(
+            volume.contains(&"popout_max_height".to_string()),
+            "{volume:?}"
+        );
+        let variants = descriptor("workspaces")
+            .option_fields()
+            .into_iter()
+            .find(|field| field.key == "capitalize")
+            .map(|field| field.control);
+        assert_eq!(
+            variants,
+            Some(Control::Enum(vec!["none", "upper", "lower", "title"]))
+        );
+    }
+
+    /// T-6.5: an instance's popover builds a row for every option its module lets it set, whatever the option's control — a list or a table of them included.
+    #[test]
+    fn the_inspector_builds_a_row_for_every_option_of_every_module() {
+        use editor::popover::{self, InstanceDraft};
+        use editor::written::Written;
+        use layout::{AreaId, GroupId, InstanceId, LayerKind, ResolvedInstance};
+        use surfaces::rects::Node;
+
+        let config = Config::starter();
+        reset_layout_runtime();
+        set_theme(config.resolve_theme());
+        telar::set_locale("en");
+        ui::descriptor::install(MODULES);
+        let scope = telar::owner_scope();
+        let owner = scope.id();
+        let area = AreaId::new("inspected");
+        let group = GroupId::new("group");
+        let written = Written::area(&layout::built_in(), Some("DP-1"), LayerKind::Desktop, &area)
+            .expect("the built-in layout covers every screen");
+        let edit = editor::session::Edit::new("Inspect");
+        let mut built = 0;
+        for module in MODULES {
+            let id = InstanceId::new(module.id);
+            let draft = InstanceDraft::new(
+                &edit,
+                Node::area(Some("DP-1"), LayerKind::Desktop, &area).instance(&group, &id),
+                ResolvedInstance {
+                    id: id.clone(),
+                    module: module.id.to_string(),
+                    representation: layout::Representation::WidgetM,
+                    options: toml::Table::new(),
+                    bindings: Default::default(),
+                    actions: Default::default(),
+                },
+                "grid",
+                popover::shown(&config, module.id, &toml::Table::new()),
+                written.instance(&group, &id),
+            );
+            for field in module.option_fields() {
+                let row =
+                    telar::batch(|| popover::option(&draft, popover::path_of(&field.key), &field));
+                assert!(
+                    row.is_ok(),
+                    "`{}` `{}`: {:?}",
+                    module.id,
+                    field.key,
+                    row.err()
+                );
+                built += 1;
+            }
+        }
+        drop(scope);
+        telar::dispose_owner(owner);
+        assert!(built > 100, "only {built} rows were built");
     }
 
     /// Notification text is the one reading that must never reach a screen anyone can read, whatever `[lock]` asks for; which applications are waiting is the user's to allow, and how many is public either way.

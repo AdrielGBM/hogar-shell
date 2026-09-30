@@ -23,16 +23,121 @@ fn problems(config: &Config, file: &Path) -> Report {
     report
 }
 
-/// Keys that said where something is drawn, which the layout says now. Each is an error rather than something ignored: a user editing one would otherwise see nothing happen.
-pub(crate) const RETIRED: &[&str] = &[
-    "bars",
-    "corners",
-    "widgets",
-    "general.show_over_fullscreen",
-    "stack.edge",
-    "stack.align",
-    "stack.width",
+/// A key that is no longer config, and where what it said is written now. Each is an error rather than something ignored: a user editing one would otherwise see nothing happen.
+pub(crate) struct Retired {
+    /// The dotted path, with `*` standing for any one table name — `modules.*.width` is every module's.
+    pub(crate) key: &'static str,
+    pub(crate) home: Home,
+}
+
+pub(crate) enum Home {
+    /// Where something is drawn, which the layout says.
+    Layout,
+    /// How any module is presented: an option of each instance, with `[modules.<id>]` as its module's default.
+    Presentation(&'static str),
+    /// An option of one module: on its instance, with its own section as the default.
+    Module {
+        module: &'static str,
+        option: &'static str,
+    },
+    /// A field of each bar's own `shape` in the layout.
+    BarShape(&'static str),
+    /// Nowhere: nothing read it, so it went without taking another name.
+    Removed,
+}
+
+const fn moved(key: &'static str, home: Home) -> Retired {
+    Retired { key, home }
+}
+
+const fn removed(key: &'static str) -> Retired {
+    Retired {
+        key,
+        home: Home::Removed,
+    }
+}
+
+pub(crate) const RETIRED: &[Retired] = &[
+    moved("bars", Home::Layout),
+    moved("corners", Home::Layout),
+    moved("widgets", Home::Layout),
+    moved("general.show_over_fullscreen", Home::Layout),
+    moved("stack.edge", Home::Layout),
+    moved("stack.align", Home::Layout),
+    moved("stack.width", Home::Layout),
+    moved("panels.drawer.width", Home::Presentation("drawer_width")),
+    moved(
+        "panels.drawer.max_height",
+        Home::Presentation("drawer_max_height"),
+    ),
+    moved("panels.float.width", Home::Presentation("float_width")),
+    moved("panels.float.height", Home::Presentation("float_height")),
+    moved("popouts.width", Home::Presentation("popout_width")),
+    moved(
+        "popouts.max_height",
+        Home::Presentation("popout_max_height"),
+    ),
+    moved(
+        "sidebar.size",
+        Home::Module {
+            module: "notifications",
+            option: "sidebar_size",
+        },
+    ),
+    moved("shape.mode", Home::BarShape("mode")),
+    moved("shape.gap", Home::BarShape("gap")),
+    moved("shape.spacing", Home::BarShape("spacing")),
+    moved("shape.radius", Home::BarShape("radius")),
+    removed("shape.inactive_size"),
+    moved("modules.*.width", Home::Presentation("float_width")),
+    moved("modules.*.height", Home::Presentation("float_height")),
 ];
+
+impl Retired {
+    /// What `config check` says about `written`, the key as the file spelled it.
+    fn message(&self, written: &str, layout: &str) -> String {
+        match self.home {
+            Home::Layout => telar::t!("config.moved_to_layout", key = written, layout = layout),
+            Home::Presentation(option) => telar::t!(
+                "config.moved_to_instance",
+                key = written,
+                option = option,
+                layout = layout
+            ),
+            Home::Module { module, option } => telar::t!(
+                "config.moved_to_module",
+                key = written,
+                module = module,
+                option = option,
+                layout = layout
+            ),
+            Home::BarShape(field) => telar::t!(
+                "config.moved_to_bar",
+                key = written,
+                field = field,
+                layout = layout
+            ),
+            Home::Removed => telar::t!("config.removed", key = written),
+        }
+    }
+}
+
+/// Every key `document` writes that `pattern` names, a `*` standing for each table name at its level.
+fn written_as(document: &DeValue, pattern: &str) -> Vec<String> {
+    let Some((head, rest)) = pattern.split_once(".*.") else {
+        return span_of(document, pattern)
+            .map(|_| vec![pattern.to_string()])
+            .unwrap_or_default();
+    };
+    let Some(DeValue::Table(tables)) = document.get(head).map(|found| found.get_ref()) else {
+        return Vec::new();
+    };
+    tables
+        .keys()
+        .map(|name| format!("{head}.{}.{rest}", name.get_ref()))
+        .filter(|key| span_of(document, key).is_some())
+        .collect()
+}
 
 fn retired_in(file: &Path, text: &str) -> Report {
     let Ok(document) = DeTable::parse(text) else {
@@ -48,18 +153,11 @@ fn retired_in(file: &Path, text: &str) -> Report {
 
 fn retired(document: &DeValue, file: &Path) -> Report {
     let mut report = Report::default();
-    let layout = crate::core::layouts::file_for_edits();
-    for key in RETIRED {
-        if span_of(document, key).is_some() {
-            report.error(Finding::new(
-                file,
-                *key,
-                telar::t!(
-                    "config.moved_to_layout",
-                    key = key,
-                    layout = layout.display().to_string()
-                ),
-            ));
+    let layout = surfaces::layouts::file_for_edits().display().to_string();
+    for entry in RETIRED {
+        for written in written_as(document, entry.key) {
+            let message = entry.message(&written, &layout);
+            report.error(Finding::new(file, written, message));
         }
     }
     report
@@ -431,7 +529,7 @@ bse = "#2e3440"
     #[test]
     fn a_config_naming_a_retired_layout_key_reports_it_at_the_layout_file() {
         telar::set_locale("en");
-        let layout = crate::core::layouts::file_for_edits().display().to_string();
+        let layout = surfaces::layouts::file_for_edits().display().to_string();
         let text = r#"[bars.top]
 start = ["workspaces"]
 
@@ -450,14 +548,19 @@ align = "start"
 width = 320
 "#;
         let report = check_text(Path::new("config.toml"), text, None);
+        let placement: Vec<&str> = RETIRED
+            .iter()
+            .filter(|entry| matches!(entry.home, Home::Layout))
+            .map(|entry| entry.key)
+            .collect();
 
         assert_eq!(
             report.errors.len(),
-            RETIRED.len(),
+            placement.len(),
             "one error per retired key: {}",
             report.render()
         );
-        for key in RETIRED {
+        for key in &placement {
             let finding = report
                 .errors
                 .iter()
@@ -527,6 +630,86 @@ width = 320
         );
     }
 
+    /// DEC-18's keys: a panel's and a hover card's sizes are each module's presentation now, the centre's depth an option of the notifications module, and `[shape]` no fallback for any bar — so each is an error naming the option that took its place, placed where the file wrote it.
+    #[test]
+    fn a_size_or_shape_key_that_moved_into_the_layout_names_where_it_lives_now() {
+        telar::set_locale("en");
+        let layout = surfaces::layouts::file_for_edits().display().to_string();
+        let text = "[panels]\ndrag_threshold = 40\n\n[panels.drawer]\nwidth = 400\n\n\
+                    [popouts]\nmax_height = 320\n\n[sidebar]\nsize = 500\n\n\
+                    [shape]\nframe = true\nmode = \"chips\"\n\n[modules.settings]\nwidth = 900\n";
+        let report = check_text(Path::new("config.toml"), text, None);
+        assert_eq!(
+            report.render(),
+            format!(
+                "config.toml:5:9: error: panels.drawer.width: {}\n\
+                 config.toml:8:14: error: popouts.max_height: {}\n\
+                 config.toml:11:8: error: sidebar.size: {}\n\
+                 config.toml:15:8: error: shape.mode: {}\n\
+                 config.toml:18:9: error: modules.settings.width: {}\n",
+                telar::t!(
+                    "config.moved_to_instance",
+                    key = "panels.drawer.width",
+                    option = "drawer_width",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_instance",
+                    key = "popouts.max_height",
+                    option = "popout_max_height",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_module",
+                    key = "sidebar.size",
+                    module = "notifications",
+                    option = "sidebar_size",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_bar",
+                    key = "shape.mode",
+                    field = "mode",
+                    layout = layout.as_str()
+                ),
+                telar::t!(
+                    "config.moved_to_instance",
+                    key = "modules.settings.width",
+                    option = "float_width",
+                    layout = layout.as_str()
+                ),
+            ),
+            "the keys that stayed — `drag_threshold`, `frame` — say nothing"
+        );
+        assert!(
+            report
+                .render()
+                .contains("write `drawer_width` in the `options`"),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// D-37: `[shape] inactive_size` was read by nothing, so it has no new home to point at — it is reported as gone, where it is written, and `frame` beside it stays quiet.
+    #[test]
+    fn a_key_nothing_read_is_reported_as_gone_rather_than_moved() {
+        telar::set_locale("en");
+        let text = "[shape]\nframe = true\ninactive_size = 6\n";
+        let report = check_text(Path::new("config.toml"), text, None);
+        assert_eq!(
+            report.render(),
+            format!(
+                "config.toml:3:17: error: shape.inactive_size: {}\n",
+                telar::t!("config.removed", key = "shape.inactive_size")
+            )
+        );
+        assert!(
+            report.render().contains("nothing read it"),
+            "{}",
+            report.render()
+        );
+    }
+
     /// A file that never wrote any of the retired keys reports none of them.
     #[test]
     fn a_config_naming_no_retired_key_reports_none() {
@@ -546,7 +729,7 @@ width = 320
     #[test]
     fn a_monitor_override_naming_a_retired_key_is_reported_too() {
         telar::set_locale("en");
-        let layout = crate::core::layouts::file_for_edits().display().to_string();
+        let layout = surfaces::layouts::file_for_edits().display().to_string();
         let report = check_text(
             Path::new("monitors/DP-1/config.toml"),
             "[bars.top]\nstart = [\"clock\"]\n",
@@ -642,7 +825,11 @@ width = 320
 
     #[test]
     fn a_file_that_does_not_parse_is_one_error_at_the_place_it_breaks() {
-        let report = check_text(Path::new("config.toml"), "[shape]\ngap = \"tall\"\n", None);
+        let report = check_text(
+            Path::new("config.toml"),
+            "[shape]\nframe = \"tall\"\n",
+            None,
+        );
 
         assert_eq!(report.errors.len(), 1, "{}", report.render());
         let finding = &report.errors[0];

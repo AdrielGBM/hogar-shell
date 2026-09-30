@@ -20,7 +20,7 @@ use telar::{
 
 use config::{Config, Edge, Shape};
 use ui::descriptor::{ChipFrame, ModuleDescriptor};
-use ui::host::{Host, InstanceId, Representation, Size};
+use ui::host::{Host, Instance, Representation, Size};
 
 /// The page a preview is measured on when it is a tree rather than a surface. Wide enough that a bar-width module is not the thing under test.
 const PAGE: (f32, f32) = (1000.0, 760.0);
@@ -34,9 +34,8 @@ const MODES: [Shape; 3] = [Shape::Bar, Shape::Sections, Shape::Chips];
 ///
 /// `extra` is one more module at the end of the bar, for the check that an unknown id still holds a chip's place.
 fn seed_world(edge: Edge, mode: Shape, extra: Option<&str>) {
-    let mut config = Config::starter();
+    let config = Config::starter();
     layout::set_running(Arc::new(swept_layout(edge, mode, extra)));
-    config.shape.mode = mode;
 
     let config = Arc::new(config);
     services::locale::init(config.language());
@@ -194,7 +193,7 @@ fn module_host(id: &str, representation: Representation) -> Host {
     let theme = config.resolve_theme();
     match representation {
         Representation::Chip => Host::placed(
-            InstanceId::of_module(id),
+            Instance::of_module(id),
             config,
             Representation::Chip,
             match edge.is_vertical() {
@@ -225,12 +224,13 @@ fn module_host(id: &str, representation: Representation) -> Host {
 }
 
 fn module_surface(representation: Representation) -> PreviewSurface {
-    let (config, edge, thickness, _) = drawn_bar();
+    let (_, edge, thickness, _) = drawn_bar();
     match representation {
         Representation::Chip if edge.is_horizontal() => PreviewSurface::new(940.0, thickness),
         Representation::Chip => PreviewSurface::new(thickness, 940.0),
         Representation::Popout => {
-            PreviewSurface::new(config.popouts.card_width(), config.popouts.card_height())
+            let (width, height) = config::ModuleOverride::default().popout_size();
+            PreviewSurface::new(width, height)
         }
         Representation::Widget(size) => {
             let extent = size.extent();
@@ -690,7 +690,18 @@ fn group(
     layout::ResolvedGroup {
         id: layout::GroupId::new("swept"),
         kind,
+        stacked: false,
         children,
+    }
+}
+
+fn stacked(
+    kind: layout::GroupKind,
+    children: Vec<layout::ResolvedInstance>,
+) -> layout::ResolvedGroup {
+    layout::ResolvedGroup {
+        stacked: true,
+        ..group(kind, children)
     }
 }
 
@@ -708,6 +719,7 @@ fn area_of(
         within: layout::Within::Output,
         style: layout::AreaStyle::default(),
         visible: None,
+        actions: Default::default(),
         groups,
     }
 }
@@ -724,9 +736,12 @@ fn every_area() -> Vec<layout::ResolvedArea> {
                 GroupKind::Zone { zone: Zone::Center },
                 vec![instance("clock", Placed::Chip)],
             ),
-            group(
+            stacked(
                 GroupKind::Zone { zone: Zone::End },
-                vec![instance("notes", Placed::Chip)],
+                vec![
+                    instance("notes", Placed::Chip),
+                    instance("clock", Placed::Chip),
+                ],
             ),
         ]
     };
@@ -796,8 +811,8 @@ fn every_area() -> Vec<layout::ResolvedArea> {
                 h: 0.25,
             },
         },
-        vec![group(
-            GroupKind::SmartStack,
+        vec![stacked(
+            GroupKind::Zone { zone: Zone::Start },
             vec![instance("clock", Placed::Card)],
         )],
     ));
@@ -898,7 +913,7 @@ fn measure_area(
             },
         )],
     );
-    surfaces::reconcile::publish_stacks(&[surfaces::reconcile::Desktop {
+    surfaces::reconcile::publish(&[surfaces::reconcile::Desktop {
         output: Some("SWEPT-1".into()),
         config: Arc::clone(&config),
         resolved: resolved.clone(),
@@ -909,6 +924,7 @@ fn measure_area(
         config: &config,
         theme: config.resolve_theme(),
         output: Some("SWEPT-1"),
+        layer: layout::LayerKind::Desktop,
         bounds: Rect::new(0.0, 0.0, size.0, size.1),
         reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
         audience: ui::host::Audience::Owner,

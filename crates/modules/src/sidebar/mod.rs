@@ -38,14 +38,22 @@ pub fn is_open() -> bool {
     transient::is_open(ID)
 }
 
+/// The module whose centre this is: its `center` action opens it, so how deep it is (`sidebar_size`) is one of that module's options, read off its first instance on the screen it opens on (TA-2).
+const OWNER: &str = "notifications";
+
 fn spec() -> Spec {
     let output = transient::focused_output();
-    let sidebar = config::config_for(output.as_deref()).sidebar.clone();
+    let config = config::config_for(output.as_deref());
+    let sidebar = config.sidebar.clone();
+    let owner = surfaces::reconcile::instance_of(OWNER, output.as_deref());
+    let thickness = owner
+        .options::<config::NotificationsConfig>(&config)
+        .sidebar_thickness();
     Spec::new(
         ID,
         Place::Docked {
             edge: sidebar.edge,
-            thickness: sidebar.thickness() as f32,
+            thickness: thickness as f32,
         },
         Rc::new(|chrome: &Chrome| body(&chrome.config)),
     )
@@ -138,13 +146,16 @@ mod tests {
     use super::*;
     #[test]
     fn a_hand_edited_size_cannot_cover_the_screen_or_vanish() {
-        let tiny = config::SidebarConfig {
-            size: 10,
-            ..config::SidebarConfig::default()
+        let tiny = config::NotificationsConfig {
+            sidebar_size: 10,
+            ..config::NotificationsConfig::default()
         };
-        assert_eq!(tiny.thickness(), 240);
-        let huge = config::SidebarConfig { size: 9000, ..tiny };
-        assert_eq!(huge.thickness(), 1200);
+        assert_eq!(tiny.sidebar_thickness(), 240);
+        let huge = config::NotificationsConfig {
+            sidebar_size: 9000,
+            ..tiny
+        };
+        assert_eq!(huge.sidebar_thickness(), 1200);
     }
 
     /// The regression this exists for: the centre shipped with no way to dismiss it. It is docked to an edge, so there is no outside to press, and it takes no keyboard, so Escape never arrives — the ✕ is the only way out a user has, and it must be in the tree.

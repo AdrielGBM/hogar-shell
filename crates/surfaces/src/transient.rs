@@ -16,7 +16,7 @@ use platform_wayland::{KeyboardMode, timeout};
 use ui::chrome::Chrome;
 use ui::descriptor::Built;
 
-use crate::layer_window::{Demand, Demands, Hold, Holder, Screen, WindowKey};
+use crate::layer_window::{Concealment, Demand, Demands, Hold, Holder, Screen, WindowKey};
 
 pub const DEFAULT_GAP: f32 = 8.0;
 
@@ -34,15 +34,20 @@ pub struct Anchor {
 #[derive(Clone)]
 pub enum Place {
     Beside(Anchor),
+    /// The whole window its anchor is drawn in, for content that works on the anchored thing itself as well as beside it: a popover and the handles it puts on the item it customizes.
+    Over(Anchor),
     Centred,
-    Docked { edge: Edge, thickness: f32 },
+    Docked {
+        edge: Edge,
+        thickness: f32,
+    },
     Whole,
 }
 
 impl Place {
     fn anchor(&self) -> Option<&Anchor> {
         match self {
-            Place::Beside(anchor) => Some(anchor),
+            Place::Beside(anchor) | Place::Over(anchor) => Some(anchor),
             _ => None,
         }
     }
@@ -226,6 +231,24 @@ pub fn hold(output: Option<&str>, layer: LayerKind) -> Option<Hold> {
     REGISTRY.with(|registry| registry.borrow().holder.as_ref()?.hold(&key))
 }
 
+/// What the window of `layer` on `output` asks of the compositor, for whatever asks it for more without being built into it: an edit mode raising the window it edits, or taking the keyboard for it.
+pub fn demands(output: Option<&str>, layer: LayerKind) -> Option<Rc<Demands>> {
+    let key = WindowKey {
+        output: output.map(str::to_string),
+        layer,
+    };
+    REGISTRY.with(|registry| registry.borrow().holder.as_ref()?.demands(&key))
+}
+
+/// Sets the areas of the window of `layer` on `output` aside for as long as the token lives: an edit mode drawing them in the overlay window instead, where the compositor cannot raise that window (TA-4, R-6). `None` where that window is not open.
+pub fn conceal(output: Option<&str>, layer: LayerKind) -> Option<Concealment> {
+    let key = WindowKey {
+        output: output.map(str::to_string),
+        layer,
+    };
+    REGISTRY.with(|registry| registry.borrow().holder.as_ref()?.conceal(&key))
+}
+
 /// Waiting out `exit` before looking is what makes the answer independent of which of two listeners to the same source ran first: the one dropping the hold, or the one starting the exit.
 pub fn release(hold: Hold, output: Option<&str>, layer: LayerKind, exit: std::time::Duration) {
     let window = WindowKey {
@@ -294,6 +317,27 @@ pub fn is_open(id: &str) -> bool {
             .entries
             .iter()
             .any(|entry| entry.id() == id && entry.is_open())
+    })
+}
+
+/// Whether an open transient other than `except` takes the keyboard: what the shortcuts of the one that is `except` stand aside for, since the keys are that other one's while it is up.
+pub fn takes_keyboard_besides(except: &str) -> bool {
+    REGISTRY.with(|registry| {
+        registry.borrow().entries.iter().any(|entry| {
+            entry.is_open() && entry.id() != except && entry.spec.keyboard != KeyboardMode::None
+        })
+    })
+}
+
+/// The window the open transient `id` is drawn in: its anchor's, or an overlay window.
+pub fn drawn_in(id: &str) -> Option<WindowKey> {
+    REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .entries
+            .iter()
+            .find(|entry| entry.id() == id && entry.is_open())
+            .map(|entry| entry.window.clone())
     })
 }
 
@@ -702,7 +746,7 @@ fn position(place: &Place, content: Box<dyn LayoutItem>, screen: ReadSignal<Scre
                     .align_items(telar::AlignItems::STRETCH)
             }),
         )),
-        Place::Whole => Ok(Box::new(passthrough(whole(), vec![content])?)),
+        Place::Over(_) | Place::Whole => Ok(Box::new(passthrough(whole(), vec![content])?)),
     }
 }
 
@@ -833,60 +877,47 @@ pub mod chips {
         }
     }
 
-    struct Chip {
-        module: String,
-        site: Site,
-        rect: RwSignal<Rect>,
+    /// A chip of the module asked for: where to hang what it opens, and the instance that opens it.
+    pub struct Found {
+        pub anchor: Anchor,
+        pub instance: ui::host::Instance,
     }
 
-    thread_local! {
-        static CHIPS: RefCell<Vec<Chip>> = const { RefCell::new(Vec::new()) };
-    }
-
-    pub fn register(module: &str, site: Site, rect: RwSignal<Rect>) {
-        CHIPS.with(|chips| {
-            let mut chips = chips.borrow_mut();
-            chips.retain(|chip| chip.rect.is_alive());
-            chips.push(Chip {
-                module: module.to_string(),
-                site,
-                rect,
-            });
-        });
-    }
-
+    /// The pressed chip of `module`, else its first chip on `focused`, else its first anywhere — TA-2's first-instance rule, with a press naming its own instance. By module rather than by instance, because `panel toggle <module>` and a keybind name a module (F-1.2); it reads the chips [`crate::rects`] holds.
     pub fn find(
         module: &str,
         pressed: Option<ui::module::Pressed>,
         focused: Option<&str>,
-    ) -> Option<Anchor> {
-        CHIPS.with(|chips| {
-            let mut chips = chips.borrow_mut();
-            chips.retain(|chip| chip.rect.is_alive());
-            let of_module: Vec<&Chip> = chips.iter().filter(|chip| chip.module == module).collect();
-            let on = |output: Option<&str>| -> Vec<&Chip> {
-                of_module
+    ) -> Option<Found> {
+        let of_module: Vec<(crate::rects::Chip, Rect)> = crate::rects::chips()
+            .into_iter()
+            .filter(|(chip, _)| &*chip.instance.module == module)
+            .collect();
+        let on = |output: Option<&str>| -> Vec<&(crate::rects::Chip, Rect)> {
+            of_module
+                .iter()
+                .filter(|(chip, _)| chip.site.output.as_deref() == output)
+                .collect()
+        };
+        let chosen = match &pressed {
+            Some(pressed) => {
+                let there = on(pressed.output.as_deref());
+                there
                     .iter()
                     .copied()
-                    .filter(|chip| chip.site.output.as_deref() == output)
-                    .collect()
-            };
-            let chosen = match &pressed {
-                Some(pressed) => {
-                    let there = on(pressed.output.as_deref());
-                    there
-                        .iter()
-                        .copied()
-                        .find(|chip| chip.rect.peek() == pressed.rect)
-                        .or_else(|| there.first().copied())
-                }
-                None => on(focused).first().copied(),
+                    .find(|(_, rect)| *rect == pressed.rect)
+                    .or_else(|| there.first().copied())
             }
-            .or_else(|| of_module.first().copied())?;
-            let rect = pressed
-                .filter(|pressed| pressed.output == chosen.site.output)
-                .map_or_else(|| chosen.rect.peek(), |pressed| pressed.rect);
-            Some(chosen.site.anchor(rect))
+            None => on(focused).first().copied(),
+        }
+        .or_else(|| of_module.first())?;
+        let (chip, at) = chosen;
+        let rect = pressed
+            .filter(|pressed| pressed.output == chip.site.output)
+            .map_or(*at, |pressed| pressed.rect);
+        Some(Found {
+            anchor: chip.site.anchor(rect),
+            instance: chip.instance.clone(),
         })
     }
 }
@@ -988,6 +1019,28 @@ mod tests {
         assert_eq!(rect.height, 1046.0 - 16.0, "never thicker than the screen");
     }
 
+    /// DEC-9: a transient laid over its anchor's whole window is drawn in that window, as one beside it is; only an unanchored one goes to the overlay window.
+    #[test]
+    fn a_transient_over_its_anchor_is_drawn_in_the_anchors_window() {
+        close_all();
+        let over = anchor(Edge::Top, Rect::new(0.0, 0.0, 1920.0, 34.0));
+        open(Spec::new("over", Place::Over(over), content()).output(Some("DP-1".into())));
+        open(Spec::new("whole", Place::Whole, content()).output(Some("DP-1".into())));
+        assert_eq!(
+            drawn_in("over"),
+            Some(WindowKey {
+                output: None,
+                layer: LayerKind::Top
+            })
+        );
+        assert_eq!(
+            drawn_in("whole").map(|window| window.layer),
+            Some(LayerKind::Overlay)
+        );
+        close_all();
+        assert_eq!(drawn_in("over"), None);
+    }
+
     #[test]
     fn a_standing_window_takes_the_screen_from_the_drawer_and_from_nothing_else() {
         close_all();
@@ -1025,17 +1078,41 @@ mod tests {
                 chrome: chrome(),
                 gap: 8.0,
             };
-            chips::register("clock", site, signal(at));
+            let options = toml::Table::from_iter([(
+                "drawer_width".to_string(),
+                toml::Value::Integer(if output == "DP-1" { 300 } else { 500 }),
+            )]);
+            crate::rects::track_chip(
+                crate::rects::Node::area(Some(output), LayerKind::Top, &layout::AreaId::new("bar"))
+                    .instance(
+                        &layout::GroupId::new("end"),
+                        &layout::InstanceId::new("clock"),
+                    ),
+                signal(at),
+                crate::rects::Chip {
+                    instance: ui::host::Instance::new(
+                        ui::host::InstanceId::of_module("clock"),
+                        "clock",
+                        options,
+                    ),
+                    site,
+                },
+            );
         }
         let pressed = ui::module::Pressed {
             rect: at,
             output: Some("HDMI-A-1".into()),
         };
-        let anchor = chips::find("clock", Some(pressed), Some("DP-1")).expect("a clock chip");
-        assert_eq!(anchor.output.as_deref(), Some("HDMI-A-1"));
+        let found = chips::find("clock", Some(pressed), Some("DP-1")).expect("a clock chip");
+        assert_eq!(found.anchor.output.as_deref(), Some("HDMI-A-1"));
+        assert_eq!(
+            found.instance.options.get("drawer_width"),
+            Some(&toml::Value::Integer(500)),
+            "and the options of the instance that was pressed"
+        );
         let unpressed = chips::find("clock", None, Some("HDMI-A-1")).expect("a clock chip");
         assert_eq!(
-            unpressed.output.as_deref(),
+            unpressed.anchor.output.as_deref(),
             Some("HDMI-A-1"),
             "with no press, the focused screen's chip"
         );

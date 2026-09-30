@@ -2,11 +2,14 @@
 //!
 //! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
-use telar::{LayoutError, LayoutItem, LayoutStyle, RwSignal, Text, box_item, signal};
+use telar::{
+    Children, LayoutError, LayoutItem, LayoutStyle, Reactive, RwSignal, Text, box_item, signal,
+};
 
 use crate::form::*;
 use config::MediaConfig;
 use config::theme::{FontRole, NordTheme};
+use ui::form::text_row::{TextRowProps, text_row};
 
 /// Every media player a `[media.aliases]` row should exist for: the ones seen on the bus this session, plus any the config already renames. Both halves matter, for the reason `monitor_keys` documents.
 fn player_keys(configured: &std::collections::HashMap<String, String>) -> Vec<String> {
@@ -45,7 +48,14 @@ pub(crate) fn media_aliases_section() -> Result<Box<dyn LayoutItem>, LayoutError
     }
     for (key, value) in &fields {
         let label = key.clone();
-        rows.push(text_field(move || label.clone(), *value, key, theme)?);
+        rows.push(text_row(
+            TextRowProps::props()
+                .label(Reactive::of(move || label.clone()))
+                .value(*value)
+                .placeholder(key.clone())
+                .build(),
+            Children::default(),
+        )?);
     }
 
     let path = path.to_path_buf();

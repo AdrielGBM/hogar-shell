@@ -5,7 +5,7 @@ title: Drawers
 summary: A panel anchored to the chip that opened it.
 status: stable
 compositor: any
-config: [panels]
+config: [modules]
 commands: [panel]
 deps: [wlr-layer-shell]
 see_also: [panels, floats, bars, compositor-rules]
@@ -38,11 +38,13 @@ means for a `layer_rule` you write yourself.
 
 ## Configuring
 
-`[panels.drawer]` — `width`, `max_height`.
-The distance from the bar is the bar's own outer gap, and the translucency is `[theme] opacity` for the whole
-shell — neither is a drawer setting.
+A drawer's size belongs to the module whose panel it is: `drawer_width` and `drawer_max_height`, written in the
+`options` of that module's instance in the layout, or under `[modules.<id>]` for every instance of it. A drawer
+opened from a chip takes that chip's instance's; one opened by IPC or a keybind takes the module's first
+instance on the focused screen. The distance from the bar is the bar's own outer gap, and the translucency is
+`[theme] opacity` for the whole shell — neither is a drawer setting.
 
-`max_height` is a maximum, not a height: a drawer with two rows in it is two rows tall.
+`drawer_max_height` is a maximum, not a height: a drawer with two rows in it is two rows tall.
 
 ## When to use a float instead
 

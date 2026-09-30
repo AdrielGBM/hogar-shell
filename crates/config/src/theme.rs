@@ -22,9 +22,9 @@ pub enum FontRole {
 // Text size inherits, so the configured base enters the tree at the root and flows down rather than being a question each component asks. A bar that wants another size declares it over this one.
 #[theme(root = Declared::default().with_font_size(self.font_size))]
 pub struct NordTheme {
-    /// Base corner radius the theme rounds panels and bars to (the design default; `[shape]`/per-bar can override).
+    /// Base corner radius the theme rounds panels and bars to (the design default; a bar's own shape can override it).
     pub radius: f32,
-    /// Base gap between adjacent modules inside a bar/section (the design default; `[shape]`/per-bar can override).
+    /// Base gap between adjacent modules inside a bar/section (the design default; a bar's own shape can override it).
     pub spacing: f32,
     /// Base (body) font size in px. Every other text size steps off this via [`font`](Self::font), so scaling it scales all text.
     pub font_size: f32,
@@ -97,6 +97,11 @@ pub const THEME_TOKENS: &[&str] = &[
     "highlight_low",
     "highlight_med",
     "highlight_high",
+];
+
+/// The eight hues an accent is named by, in the order a picker offers them.
+pub const ACCENTS: &[&str] = &[
+    "blue", "cyan", "teal", "red", "orange", "yellow", "green", "purple",
 ];
 
 /// A colour as `#rrggbb`, which is the only spelling `[theme.colors]` and every export file use.
@@ -936,7 +941,7 @@ mod tests {
         assert_eq!(ThemeTokens::spacing(&theme), theme.spacing);
         assert_eq!(
             ThemeTokens::root(&theme).font_size,
-            Some(theme.font_size),
+            Some(telar::TextLength::Px(theme.font_size)),
             "the configured base size reaches the document root"
         );
         assert_eq!(ThemeTokens::icon_size(&theme), theme.icon_size);

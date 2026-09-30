@@ -38,9 +38,9 @@ pub fn rust_files(paths: &[&Path]) -> Vec<PathBuf> {
     found
 }
 
-/// Scans `sources` and writes `<OUT_DIR>/<file>` with three tables named after `prefix`.
+/// Scans `sources` and writes `<OUT_DIR>/<file>` with the tables named after `prefix`.
 ///
-/// The statics are `<PREFIX>_DOCS`, `<PREFIX>_FIELDS` and `<PREFIX>_FIELD_TYPES`, which is what lets one crate `include!` the config's tables and another the layout's without either knowing the other exists.
+/// The statics are `<PREFIX>_DOCS`, `<PREFIX>_FIELDS`, `<PREFIX>_FIELD_TYPES`, `<PREFIX>_FIELD_RUST` and `<PREFIX>_VARIANTS`, which is what lets one crate `include!` the config's tables and another the layout's without either knowing the other exists.
 pub fn emit(sources: &[PathBuf], prefix: &str, file: &str) {
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     std::fs::write(out.join(file), scan(sources).render(prefix))
@@ -56,6 +56,10 @@ pub struct Tables {
     fields: Vec<(String, String)>,
     /// `(item, field, type)` for every field whose type is a plain named one.
     types: Vec<(String, String, String)>,
+    /// `(item, field, type)` for every field, with the type exactly as declared.
+    rust: Vec<(String, String, String)>,
+    /// `(enum, variant)` for every unit variant, spelled the way serde writes it in a file.
+    variants: Vec<(String, String)>,
 }
 
 /// Lifts the doc comments off `sources`.
@@ -75,6 +79,8 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
     let mut inside_enum: Option<String> = None;
     // What `#[serde(rename)]` calls the next field, if it says.
     let mut rename: Option<String> = None;
+    let mut rename_all: Option<String> = None;
+    let mut variant_case: Option<String> = None;
 
     for line in text.lines() {
         let trimmed = line.trim();
@@ -90,12 +96,17 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
             if let Some(name) = renamed(trimmed) {
                 rename = Some(name);
             }
+            if let Some(case) = renamed_all(trimmed) {
+                rename_all = Some(case);
+            }
             continue;
         }
         // A closing brace at the left margin ends the item it closes, which is what keeps a field of the next thing from being recorded against this one.
         if line == "}" {
             item.clear();
             inside_enum = None;
+            variant_case = None;
+            rename_all = None;
             pending.clear();
             continue;
         }
@@ -106,8 +117,17 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
             tables.push_doc(&item, "", &pending);
         } else if let Some(name) = enum_name(trimmed) {
             inside_enum = Some(name.clone());
+            variant_case = rename_all.take();
             item = name;
             tables.push_doc(&item, "", &pending);
+        } else if let Some((owner, variant)) = inside_enum
+            .as_deref()
+            .and_then(|owner| unit_variant(trimmed).map(|variant| (owner.to_string(), variant)))
+        {
+            let spelled = rename
+                .take()
+                .unwrap_or_else(|| spelled(&variant, variant_case.as_deref()));
+            tables.variants.push((owner, spelled));
         } else if let Some(variant) = inside_enum
             .as_deref()
             .and_then(|owner| variant_name(trimmed).map(|variant| format!("{owner}::{variant}")))
@@ -122,6 +142,9 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
             for field in fields.split(',') {
                 if let Some(name) = field_name(field.trim(), true) {
                     tables.fields.push((variant.clone(), name.clone()));
+                    if let Some(declared) = declared_type(field) {
+                        tables.rust.push((variant.clone(), name.clone(), declared));
+                    }
                     if let Some(kind) = field_type(field) {
                         tables.types.push((variant.clone(), name, kind));
                     }
@@ -134,12 +157,16 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
             let field = rename.take().unwrap_or(field);
             tables.push_doc(&item, &field, &pending);
             tables.fields.push((item.clone(), field.clone()));
+            if let Some(declared) = declared_type(trimmed) {
+                tables.rust.push((item.clone(), field.clone(), declared));
+            }
             if let Some(kind) = field_type(trimmed) {
                 tables.types.push((item.clone(), field, kind));
             }
         }
         pending.clear();
         rename = None;
+        rename_all = None;
     }
     tables
 }
@@ -153,7 +180,7 @@ impl Tables {
             .push((item.to_string(), field.to_string(), docs.join("\n")));
     }
 
-    /// The three tables as Rust, for a build script to write into `OUT_DIR`.
+    /// The tables as Rust, for a build script to write into `OUT_DIR`.
     pub fn render(&self, prefix: &str) -> String {
         let mut docs = String::new();
         for (item, field, doc) in &self.docs {
@@ -167,6 +194,14 @@ impl Tables {
         for (item, field, kind) in &self.types {
             let _ = writeln!(types, "    ({item:?}, {field:?}, {kind:?}),");
         }
+        let mut rust = String::new();
+        for (item, field, declared) in &self.rust {
+            let _ = writeln!(rust, "    ({item:?}, {field:?}, {declared:?}),");
+        }
+        let mut variants = String::new();
+        for (owner, variant) in &self.variants {
+            let _ = writeln!(variants, "    ({owner:?}, {variant:?}),");
+        }
         format!(
             "/// `(item, field, doc)`; an empty field is the item's own comment. A struct variant is `Enum::Variant`.\n\
              /// Generated by `build.rs` through `hogar-shell-doc-scanner`.\n\
@@ -177,7 +212,12 @@ impl Tables {
              pub static {prefix}_FIELDS: &[(&str, &str)] = &[\n{fields}];\n\n\
              /// `(item, field, type)` for every field, documented or not. What lets a schema annotate a\n\
              /// nested table from the struct that actually backs it.\n\
-             pub static {prefix}_FIELD_TYPES: &[(&str, &str, &str)] = &[\n{types}];\n"
+             pub static {prefix}_FIELD_TYPES: &[(&str, &str, &str)] = &[\n{types}];\n\n\
+             /// `(item, field, type)` for every field, with its Rust type as declared: what a control type is\n\
+             /// read off, so a `bool` is a switch and an `Option<f32>` a number that may be left unset.\n\
+             pub static {prefix}_FIELD_RUST: &[(&str, &str, &str)] = &[\n{rust}];\n\n\
+             /// `(enum, variant)` for every unit variant, spelled as serde writes it in a file.\n\
+             pub static {prefix}_VARIANTS: &[(&str, &str)] = &[\n{variants}];\n"
         )
     }
 }
@@ -200,6 +240,59 @@ fn field_type(line: &str) -> Option<String> {
         && kind.chars().all(|c| c.is_ascii_alphanumeric())
         && kind.starts_with(|c: char| c.is_ascii_uppercase());
     plain.then(|| kind.to_string())
+}
+
+/// `    pub size: Option<u32>,` → `Option<u32>`: the type as written, for whoever needs more than the struct a field names.
+fn declared_type(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once(':')?;
+    let declared = rest.trim().trim_end_matches(',').trim();
+    (!declared.is_empty()).then(|| declared.to_string())
+}
+
+/// `    Chips,` → `Chips`: a variant that carries nothing, which a file writes as a bare string.
+fn unit_variant(line: &str) -> Option<String> {
+    let name = line.trim_end_matches(',').split('=').next()?.trim();
+    let named = !name.is_empty()
+        && name.starts_with(|c: char| c.is_ascii_uppercase())
+        && name.chars().all(|c| c.is_ascii_alphanumeric());
+    named.then(|| name.to_string())
+}
+
+/// `#[serde(rename_all = "snake_case")]` → `snake_case`: how every variant of the enum below it is spelled.
+fn renamed_all(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once("rename_all = \"")?;
+    let (case, _) = rest.split_once('"')?;
+    (!case.is_empty()).then(|| case.to_string())
+}
+
+/// A variant's name as serde spells it under a `rename_all` rule.
+fn spelled(variant: &str, case: Option<&str>) -> String {
+    let separated = |separator: char| {
+        let mut out = String::new();
+        for (index, c) in variant.chars().enumerate() {
+            if c.is_ascii_uppercase() && index > 0 {
+                out.push(separator);
+            }
+            out.push(c.to_ascii_lowercase());
+        }
+        out
+    };
+    match case {
+        Some("lowercase") => variant.to_lowercase(),
+        Some("UPPERCASE") => variant.to_uppercase(),
+        Some("snake_case") => separated('_'),
+        Some("kebab-case") => separated('-'),
+        Some("SCREAMING_SNAKE_CASE") => separated('_').to_uppercase(),
+        Some("SCREAMING-KEBAB-CASE") => separated('-').to_uppercase(),
+        Some("camelCase") => {
+            let mut chars = variant.chars();
+            chars
+                .next()
+                .map(|first| first.to_ascii_lowercase().to_string() + chars.as_str())
+                .unwrap_or_default()
+        }
+        _ => variant.to_string(),
+    }
 }
 
 /// `pub struct Name {` → `Name`. Tuple and unit structs carry no fields worth documenting, so they are skipped.
@@ -397,6 +490,63 @@ mod tests {
         assert!(
             rendered.contains(r#"\"quoted\""#),
             "a quote has to come back out escaped: {rendered}"
+        );
+    }
+
+    #[test]
+    fn a_field_keeps_the_type_it_was_declared_with() {
+        let tables = scanned(
+            "declared",
+            "pub struct Thing {\n\
+             \x20   pub size: Option<u32>,\n\
+             \x20   pub names: HashMap<String, String>,\n\
+             \x20   pub on: bool,\n\
+             }\n",
+        );
+        assert_eq!(
+            tables.rust,
+            [
+                ("Thing".into(), "size".into(), "Option<u32>".into()),
+                (
+                    "Thing".into(),
+                    "names".into(),
+                    "HashMap<String, String>".into()
+                ),
+                ("Thing".into(), "on".into(), "bool".into()),
+            ]
+        );
+    }
+
+    /// What an enum field accepts is what serde spells its variants as, so the scanner applies the enum's own `rename_all` rather than guessing.
+    #[test]
+    fn a_unit_variant_is_spelled_the_way_serde_writes_it() {
+        let tables = scanned(
+            "variants",
+            "#[derive(Deserialize)]\n\
+             #[serde(rename_all = \"snake_case\")]\n\
+             pub enum Mode {\n\
+             \x20   #[default]\n\
+             \x20   OneBar,\n\
+             \x20   Sections,\n\
+             \x20   #[serde(rename = \"pill\")]\n\
+             \x20   Chips,\n\
+             }\n\
+             \n\
+             pub enum Plain {\n\
+             \x20   Kept,\n\
+             \x20   Carrying(u32),\n\
+             \x20   Shaped { at: f32 },\n\
+             }\n",
+        );
+        assert_eq!(
+            tables.variants,
+            [
+                ("Mode".into(), "one_bar".into()),
+                ("Mode".into(), "sections".into()),
+                ("Mode".into(), "pill".into()),
+                ("Plain".into(), "Kept".into()),
+            ],
+            "only variants a file writes as a bare string, each spelled by its own enum's rule"
         );
     }
 }

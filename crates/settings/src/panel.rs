@@ -29,8 +29,11 @@ pub fn settings_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     icon_view(|| "settings".to_string(), move || fg, host.icon_size())
 }
 
-/// The settings panel: an in-shell editor for `config.toml`. Each section's fields are seeded from the current file, and a form applies itself a moment after the last edit — its Save button is the same write without the wait (see [`live_apply`]). Both go through [`Config::save_section`] (format-preserving), which the running shell hot-reloads and applies live; Revert (in the header) puts the file back to how it was when the window opened.
-pub fn settings_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
+/// What the application spends on its own title bar, search row and padding before any form is drawn, subtracted from the surface to size the scrolling page area.
+const CHROME: f32 = 108.0;
+
+/// The settings panel, `surface` tall: an in-shell editor for `config.toml`. Each section's fields are seeded from the current file, and a form applies itself a moment after the last edit — its Save button is the same write without the wait (see [`live_apply`]). Both go through [`Config::save_section`] (format-preserving), which the running shell hot-reloads and applies live; Revert (in the header) puts the file back to how it was when the window opened.
+pub fn settings_panel(surface: f32) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let path = Arc::new(Config::default_path());
     // Before anything reads the file, so what the window vouches for can only lag behind what its forms show.
@@ -58,8 +61,8 @@ pub fn settings_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
                 selected.read_only(),
                 query.read_only(),
                 reseed.read_only(),
-                config,
-                Arc::clone(&path),
+                (config, Arc::clone(&path)),
+                surface,
                 theme,
             )?,
         ],
@@ -235,11 +238,12 @@ fn page_stack(
     selected: telar::ReadSignal<usize>,
     query: telar::ReadSignal<String>,
     reseed: telar::ReadSignal<u64>,
-    config: Arc<Config>,
-    path: Arc<PathBuf>,
+    (config, path): (Arc<Config>, Arc<PathBuf>),
+    surface: f32,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let height = config.settings_page_height();
+    // A number rather than "the rest of the box": a scroll area is a layout leaf whose content is laid out as its own root, so a viewport with no height of its own measures zero and clips every form away.
+    let height = (surface - CHROME).max(160.0);
     // The nav is outside this scroll area on purpose: a nav pane that scrolls away with the page it selects is a list of links you have to scroll back up to use.
     let scroll = telar::LayoutScrollArea::new_kept(
         "settings.scroll",
@@ -293,8 +297,9 @@ fn build_page_area(
             .collect()
     };
     // Each form re-reads the file for itself (`form::source`), which is what makes a form rebuilt a form re-seeded — the panel only says which file that is, once, before any of them is built.
-    let build =
-        move |(_, _, section): (String, u64, &'static crate::pages::Section)| (section.build)();
+    let build = move |(_, _, section): (String, u64, &'static crate::pages::Section)| {
+        ui::form::recorder::recording(section.build)
+    };
     Ok(Box::new(ReactiveList::with_style(
         LayoutStyle::new()
             .flex_column()
@@ -315,6 +320,9 @@ mod tests {
     use telar::WindowRoot;
     use telar::{reset_layout_runtime, set_theme};
 
+    /// The float the application opens in.
+    const PANEL: f32 = 680.0;
+
     // Switching the locale after the panel is built re-renders its labels live: the section titles are reactive `t!` closures, so the rendered text changes from English to Spanish without a rebuild.
     #[test]
     fn labels_live_switch_locale() {
@@ -328,7 +336,7 @@ mod tests {
 
         reset_layout_runtime();
         set_theme(NordTheme::new());
-        let panel = settings_panel().expect("settings panel");
+        let panel = settings_panel(PANEL).expect("settings panel");
         let mut tree = ComponentList::new(WindowRoot::wrapping(panel).expect("root"));
         tree.on_event(&Event::WindowResized {
             width: 380,
@@ -363,7 +371,7 @@ mod tests {
                 reset_layout_runtime();
                 set_theme(NordTheme::new());
                 assert!(
-                    (section.build)().is_ok(),
+                    ui::form::recorder::recording(section.build).is_ok(),
                     "{}/{} does not build",
                     page.label,
                     section.label
@@ -382,7 +390,7 @@ mod tests {
         telar::Scope::with(|| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let panel = settings_panel().expect("settings panel");
+            let panel = settings_panel(PANEL).expect("settings panel");
             let mut tree = ComponentList::new(WindowRoot::wrapping(panel).expect("root"));
             tree.on_event(&Event::WindowResized {
                 width: 900,
@@ -442,7 +450,7 @@ mod tests {
             reset_layout_runtime();
             let theme = NordTheme::new();
             set_theme(theme);
-            let body = settings_panel().expect("the settings panel builds");
+            let body = settings_panel(PANEL).expect("the settings panel builds");
             let frame = telar::window_frame(
                 MODULE.to_string(),
                 None,

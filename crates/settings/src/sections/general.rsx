@@ -1,8 +1,8 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
 use crate::language_row::{language_row, LanguageRowProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
-use crate::text_row::{text_row, TextRowProps};
+use ::ui::form::toggle_row::{toggle_row, ToggleRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{persist, source};
 use ::config::{AppsConfig, GeneralConfig};

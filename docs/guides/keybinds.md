@@ -5,7 +5,7 @@ title: Keybinds
 summary: The commands worth binding, and the portal route.
 status: stable
 compositor: any
-commands: [launcher, dashboard, panel, notifs, lock, screenshot, record, volume, mic, brightness, media, wallpaper]
+commands: [launcher, dashboard, panel, notifs, lock, screenshot, record, volume, mic, brightness, media, wallpaper, layout]
 deps: [xdg-desktop-portal]
 see_also: [scripting, global-shortcuts]
 ---
@@ -36,6 +36,7 @@ the complete, authoritative menu â€” this page is a starting set, not a second c
 | `hogar-shell brightness up` / `down` | |
 | `hogar-shell media play-pause` / `next` / `previous` | |
 | `hogar-shell wallpaper random` | |
+| `hogar-shell layout edit desktop` | edit the desktop layer of the focused screen; Esc with nothing selected, or Done, ends it |
 
 Two things that are not obvious from the names:
 
@@ -70,6 +71,7 @@ hl.bind({ "SUPER" }, "l",      sh("lock on"))
 hl.bind({ "SUPER", "SHIFT" }, "s", sh("screenshot region"))
 hl.bind({ "SUPER", "SHIFT" }, "r", sh("record toggle"))
 hl.bind({ "SUPER", "SHIFT" }, "w", sh("wallpaper random"))
+hl.bind({ "SUPER", "SHIFT" }, "e", sh("layout edit desktop"))
 
 hl.bind({}, "XF86AudioRaiseVolume",  sh("volume up"))
 hl.bind({}, "XF86AudioLowerVolume",  sh("volume down"))
@@ -103,7 +105,7 @@ The name is `<appid>:<id>`, and on a non-sandboxed install the app id is empty â
 `hogar-shell:launcher`.
 
 Registered ids: `launcher` `dashboard` `notifications` `session` `dnd` `volume-up` `volume-down` `volume-mute`
-`mic-mute` `brightness-up` `brightness-down`.
+`mic-mute` `brightness-up` `brightness-down` `edit-layout`.
 
 That list is deliberately shorter than the IPC table. `hogar-shell audio set 40` is a scripting command, not a
 shortcut, and registering every command would bury the ten anyone binds.

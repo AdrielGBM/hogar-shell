@@ -27,8 +27,13 @@ pub const DYNAMIC: &str = "dynamic";
 /// How far a semantic hue may be rotated toward the seed. Enough that a red belongs to the palette, small enough that it is still a red.
 const HARMONY: f32 = 15.0;
 
-/// The contrast body text must keep against the base it is read on (WCAG AA for normal text). A generated palette has no designer to catch an unreadable pairing, so the ramp is corrected until it clears this.
-const MIN_TEXT_CONTRAST: f32 = 4.5;
+/// The contrast body text must keep against what it is read on (WCAG AA for normal text). A generated palette has no designer to catch an unreadable pairing, so the ramp is corrected until it clears this, and a lock prompt's card is held to the same line.
+pub const MIN_TEXT_CONTRAST: f32 = 4.5;
+
+/// Whether `text` clears [`MIN_TEXT_CONTRAST`] on `background`. Alpha is ignored, so a translucent background is composed over whatever is under it first.
+pub fn is_readable(text: Color, background: Color) -> bool {
+    text.contrast_ratio(background) >= MIN_TEXT_CONTRAST
+}
 
 /// Whether the scheme is built for a dark or a light desktop.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -403,7 +408,7 @@ fn readable(colors: &mut [(String, String)], mode: Mode) {
     let (mut lightness, chroma, hue, _) = text.to_oklcha();
     let mut corrected = text;
     for _ in 0..24 {
-        if corrected.contrast_ratio(base) >= MIN_TEXT_CONTRAST {
+        if is_readable(corrected, base) {
             break;
         }
         lightness = match mode {

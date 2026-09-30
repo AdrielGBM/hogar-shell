@@ -1,28 +1,25 @@
-//! The form toolkit every settings section is built out of.
+//! The write-back every settings section is built on.
 //!
-//! A section is a heading, a column of fields, and one Save button. This is that vocabulary — the widgets, the write-back to `config.toml`, and the recorder that tells a button whether anything under it moved — so the sections themselves are a description of *which* fields they have rather than of how a field behaves.
+//! A section is a heading, a column of rows from `ui::form`, and one Save button. This is what is particular to settings — the file the forms edit, the write-back to `config.toml`, and the button that applies a form when one of its fields moves — so the sections themselves are a description of *which* fields they have rather than of how a field behaves.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use ui::scale::{paint, space};
+use ui::form::recorder::{self, Recorded};
+use ui::scale::space;
 
 use serde::Serialize;
-use telar::{
-    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, RwSignal, SizeDimension,
-    StyledContainer, Text, box_item, signal,
-};
+use telar::{Container, LayoutError, LayoutItem, LayoutStyle, SizeDimension, Text};
 
 use config::fingerprint::{Fingerprint, Stamp};
 use config::theme::{FontRole, NordTheme};
 use config::{
     Capitalize, Config, Edge, FullscreenPopups, MediaDetail, MediaScroll, NotificationDetail,
-    OpenMode, Saved, Shape, TemperatureUnit, Variant,
+    OpenMode, Saved, TemperatureUnit, Variant,
 };
 
 use crate::panel::MODULE;
 
 pub(crate) const EDGES: &[&str] = &["top", "bottom", "left", "right"];
-pub(crate) const SHAPES: &[&str] = &["bar", "sections", "chips"];
 pub(crate) const LANGUAGES: &[&str] = &["en", "es"];
 pub(crate) const MEDIA_SCROLLS: &[&str] = &["volume", "track", "seek", "none"];
 pub(crate) const CAPITALIZATIONS: &[&str] = &["none", "upper", "lower", "title"];
@@ -40,106 +37,29 @@ pub(crate) const CURVES: &[&str] = &["gentle", "snappy", "bouncy"];
 pub(crate) const VARIANT_STYLES: &[&str] = &["default", "filled"];
 pub(crate) const OPEN_MODES: &[&str] = &["drawer", "float"];
 pub(crate) const EASINGS: &[&str] = &["linear", "ease-in", "ease-out", "ease-in-out"];
-/// K14, the recorder half: every field the form helpers build, so a section knows when one of them moved.
-///
-/// A thread-local rather than a parameter because the alternative is threading a tracker through all forty `*_section` functions and every `text_field`/`toggle_field`/`enum_field` call inside them. The forms are built one at a time on the driver thread, and each ends with exactly one [`save_button`] — which is where the recording is drained. That is the whole contract: **a form's fields must be built before its button.**
-///
-/// Each entry is an effect that bumps `revision` when its field changes, plus the revision itself. Effects are handed to the button so they live exactly as long as the form does.
-struct FormRecorder {
-    revision: RwSignal<u64>,
-    subscriptions: Vec<telar::Effect>,
-}
-
-thread_local! {
-    static RECORDING: std::cell::RefCell<Option<FormRecorder>> = const { std::cell::RefCell::new(None) };
-}
-
 /// How long after the last keystroke a live-preview form applies itself. Long enough that typing a font name is one apply rather than nine, short enough to read as a preview rather than as a delay.
 const LIVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(700);
 
-/// Hands `effect` to the form being built, which keeps it alive until its button is gone.
-fn park(build: impl FnOnce(RwSignal<u64>) -> telar::Effect) {
-    RECORDING.with(|recording| {
-        let mut recording = recording.borrow_mut();
-        let recorder = recording.get_or_insert_with(|| FormRecorder {
-            revision: signal(0u64),
-            subscriptions: Vec::new(),
-        });
-        let effect = build(recorder.revision);
-        recorder.subscriptions.push(effect);
-    });
-}
-
-/// Registers `value` as one of the current form's fields. Called by every field helper.
-pub(crate) fn record_field<T: Clone + PartialEq + 'static>(value: &RwSignal<T>) {
-    let watched = value.read_only();
-    park(move |revision| {
-        // An effect fires once when it is registered, and that first run is the field being *seeded* — not a user changing anything. Reporting it would make every form apply itself the moment it was drawn.
-        let seeded = std::cell::Cell::new(false);
-        telar::effect(move || {
-            let _ = watched.get();
-            if seeded.replace(true) {
-                revision.set(revision.peek() + 1);
-            }
-        })
-    });
-}
-
-/// Binds a form's `String` field to the index the catalogue's `select` speaks in, and records it.
-///
-/// The sections speak in the value they write to `config.toml`, the widget in positions. The two are kept in step both ways, because a Revert writes the string back and the trigger has to follow it — an effect the form keeps, since a `.rsx` component cannot hold one of its own past the call that builds it.
-pub(crate) fn option_index(
-    value: RwSignal<String>,
-    options: &'static [&'static str],
-) -> RwSignal<u32> {
-    record_field(&value);
-    let index_of = |current: &str| options.iter().position(|o| *o == current).unwrap_or(0) as u32;
-    let picked = signal(index_of(&value.peek()));
-    let follow_value = value.read_only();
-    let follow_index = picked;
-    park(move |_| {
-        telar::effect(move || {
-            let at = index_of(&follow_value.get());
-            if follow_index.peek() != at {
-                follow_index.set(at);
-            }
-        })
-    });
-    picked
-}
-
-/// Writes the option at `at` back to the field it came from.
-///
-/// Guarded because a signal notifies on every write: re-picking what is already selected is not an edit, and counting it would apply the whole form.
-pub(crate) fn pick_option(value: &RwSignal<String>, options: &'static [&'static str], at: u32) {
-    let next = options[at as usize].to_string();
-    if value.peek() != next {
-        value.set(next);
-    }
-}
-
-/// Wires the recorded fields to `apply`, debounced — the second half of K14.
+/// Wires the form just built — the fields [`recorder::take`] hands over — to `apply`, debounced: the second half of K14.
 ///
 /// Returns the subscriptions for the caller to hold. The reload its own write causes passes the window by (see [`persist`]), so what the user is typing into is the same field it was before the change landed.
 pub(crate) fn live_apply(apply: Rc<dyn Fn()>) -> Vec<telar::Effect> {
-    let Some(recorder) = RECORDING.with(|recording| recording.borrow_mut().take()) else {
-        return Vec::new();
-    };
-    let FormRecorder {
+    let Some(Recorded {
         revision,
         mut subscriptions,
-    } = recorder;
-    let watched = revision.read_only();
+    }) = recorder::take()
+    else {
+        return Vec::new();
+    };
     subscriptions.push(telar::effect(move || {
-        let at = watched.get();
+        let at = revision.get();
         if at == 0 {
             return;
         }
         let apply = Rc::clone(&apply);
-        let watched = watched;
         // Debounced by re-reading the counter when the timer fires: a change that arrived in the meantime has its own timer running, so only the last one in a burst applies.
         platform_wayland::timeout(LIVE_DEBOUNCE, move || {
-            if watched.peek() == at {
+            if revision.peek() == at {
                 apply();
             }
         });
@@ -334,104 +254,9 @@ pub(crate) fn subheader(
     Ok(Box::new(text))
 }
 
-pub(crate) fn labelled(
-    label: impl Fn() -> String + 'static,
-    control: Box<dyn LayoutItem>,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let label_text = Text::new(label, LayoutStyle::new().width(120.0), move || {
-        theme.text_style(FontRole::Body, theme.subtle)
-    })?;
-    let row = Container::new(
-        LayoutStyle::new()
-            .flex_row()
-            .align_items(AlignItems::CENTER)
-            .gap(space::md())
-            .width(SizeDimension::Percent(1.0)),
-        vec![Box::new(label_text), control],
-    )?;
-    Ok(Box::new(row))
-}
-
-pub(crate) fn text_field(
-    label: impl Fn() -> String + 'static,
-    value: RwSignal<String>,
-    placeholder: &str,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    record_field(&value);
-    let input = Input::new(
-        value,
-        LayoutStyle::new()
-            .flex_grow(1.0)
-            .height(theme.font(FontRole::Body) * 1.6),
-        move || theme.text_style(FontRole::Body, theme.text),
-    )?
-    .placeholder(placeholder.to_string());
-    let boxed = StyledContainer::new(
-        LayoutStyle::new()
-            .flex_grow(1.0)
-            .padding_horizontal(space::md())
-            .padding_vertical(space::sm()),
-        paint::md(theme.base),
-        vec![box_item(input)],
-    )?;
-    labelled(label, Box::new(boxed), theme)
-}
-
-/// A switch. The catalogue's `toggle` carries its own label, which this form has already drawn in the row's left column — so it takes an empty one and the row stays the shape every other field is.
-pub(crate) fn toggle_field(
-    label: impl Fn() -> String + 'static,
-    value: RwSignal<bool>,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    record_field(&value);
-    let control = telar::toggle(
-        telar::ToggleProps::props()
-            .checked(value)
-            .color(telar::Reactive::of(move || theme.accent))
-            .build(),
-        telar::Children::default(),
-    )?;
-    labelled(label, control, theme)
-}
-
-/// A picker: the current option, and a panel of all of them on press.
-pub(crate) fn enum_field(
-    label: impl Fn() -> String + 'static,
-    value: RwSignal<String>,
-    options: &'static [&'static str],
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let picked = option_index(value, options);
-    let control = telar::select(
-        telar::SelectProps::props()
-            .selected(picked)
-            .color(telar::Reactive::of(move || theme.accent))
-            .stretch(true)
-            .on_select(std::rc::Rc::new(move |at| pick_option(&value, options, at)))
-            .build(),
-        // The choices are rows now, not strings: one `item` per option, rebuilt whenever the list reopens.
-        telar::Children::new(move || {
-            let mut slots = telar::Slots::new();
-            for opt in options {
-                let row = telar::item(
-                    telar::ItemProps::props()
-                        .label(telar::Reactive::of(move || opt.to_string()))
-                        .build(),
-                    telar::Children::default(),
-                )?;
-                slots.push(None, row);
-            }
-            Ok(slots)
-        }),
-    )?;
-    labelled(label, control, theme)
-}
-
 /// A form's action button — and, with live preview on, where that form's fields get wired to it.
 ///
-/// The wiring lives here because every `*_section` builds its fields and then calls this exactly once, so this is the one point in the file that has both the form's fields (through [`RECORDING`]) and the action they feed. The alternative was a fortieth argument on forty functions.
+/// The wiring lives here because every `*_section` builds its fields inside a [`recorder::recording`] and then calls this exactly once, so this is the one point that has both the form's fields (through [`recorder::take`]) and the action they feed. A button that applies no form — an Add, a Clear — is a plain `telar::button`, or it would claim the fields built above it.
 #[derive(telar::Props)]
 pub struct SaveButtonProps {
     pub label: telar::Reactive<String>,
@@ -558,22 +383,6 @@ pub(crate) fn parse_fullscreen_popups(s: &str) -> FullscreenPopups {
     }
 }
 
-pub(crate) fn shape_str(shape: Shape) -> &'static str {
-    match shape {
-        Shape::Bar => "bar",
-        Shape::Sections => "sections",
-        Shape::Chips => "chips",
-    }
-}
-
-pub(crate) fn parse_shape(s: &str) -> Shape {
-    match s {
-        "sections" => Shape::Sections,
-        "chips" => Shape::Chips,
-        _ => Shape::Bar,
-    }
-}
-
 pub(crate) fn capitalize_str(capitalize: Capitalize) -> &'static str {
     match capitalize {
         Capitalize::None => "none",
@@ -666,49 +475,11 @@ mod tests {
         assert_eq!(join_csv(&["a".to_string(), "b".to_string()]), "a, b");
     }
 
-    /// A reorder must not cost an entry its own settings. The comma-separated field this replaced could only carry ids, so it had to reconstruct `{ id = "clock", accent = "red" }` by claiming entries back by name; the pill editor moves the entry itself, and this is the guard that it keeps doing so — including across zones, where losing the accent would look like the module having been re-added rather than moved.
     #[test]
     fn enum_helpers_round_trip() {
         for e in Edge::ALL {
             assert_eq!(parse_edge(edge_str(e)), e);
         }
-        for (s, sh) in [
-            ("bar", Shape::Bar),
-            ("sections", Shape::Sections),
-            ("chips", Shape::Chips),
-        ] {
-            assert_eq!(shape_str(sh), s);
-            assert_eq!(parse_shape(s), sh);
-        }
-    }
-
-    /// K14's one subtle rule: an effect fires once when it is registered, and that run is the field being seeded from the file — not a user changing anything. Counting it would make every form on the page write itself back the moment it was drawn, which with a dozen forms on a page is a dozen config saves and a dozen reloads for a window the user has only just opened.
-    #[test]
-    fn seeding_a_form_is_not_a_change_to_it() {
-        telar::reset_runtime();
-        RECORDING.with(|recording| *recording.borrow_mut() = None);
-
-        let name = signal("nord".to_string());
-        let filled = signal(false);
-        record_field(&name);
-        record_field(&filled);
-
-        let recorder = RECORDING.with(|recording| recording.borrow_mut().take());
-        let recorder = recorder.expect("two fields were recorded");
-        assert_eq!(recorder.subscriptions.len(), 2);
-        assert_eq!(
-            recorder.revision.peek(),
-            0,
-            "drawing the form is not editing it"
-        );
-
-        name.set("rose-pine".to_string());
-        assert_eq!(recorder.revision.peek(), 1);
-        filled.set(true);
-        assert_eq!(recorder.revision.peek(), 2, "either field counts");
-
-        // And the recording is per form: the next one starts empty, or a section would apply its neighbour's fields as well as its own.
-        assert!(RECORDING.with(|recording| recording.borrow().is_none()));
     }
 
     fn scratch_config(name: &str) -> PathBuf {

@@ -2,15 +2,15 @@
 //!
 //! A token named for where it is used is a lie the first time someone needs it somewhere else: `CARD_RADIUS` on a row invites either a wrong name or a fresh literal, and the shell collected sixty of the second kind. A T-shirt size says only how big it is, which is the only thing a step on a scale knows about itself.
 //!
-//! **Both scales have a source, and it is the surface's own.** A corner radius and a base spacing are both configured (`[shape] radius` / `[shape] spacing`, per bar, each falling back to the palette's), so each scale is *derived* from whatever this surface resolved — set the radius to `0` and the whole shell squares off together instead of only its panel corners; raise the spacing and every inset and gap opens with it, not only the distance between two modules on a bar. That is why both are functions and neither is a constant.
+//! **Both scales have a source, and it is the surface's own.** A corner radius and a base spacing are both configured (a bar's own `shape.radius` / `shape.spacing`, each falling back to the palette's), so each scale is *derived* from whatever this surface resolved — set the radius to `0` and the whole shell squares off together instead of only its panel corners; raise the spacing and every inset and gap opens with it, not only the distance between two modules on a bar. That is why both are functions and neither is a constant.
 //!
 //! **Every inset and every gap is on the scale, including inside a widget.** They ran 1, 2, 3, 5, 7 as often as 4, 8, 16 across 84 padding literals and 110 gap literals, which looks at first like per-widget tuning and is not: nothing here was ever measured against anything else, so the spread is what a number picked afresh each time looks like. Six steps, and a value that is not one of them is a bug.
 
 /// The corner radii, as fractions of the one this surface resolved.
 ///
-/// Three steps because the shell has three: a panel and its peers, the cards and rows inside them, and the small hover pills inside those. At the default palette's radius of 10 they come out 10 / 8 / 6, within a pixel of the literals they replace — the point is not a new look, it is that `[shape] radius` and a palette's own radius finally reach past the outermost corner.
+/// Three steps because the shell has three: a panel and its peers, the cards and rows inside them, and the small hover pills inside those. At the default palette's radius of 10 they come out 10 / 8 / 6, within a pixel of the literals they replace — the point is not a new look, it is that a bar's own radius and a palette's finally reach past the outermost corner.
 ///
-/// The ratios are `telar::ThemeTokens`' own (`radius_lg` / `radius_md` / `radius_sm`), so a catalogue widget dropped next to a card rounds by the same rule rather than by a second scale invented here. What stays the shell's is the *base*: these resolve against the surface's configured radius (per-bar override → `[shape] radius` → the theme), which a theme token cannot see.
+/// The ratios are `telar::ThemeTokens`' own (`radius_lg` / `radius_md` / `radius_sm`), so a catalogue widget dropped next to a card rounds by the same rule rather than by a second scale invented here. What stays the shell's is the *base*: these resolve against the surface's configured radius (the bar's own, else the theme's), which a theme token cannot see.
 ///
 /// **Resolve these once per build and capture the number.** A style closure runs on every paint, and the lookup behind [`content_radius`](crate::chrome::content_radius) is a context read, not a constant.
 pub mod corner {
@@ -60,7 +60,7 @@ pub mod paint {
 ///
 /// Six steps, doubling from [`md`] in both directions, with [`xs`] below for the hairline gaps a dense list wants. Few enough that picking one is a decision and not a guess, and wide enough to cover the whole shell — which the twelve distinct values it replaced did not do any better.
 ///
-/// [`md`] is the base on purpose, where the radius base is the *largest* step: "how round is the biggest thing" and "what is the default gap" are different questions. The four middle ratios are `telar::ThemeTokens`' own (`spacing_sm` / `spacing_md` / `spacing_lg` / `spacing_xl`), so a catalogue widget dropped next to a shell row is spaced by the same rule rather than by a second scale invented here; [`xs`] and [`xxl`] extend it past what the theme names. What stays the shell's is the *base*: these resolve against the surface's configured spacing (per-bar override → `[shape] spacing` → the theme), which a theme token cannot see.
+/// [`md`] is the base on purpose, where the radius base is the *largest* step: "how round is the biggest thing" and "what is the default gap" are different questions. The four middle ratios are `telar::ThemeTokens`' own (`spacing_sm` / `spacing_md` / `spacing_lg` / `spacing_xl`), so a catalogue widget dropped next to a shell row is spaced by the same rule rather than by a second scale invented here; [`xs`] and [`xxl`] extend it past what the theme names. What stays the shell's is the *base*: these resolve against the surface's configured spacing (the bar's own, else the theme's), which a theme token cannot see.
 ///
 /// **Resolve these once per build and capture the number**, the same rule the [`corner`] scale carries: the lookup behind [`content_spacing`](crate::chrome::content_spacing) is a context read, not a constant.
 pub mod space {

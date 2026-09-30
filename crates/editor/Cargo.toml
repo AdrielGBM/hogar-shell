@@ -1,0 +1,24 @@
+[package]
+name = "hogar-shell-editor"
+description = "The hogar-shell edit modes: one layer of one screen at a time, its host in the overlay window, the strip that says which, and the tools that edit it."
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+config.workspace = true
+layout.workspace = true
+modules.workspace = true
+platform-wayland.workspace = true
+serde.workspace = true
+services.workspace = true
+surfaces.workspace = true
+telar = { workspace = true, features = ["async-assets", "previews"] }
+toml.workspace = true
+tracing.workspace = true
+ui.workspace = true
+
+[dev-dependencies]
+util.workspace = true

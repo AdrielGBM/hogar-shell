@@ -103,8 +103,9 @@ Three sections are cross-cutting rather than one feature's:
   window is a per-area `above_fullscreen` flag in the layout now, not a global switch — see the
   [Layout reference](../reference/layout.md).
 - `[paths]` — where wallpapers, screenshots, recordings, lyrics and assets live.
-- `[modules.<id>]` — per-module presentation overrides (variant, accent, whether its panel opens as a drawer or
-  a float, and that float's size). Keyed by module id, so it applies to every copy of that module on every bar.
+- `[modules.<id>]` — each module's presentation defaults: variant, accent, whether its panel opens as a drawer
+  or a float, and how big the drawer, the float and its hover card are. Keyed by module id, so it applies to
+  every copy of that module; one copy says otherwise with the same key in its instance's `options`.
 
 ## Unknown keys and unknown ids
 

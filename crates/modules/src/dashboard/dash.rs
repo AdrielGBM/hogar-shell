@@ -30,8 +30,8 @@ pub fn page(host: &Host, theme: NordTheme) -> Result<Box<dyn LayoutItem>, Layout
         host,
         vec![
             PageCard::Module("clock"),
-            PageCard::Own(calendar_card(dashboard, theme)),
-            PageCard::Own(user_card(dashboard, theme)),
+            PageCard::Own(calendar_card(&dashboard, theme)),
+            PageCard::Own(user_card(&dashboard, theme)),
         ],
     )
 }

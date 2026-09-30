@@ -1,7 +1,7 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::enum_row::{enum_row, EnumRowProps};
-use crate::text_row::{text_row, TextRowProps};
+use ::ui::form::enum_row::{enum_row, EnumRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     TEMPERATURE_UNITS, parse_f32, parse_temperature_unit, persist, source, temperature_unit_str,

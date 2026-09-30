@@ -63,7 +63,7 @@ looks like.
 
 `~/.config/hogar-shell/monitors/<output>/config.toml` still exists, with the same shape as the global
 `config.toml`, but it is narrower than it used to be: what used to place a screen's bars and widgets is the
-layout now, so a monitor override is for **behaviour and theme**, not placement — a lower `[shape] radius`, a
+layout now, so a monitor override is for **behaviour and theme**, not placement — a lower `[theme] radius`, a
 different `[theme]` accent, or a wallpaper set below.
 
 ```toml

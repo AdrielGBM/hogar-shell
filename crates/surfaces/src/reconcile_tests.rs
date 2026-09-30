@@ -2,7 +2,9 @@
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
+    use std::rc::Rc;
     use std::sync::Arc;
 
     use platform_wayland::OutputDescriptor;
@@ -14,8 +16,9 @@ mod tests {
         OutputRule, Representation, SessionLayers, WorkspaceMatch, WorkspaceRule, Zone,
     };
 
+    use crate::layer_window::Content;
     use crate::layer_window::Reserved;
-    use crate::reconcile::{Desktop, plan};
+    use crate::reconcile::{self, Desktop, Shell, plan, stacks};
 
     const SCREEN: &str = "DP-1";
 
@@ -97,7 +100,7 @@ mod tests {
                         ..Instance::default()
                     })
                     .collect(),
-                remove: Vec::new(),
+                ..Group::default()
             }],
             ..Area::default()
         }
@@ -416,5 +419,73 @@ mod tests {
                 "{quiet} was never written to"
             );
         }
+    }
+
+    /// What an edit mode draws its reference outlines from is what the windows were handed, output by output, and it is there once the reconcile is done.
+    #[test]
+    fn the_published_arrangement_is_what_the_plan_resolved() {
+        // Nothing reserves: a strip queued before any window would make the driver's surface queue outlive telar's surface table when the test thread exits.
+        let layout = layout_of(Vec::new(), Vec::new());
+        let two = vec![
+            screen(SCREEN, (1920, 1080)),
+            screen("HDMI-A-1", (2560, 1440)),
+        ];
+        let (desktops, _) = on(&layout, &two, None);
+        let mut shell = Shell::new();
+
+        shell.reconcile(&desktops, Content::Rebuild);
+
+        let published = reconcile::desktops();
+        assert_eq!(published.len(), desktops.len());
+        for (published, planned) in published.iter().zip(&desktops) {
+            assert_eq!(published.output, planned.output);
+            assert_eq!(
+                format!("{:?}", published.resolved),
+                format!("{:?}", planned.resolved)
+            );
+            assert_eq!(published.reserved, planned.reserved);
+            assert_eq!(published.size, planned.size);
+        }
+        assert_eq!(
+            stacks().len(),
+            2,
+            "the stack sites are read off the same publication"
+        );
+    }
+
+    /// An edit mode learns that the output it edits went away from the arrangement it already reads, after the windows on that output are gone.
+    #[test]
+    fn an_output_going_away_is_news_to_whoever_reads_the_arrangement() {
+        let layout = layout_of(Vec::new(), Vec::new());
+        let two = vec![
+            screen(SCREEN, (1920, 1080)),
+            screen("HDMI-A-1", (2560, 1440)),
+        ];
+        let mut shell = Shell::new();
+        shell.reconcile(&on(&layout, &two, None).0, Content::Rebuild);
+
+        let seen: Rc<RefCell<Vec<Vec<Option<String>>>>> = Rc::default();
+        let _watching = telar::effect({
+            let seen = Rc::clone(&seen);
+            move || {
+                let outputs = reconcile::desktops()
+                    .iter()
+                    .map(|it| it.output.clone())
+                    .collect();
+                seen.borrow_mut().push(outputs);
+            }
+        });
+        shell.reconcile(&on(&layout, &outputs(), None).0, Content::Keep);
+
+        assert_eq!(
+            seen.borrow().last().cloned(),
+            Some(vec![Some(SCREEN.to_string())]),
+            "the reader ran again and found one screen: {:?}",
+            seen.borrow()
+        );
+        assert!(
+            !shell.windows().is_open(Some("HDMI-A-1"), LayerKind::Top),
+            "by the time it is told, the windows on the screen that left are gone"
+        );
     }
 }

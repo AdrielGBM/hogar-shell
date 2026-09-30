@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use telar::{
-    AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension,
-    Slots, StyledContainer, Text, box_item,
+    AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, PointerButton, RectStyle,
+    SizeDimension, Slots, StyledContainer, Text, box_item,
 };
 
 use config::Variant;
@@ -58,16 +58,24 @@ pub fn neutral(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// What stands in for `id` as `host.representation`: a chip on a bar, and elsewhere a box saying which id, and `reason` when there is one.
+/// What stands in for `id` as `host.representation`: a chip on a bar, and elsewhere a box saying which id, and `reason` when there is one. `menu` is what a secondary press on it opens — the "Fix…" menu of what the layout placed there (TA-7) — and nothing where none is offered.
 pub fn placeholder(
     id: &str,
     reason: Option<&str>,
     host: &Host,
     theme: NordTheme,
+    menu: Option<Rc<dyn Fn()>>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let alt_press = menu.map(|menu| -> Rc<dyn Fn(PointerButton)> {
+        Rc::new(move |button| {
+            if button == PointerButton::Secondary {
+                menu();
+            }
+        })
+    });
     match host.representation {
-        Representation::Chip => placeholder_chip(id, host, theme),
-        _ => placeholder_box(id, reason, host, theme),
+        Representation::Chip => placeholder_chip(id, host, theme, alt_press),
+        _ => placeholder_box(id, reason, host, theme, alt_press),
     }
 }
 
@@ -76,6 +84,7 @@ fn placeholder_chip(
     id: &str,
     host: &Host,
     theme: NordTheme,
+    alt_press: Option<Rc<dyn Fn(PointerButton)>>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let ink = ink(theme);
     let glyph = icon_view(|| GLYPH.to_string(), move || ink, host.icon_size())?;
@@ -108,6 +117,7 @@ fn placeholder_chip(
             .inset(host.inset())
             .vertical(vertical)
             .on_press(Some(Rc::new(open_settings) as Rc<dyn Fn()>))
+            .on_alt_press(alt_press)
             .build(),
         telar::Children::new({
             let inner = RefCell::new(Some(inner));
@@ -121,12 +131,13 @@ fn placeholder_chip(
     )
 }
 
-/// Takes no press, unlike the chip: it may stand where a `ReadOnly` representation was promised — on the lock screen, over the desktop — and a placeholder must not be the one thing there that *acts*. It still claims its rect, because it is painted: a press on it is the shell's rather than the window's underneath, it simply does nothing.
+/// Takes no press, unlike the chip: it may stand where a `ReadOnly` representation was promised — on the lock screen, over the desktop — and a placeholder must not be the one thing there that *acts*. It still claims its rect, because it is painted: a press on it is the shell's rather than the window's underneath, it simply does nothing. A secondary press opens its menu where one is offered, which is never on the lock layer.
 fn placeholder_box(
     id: &str,
     reason: Option<&str>,
     host: &Host,
     theme: NordTheme,
+    alt_press: Option<Rc<dyn Fn(PointerButton)>>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let ink = ink(theme);
     let glyph = icon_view(|| GLYPH.to_string(), move || ink, 18.0)?;
@@ -164,7 +175,8 @@ fn placeholder_box(
     let radius = host.shape.radius;
     let fill = fill(theme);
     Ok(Box::new(crate::layout::painted_chrome(
-        StyledContainer::new(style, move |_| RectStyle::filled(fill, radius), lines)?,
+        StyledContainer::new(style, move |_| RectStyle::filled(fill, radius), lines)?
+            .maybe_on_alt_press(alt_press.map(|run| move |button| run(button))),
         fill,
     )))
 }
@@ -179,7 +191,7 @@ mod tests {
 
     fn host() -> Host {
         Host::chip(
-            crate::host::InstanceId::new("clokc"),
+            crate::host::Instance::of_module("clokc"),
             std::sync::Arc::new(config::Config::starter()),
             config::Edge::Top,
             34.0,
@@ -202,7 +214,7 @@ mod tests {
             OPENED.with(|opened| opened.borrow_mut().push(panel.to_string()))
         });
         let mut chip =
-            placeholder_chip("clokc", &host(), NordTheme::new()).expect("the chip builds");
+            placeholder_chip("clokc", &host(), NordTheme::new(), None).expect("the chip builds");
         let rect = track_layout(chip.layout_node()).expect("the chip registers its rect");
         compute_layout(
             chip.layout_node(),

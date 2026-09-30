@@ -5,7 +5,7 @@ use ::config::theme::{FontRole, NordTheme};
 use ::services::hyprland::{self, ActiveWindow};
 
 let host = ui::host::Host::current()?;
-let config = *host.options::<::config::ActiveWindowConfig>();
+let config = host.options::<::config::ActiveWindowConfig>();
 
 fn text_for(window: &ActiveWindow, config: &::config::ActiveWindowConfig) -> String {
     if window.is_empty() {

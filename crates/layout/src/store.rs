@@ -286,7 +286,11 @@ impl LayoutStore {
         Ok(())
     }
 
+    /// Takes back the last committed transaction. Refused on the recovery store like every other edit (F-10.35), rather than answered as an empty history.
     pub fn undo(&mut self) -> Result<String, StoreError> {
+        if self.safe {
+            return Err(StoreError::Safe);
+        }
         let entry = self.done.pop().ok_or(StoreError::NothingToUndo)?;
         let redo = self.reverse(&entry)?;
         let label = entry.label.clone();
@@ -295,6 +299,9 @@ impl LayoutStore {
     }
 
     pub fn redo(&mut self) -> Result<String, StoreError> {
+        if self.safe {
+            return Err(StoreError::Safe);
+        }
         let entry = self.undone.pop().ok_or(StoreError::NothingToRedo)?;
         let undo = self.reverse(&entry)?;
         let label = entry.label.clone();

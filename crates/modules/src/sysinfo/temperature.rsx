@@ -13,7 +13,7 @@ fn heat_text(celsius: Option<f32>, config: &TemperatureConfig) -> String {
 }
 
 let host = ui::host::Host::current()?;
-let config = host.options::<::config::TemperatureConfig>().clone();
+let config = host.options::<::config::TemperatureConfig>();
 let text_config = config.clone();
 let tint_config = config.clone();
 let sensor = config.sensor.clone();

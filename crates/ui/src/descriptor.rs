@@ -1,6 +1,7 @@
 //! What a module is, declared once: its id, the representations it can be shown as, the options it reads, the verbs it answers and the readings it exposes; the table is installed at startup so a surface can resolve a module id without naming a module.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use platform_wayland::KeyboardMode;
 use telar::{
@@ -338,6 +339,43 @@ pub fn has_popout(module: &str) -> bool {
     find(module).is_some_and(|descriptor| descriptor.representations.popout.is_some())
 }
 
+/// Every option an instance of `module` in the installed table can set; empty for a module the table does not have. See [`ModuleDescriptor::option_fields`].
+pub fn option_fields(module: &str) -> Vec<config::fields::OptionField> {
+    find(module).map_or_else(Vec::new, ModuleDescriptor::option_fields)
+}
+
+impl ModuleDescriptor {
+    /// Every option an instance of this module can set, typed for the inspector: its own options type's, then the presentation keys of what it can be drawn as — a chip's `variant` and `accent`, a panel's `open` and sizes, a hover card's sizes.
+    pub fn option_fields(&self) -> Vec<config::fields::OptionField> {
+        let r = &self.representations;
+        let own = self
+            .options
+            .first()
+            .and_then(|own| config::fields::section(own.section))
+            .unwrap_or_default();
+        let presented =
+            config::fields::presentation()
+                .into_iter()
+                .filter(|field| match field.key.as_str() {
+                    "variant" | "accent" => {
+                        r.chip.is_some() || r.widget.is_some() || r.card.is_some()
+                    }
+                    "open" => r.panel.is_some(),
+                    key if key.starts_with("drawer_") || key.starts_with("float_") => {
+                        r.panel.is_some()
+                    }
+                    key if key.starts_with("popout_") => r.popout.is_some(),
+                    _ => true,
+                });
+        own.into_iter().chain(presented).collect()
+    }
+
+    /// What is wrong with an instance of this module setting `options`, as `(key, why)`: a key [`ModuleDescriptor::option_fields`] does not list, or a value its control does not take.
+    pub fn option_problems(&self, options: &toml::Table) -> Vec<(String, String)> {
+        config::fields::check(&self.option_fields(), options)
+    }
+}
+
 pub fn wants_keyboard(module: &str) -> KeyboardMode {
     panel_of(module).map_or(KeyboardMode::None, |panel| panel.keyboard)
 }
@@ -349,11 +387,12 @@ pub fn closed(module: &str) {
     }
 }
 
-/// Builds `build` in a box laid out by `style`, so that a failure — an error or a panic, during the build or in a later re-run of what it built — is logged and shows `id`'s placeholder for `host` in its place instead of failing the surface around it.
+/// Builds `build` in a box laid out by `style`, so that a failure — an error or a panic, during the build or in a later re-run of what it built — is logged and shows `id`'s placeholder for `host` in its place instead of failing the surface around it. `menu` is what a secondary press on that placeholder opens ([`placeholder::placeholder`]).
 pub fn guard(
     id: &str,
     host: &Host,
     style: LayoutStyle,
+    menu: Option<Rc<dyn Fn()>>,
     build: impl FnOnce() -> Built + 'static,
 ) -> Built {
     let id = id.to_string();
@@ -361,7 +400,7 @@ pub fn guard(
     let boundary = ErrorBoundary::with_style(style, build, move |failure| {
         tracing::error!("'{id}' as {:?}: {failure}", host.representation);
         let theme = host.config().resolve_theme();
-        placeholder::placeholder(&id, Some(&failure.to_string()), &host, theme)
+        placeholder::placeholder(&id, Some(&failure.to_string()), &host, theme, menu.clone())
     })?;
     Ok(Box::new(boundary))
 }
@@ -371,7 +410,7 @@ pub fn place(id: &str, host: &Host, style: LayoutStyle) -> Built {
     let descriptor = find(id).copied();
     let module = id.to_string();
     let built_host = host.clone();
-    guard(id, host, style, move || {
+    guard(id, host, style, None, move || {
         let descriptor = descriptor
             .ok_or_else(|| LayoutError::Engine(format!("no module answers to '{module}'")))?;
         descriptor.build(&built_host).unwrap_or_else(|| {
@@ -387,7 +426,7 @@ pub fn place(id: &str, host: &Host, style: LayoutStyle) -> Built {
 pub fn build_panel(host: &Host) -> Built {
     debug_assert_eq!(host.representation, Representation::Panel);
     place(
-        host.instance.module(),
+        host.module(),
         host,
         LayoutStyle::new()
             .flex_column()
@@ -486,7 +525,7 @@ mod tests {
         set_theme,
     };
 
-    use crate::host::{InstanceId, Size};
+    use crate::host::{Instance, Size};
 
     fn reading(_host: &Host) -> Built {
         Ok(Box::new(StyledContainer::new(
@@ -542,7 +581,7 @@ mod tests {
 
     fn chip_host() -> Host {
         Host::chip(
-            InstanceId::of_module("probe"),
+            Instance::of_module("probe"),
             Arc::new(config::Config::default()),
             config::Edge::Top,
             34.0,

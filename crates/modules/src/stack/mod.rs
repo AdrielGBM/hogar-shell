@@ -490,17 +490,24 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
         Side::Middle => telar::JustifyContent::CENTER,
         Side::End => telar::JustifyContent::END,
     };
-    Ok(Box::new(Container::new(
-        LayoutStyle::new()
-            .absolute()
-            .inset_start(x)
-            .inset_top(bounds.y + inset)
-            .width(width)
-            .height(height)
-            .flex_column()
-            .justify_content(justify),
-        vec![Box::new(list)],
-    )?))
+    Ok(Box::new(surfaces::area::empty_space(
+        area,
+        surround,
+        surfaces::area::dressed(
+            &area.style,
+            &surround.theme,
+            LayoutStyle::new()
+                .absolute()
+                .inset_start(x)
+                .inset_top(bounds.y + inset)
+                .width(width)
+                .height(height)
+                .flex_column()
+                .justify_content(justify),
+            vec![Box::new(list)],
+        )?,
+        surfaces::area::is_filled(&area.style, &surround.theme),
+    )))
 }
 
 /// Sideways, matching the swipe, so a card that arrives along the same axis reads as the same object.

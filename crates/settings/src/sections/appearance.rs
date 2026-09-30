@@ -7,13 +7,16 @@ use std::sync::{Arc, OnceLock};
 use ui::scale::space;
 
 use telar::{
-    AlignItems, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle, RectStyle,
-    RwSignal, StyledContainer, Text, box_item, signal,
+    AlignItems, Children, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
+    Reactive, RectStyle, RwSignal, StyledContainer, Text, box_item, signal,
 };
 
 use crate::form::*;
 use config::theme::{BUILT_IN_THEMES, FontRole, NordTheme, THEME_TOKENS};
 use config::{Config, ScaleConfig, ThemeConfig};
+use ui::form::enum_row::{EnumRowProps, enum_row};
+use ui::form::labelled::labelled;
+use ui::form::text_row::{TextRowProps, text_row};
 
 /// A palette a control draws from and re-reads: the pending `[theme]` selection resolved through [`Config::theme_with`], so a swatch shows the theme being chosen rather than the one being worn.
 type Palette = Rc<dyn Fn() -> NordTheme>;
@@ -91,7 +94,10 @@ fn palette_preview(palette: Palette, theme: NordTheme) -> Result<Box<dyn LayoutI
             .min_width(0.0),
         swatches,
     )?;
-    labelled(|| telar::t!("settings.field.palette"), Box::new(row), theme)
+    labelled(
+        Reactive::of(|| telar::t!("settings.field.palette")),
+        Box::new(row),
+    )
 }
 
 /// One tile per selectable theme, each painted in its own colours: the surface it would give the shell, the ink it would write with, and its accent. The tile a cycle button replaces — ten presses to see ten palettes is the control this page had, and the reason K2 existed.
@@ -115,7 +121,10 @@ fn theme_swatches(
             .min_width(0.0),
         tiles,
     )?;
-    labelled(|| telar::t!("settings.field.name"), Box::new(grid), theme)
+    labelled(
+        Reactive::of(|| telar::t!("settings.field.name")),
+        Box::new(grid),
+    )
 }
 
 fn theme_tile(
@@ -219,7 +228,10 @@ fn accent_swatches(
             .min_width(0.0),
         swatches,
     )?;
-    labelled(|| telar::t!("settings.field.accent"), Box::new(row), theme)
+    labelled(
+        Reactive::of(|| telar::t!("settings.field.accent")),
+        Box::new(row),
+    )
 }
 
 pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -255,84 +267,117 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
         palette_preview(pending.clone(), theme)?,
         theme_swatches(name, mode.read_only(), config.clone(), theme)?,
         accent_swatches(accent, pending, theme)?,
-        enum_field(
-            || telar::t!("settings.field.color_mode"),
-            mode,
-            MODES,
-            theme,
+        enum_row(
+            EnumRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.color_mode")))
+                .value(mode)
+                .options(MODES)
+                .build(),
+            Children::default(),
         )?,
-        enum_field(
-            || telar::t!("settings.field.variant"),
-            variant,
-            VARIANTS,
-            theme,
+        enum_row(
+            EnumRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.variant")))
+                .value(variant)
+                .options(VARIANTS)
+                .build(),
+            Children::default(),
         )?,
-        enum_field(
-            || telar::t!("settings.field.fallback"),
-            fallback,
-            BUILT_IN_THEMES,
-            theme,
+        enum_row(
+            EnumRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.fallback")))
+                .value(fallback)
+                .options(BUILT_IN_THEMES)
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.font_family"),
-            font_family,
-            "(default)",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.font_family")))
+                .value(font_family)
+                .placeholder("(default)")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.radius"),
-            radius,
-            "(theme)",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.radius")))
+                .value(radius)
+                .placeholder("(theme)")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.spacing"),
-            spacing,
-            "(theme)",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.spacing")))
+                .value(spacing)
+                .placeholder("(theme)")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.font_size"),
-            font_size,
-            "(theme)",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.font_size")))
+                .value(font_size)
+                .placeholder("(theme)")
+                .build(),
+            Children::default(),
         )?,
-        text_field(|| telar::t!("settings.field.opacity"), opacity, "1", theme)?,
-        text_field(
-            || telar::t!("settings.field.icon_size"),
-            icon_size,
-            "(theme)",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.opacity")))
+                .value(opacity)
+                .placeholder("1")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.icon_stroke"),
-            icon_stroke,
-            "(glyph)",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.icon_size")))
+                .value(icon_size)
+                .placeholder("(theme)")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.scale_rounding"),
-            scale_rounding,
-            "1",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.icon_stroke")))
+                .value(icon_stroke)
+                .placeholder("(glyph)")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.scale_spacing"),
-            scale_spacing,
-            "1",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.scale_rounding")))
+                .value(scale_rounding)
+                .placeholder("1")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.scale_font"),
-            scale_font,
-            "1",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.scale_spacing")))
+                .value(scale_spacing)
+                .placeholder("1")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.scale_icon"),
-            scale_icon,
-            "1",
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.scale_font")))
+                .value(scale_font)
+                .placeholder("1")
+                .build(),
+            Children::default(),
+        )?,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.scale_icon")))
+                .value(scale_icon)
+                .placeholder("1")
+                .build(),
+            Children::default(),
         )?,
     ];
 
@@ -399,11 +444,13 @@ pub(crate) fn theme_colors_section() -> Result<Box<dyn LayoutItem>, LayoutError>
 
     let mut rows: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(fields.len());
     for (token, value) in fields.iter().map(|(t, v)| (*t, *v)) {
-        rows.push(text_field(
-            move || token.to_string(),
-            value,
-            &config::theme::hex(resolved.token(token)),
-            theme,
+        rows.push(text_row(
+            TextRowProps::props()
+                .label(Reactive::of(move || token.to_string()))
+                .value(value)
+                .placeholder(config::theme::hex(resolved.token(token)))
+                .build(),
+            Children::default(),
         )?);
     }
 

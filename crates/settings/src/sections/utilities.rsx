@@ -1,7 +1,7 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::text_row::{text_row, TextRowProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
+use ::ui::form::toggle_row::{toggle_row, ToggleRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{join_csv, parse_u32, parse_u64, persist, source, split_csv};
 use ::config::UtilitiesConfig;

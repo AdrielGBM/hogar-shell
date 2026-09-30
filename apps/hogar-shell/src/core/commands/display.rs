@@ -401,19 +401,9 @@ pub(crate) const WALLPAPER: Target = Target {
         },
         Command {
             name: "set",
-            args: "<path> [output]",
-            help: "put an image on every screen, or on one of them",
-            run: |args| {
-                use services::wallpaper;
-                let path = util::paths::expand_tilde(std::path::Path::new(arg(args, 0, "path")?));
-                // Checked here rather than left to the surface: a `set` that answered `ok` and changed nothing because the file is gone is the one reply a script cannot act on.
-                if !path.is_file() {
-                    return Err(format!("'{}' is not a file", path.display()));
-                }
-                wallpaper::set(&path, target_output(args.get(1).copied())?.as_deref());
-                refresh_scheme();
-                Ok(path.display().to_string())
-            },
+            args: "<path> [--region <area>] [output]",
+            help: "put an image on every screen, on one of them, or in one region of the layout",
+            run: set_wallpaper,
         },
         Command {
             name: "random",
@@ -449,3 +439,42 @@ pub(crate) const WALLPAPER: Target = Target {
         },
     ],
 };
+
+/// A screen's picture is state the shell owns, so a plain `set` stays a config action; a region's `source` is written in the layout, so `--region` is a layout edit that `layout undo` takes back (F-10.22).
+fn set_wallpaper(args: &[&str]) -> Result<String, String> {
+    let path = util::paths::expand_tilde(std::path::Path::new(arg(args, 0, "path")?));
+    // Checked here rather than left to the surface: a `set` that answered `ok` and changed nothing because the file is gone is the one reply a script cannot act on.
+    if !path.is_file() {
+        return Err(format!("'{}' is not a file", path.display()));
+    }
+    let (region, rest) = region_named(&args[1..])?;
+    let output = target_output(rest.first().copied())?;
+    match region {
+        Some(area) => super::layout::show_in_region(layout::AreaId::new(area), &path, output),
+        None => {
+            services::wallpaper::set(&path, output.as_deref());
+            refresh_scheme();
+            Ok(path.display().to_string())
+        }
+    }
+}
+
+/// The area `--region` names among `args`, wherever it sits, and the arguments left once it is taken out.
+fn region_named<'a>(args: &[&'a str]) -> Result<(Option<&'a str>, Vec<&'a str>), String> {
+    let mut region = None;
+    let mut rest = Vec::with_capacity(args.len());
+    let mut words = args.iter().copied();
+    while let Some(word) = words.next() {
+        if word != "--region" {
+            rest.push(word);
+            continue;
+        }
+        let area = words
+            .next()
+            .ok_or("missing argument <area> after --region")?;
+        if region.replace(area).is_some() {
+            return Err("--region is given twice".to_string());
+        }
+    }
+    Ok((region, rest))
+}

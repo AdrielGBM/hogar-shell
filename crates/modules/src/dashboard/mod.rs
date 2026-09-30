@@ -45,16 +45,13 @@ pub mod cards {
     use config::{ClockConfig, MediaConfig, TemperatureConfig, VisualiserConfig};
 
     pub fn clock(host: &Host) -> Card {
-        dash::clock_card(
-            host.options::<ClockConfig>().clone(),
-            use_theme::<NordTheme>(),
-        )
+        dash::clock_card(host.options::<ClockConfig>(), use_theme::<NordTheme>())
     }
 
     pub fn cpu(host: &Host) -> Card {
         performance::cpu_card(
-            performance::machine(host.options::<DashboardConfig>()),
-            host.options::<TemperatureConfig>(),
+            performance::machine(&host.options::<DashboardConfig>()),
+            &host.options::<TemperatureConfig>(),
             use_theme::<NordTheme>(),
         )
     }
@@ -68,7 +65,7 @@ pub mod cards {
 
     pub fn memory(host: &Host) -> Card {
         performance::memory_card(
-            performance::machine(host.options::<DashboardConfig>()),
+            performance::machine(&host.options::<DashboardConfig>()),
             use_theme::<NordTheme>(),
         )
     }
@@ -83,10 +80,10 @@ pub mod cards {
 
     pub fn media(host: &Host) -> Card {
         media::now_playing_card(
-            host.options::<DashboardConfig>(),
+            &host.options::<DashboardConfig>(),
             media::ring_bands(
-                host.options::<MediaConfig>(),
-                host.options::<VisualiserConfig>(),
+                &host.options::<MediaConfig>(),
+                &host.options::<VisualiserConfig>(),
             ),
             use_theme::<NordTheme>(),
         )
@@ -95,8 +92,8 @@ pub mod cards {
     pub fn track(host: &Host) -> Card {
         media::track_card(
             media::ring_bands(
-                host.options::<MediaConfig>(),
-                host.options::<VisualiserConfig>(),
+                &host.options::<MediaConfig>(),
+                &host.options::<VisualiserConfig>(),
             ),
             use_theme::<NordTheme>(),
         )

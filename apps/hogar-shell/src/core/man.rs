@@ -475,7 +475,8 @@ mod tests {
         let page = commands_page();
         assert!(page.contains(".SS layout\n"));
         for verb in [
-            "list", "show", "check", "use", "undo", "redo", "add", "remove", "move", "set", "reset",
+            "list", "show", "check", "use", "undo", "redo", "add", "remove", "move", "set",
+            "reset", "edit",
         ] {
             assert!(
                 page.contains(&format!("\\fB{verb}\\fR")),

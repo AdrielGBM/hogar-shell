@@ -416,6 +416,52 @@ The `media` module. `preferred_player` names an MPRIS bus suffix (`spotify`, `mp
 
 ### `[media.aliases]`
 
+## `[modules."<id>"]`
+
+How a module is presented, whichever module it is: how a chip of it is dressed, and how big the panel and the hover card it opens are. `[modules.<id>]` holds one module's defaults, and an instance of it in the layout overrides any of them with an option of the same name.
+
+- **`drawer_max_height`** · default `280.0`
+
+  The tallest its drawer grows before its content scrolls, in px. A maximum, not a height: a drawer with two rows in it is two rows tall.
+  Range: 80 to 1600.
+
+- **`drawer_width`** · default `320.0`
+
+  How wide its panel is as a drawer, in px.
+  Range: 160 to 1600.
+
+- **`popout_max_height`** · default `300.0`
+
+  The tallest that card may grow. Its transient is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
+  Range: 80 to 1200.
+
+- **`popout_width`** · default `264.0`
+
+  How wide the card it shows while the pointer rests on its chip is, in px.
+  Range: 140 to 900.
+
+- **`variant`** · default `"default"`
+
+  How a chip of it is filled: `default` is transparent and highlights on hover, `filled` paints its accent.
+
+- **`accent`** · unset by default
+
+  The accent a chip of it draws with, over `[theme] accent`.
+
+- **`open`** · unset by default
+
+  Whether its panel opens as a drawer hanging off the chip or as a float in the middle of the screen. Unset is a drawer, except for a panel that is an application, such as the settings.
+
+- **`float_width`** · unset by default
+
+  How wide its panel is as a float, in px. Unset is 360, or what an application panel needs.
+  Range: 160 to 3840.
+
+- **`float_height`** · unset by default
+
+  How tall its panel is as a float, in px. Unset is 240, or what an application panel needs.
+  Range: 120 to 2160.
+
 ## `[network]`
 
 The network (`[network]`): the wireless list its panel shows.
@@ -462,27 +508,22 @@ The history panel's own behaviour lives here too, since it draws the same cards:
 - **`group_by_app`** · default `true`
 - **`group_preview_num`** · default `3`
 - **`open_expanded`** · default `false`
+- **`sidebar_size`** · default `400`
+
+  How deep the notification centre is across its edge — the width of a left or right one, the height of a top or bottom one — in px.
+  Range: 240 to 1200.
+
 - **`sound`** · default `""`
 
 ## `[panels]`
 
-Panel presentation shared by drawers and floating windows (`[panels]`): each form's size, and the gesture that opens one. One home for both so a drawer and a float are configured the same way.
+Panel behaviour shared by drawers and floating windows (`[panels]`): the gesture that opens one. How big each form is belongs to the module whose panel it is (`drawer_width`, `float_width`, … under `[modules.<id>]` or on its instance).
 
 **What is deliberately not here.** The gap a panel keeps from the bar is derived, never set: the bar's own outer gap when it floats, else a default so a hugging bar's panels still breathe. And its opacity is `[theme] opacity`, for every surface at once. Both used to be overridable per-panel, and neither key bought anything but the chance for a drawer to sit at a distance, or at an opacity, that nothing else on the screen shares.
 
 - **`drag_threshold`** · default `48.0`
 
   How far a chip must be dragged away from the bar before letting go opens its panel, in px. `0` switches the gesture off. One threshold for every panel rather than one each: the gesture is the same everywhere on the bar, and a per-panel distance would make the bar feel inconsistent under the same finger.
-
-### `[panels.drawer]`
-
-- **`max_height`** · default `280.0`
-- **`width`** · default `320.0`
-
-### `[panels.float]`
-
-- **`height`** · default `240`
-- **`width`** · default `360`
 
 ## `[paths]`
 
@@ -513,15 +554,9 @@ The delays are what separate a popout from a flicker. Without `open_delay`, drag
 
   Off costs nothing: no chip tracks the pointer and no transient is ever opened.
 
-- **`max_height`** · default `300.0`
-
-  The tallest a popout may grow. Its transient is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
-
 - **`open_delay`** · default `280`
 
   How long the pointer must rest on a chip before its popout opens, in ms.
-
-- **`width`** · default `264.0`
 
 ## `[recorder]`
 
@@ -577,27 +612,21 @@ Screenshots (`[screenshot]`).
 
 ## `[shape]`
 
-Global shape settings. `gap` defaults to 0 (edge-to-edge bar; floating is opt-in). `spacing`/`radius` are unset by default so they fall back to the theme's values — set them here (or per-bar) to override the theme.
+What every bar shares about its shape. A bar's own mode, gap, spacing and radius are its `shape` in the layout; what it leaves unset follows the theme.
 
 - **`frame`** · default `false`
-- **`gap`** · default `0`
-- **`inactive_size`** · default `6`
-- **`mode`** · default `"bar"`
-- **`spacing`** · unset by default
-- **`radius`** · unset by default
+
+  Draw the bars as one ring around the screen: each bar fills its strip flat and square, and none floats off its edge.
 
 ## `[sidebar]`
 
 The notification centre (`[sidebar]`): a full-height surface that is the home for the notification history and the quick toggles.
 
-Distinct from the bell drawer, which is a glance: this is where a user goes to *deal with* what has arrived, so it takes the whole edge, scrolls, and hosts the utilities panel's own toggles rather than a second set.
+Distinct from the bell drawer, which is a glance: this is where a user goes to *deal with* what has arrived, so it takes the whole edge, scrolls, and hosts the utilities panel's own toggles rather than a second set. How deep it is belongs to the notifications module that opens it (`sidebar_size`).
 
 - **`edge`** · default `"right"`
 - **`show_history`** · default `true`
 - **`show_toggles`** · default `true`
-- **`size`** · default `400`
-
-  Width for a left/right sidebar, height for a top/bottom one, in px.
 
 ## `[stack]`
 

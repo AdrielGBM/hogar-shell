@@ -5,7 +5,7 @@ title: Bars
 summary: One per screen edge, all four at once if you like, on every monitor.
 status: stable
 compositor: any
-config: [shape]
+config: [shape, modules]
 commands: [shell, layout]
 deps: [wlr-layer-shell]
 see_also: [panels, per-monitor, shape, compositor-rules]
@@ -55,17 +55,17 @@ Three anchor points inside the bar's groups: `start`, `center`, `end`. [spacer](
 buys every arrangement in between.
 
 `hogar-shell layout add <module> <area> [group]` is the same edit from a script or a keybind, and
-`hogar-shell layout show` prints a layout as it is stored. `instance.options` on a placed module is what a
-`[modules.<id>] accent = "red"`-style override used to be — see the
-[Layout reference](../../reference/layout.md) for the full shape.
+`hogar-shell layout show` prints a layout as it is stored. `instance.options` on a placed module sets any of
+that module's options for that copy alone — `accent = "red"`, a `drawer_width` for the panel it opens, a key of
+its own section — over the module's `[<module>]` and `[modules.<id>]` defaults; a key the module does not have
+is a `layout check` error. See the [Layout reference](../../reference/layout.md) for the full shape.
 
 An id placed twice keeps its options independent — that is the whole reason an `Instance` has an id: two copies
 of `clock` can be styled differently, and each is addressed on its own by IPC and by an edit.
 
 ## Shapes
 
-`[shape] mode` (the global default) or a bar's own `shape` field decides what the bar looks like, and every
-module works in all three:
+A bar's own `shape` field decides what it looks like, and every module works in all three modes:
 
 | Mode | What it is |
 | --- | --- |
@@ -73,12 +73,11 @@ module works in all three:
 | `sections` | the three zones as separate plates |
 | `chips` | a plate per module |
 
-`[shape] gap` floats the bar off the edge; `frame` draws a ring around the screen; `inactive_size` shrinks what
-is not focused.
+The same table's `gap` floats the bar off the edge, and `spacing` and `radius` set the room between its
+modules and how round it is — so a top bar can be one solid strip while a left bar is chips. What a bar leaves
+unset follows the theme. See [`BarShape`](../../reference/layout.md) in the layout reference.
 
-Each bar area can override the global shape for itself with its own `shape` table — `mode`, `gap`, `spacing`
-and `radius`, all unset by default, so a top bar can be one solid strip while a left bar is chips. See
-[`BarShape`](../../reference/layout.md) in the layout reference.
+`[shape] frame` draws a ring around the screen out of every bar.
 
 ## Auto-hide
 

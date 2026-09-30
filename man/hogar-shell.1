@@ -436,8 +436,8 @@ every image in the library: folder, name and path
 \fBreload\fR
 re\-scan the wallpaper folder
 .TP
-\fBset\fR \fI<path> [output]\fR
-put an image on every screen, or on one of them
+\fBset\fR \fI<path> [\-\-region <area>] [output]\fR
+put an image on every screen, on one of them, or in one region of the layout
 .TP
 \fBrandom\fR \fI[output]\fR
 pick one from the library at random
@@ -512,7 +512,10 @@ put a placed module in another group, or elsewhere in its own
 change one property of a placed module
 .TP
 \fBreset\fR \fI<id|layer|all>\fR
-put a part of the layout back to what the built\-in one says
+put a part of the layout back to what the layout it extends says, or the built\-in one
+.TP
+\fBedit\fR \fI<background|desktop|top|overlay|lock|off> [output]\fR
+edit one layer on one screen (the focused one unless named), or stop
 .SS deps
 .TP
 \fBlist\fR

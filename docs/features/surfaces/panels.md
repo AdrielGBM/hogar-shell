@@ -29,16 +29,17 @@ hogar-shell panel list            # what is open right now
 
 ## Two presentations
 
-`[modules.<id>] open` picks one per module:
+`open` picks one — in the `options` of the module's instance in the layout, or under `[modules.<id>]` for every
+instance of it:
 
 | Value | What you get |
 | --- | --- |
 | `drawer` | anchored to the chip that opened it, sized to its content — see [Drawers](drawers.md) |
 | `float` | a free-standing window you can move and resize — see [Floats](floats.md) |
 
-The choice lives under `[modules.<id>]` rather than on the bar entry because a panel is toggled by module id
-from three places and only one of them has a bar entry in hand. An entry-scoped answer would make the same
-panel open differently depending on how you asked for it.
+A panel is toggled by module id from three places and only a press has a chip in hand, so which instance's
+options apply is fixed: a press takes the pressed chip's instance, and IPC or a keybind the module's first
+instance on the focused screen, then on any screen, then `[modules.<id>]` alone.
 
 ## Configuring
 
@@ -47,11 +48,10 @@ panel open differently depending on how you asked for it.
 How translucent a panel is, and how far it sits off the bar, are not panel settings: the opacity is
 `[theme] opacity` for the whole shell at once, and the gap is the bar's own, so a panel floats off the bar by
 exactly what the bar floats off the screen.
-`[panels.drawer]` — `width`, `max_height`.
-`[panels.float]` — `width`, `height`.
 
-Per module, `[modules.<id>]` overrides `width` and `height` for that module's float, plus `variant` and
-`accent` for how it is drawn.
+How big a panel opens is its module's: `drawer_width` and `drawer_max_height` for a drawer, `float_width` and
+`float_height` for a float, set on an instance or under `[modules.<id>]` like `open`, beside `variant` and
+`accent` for how its chip is drawn.
 
 ## Keyboard
 

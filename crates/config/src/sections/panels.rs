@@ -9,15 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::sections::*;
 
-/// What the settings application spends on its own title bar, search row and padding before any form is drawn. Subtracted from the surface height to size the scrolling page area — see [`Config::settings_page_height`].
-pub(crate) const SETTINGS_CHROME: f32 = 108.0;
-
 /// Modules whose panel is an *application* rather than a card, and the float each needs, as `(id, w, h)`.
 ///
-/// The default open mode is a drawer because that is what a panel is: a card dropped under the chip you pressed. Settings is not that — it is a nav pane with a page beside it — and in a 320px drawer the nav leaves no room for a form at all. Putting the answer here rather than in [`Config::starter`] is what makes it true for the installs that already have a config file, which is all of them after the first run; an explicit `[modules.<id>]` still wins over it.
+/// The default open mode is a drawer because that is what a panel is: a card dropped under the chip you pressed. Settings is not that — it is a nav pane with a page beside it — and in a 320px drawer the nav leaves no room for a form at all. Putting the answer here rather than in [`Config::starter`] is what makes it true for the installs that already have a config file, which is all of them after the first run; an explicit `open` or float size still wins over it.
 const APPLICATION_PANELS: &[(&str, u32, u32)] = &[("settings", 920, 680)];
 
-pub(crate) fn application_panel(id: &str) -> Option<(u32, u32)> {
+/// The float a panel that is not an application opens in, in logical px.
+const FLOAT: (u32, u32) = (360, 240);
+
+fn application_panel(id: &str) -> Option<(u32, u32)> {
     APPLICATION_PANELS
         .iter()
         .find(|(name, _, _)| *name == id)
@@ -63,50 +63,98 @@ pub enum OpenMode {
     Float,
 }
 
-/// Per-module presentation override, keyed by module id under `[modules.<id>]`: container variant, an accent token that wins over the global `[theme] accent`, how its panel opens, and how large it opens.
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+/// A colour named by the theme: one of its accents (`blue`, `cyan`, `teal`, `red`, `orange`, `yellow`, `green`, `purple`).
+pub type AccentName = String;
+
+/// How a module is presented, whichever module it is: how a chip of it is dressed, and how big the panel and the hover card it opens are. `[modules.<id>]` holds one module's defaults, and an instance of it in the layout overrides any of them with an option of the same name.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct ModuleOverride {
+    /// How a chip of it is filled: `default` is transparent and highlights on hover, `filled` paints its accent.
     pub variant: Variant,
-    pub accent: Option<String>,
-    pub open: OpenMode,
-    /// Overrides `[panels.float] width` for this module's float, in logical px. Unset follows the global size.
-    pub width: Option<u32>,
-    /// Overrides `[panels.float] height` for this module's float, in logical px.
-    pub height: Option<u32>,
+    /// The accent a chip of it draws with, over `[theme] accent`.
+    pub accent: Option<AccentName>,
+    /// Whether its panel opens as a drawer hanging off the chip or as a float in the middle of the screen. Unset is a drawer, except for a panel that is an application, such as the settings.
+    pub open: Option<OpenMode>,
+    /// How wide its panel is as a drawer, in px.
+    /// Range: 160 to 1600.
+    pub drawer_width: f32,
+    /// The tallest its drawer grows before its content scrolls, in px. A maximum, not a height: a drawer with two rows in it is two rows tall.
+    /// Range: 80 to 1600.
+    pub drawer_max_height: f32,
+    /// How wide its panel is as a float, in px. Unset is 360, or what an application panel needs.
+    /// Range: 160 to 3840.
+    pub float_width: Option<u32>,
+    /// How tall its panel is as a float, in px. Unset is 240, or what an application panel needs.
+    /// Range: 120 to 2160.
+    pub float_height: Option<u32>,
+    /// How wide the card it shows while the pointer rests on its chip is, in px.
+    /// Range: 140 to 900.
+    pub popout_width: f32,
+    /// The tallest that card may grow. Its transient is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
+    /// Range: 80 to 1200.
+    pub popout_max_height: f32,
 }
 
-/// The drawer panel's size (§4): a fixed width and a max height its content scrolls within.
-#[derive(Deserialize, Serialize, Clone, Copy, Debug)]
-#[serde(default)]
-pub struct DrawerConfig {
-    pub width: f32,
-    pub max_height: f32,
-}
-
-impl Default for DrawerConfig {
+impl Default for ModuleOverride {
     fn default() -> Self {
         Self {
-            width: 320.0,
-            max_height: 280.0,
+            variant: Variant::default(),
+            accent: None,
+            open: None,
+            drawer_width: 320.0,
+            drawer_max_height: 280.0,
+            float_width: None,
+            float_height: None,
+            popout_width: 264.0,
+            popout_max_height: 300.0,
         }
     }
 }
 
-/// A floating window's size (§5) in logical px.
-#[derive(Deserialize, Serialize, Clone, Copy, Debug)]
-#[serde(default)]
-pub struct FloatConfig {
-    pub width: u32,
-    pub height: u32,
+impl ModuleOverride {
+    /// How `module`'s panel opens: as asked, else a drawer — except for an application panel, which has no drawer-sized form (see [`APPLICATION_PANELS`]).
+    pub fn open_mode(&self, module: &str) -> OpenMode {
+        self.open.unwrap_or(match application_panel(module) {
+            Some(_) => OpenMode::Float,
+            None => OpenMode::Drawer,
+        })
+    }
+
+    /// How big `module`'s float opens: as asked, else what an application panel needs, else [`FLOAT`].
+    ///
+    /// Per module rather than one number for every float because the panels are not one kind of thing. A media float is a card; the settings float is an application with a nav pane down its left-hand side, and a size that suits one makes the other either cramped or mostly empty.
+    pub fn float_size(&self, module: &str) -> (u32, u32) {
+        let (width, height) = application_panel(module).unwrap_or(FLOAT);
+        (
+            self.float_width.unwrap_or(width).clamp(160, 3840),
+            self.float_height.unwrap_or(height).clamp(120, 2160),
+        )
+    }
+
+    /// The drawer's width and the height its content scrolls within, bounded so a typo cannot open a drawer too narrow to read or taller than any screen.
+    pub fn drawer_size(&self) -> (f32, f32) {
+        (
+            bounded(self.drawer_width, 160.0, 1600.0, 320.0),
+            bounded(self.drawer_max_height, 80.0, 1600.0, 280.0),
+        )
+    }
+
+    /// The hover card's width and the most it may grow to.
+    pub fn popout_size(&self) -> (f32, f32) {
+        (
+            bounded(self.popout_width, 140.0, 900.0, 264.0),
+            bounded(self.popout_max_height, 80.0, 1200.0, 300.0),
+        )
+    }
 }
 
-impl Default for FloatConfig {
-    fn default() -> Self {
-        Self {
-            width: 360,
-            height: 240,
-        }
+/// `value` clamped into `min..=max`, or `fallback` when it is not a number at all.
+fn bounded(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        fallback
     }
 }
 
@@ -145,9 +193,6 @@ pub struct PopoutsConfig {
     pub open_delay: u64,
     /// How long the popout survives after the pointer leaves, in ms.
     pub close_delay: u64,
-    pub width: f32,
-    /// The tallest a popout may grow. Its transient is this tall whatever the card needs; the surplus is carved out of the input region, so it stays click-through rather than swallowing presses.
-    pub max_height: f32,
 }
 
 impl Default for PopoutsConfig {
@@ -156,8 +201,6 @@ impl Default for PopoutsConfig {
             enabled: true,
             open_delay: 280,
             close_delay: 200,
-            width: 264.0,
-            max_height: 300.0,
         }
     }
 }
@@ -172,17 +215,9 @@ impl PopoutsConfig {
     pub fn close_after(&self) -> Duration {
         Duration::from_millis(self.close_delay.clamp(60, 5_000))
     }
-
-    pub fn card_width(&self) -> f32 {
-        self.width.clamp(140.0, 900.0)
-    }
-
-    pub fn card_height(&self) -> f32 {
-        self.max_height.clamp(80.0, 1200.0)
-    }
 }
 
-/// Panel presentation shared by drawers and floating windows (`[panels]`): each form's size, and the gesture that opens one. One home for both so a drawer and a float are configured the same way.
+/// Panel behaviour shared by drawers and floating windows (`[panels]`): the gesture that opens one. How big each form is belongs to the module whose panel it is (`drawer_width`, `float_width`, … under `[modules.<id>]` or on its instance).
 ///
 /// **What is deliberately not here.** The gap a panel keeps from the bar is derived, never set: the bar's own outer gap when it floats, else a default so a hugging bar's panels still breathe. And its opacity is `[theme] opacity`, for every surface at once. Both used to be overridable per-panel, and neither key bought anything but the chance for a drawer to sit at a distance, or at an opacity, that nothing else on the screen shares.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug)]
@@ -190,16 +225,12 @@ impl PopoutsConfig {
 pub struct PanelsConfig {
     /// How far a chip must be dragged away from the bar before letting go opens its panel, in px. `0` switches the gesture off. One threshold for every panel rather than one each: the gesture is the same everywhere on the bar, and a per-panel distance would make the bar feel inconsistent under the same finger.
     pub drag_threshold: f32,
-    pub drawer: DrawerConfig,
-    pub float: FloatConfig,
 }
 
 impl Default for PanelsConfig {
     fn default() -> Self {
         Self {
             drag_threshold: 48.0,
-            drawer: DrawerConfig::default(),
-            float: FloatConfig::default(),
         }
     }
 }

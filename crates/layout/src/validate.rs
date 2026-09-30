@@ -9,8 +9,11 @@
 //!
 //! What this crate cannot know on its own — whether a module exists, whether it has a representation, whether that representation is read-only, and whether a command line resolves — is asked of a [`Catalogue`]. That keeps the layout model free of the module registry and the IPC table, and lets a test state exactly which modules it is talking about.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use config::scheme;
+use config::theme::NordTheme;
+use telar::Color;
 use util::report::{Finding, Report};
 
 use crate::merge::merge_layers;
@@ -26,13 +29,12 @@ pub trait Catalogue {
     fn is_read_only(&self, module: &str, representation: Representation) -> bool;
     /// Whether the line names a real IPC command, checked without running it.
     fn command_resolves(&self, line: &str) -> bool;
+    /// What is wrong with an instance of `module` setting `options`, as `(key, why)`: a key the module does not declare, or a value of the wrong kind.
+    fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, String)>;
 }
 
 /// The smallest prompt that is still usable, as a fraction of the output. Anything smaller is a lockout on a large monitor as surely as a hidden one.
 const SMALLEST_PROMPT: f32 = 0.05;
-
-/// The faintest a prompt may be drawn. Below this the field a user has to type into disappears into the wallpaper behind it.
-const FAINTEST_PROMPT: f32 = 0.9;
 
 /// Everything wrong with `layout` that does not depend on which output it is shown on.
 pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
@@ -47,6 +49,7 @@ pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
         check_modules(&rule.layers, &at, &file, catalogue, &mut report);
         check_actions(&rule.layers, &at, &file, catalogue, &mut report);
         check_gradients(&rule.layers, &at, &file, &mut report);
+        check_bar_corners(&rule.layers, &at, &file, &mut report);
         check_workspace_rules(layout, rule, &at, &file, catalogue, &mut report);
     }
     report
@@ -73,7 +76,9 @@ pub fn validate_lock(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
 }
 
 /// Everything wrong with one output's resolved arrangement. The lock layer's prompt lives here rather than in [`validate`] because "exactly one per output" is only answerable once an output is known.
-pub fn validate_resolved(resolved: &Resolved, file: &str) -> Report {
+///
+/// `theme` is the one the lock would draw with, since whether the prompt's text can be read on its card depends on what its tokens are.
+pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> Report {
     let mut report = Report::default();
     let Some(lock) = resolved.layer(LayerKind::Lock) else {
         return report;
@@ -111,7 +116,7 @@ pub fn validate_resolved(resolved: &Resolved, file: &str) -> Report {
 
     let prompt_at = prompts[0];
     let prompt = &lock.areas[prompt_at];
-    let ResolvedAreaKind::Prompt { rect, style } = &prompt.kind else {
+    let ResolvedAreaKind::Prompt { rect } = &prompt.kind else {
         return report;
     };
 
@@ -136,7 +141,8 @@ pub fn validate_resolved(resolved: &Resolved, file: &str) -> Report {
             "the prompt is too small to type into".to_string(),
         ));
     }
-    if let Some(opacity) = style.opacity.or(prompt.style.opacity)
+    let style = &prompt.style;
+    if let Some(opacity) = style.opacity
         && opacity < FAINTEST_PROMPT
     {
         report.error(Finding::new(
@@ -144,6 +150,21 @@ pub fn validate_resolved(resolved: &Resolved, file: &str) -> Report {
             format!("{at}.areas.{}.style.opacity", prompt.id),
             format!("the prompt is drawn at {opacity}, too faint to find; it stays at {FAINTEST_PROMPT} or above"),
         ));
+    }
+    // Only a fill the layout chose is judged: the theme's own surface is what the minimal lock draws too, so refusing it would fall back to the same card.
+    if style.fill.is_some() {
+        let card = composed(prompt_card(style, theme), theme.base);
+        if !scheme::is_readable(theme.text, card) {
+            report.error(Finding::new(
+                file,
+                format!("{at}.areas.{}.style.fill", prompt.id),
+                format!(
+                    "the prompt's text is {:.1}:1 against this card, under the {}:1 it needs to be read (WCAG AA)",
+                    theme.text.contrast_ratio(card),
+                    scheme::MIN_TEXT_CONTRAST
+                ),
+            ));
+        }
     }
     for covering in &lock.areas[prompt_at + 1..] {
         report.error(Finding::new(
@@ -169,10 +190,11 @@ const AREA_KEYS: &[&str] = &[
     "visible",
     "groups",
     "remove",
+    "actions",
 ];
 
 /// The keys every group has, wherever it sits.
-const GROUP_KEYS: &[&str] = &["id", "place", "children", "remove"];
+const GROUP_KEYS: &[&str] = &["id", "place", "stacked", "children", "remove"];
 
 fn keys_of_kind(kind: &str) -> &'static [&'static str] {
     match kind {
@@ -183,7 +205,7 @@ fn keys_of_kind(kind: &str) -> &'static [&'static str] {
         "texture" => &["rect", "image", "gradient", "tile", "blend", "opacity"],
         "dock" => &["edge", "thickness"],
         "free" => &["rect"],
-        "prompt" => &["rect", "style"],
+        "prompt" => &["rect"],
         _ => &[],
     }
 }
@@ -339,6 +361,21 @@ fn check_gradients(layers: &Layers, at: &str, file: &str, report: &mut Report) {
     }
 }
 
+/// A bar is rounded by its `shape.radius`, which its chips nest their own corners inside; a `style.radius` beside it would be a second answer for the same pixels, so it is reported rather than drawn.
+fn check_bar_corners(layers: &Layers, at: &str, file: &str, report: &mut Report) {
+    for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            if matches!(area.kind, Some(AreaKind::Bar { .. })) && area.style.radius.is_some() {
+                report.warn(Finding::new(
+                    file,
+                    format!("{at}.layers.{kind}.areas.{}.style.radius", area.id),
+                    "a bar is rounded by its `shape.radius`, so this one is not drawn".to_string(),
+                ));
+            }
+        }
+    }
+}
+
 fn check_layer_ids(
     layers: &Layers,
     at: &str,
@@ -415,6 +452,13 @@ fn check_modules(
                     ),
                 ));
             }
+            for (key, why) in catalogue.option_problems(module, &instance.options) {
+                report.error(Finding::new(
+                    file,
+                    format!("{path}.options.{key}"),
+                    format!("`{module}`: `{key}` {why}"),
+                ));
+            }
         }
     }
 }
@@ -427,21 +471,35 @@ fn check_actions(
     report: &mut Report,
 ) {
     for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            let path = format!("{at}.layers.{kind}.areas.{}", area.id);
+            check_chains(&area.actions, &path, file, catalogue, report);
+        }
         for (area, group, instance) in instances_of(layer) {
-            for (trigger, action) in &instance.actions {
-                let path = format!(
-                    "{at}.layers.{kind}.areas.{}.groups.{}.children.{}.actions.{:?}",
-                    area.id, group.id, instance.id, trigger
-                );
-                for line in &action.0 {
-                    if !catalogue.command_resolves(line) {
-                        report.error(Finding::new(
-                            file,
-                            path.clone(),
-                            format!("`{line}` is not a command this shell has"),
-                        ));
-                    }
-                }
+            let path = format!(
+                "{at}.layers.{kind}.areas.{}.groups.{}.children.{}",
+                area.id, group.id, instance.id
+            );
+            check_chains(&instance.actions, &path, file, catalogue, report);
+        }
+    }
+}
+
+fn check_chains(
+    actions: &BTreeMap<Trigger, Action>,
+    at: &str,
+    file: &str,
+    catalogue: &dyn Catalogue,
+    report: &mut Report,
+) {
+    for (trigger, action) in actions {
+        for line in &action.0 {
+            if !catalogue.command_resolves(line) {
+                report.error(Finding::new(
+                    file,
+                    format!("{at}.actions.{}", trigger.as_str()),
+                    format!("`{line}` is not a command this shell has"),
+                ));
             }
         }
     }
@@ -454,18 +512,24 @@ fn check_lock_layer(
     catalogue: &dyn Catalogue,
     report: &mut Report,
 ) {
+    let refuse = |path: String, report: &mut Report| {
+        report.error(Finding::new(
+            file,
+            format!("{path}.actions"),
+            "the lock layer holds readings, never controls, so an action here is refused"
+                .to_string(),
+        ));
+    };
+    for area in lock.areas.iter().filter(|area| !area.actions.is_empty()) {
+        refuse(format!("{at}.layers.lock.areas.{}", area.id), report);
+    }
     for (area, group, instance) in instances_of(lock) {
         let path = format!(
             "{at}.layers.lock.areas.{}.groups.{}.children.{}",
             area.id, group.id, instance.id
         );
         if !instance.actions.is_empty() {
-            report.error(Finding::new(
-                file,
-                format!("{path}.actions"),
-                "the lock layer holds readings, never controls, so an action here is refused"
-                    .to_string(),
-            ));
+            refuse(path.clone(), report);
         }
         let Some(module) = &instance.module else {
             continue;
@@ -492,13 +556,7 @@ fn check_workspace_rules(
     catalogue: &dyn Catalogue,
     report: &mut Report,
 ) {
-    let mut output_level = Layers::default();
-    for other in &layout.outputs {
-        if other.matches.specificity() <= rule.matches.specificity() {
-            merge_layers(&mut output_level, &other.layers);
-        }
-    }
-    let reserving = reserving_areas(&output_level);
+    let reserving = reserving_under(layout, &rule.matches);
 
     for workspace in &rule.workspaces {
         let at = format!("{at}.workspaces.{}", workspace.matches.0);
@@ -544,8 +602,15 @@ fn check_workspace_rules(
     }
 }
 
-fn reserving_areas(layers: &Layers) -> BTreeSet<AreaId> {
-    layers
+/// What reserves space under the workspace rules of the output rule `matches` names: that rule and every broader one of the same layout, merged the way resolution merges them. A workspace rule may change what is inside one of these areas, never whether it is there, what it reserves or how big it is (TA-2).
+pub(crate) fn reserving_under(layout: &Layout, matches: &OutputMatch) -> BTreeSet<AreaId> {
+    let mut output_level = Layers::default();
+    for other in &layout.outputs {
+        if other.matches.specificity() <= matches.specificity() {
+            merge_layers(&mut output_level, &other.layers);
+        }
+    }
+    output_level
         .each()
         .into_iter()
         .flat_map(|(_, layer)| layer.areas.iter())
@@ -563,4 +628,14 @@ fn instances_of(layer: &Layer) -> impl Iterator<Item = (&Area, &Group, &Instance
                 .map(move |instance| (area, group, instance))
         })
     })
+}
+
+/// `top` painted over an opaque `under`, which is the colour a reader actually sees through a translucent card.
+fn composed(top: Color, under: Color) -> Color {
+    let mix = |over: f32, back: f32| over * top.a + back * (1.0 - top.a);
+    Color::rgb(
+        mix(top.r, under.r),
+        mix(top.g, under.g),
+        mix(top.b, under.b),
+    )
 }

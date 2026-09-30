@@ -22,6 +22,7 @@ cover-cropped over the theme's base colour, and nothing else — a clock or a vi
 ```sh
 hogar-shell wallpaper set ~/pictures/x.jpg    # every screen
 hogar-shell wallpaper set ~/pictures/x.jpg DP-2
+hogar-shell wallpaper set ~/pictures/x.jpg --region left   # one region of the layout
 hogar-shell wallpaper random [output]
 hogar-shell wallpaper clear [output]          # back to what your config says
 hogar-shell wallpaper list
@@ -42,10 +43,22 @@ An image you pinned in your config keeps showing until something sets one at run
 puts you back. The runtime choice lives in `state.json`, not in `config.toml`: a wallpaper picked at random is
 state the shell owns, not a preference you hand-edited.
 
+## Regions
+
+The picture is drawn by the layout's `wallpaper_region` areas, and a screen can be split into several. A region
+that names no `source` shows the image resolved above and follows every `wallpaper set`. One that names its own
+keeps it: the runtime choice never reaches it. `wallpaper set <path> --region <area>` writes that `source` as a
+layout edit, so `layout undo` takes it back; add an output to edit the region as that screen's own rule writes
+it. Each region cross-fades on its own, and its fade repaints only its own box.
+
+A region's `style` paints it too: `fill` is the colour wherever the picture does not reach, `radius` cuts its
+corners, `opacity` fades the whole picture and `padding` holds it off the region's edges.
+
 ## The transition
 
-A wallpaper change is an **event on the live surface**, not a rebuild — a fresh tree has nothing left of the
-old image to fade *from*. `[background] transition` and `transition_ms` control the cross-fade.
+A wallpaper change is an **event on the live surface**, not a rebuild. A layout or config edit does rebuild the
+region, and it remembers the picture it was showing so that it still fades from it. `[background] transition`
+and `transition_ms` control the cross-fade.
 
 ## The library
 

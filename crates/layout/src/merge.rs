@@ -6,6 +6,8 @@
 //!
 //! Order is z-order, and an override never moves an item: added items go after the ones already there, which is what keeps a monitor rule from silently restacking a layer it only meant to adjust.
 
+use std::collections::BTreeMap;
+
 use crate::model::*;
 
 /// Lays `over` on top of `base`, in place.
@@ -44,6 +46,7 @@ fn merge_area(base: &mut Area, over: &Area) {
     replace_if_set(&mut base.within, &over.within);
     merge_style(&mut base.style, &over.style);
     replace_if_set(&mut base.visible, &over.visible);
+    merge_actions(&mut base.actions, &over.actions);
 
     for id in &over.remove {
         base.groups.retain(|group| &group.id != id);
@@ -60,6 +63,7 @@ fn merge_group(base: &mut Group, over: &Group) {
     if over.kind.is_some() {
         base.kind = over.kind;
     }
+    replace_if_set(&mut base.stacked, &over.stacked);
     for id in &over.remove {
         base.children.retain(|instance| &instance.id != id);
     }
@@ -78,8 +82,13 @@ fn merge_instance(base: &mut Instance, over: &Instance) {
     for (path, expr) in &over.bindings {
         base.bindings.insert(path.clone(), expr.clone());
     }
-    for (trigger, action) in &over.actions {
-        base.actions.insert(*trigger, action.clone());
+    merge_actions(&mut base.actions, &over.actions);
+}
+
+/// A level rebinds one gesture without restating the others.
+fn merge_actions(base: &mut BTreeMap<Trigger, Action>, over: &BTreeMap<Trigger, Action>) {
+    for (trigger, action) in over {
+        base.insert(*trigger, action.clone());
     }
 }
 
@@ -225,17 +234,8 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
         (AreaKind::Free { rect }, AreaKind::Free { rect: over_rect }) => {
             replace_if_set(rect, over_rect);
         }
-        (
-            AreaKind::Prompt { rect, style },
-            AreaKind::Prompt {
-                rect: over_rect,
-                style: over_style,
-            },
-        ) => {
+        (AreaKind::Prompt { rect }, AreaKind::Prompt { rect: over_rect }) => {
             replace_if_set(rect, over_rect);
-            replace_if_set(&mut style.fill, &over_style.fill);
-            replace_if_set(&mut style.radius, &over_style.radius);
-            replace_if_set(&mut style.opacity, &over_style.opacity);
         }
         _ => unreachable!("is_same_kind already proved both sides are the same variant"),
     }

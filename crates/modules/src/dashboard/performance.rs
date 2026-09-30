@@ -21,7 +21,7 @@ use util::reactive::{derive, fixed, fixed_text};
 const FULL_SCALE: f32 = 100.0;
 
 pub fn page(host: &Host, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let machine = machine(host.options::<DashboardConfig>());
+    let machine = machine(&host.options::<DashboardConfig>());
     cards_page(
         host,
         vec![

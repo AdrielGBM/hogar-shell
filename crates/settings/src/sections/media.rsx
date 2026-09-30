@@ -1,8 +1,8 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::text_row::{text_row, TextRowProps};
-use crate::enum_row::{enum_row, EnumRowProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
+use ::ui::form::enum_row::{enum_row, EnumRowProps};
+use ::ui::form::toggle_row::{toggle_row, ToggleRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{
     MEDIA_SCROLLS, media_scroll_str, parse_media_scroll, parse_u32, persist, source,

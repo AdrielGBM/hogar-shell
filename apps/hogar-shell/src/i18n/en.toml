@@ -5,3 +5,11 @@ problems_more = "…and {count} more"
 problems_hint = "`hogar-shell config check` says where each one is."
 global_only = "[{section}] can only be set in config.toml, so a monitor override's copy of it is ignored"
 moved_to_layout = "`{key}` says where something is drawn, which is the layout's to say now: write it in {layout} (`hogar-shell config schema layout` prints one to start from)"
+moved_to_instance = "`{key}` is an option of each module now: write `{option}` in the `options` of the module's instance in {layout}, or under [modules.<id>] for every instance of it"
+moved_to_module = "`{key}` is an option of the `{module}` module now: write `{option}` in the `options` of its instance in {layout}, or under [{module}] for every instance of it"
+moved_to_bar = "`{key}` belongs to each bar now: write `{field}` in the bar's `shape` in {layout}; what a bar leaves unset follows the theme"
+removed = "`{key}` is gone: nothing read it, so it changed nothing, and it can be deleted"
+
+[layout]
+scanout = "`{area}` is drawn above fullscreen windows, which keeps {output} off direct scanout"
+every_output = "every output"

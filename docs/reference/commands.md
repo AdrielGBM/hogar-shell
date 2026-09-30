@@ -247,7 +247,7 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `get` | `[output]` | the image a screen is showing (no output means the focused one) |
 | `list` |  | every image in the library: folder, name and path |
 | `reload` |  | re-scan the wallpaper folder |
-| `set` | `<path> [output]` | put an image on every screen, or on one of them |
+| `set` | `<path> [--region <area>] [output]` | put an image on every screen, on one of them, or in one region of the layout |
 | `random` | `[output]` | pick one from the library at random |
 | `clear` | `[output]` | drop the runtime choice, putting [background] back in charge |
 
@@ -286,7 +286,8 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `remove` | `<id>` | take a placed module, or a whole area, out of the layout |
 | `move` | `<id> <group> [index]` | put a placed module in another group, or elsewhere in its own |
 | `set` | `<instance> <key> <value>` | change one property of a placed module |
-| `reset` | `<id\|layer\|all>` | put a part of the layout back to what the built-in one says |
+| `reset` | `<id\|layer\|all>` | put a part of the layout back to what the layout it extends says, or the built-in one |
+| `edit` | `<background\|desktop\|top\|overlay\|lock\|off> [output]` | edit one layer on one screen (the focused one unless named), or stop |
 
 ## `deps`
 

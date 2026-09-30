@@ -23,7 +23,7 @@ hyprctl globalshortcuts    # what is registered, and under what name
 ```
 
 Registered ids: `launcher` `dashboard` `notifications` `session` `dnd` `volume-up` `volume-down` `volume-mute`
-`mic-mute` `brightness-up` `brightness-down`.
+`mic-mute` `brightness-up` `brightness-down` `edit-layout`.
 
 The name is `<appid>:<id>`, and on a non-sandboxed install the app id is empty — so it is `:launcher`, not
 `hogar-shell:launcher`.

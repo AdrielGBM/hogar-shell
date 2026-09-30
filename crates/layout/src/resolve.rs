@@ -2,7 +2,7 @@
 //!
 //! Resolution is a pure function of the layout, the output and the active workspace: no service is read, no surface is opened and nothing is cached, so the same three inputs always give the same arrangement and a test can ask for one without a compositor. Each output resolves on its own, which is what lets a monitor be re-planned on hotplug without touching the others.
 //!
-//! The precedence is fixed and total, each level laid over the one before it: the `extends` chain, root first; then every [`OutputRule`] whose glob matches this output, broadest glob first so a named monitor refines a `*` rule; then the [`WorkspaceRule`] for the workspace that is active on it. Merging is by id at every level ([`crate::merge`]).
+//! The precedence is fixed and total, each level laid over the one before it: the `extends` chain, root first; then every [`OutputRule`] whose glob matches this output, broadest glob first so a named monitor refines a `*` .filter(|rule| rule.matches.matches(output)); then the [`WorkspaceRule`] for the workspace that is active on it. Merging is by id at every level ([`crate::merge`]).
 //!
 //! The last step is the one that turns *what the file said* into *what was decided*: the partial [`AreaKind`] becomes a [`ResolvedAreaKind`] with every field answered. A field no level ever filled is where an arrangement stops being drawable, so it becomes a [`Finding`] naming the area and the field, and that area alone is dropped. The rest of the layer still resolves, because one unfinished bar is not a reason for a user to lose their desktop.
 
@@ -25,7 +25,7 @@ pub struct ActiveWorkspace {
 }
 
 /// What one output shows, with every field answered.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Resolved {
     pub output: String,
     pub workspace: Option<ActiveWorkspace>,
@@ -70,18 +70,18 @@ impl Resolved {
 
     /// How deep `edge`'s reserving areas are, which is what its reservation strip commits.
     ///
-    /// Derived from the output-level arrangement alone — the one every workspace on that screen shares — so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7). It is the areas' own depth; the air a floating bar sits in is `[shape] gap`, which only the config can answer.
+    /// Derived from the output-level arrangement alone — the one every workspace on that screen shares — so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7). It is the areas' own depth; the air a floating bar sits in is its shape's `gap`, which the config can still take away (`[shape] frame`).
     pub fn reserved(&self, edge: Edge) -> f32 {
         self.reserved[Edge::ALL.iter().position(|it| *it == edge).unwrap_or(0)]
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ResolvedLayer {
     pub areas: Vec<ResolvedArea>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedArea {
     pub id: AreaId,
     pub kind: ResolvedAreaKind,
@@ -92,6 +92,7 @@ pub struct ResolvedArea {
     pub style: AreaStyle,
     pub visible: Option<Expr>,
     pub groups: Vec<ResolvedGroup>,
+    pub actions: BTreeMap<Trigger, Action>,
 }
 
 /// An area's geometry with nothing left to decide.
@@ -139,7 +140,6 @@ pub enum ResolvedAreaKind {
     },
     Prompt {
         rect: Rect,
-        style: PromptStyle,
     },
 }
 
@@ -200,14 +200,16 @@ impl ResolvedAreaKind {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedGroup {
     pub id: GroupId,
     pub kind: GroupKind,
+    /// Whether the group shows one instance at a time.
+    pub stacked: bool,
     pub children: Vec<ResolvedInstance>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedInstance {
     pub id: InstanceId,
     pub module: String,
@@ -237,7 +239,7 @@ pub fn resolve(
         let mut rules: Vec<&OutputRule> = level
             .outputs
             .iter()
-            .filter(|rule| matches_output(&rule.matches, output))
+            .filter(|rule| rule.matches.matches(output))
             .collect();
         rules.sort_by_key(|rule| rule.matches.specificity());
 
@@ -313,7 +315,7 @@ fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
 }
 
 /// The layouts to apply, root first. A cycle stops at the layout that closes it, reported once, so a file that extends itself is a message rather than a hang.
-fn chain_of<'a>(
+pub(crate) fn chain_of<'a>(
     layout: &'a Layout,
     known: &'a BTreeMap<LayoutId, Layout>,
     report: &mut Report,
@@ -350,10 +352,6 @@ fn chain_of<'a>(
 
 fn layout_path(id: &LayoutId) -> String {
     format!("layouts/{id}.toml")
-}
-
-fn matches_output(pattern: &OutputMatch, output: &str) -> bool {
-    pattern.is_every_output() || glob_matches(&pattern.0, output)
 }
 
 enum WorkspaceVerdict {
@@ -480,6 +478,7 @@ fn answer_area(
         style: area.style.clone(),
         visible: area.visible.clone(),
         groups,
+        actions: area.actions.clone(),
     })
 }
 
@@ -579,14 +578,13 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
         AreaKind::Free { rect } => need(rect.is_some(), "rect").then(|| ResolvedAreaKind::Free {
             rect: rect.expect("checked"),
         }),
-        AreaKind::Prompt { rect, style } => Some(ResolvedAreaKind::Prompt {
+        AreaKind::Prompt { rect } => Some(ResolvedAreaKind::Prompt {
             rect: rect.unwrap_or(Rect {
                 x: 0.3,
                 y: 0.35,
                 w: 0.4,
                 h: 0.3,
             }),
-            style: style.clone(),
         }),
     }
 }
@@ -622,6 +620,7 @@ fn answer_group(
     Some(ResolvedGroup {
         id: group.id.clone(),
         kind,
+        stacked: group.stacked.unwrap_or(false),
         children,
     })
 }

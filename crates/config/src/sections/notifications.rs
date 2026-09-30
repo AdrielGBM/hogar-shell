@@ -98,6 +98,9 @@ pub struct NotificationsConfig {
     pub body_lines: u32,
     pub open_expanded: bool,
     pub sound: String,
+    /// How deep the notification centre is across its edge — the width of a left or right one, the height of a top or bottom one — in px.
+    /// Range: 240 to 1200.
+    pub sidebar_size: u32,
 }
 
 impl Default for NotificationsConfig {
@@ -112,12 +115,18 @@ impl Default for NotificationsConfig {
             body_lines: 4,
             open_expanded: false,
             sound: String::new(),
+            sidebar_size: 400,
         }
     }
 }
 
 impl NotificationsConfig {
     /// How long a sticky `critical` popup may stay before retiring to the history, or `None` for the unbounded wait `critical_max_secs = 0` asks for.
+    /// The centre's depth, clamped so a hand-edited size cannot produce one too narrow to read or one that covers the screen.
+    pub fn sidebar_thickness(&self) -> u32 {
+        self.sidebar_size.clamp(240, 1200)
+    }
+
     pub fn critical_ceiling(&self) -> Option<std::time::Duration> {
         (self.critical_max_secs > 0).then(|| std::time::Duration::from_secs(self.critical_max_secs))
     }
@@ -227,13 +236,11 @@ impl ToastsConfig {
 
 /// The notification centre (`[sidebar]`): a full-height surface that is the home for the notification history and the quick toggles.
 ///
-/// Distinct from the bell drawer, which is a glance: this is where a user goes to *deal with* what has arrived, so it takes the whole edge, scrolls, and hosts the utilities panel's own toggles rather than a second set.
+/// Distinct from the bell drawer, which is a glance: this is where a user goes to *deal with* what has arrived, so it takes the whole edge, scrolls, and hosts the utilities panel's own toggles rather than a second set. How deep it is belongs to the notifications module that opens it (`sidebar_size`).
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct SidebarConfig {
     pub edge: Edge,
-    /// Width for a left/right sidebar, height for a top/bottom one, in px.
-    pub size: u32,
     pub show_toggles: bool,
     pub show_history: bool,
 }
@@ -242,16 +249,8 @@ impl Default for SidebarConfig {
     fn default() -> Self {
         Self {
             edge: Edge::Right,
-            size: 400,
             show_toggles: true,
             show_history: true,
         }
-    }
-}
-
-impl SidebarConfig {
-    /// Clamped so a hand-edited `size` cannot produce a sidebar too narrow to read or one that covers the screen.
-    pub fn thickness(&self) -> u32 {
-        self.size.clamp(240, 1200)
     }
 }

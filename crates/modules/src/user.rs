@@ -82,7 +82,7 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let small = host.is_small();
     let picture = if small { SMALL_PICTURE } else { PICTURE };
     let Identity { face, name } = identity(
-        host.options::<DashboardConfig>(),
+        &host.options::<DashboardConfig>(),
         picture,
         use_theme::<NordTheme>(),
     )?;

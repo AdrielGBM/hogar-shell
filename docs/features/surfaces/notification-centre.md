@@ -46,7 +46,11 @@ Both halves are switchable: `[sidebar] show_history` and `show_toggles`.
 
 ## Configuring
 
-`[sidebar]` — `edge`, `size`, `show_history`, `show_toggles`.
+`[sidebar]` — `edge`, `show_history`, `show_toggles`.
+
+How deep it is across its edge is `sidebar_size`, an option of the notifications module that opens it: set it in
+the `options` of the notifications instance in the layout, or under `[notifications]` for every instance. With
+several, the first on the focused screen decides.
 
 The toggles themselves come from `[utilities] toggles`; the history's grouping and thresholds from
 `[notifications]`.

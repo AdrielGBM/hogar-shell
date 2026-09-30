@@ -50,7 +50,11 @@ Nothing polls: each subscription is bound to the popout's node and dies with it.
 
 ## Configuring
 
-`[popouts]` — `enabled`, `open_delay`, `close_delay`, `width`, `max_height`.
+`[popouts]` — `enabled`, `open_delay`, `close_delay`.
+
+How big a card is belongs to the module whose chip it rests on: `popout_width` and `popout_max_height`, in the
+`options` of that chip's instance in the layout, or under `[modules.<id>]` for every instance of it.
+`popout_max_height` is a ceiling: the card is as tall as it needs, and the rest stays click-through.
 
 ## What it needs
 

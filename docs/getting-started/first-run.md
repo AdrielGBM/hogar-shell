@@ -40,8 +40,9 @@ Every module id is a page under [features/modules](../features/modules/). An id 
 drawn as a placeholder where you placed it rather than failing the bar, and `hogar-shell layout check` says
 which one.
 
-**2. Pick a shape.** `[shape] mode` is `bar`, `sections` or `chips` — one solid bar, grouped zones, or a chip
-per module. Every module works in all three; see [Bars](../features/surfaces/bars.md).
+**2. Pick a shape.** A bar's `shape.mode` in the layout is `bar`, `sections` or `chips` — one solid bar,
+grouped zones, or a chip per module (`hogar-shell layout show` prints the layout to edit). Every module works
+in all three; see [Bars](../features/surfaces/bars.md).
 
 **3. Pick a palette.**
 

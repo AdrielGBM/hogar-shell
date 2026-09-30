@@ -30,7 +30,6 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
                 id,
                 stage.timeout.to_string(),
                 "300",
-                theme,
                 |entry: &mut IdleStage, text| entry.timeout = parse_u64(text, entry.timeout),
             )?;
             let action = bound_field(
@@ -39,7 +38,6 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
                 id,
                 stage.action.clone(),
                 "lock on",
-                theme,
                 |entry: &mut IdleStage, text| entry.action = text.to_string(),
             )?;
             let return_action = bound_field(
@@ -48,7 +46,6 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
                 id,
                 stage.return_action.clone(),
                 "shell dpms on",
-                theme,
                 |entry: &mut IdleStage, text| entry.return_action = text.to_string(),
             )?;
             entry_card(vec![timeout, action, return_action], &list, id, theme)
@@ -57,8 +54,8 @@ pub(crate) fn idle_stages_section() -> Result<Box<dyn LayoutItem>, LayoutError> 
 
     let add = {
         let list = Rc::clone(&list);
-        save_button(
-            SaveButtonProps::props()
+        telar::button(
+            telar::ButtonProps::props()
                 .label(telar::Reactive::of(|| telar::t!("settings.list.add")))
                 .on_press(std::rc::Rc::new(move || list.add(IdleStage::default())))
                 .build(),

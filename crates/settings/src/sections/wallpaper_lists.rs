@@ -6,13 +6,16 @@ use std::path::{Path, PathBuf};
 use ui::scale::{corner, paint, space};
 
 use telar::{
-    AlignItems, Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, RectStyle, RwSignal,
-    SizeDimension, StyledContainer, Text, box_item, signal,
+    AlignItems, Children, Container, LayoutError, LayoutItem, LayoutStyle, Reactive, ReactiveList,
+    RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal,
 };
 
 use crate::form::*;
 use config::theme::{FontRole, NordTheme};
 use config::{BackgroundConfig, WallpaperTransition};
+use ui::form::enum_row::{EnumRowProps, enum_row};
+use ui::form::text_row::{TextRowProps, text_row};
+use ui::form::toggle_row::{ToggleRowProps, toggle_row};
 
 /// How wide one wallpaper tile is, and the shape of its picture — landscape, because a wallpaper is a picture of a screen and a square crop of one is unrecognisable.
 const WALL_TILE: f32 = 132.0;
@@ -44,11 +47,13 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
         move |assignment: services::wallpaper::Assignment| current_sink.set(assignment.global),
     );
 
-    let search = text_field(
-        || telar::t!("settings.field.search"),
-        query,
-        "sunset",
-        theme,
+    let search = text_row(
+        TextRowProps::props()
+            .label(Reactive::of(|| telar::t!("settings.field.search")))
+            .value(query)
+            .placeholder("sunset")
+            .build(),
+        Children::default(),
     )?;
 
     let source_library = library.read_only();
@@ -91,8 +96,8 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
         move || theme.text_style(FontRole::Caption, theme.muted),
     )?;
 
-    let clear = save_button(
-        SaveButtonProps::props()
+    let clear = telar::button(
+        telar::ButtonProps::props()
             .label(telar::Reactive::of(|| {
                 telar::t!("settings.wallpaper.clear")
             }))
@@ -282,24 +287,36 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let transition_ms = signal(b.transition_ms.to_string());
 
     let mut rows = vec![
-        toggle_field(|| telar::t!("settings.field.enabled"), enabled, theme)?,
-        text_field(
-            || telar::t!("settings.field.image"),
-            image,
-            "~/wall.png",
-            theme,
+        toggle_row(
+            ToggleRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.enabled")))
+                .value(enabled)
+                .build(),
+            Children::default(),
         )?,
-        enum_field(
-            || telar::t!("settings.field.transition"),
-            transition,
-            TRANSITIONS,
-            theme,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.image")))
+                .value(image)
+                .placeholder("~/wall.png")
+                .build(),
+            Children::default(),
         )?,
-        text_field(
-            || telar::t!("settings.field.transition_ms"),
-            transition_ms,
-            "600",
-            theme,
+        enum_row(
+            EnumRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.transition")))
+                .value(transition)
+                .options(TRANSITIONS)
+                .build(),
+            Children::default(),
+        )?,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.transition_ms")))
+                .value(transition_ms)
+                .placeholder("600")
+                .build(),
+            Children::default(),
         )?,
     ];
 
@@ -320,11 +337,13 @@ pub(crate) fn background_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
                 .unwrap_or_default(),
         );
         let label = name.clone();
-        rows.push(text_field(
-            move || label.clone(),
-            value,
-            "(global image)",
-            theme,
+        rows.push(text_row(
+            TextRowProps::props()
+                .label(Reactive::of(move || label.clone()))
+                .value(value)
+                .placeholder("(global image)")
+                .build(),
+            Children::default(),
         )?);
         monitors.push((name, value));
     }

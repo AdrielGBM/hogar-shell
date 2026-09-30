@@ -909,6 +909,7 @@ name = "hogar-shell"
 version = "0.1.0"
 dependencies = [
  "hogar-shell-config",
+ "hogar-shell-editor",
  "hogar-shell-layout",
  "hogar-shell-modules",
  "hogar-shell-services",
@@ -945,6 +946,24 @@ dependencies = [
 [[package]]
 name = "hogar-shell-doc-scanner"
 version = "0.1.0"
+
+[[package]]
+name = "hogar-shell-editor"
+version = "0.1.0"
+dependencies = [
+ "hogar-shell-config",
+ "hogar-shell-layout",
+ "hogar-shell-modules",
+ "hogar-shell-services",
+ "hogar-shell-surfaces",
+ "hogar-shell-ui",
+ "hogar-shell-util",
+ "platform-wayland",
+ "serde",
+ "telar",
+ "toml",
+ "tracing",
+]
 
 [[package]]
 name = "hogar-shell-layout"
@@ -1037,6 +1056,7 @@ dependencies = [
  "hogar-shell-services",
  "hogar-shell-ui",
  "hogar-shell-util",
+ "image",
  "platform-wayland",
  "telar",
  "telar-platform-headless",
@@ -2558,6 +2578,7 @@ dependencies = [
  "telar-geometry-core",
  "telar-preferences-core",
  "telar-reactive-core",
+ "telar-renderer-core",
  "web-time",
 ]
 
@@ -2769,6 +2790,7 @@ dependencies = [
  "telar-services-core",
  "telar-theme-core",
  "telar-ui-tree",
+ "tracing",
  "web-time",
 ]
 

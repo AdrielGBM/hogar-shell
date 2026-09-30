@@ -4,11 +4,13 @@
 //!
 //! Ids are the merge key at every level, which is what lets a monitor rule say "this one also has a clock" without restating the bar. They are generated once, never reused, and an undo restores the same id, so IPC, rules and panels can address an instance by name for as long as it exists.
 
+use config::theme::NordTheme;
 use config::{Edge, Shape};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
+use telar::Color;
 
 macro_rules! id_type {
     ($(#[$doc:meta])* $name:ident) => {
@@ -68,7 +70,7 @@ id_type!(
 );
 
 /// One named arrangement of everything the shell draws.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Layout {
     /// The name everything addresses this layout by — `layout use`, `extends`, the last-good copy. It comes from the file name, so writing something else here changes nothing.
@@ -104,7 +106,7 @@ empty_default!(GroupId);
 empty_default!(InstanceId);
 
 /// What an output, or every output, is arranged like.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OutputRule {
     /// `*` for every output, or a glob over the connector name (`DP-*`, `eDP-1`).
@@ -132,6 +134,11 @@ impl OutputMatch {
         self.0 == "*"
     }
 
+    /// Whether this rule speaks for the output called `output`.
+    pub fn matches(&self, output: &str) -> bool {
+        self.is_every_output() || config::glob_matches(&self.0, output)
+    }
+
     /// How narrow the pattern is, so that rules can be applied broadest first. A pattern with no wildcard is the most specific; otherwise the more literal characters it has, the more specific it is.
     ///
     /// `*` is the only wildcard, because the matching itself is `config::glob_matches` — the same globber `[tray] icon_subs` and `excluded_screens` already use. A second vocabulary here would make a pattern narrow by one rule and broad by the other.
@@ -141,7 +148,7 @@ impl OutputMatch {
 }
 
 /// A refinement that applies only while a given workspace is active on the output.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkspaceRule {
     /// A workspace name, `id:<n>` or `special:<name>`. The prefixed forms need Hyprland; without it the rule is reported as inactive instead of being silently dropped.
@@ -189,7 +196,7 @@ impl WorkspaceMatch {
 }
 
 /// The five layers of one output. The first four are wlr layer-shell layers, one window each; `lock` is the same model on `ext-session-lock-v1` surfaces.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Layers {
     #[serde(skip_serializing_if = "Layer::is_empty")]
@@ -232,7 +239,7 @@ impl Layers {
 }
 
 /// The four layers a workspace rule may refine.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SessionLayers {
     #[serde(skip_serializing_if = "Layer::is_empty")]
@@ -246,6 +253,27 @@ pub struct SessionLayers {
 }
 
 impl SessionLayers {
+    /// `None` for the lock layer, which a workspace rule does not have.
+    pub fn get(&self, kind: LayerKind) -> Option<&Layer> {
+        match kind {
+            LayerKind::Background => Some(&self.background),
+            LayerKind::Desktop => Some(&self.desktop),
+            LayerKind::Top => Some(&self.top),
+            LayerKind::Overlay => Some(&self.overlay),
+            LayerKind::Lock => None,
+        }
+    }
+
+    pub fn get_mut(&mut self, kind: LayerKind) -> Option<&mut Layer> {
+        match kind {
+            LayerKind::Background => Some(&mut self.background),
+            LayerKind::Desktop => Some(&mut self.desktop),
+            LayerKind::Top => Some(&mut self.top),
+            LayerKind::Overlay => Some(&mut self.overlay),
+            LayerKind::Lock => None,
+        }
+    }
+
     /// Every layer a workspace rule may refine, bottom first. The lock layer is not one of them: no workspace is visible while the screen is locked.
     pub fn each(&self) -> [(LayerKind, &Layer); 4] {
         [
@@ -320,7 +348,7 @@ impl fmt::Display for LayerKind {
 }
 
 /// One layer's areas. Their order is their z-order inside the layer's window.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Layer {
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -340,7 +368,7 @@ impl Layer {
 /// A region of a layer that holds instances and has a geometry of its own.
 ///
 /// Its geometry is written *in this table*, beside the keys below: `kind` says which kind of region it is and the keys that kind has follow it. A key no kind of area has is reported with its line and column rather than ignored — see `layout check`.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Area {
     /// What a rule, a command or another level of the same layout addresses this area by. Unique within its layer.
@@ -363,6 +391,9 @@ pub struct Area {
     /// Ids of groups an earlier level placed that this one takes away.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remove: Vec<GroupId>,
+    /// What each gesture on the area's own background runs — a press or a scroll that lands between its instances rather than on one. Refused on the lock layer, which holds readings, never controls.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub actions: BTreeMap<Trigger, Action>,
 }
 
 /// What kind of region an area is, and the geometry that kind needs, as a level wrote it.
@@ -382,7 +413,7 @@ pub enum AreaKind {
         /// How far it runs along the edge.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         length: Option<Extent>,
-        /// Where it starts along the edge, as a fraction of the edge, so several bars can share one.
+        /// Where it starts along the edge, in pixels from the edge's start, so several bars can share one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<f32>,
         #[serde(default, skip_serializing_if = "BarShape::is_empty")]
@@ -421,7 +452,7 @@ pub enum AreaKind {
     WallpaperRegion {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
-        /// A path to the picture this region shows. Left out, it shows whatever `[background]` is set to — so changing the desktop's picture stays a `[background]` edit and a `hogar-shell wallpaper set` rather than a layout edit.
+        /// A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
         /// How the picture is fitted to the region.
@@ -461,12 +492,10 @@ pub enum AreaKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
     },
-    /// The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden.
+    /// The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden. Its card is drawn from the area's own `style`: `fill`, `radius` and `opacity`, the fill held to a contrast the field's text can be read on and the opacity to 0.9 or above.
     Prompt {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
-        #[serde(default, skip_serializing_if = "PromptStyle::is_empty")]
-        style: PromptStyle,
     },
 }
 
@@ -701,17 +730,124 @@ pub enum Blend {
     Add,
 }
 
+/// How far each corner of a box is rounded, in logical pixels, clockwise from the top left.
+///
+/// Written as one number when every corner agrees and as `[top_left, top_right, bottom_right, bottom_left]` when they do not, so the common case stays the one number a person types and a layout written back keeps that shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Corners([f32; 4]);
+
+impl Corners {
+    pub const fn all(radius: f32) -> Self {
+        Self([radius; 4])
+    }
+
+    pub const fn each(top_left: f32, top_right: f32, bottom_right: f32, bottom_left: f32) -> Self {
+        Self([top_left, top_right, bottom_right, bottom_left])
+    }
+
+    pub fn top_left(self) -> f32 {
+        self.0[0]
+    }
+
+    pub fn top_right(self) -> f32 {
+        self.0[1]
+    }
+
+    pub fn bottom_right(self) -> f32 {
+        self.0[2]
+    }
+
+    pub fn bottom_left(self) -> f32 {
+        self.0[3]
+    }
+
+    pub fn is_uniform(self) -> bool {
+        self.0.iter().all(|corner| *corner == self.0[0])
+    }
+
+    pub fn largest(self) -> f32 {
+        self.0.into_iter().fold(0.0, f32::max)
+    }
+}
+
+impl From<Corners> for telar::BorderRadius {
+    fn from(corners: Corners) -> Self {
+        let [top_left, top_right, bottom_right, bottom_left] = corners.0;
+        Self {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        }
+    }
+}
+
+impl Serialize for Corners {
+    fn serialize<S: serde::Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        match self.is_uniform() {
+            true => out.serialize_f32(self.0[0]),
+            false => self.0.serialize(out),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Corners {
+    fn deserialize<D: serde::Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
+        struct Written;
+
+        impl<'de> serde::de::Visitor<'de> for Written {
+            type Value = Corners;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str(
+                    "one radius, or four as [top_left, top_right, bottom_right, bottom_left]",
+                )
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, radius: f64) -> Result<Corners, E> {
+                Ok(Corners::all(radius as f32))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, radius: i64) -> Result<Corners, E> {
+                Ok(Corners::all(radius as f32))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, radius: u64) -> Result<Corners, E> {
+                Ok(Corners::all(radius as f32))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Corners, A::Error> {
+                let mut corners = [0.0; 4];
+                for (at, corner) in corners.iter_mut().enumerate() {
+                    *corner = seq
+                        .next_element::<f32>()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(at, &self))?;
+                }
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(5, &self));
+                }
+                Ok(Corners(corners))
+            }
+        }
+
+        input.deserialize_any(Written)
+    }
+}
+
 /// Per-area appearance. Every field is optional because the theme answers whatever an area does not.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AreaStyle {
-    /// A theme token name or a hex colour.
+    /// A theme token name or a hex colour, painted across the area's whole box under what it holds. A bar paints it as its strip in place of the theme's base, and a wallpaper region shows it wherever its picture does not reach. Behind the lock's prompt it is the card the password field sits on, and one the field's text cannot be read on — below WCAG AA, 4.5:1 — is refused, because an unreadable prompt is a lockout too.
     pub fill: Option<String>,
-    /// How far the corners are rounded, in logical pixels.
-    pub radius: Option<f32>,
-    /// How opaque the area is drawn, from 0 to 1.
+    /// How far the corners are rounded, in logical pixels: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]`. A wallpaper region or a texture is cut to it. A bar is rounded by its own `shape.radius`, so one written here on a bar is reported and not drawn.
+    pub radius: Option<Corners>,
+    /// How opaque the area's own paint is, from 0 to 1, whatever alpha its `fill` names: the fill, everything a bar paints — its strip, sections and resting chips — in place of `[theme] opacity`, a wallpaper region's picture, or a texture on top of its own `opacity`. What the area holds is drawn as it is. The lock's prompt is kept at 0.9 or above: a prompt faded into its background is a lockout.
     pub opacity: Option<f32>,
-    /// How far the area holds its contents off its own edges.
+    /// How far the area holds its contents off its own edges. A bar that names none pads by half its spacing in `bar` mode and not at all in the others.
     pub padding: Option<f32>,
     pub backdrop: Option<Backdrop>,
 }
@@ -723,6 +859,15 @@ impl AreaStyle {
             && self.opacity.is_none()
             && self.padding.is_none()
             && self.backdrop.is_none()
+    }
+
+    /// The colour `fill` paints, at `opacity` where the area names one. `None` when it names no fill.
+    pub fn paint(&self, theme: &NordTheme) -> Option<Color> {
+        let fill = color_of(self.fill.as_deref()?, theme);
+        Some(match self.opacity {
+            Some(opacity) => fill.with_alpha(opacity.clamp(0.0, 1.0)),
+            None => fill,
+        })
     }
 }
 
@@ -736,7 +881,7 @@ pub enum Backdrop {
     Blur,
 }
 
-/// A bar's own shape, overriding the global `[shape]` where it is set.
+/// A bar's shape: whether it is one surface, sections or chips, how far it floats and how round it is. What it leaves unset follows the theme.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BarShape {
@@ -746,8 +891,8 @@ pub struct BarShape {
     pub gap: Option<f32>,
     /// The space between two modules on it.
     pub spacing: Option<f32>,
-    /// How far its corners are rounded.
-    pub radius: Option<f32>,
+    /// How far its corners are rounded: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]` so a bar that meets another at a corner can square that corner alone.
+    pub radius: Option<Corners>,
 }
 
 impl BarShape {
@@ -775,26 +920,27 @@ impl Default for AutoHide {
     }
 }
 
-/// How the lock layer's prompt is drawn.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct PromptStyle {
-    /// A theme token name or a hex colour for the card behind the field.
-    pub fill: Option<String>,
-    /// How far its corners are rounded.
-    pub radius: Option<f32>,
-    /// Kept at or above 0.9 by validation: a prompt faded into its background is a lockout.
-    pub opacity: Option<f32>,
+/// The colour a layout names: a hex colour, or else a theme token — the vocabulary `fill` and a gradient stop share with `[theme.colors]`.
+pub fn color_of(token_or_hex: &str, theme: &NordTheme) -> Color {
+    Color::from_hex(token_or_hex).unwrap_or_else(|| theme.token(token_or_hex))
 }
 
-impl PromptStyle {
-    pub fn is_empty(&self) -> bool {
-        self.fill.is_none() && self.radius.is_none() && self.opacity.is_none()
-    }
+/// The card the lock paints behind its prompt, alpha included: the area's `fill`, or the theme's surface where it names none. The lock draws with it and validation measures the prompt's contrast against it, so the two can never be judging different cards.
+pub fn prompt_card(style: &AreaStyle, theme: &NordTheme) -> Color {
+    let fill = style
+        .fill
+        .as_deref()
+        .map(|fill| color_of(fill, theme))
+        .unwrap_or(theme.surface);
+    // Validation already refuses anything fainter; a hand-edited file that got past it is clamped rather than drawn as written.
+    fill.with_alpha(style.opacity.unwrap_or(1.0).clamp(FAINTEST_PROMPT, 1.0))
 }
+
+/// The faintest a prompt may be drawn. Below this the field a user has to type into disappears into the wallpaper behind it.
+pub const FAINTEST_PROMPT: f32 = 0.9;
 
 /// A run of instances inside an area, and how the area places it.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Group {
     /// What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`.
@@ -802,6 +948,8 @@ pub struct Group {
     /// Where in its area the group sits. `place` says which way, and the keys that way needs follow it.
     #[serde(flatten)]
     pub kind: Option<GroupKind>,
+    /// Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set.
+    pub stacked: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Instance>,
     /// Ids of instances an earlier level placed that this one takes away.
@@ -828,8 +976,6 @@ pub enum GroupKind {
         #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
         row_span: u32,
     },
-    /// Several instances stacked in one footprint, shown one at a time.
-    SmartStack,
 }
 
 fn one_span() -> u32 {
@@ -851,7 +997,7 @@ pub enum Zone {
 }
 
 /// One placed module.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Instance {
     /// What IPC, a rule and another level of the same layout address this placed module by. Unique across the whole layout, readable, and never reused — `clock`, then `clock-2`.
@@ -860,7 +1006,7 @@ pub struct Instance {
     pub module: Option<String>,
     /// How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`.
     pub representation: Option<Representation>,
-    /// Option overrides for this instance alone, on top of the module's global defaults.
+    /// Option overrides for this instance alone, over its module's defaults: any key of the module's own section (`[clock]` for a clock), and any of `[modules.<id>]` — `accent`, `variant`, `open` and the sizes of what it opens. A key the module does not have is an error.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]
     pub options: toml::Table,
     /// Properties driven by an expression instead of a fixed value, keyed by the property's path.
@@ -951,7 +1097,7 @@ impl Trigger {
 }
 
 /// A chain of shell commands a trigger runs. Each line is an IPC command validated against the command table when the layout loads, so a typo is a located error rather than a gesture that silently does nothing.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct Action(pub Vec<String>);
 

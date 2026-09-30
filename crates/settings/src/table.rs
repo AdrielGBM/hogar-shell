@@ -4,12 +4,13 @@ use std::rc::Rc;
 use ui::scale::{corner, paint, space};
 
 use telar::{
-    AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
-    ReactiveList, RectStyle, RwSignal, SizeDimension, StyledContainer, signal,
+    AlignItems, Children, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
+    Reactive, ReactiveList, RectStyle, RwSignal, SizeDimension, StyledContainer, signal,
 };
 
-use crate::form::*;
 use config::theme::NordTheme;
+use ui::form::text_row::{TextRowProps, text_row};
+use ui::form::toggle_row::{ToggleRowProps, toggle_row};
 use ui::icon::icon_view;
 
 /// K13, second half: a `[[list]]` of config tables, edited as rows with an Add button and a remove control on each — `[[battery.warn_levels]]` and `[[idle.stages]]`.
@@ -106,8 +107,7 @@ pub(crate) fn bound_field<T: Clone + 'static>(
     list: &TableList<T>,
     id: u64,
     initial: String,
-    placeholder: &str,
-    theme: NordTheme,
+    placeholder: &'static str,
     apply: impl Fn(&mut T, &str) + 'static,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let value = signal(initial);
@@ -117,7 +117,14 @@ pub(crate) fn bound_field<T: Clone + 'static>(
         let text = watched.get();
         list.edit(id, |entry| apply(entry, &text));
     });
-    text_field(label, value, placeholder, theme)
+    text_row(
+        TextRowProps::props()
+            .label(Reactive::of(label))
+            .value(value)
+            .placeholder(placeholder)
+            .build(),
+        Children::default(),
+    )
 }
 
 /// [`bound_field`] for a switch.
@@ -126,7 +133,6 @@ pub(crate) fn bound_toggle<T: Clone + 'static>(
     list: &TableList<T>,
     id: u64,
     initial: bool,
-    theme: NordTheme,
     apply: impl Fn(&mut T, bool) + 'static,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let value = signal(initial);
@@ -136,7 +142,13 @@ pub(crate) fn bound_toggle<T: Clone + 'static>(
         let on = watched.get();
         list.edit(id, |entry| apply(entry, on));
     });
-    toggle_field(label, value, theme)
+    toggle_row(
+        ToggleRowProps::props()
+            .label(Reactive::of(label))
+            .value(value)
+            .build(),
+        Children::default(),
+    )
 }
 
 /// One entry of a [`TableList`]: its fields in a filled card, with the control that deletes it.
@@ -183,7 +195,7 @@ pub(crate) fn toggle_membership(list: RwSignal<Vec<String>>, id: String) -> impl
     }
 }
 
-/// A square icon button that reads as on or off — the row-sized form of [`toggle_field`], which is a labelled row and far too wide to put two of on every application.
+/// A square icon button that reads as on or off — the row-sized form of [`toggle_row`], which is a labelled row and far too wide to put two of on every application.
 pub(crate) fn toggle_pill(
     glyph: &'static str,
     on: bool,

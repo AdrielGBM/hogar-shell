@@ -5,7 +5,7 @@ use ::config::theme::NordTheme;
 use ::services::tray::{self, TrayItem};
 
 let host = ui::host::Host::current()?;
-let config = host.options::<::config::TrayConfig>().clone();
+let config = host.options::<::config::TrayConfig>();
 let filter_config = config.clone();
 
 let items = signal(visible(&tray::current().unwrap_or_default(), &config));

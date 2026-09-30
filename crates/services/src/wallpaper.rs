@@ -2,7 +2,7 @@
 //!
 //! Two questions, one owner. **What is available** is a recursive scan of `[paths] wallpapers`, with a thumbnail cache so a grid of two hundred images does not decode two hundred full-resolution photographs. **What is showing** is a per-output assignment that outlives a restart, because a wallpaper picked at random or chosen from a grid is state the shell owns, not a preference the user hand-edited into `config.toml` — the same split every other runtime toggle follows.
 //!
-//! Resolution order for one screen, most specific first: the runtime per-output choice, the runtime global one, `[background.monitors]`, `[background] image`. A user who pinned an image in their config still sees it until something sets one at runtime, and `hogar-shell wallpaper clear` puts them back.
+//! Resolution order for one screen, most specific first: the runtime per-output choice, the runtime global one, `[background.monitors]`, `[background] image`. A user who pinned an image in their config still sees it until something sets one at runtime, and `hogar-shell wallpaper clear` puts them back. A layout region that names its own `source` is outside this order altogether: it shows that picture, and [`frames`] never feeds it.
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};

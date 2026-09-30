@@ -1,13 +1,13 @@
 [logic]
-use crate::enum_row::{EnumRowProps, enum_row};
+use ::ui::form::enum_row::{EnumRowProps, enum_row};
 use crate::form::{
     MEDIA_DETAILS, NOTIFICATION_DETAILS, media_detail_str, notification_detail_str, parse_i32,
     parse_media_detail, parse_notification_detail, persist, source,
 };
 use crate::form_section::{FormSectionProps, form_section};
 use crate::save_row::{SaveRowProps, save_row};
-use crate::text_row::{TextRowProps, text_row};
-use crate::toggle_row::{ToggleRowProps, toggle_row};
+use ::ui::form::text_row::{TextRowProps, text_row};
+use ::ui::form::toggle_row::{ToggleRowProps, toggle_row};
 use ::config::LockConfig;
 
 let (config, path) = source();

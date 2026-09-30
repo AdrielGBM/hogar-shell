@@ -2,7 +2,7 @@
 
 use telar::{LayoutError, LayoutItem, PreviewEntry, PreviewSurface};
 
-/// The float this application opens in (`Config::float_size_for`), so both previews are laid out at the size the user actually reads them at.
+/// The float this application opens in (`ModuleOverride::float_size`), so both previews are laid out at the size the user actually reads them at.
 const FLOAT: PreviewSurface = PreviewSurface {
     width: 920.0,
     height: 680.0,
@@ -14,7 +14,7 @@ pub fn entries() -> Vec<PreviewEntry> {
         PreviewEntry {
             component_name: "settings",
             preview_name: "Settings panel",
-            build: crate::panel::settings_panel,
+            build: || crate::panel::settings_panel(FLOAT.height),
             surface: Some(FLOAT),
         },
         PreviewEntry {
@@ -49,5 +49,5 @@ fn page(label: &str) -> Result<Box<dyn LayoutItem>, LayoutError> {
         .position(|page| page.label == label)
         .unwrap_or(0);
     util::state::kept("settings.page", || telar::signal(0usize)).set(at);
-    crate::panel::settings_panel()
+    crate::panel::settings_panel(FLOAT.height)
 }

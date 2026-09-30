@@ -73,7 +73,7 @@ pub fn temperature(host: &Host) -> Built {
     }
     let theme = use_theme::<NordTheme>();
     let accent = host.accent;
-    let settings = host.options::<TemperatureConfig>().clone();
+    let settings = host.options::<TemperatureConfig>();
     let (unit, critical) = (settings.unit, settings.critical);
     let state = resource_signal();
     let sensor = settings.sensor.clone();

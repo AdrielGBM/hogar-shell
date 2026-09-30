@@ -5,7 +5,7 @@ title: Floats
 summary: A panel as a free-standing, centred window with a title bar and close button.
 status: stable
 compositor: any
-config: [panels, modules]
+config: [modules]
 commands: [panel]
 deps: [wlr-layer-shell]
 see_also: [panels, drawers, compositor-rules]
@@ -16,8 +16,7 @@ see_also: [panels, drawers, compositor-rules]
 ## What it is
 
 The other presentation for a panel: a free-standing, centred window with a frame, a title bar and a close
-button. It is not moved or resized — it always opens centred, at the size `[modules.<id>]` or `[panels.float]`
-gives it.
+button. It is not moved or resized — it always opens centred, at the size its module's options give it.
 
 Opening one closes the drawer, which it would otherwise open underneath. Nothing closes it back: opening a
 drawer, pressing a chip, opening the notification centre or opening a second float all leave it where it is.
@@ -26,15 +25,17 @@ it.
 
 ```toml
 [modules.mixer]
-open   = "float"
-width  = 520
-height = 640
+open         = "float"
+float_width  = 520
+float_height = 640
 ```
 
 ## Sizing
 
-The size that shows is `[modules.<id>] width` / `height`, or `[panels.float]` where the module sets none. Set
-it there — there is no drag to resize with.
+The size that shows is `float_width` / `float_height` from the `options` of the module's instance in the
+layout, then from `[modules.<id>]`, and 360 × 240 where neither says — or what an application panel such as the
+settings needs. A float opened from a chip takes that chip's instance's; one opened by IPC or a keybind takes
+the module's first instance on the focused screen. Set it there — there is no drag to resize with.
 
 ## Where it lives
 

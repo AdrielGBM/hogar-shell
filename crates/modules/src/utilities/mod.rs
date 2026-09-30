@@ -216,7 +216,7 @@ pub fn check(config: &UtilitiesConfig, file: &Path) -> Report {
 /// The panel: the toggles, then the capture controls, then what has been recorded.
 pub fn utilities_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     utilities_view(
-        host.options::<UtilitiesConfig>(),
+        &host.options::<UtilitiesConfig>(),
         Recordings::of(host.config()),
         use_theme::<NordTheme>(),
     )

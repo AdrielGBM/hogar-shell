@@ -5,7 +5,7 @@ use ::config::theme::{FontRole, NordTheme};
 use ::services::mpris::{self, Player};
 
 let host = ui::host::Host::current()?;
-let config = host.options::<::config::MediaConfig>().clone();
+let config = host.options::<::config::MediaConfig>();
 let for_frame = config.clone();
 
 let initial = mpris::current().unwrap_or_default();

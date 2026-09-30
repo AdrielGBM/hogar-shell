@@ -16,7 +16,7 @@ fn render(now: &chrono::DateTime<chrono::Local>, config: &ClockConfig) -> String
 }
 
 let host = ui::host::Host::current()?;
-let config = host.options::<::config::ClockConfig>().clone();
+let config = host.options::<::config::ClockConfig>();
 let for_tick = config.clone();
 
 let now = signal(render(&chrono::Local::now(), &config));

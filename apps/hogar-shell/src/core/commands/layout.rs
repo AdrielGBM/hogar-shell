@@ -1,6 +1,6 @@
 //! `hogar-shell layout` — reading the layouts on disk, choosing which one the shell draws, and editing it.
 //!
-//! `list`, `show` and `check` answer in the CLI process, because a layout that stops the shell from starting is exactly the one a user needs to be able to look at (F-10.5). Everything else goes to the shell, which is what owns the store: `use` writes the active name to machine state and asks for a reload, and the verbs that change a layout commit a transaction against the store the shell is drawing from (`crate::core::layouts`).
+//! `list`, `show` and `check` answer in the CLI process, because a layout that stops the shell from starting is exactly the one a user needs to be able to look at (F-10.5). Everything else goes to the shell, which is what owns the store: `use` writes the active name to machine state and asks for a reload, and the verbs that change a layout commit a transaction against the store the shell is drawing from (`surfaces::layouts`).
 //!
 //! **Every edit here is one transaction**, so `layout undo` takes back one command whatever else made the edit before it — a gesture, a popover or another line of this. The layout an edit lands in is the one being drawn, except that the first edit to the built-in layout forks it: the shipped one is read-only so that a user who has broken theirs always has one that works.
 //!
@@ -8,6 +8,8 @@
 
 use std::collections::BTreeSet;
 
+use layout::ops::{areas_at, placement_of, site_of_area, sites};
+use layout::reset::Target as Aim;
 use layout::{
     Action, Area, AreaId, AreaKind, BUILT_IN, Catalogue, Group, GroupId, Instance, InstanceId,
     LayerKind, Layout, LayoutId, LayoutOp, LayoutStore, NOMINAL_OUTPUT, Representation, Site, Spot,
@@ -16,7 +18,7 @@ use layout::{
 
 use super::args::arg;
 use super::{Command, Target};
-use crate::core::layouts;
+use surfaces::layouts;
 
 pub(crate) const LAYOUT: Target = Target {
     name: "layout",
@@ -84,11 +86,36 @@ pub(crate) const LAYOUT: Target = Target {
         Command {
             name: "reset",
             args: "<id|layer|all>",
-            help: "put a part of the layout back to what the built-in one says",
+            help: "put a part of the layout back to what the layout it extends says, or the built-in one",
             run: |args| reset(arg(args, 0, "id|layer|all")?),
+        },
+        Command {
+            name: "edit",
+            args: "<background|desktop|top|overlay|lock|off> [output]",
+            help: "edit one layer on one screen (the focused one unless named), or stop",
+            run: edit,
         },
     ],
 };
+
+/// Switches the edit mode of one layer on, on the screen named or the focused one, or switches whichever is up off. One mode at a time (DEC-2): entering one leaves the last. Lock mode is a preview, refused while the session is locked (TA-8), and every mode is refused under `--safe-layout` (F-10.35).
+fn edit(args: &[&str]) -> Result<String, String> {
+    let which = arg(args, 0, "background|desktop|top|overlay|lock|off")?;
+    if which == "off" {
+        return Ok(match editor::mode::leave() {
+            Some(left) => format!("stopped editing {} on {}", left.layer, left.output),
+            None => "nothing was being edited".to_string(),
+        });
+    }
+    let layer = LayerKind::from_name(which).ok_or_else(|| {
+        format!("'{which}' is not a layer (try: background, desktop, top, overlay, lock, off)")
+    })?;
+    let mode = editor::mode::enter(layer, args.get(1).copied())?;
+    Ok(match mode.refused {
+        Some(why) => format!("previewing {} on {}: {why}", mode.layer, mode.output),
+        None => format!("editing {} on {}", mode.layer, mode.output),
+    })
+}
 
 /// Makes `name` the layout the shell draws, and asks whatever is running to pick it up.
 ///
@@ -168,12 +195,50 @@ fn check(name: Option<&str>) -> Result<String, String> {
     report.merge(layout::validate_resolved(
         &resolved,
         &path.display().to_string(),
+        &lock_theme(),
     ));
+    report.merge(scanout(&resolved, &path.display().to_string()));
 
     match report.is_clean() {
         true => Ok(report.summary()),
         false => Err(report.render()),
     }
+}
+
+/// What each area above fullscreen costs its output, said once per area (DEC-17): it lives in the overlay window, and an output with an overlay surface cannot scan a fullscreen window out directly (F-6.1). A warning rather than an error, because it is a cost the user chose.
+///
+/// Resolved against [`NOMINAL_OUTPUT`] it is every output a `*` rule reaches; the running shell says it again for each output it draws.
+pub(crate) fn scanout(resolved: &layout::Resolved, file: &str) -> util::report::Report {
+    let mut report = util::report::Report::default();
+    let output = match resolved.output.as_str() {
+        NOMINAL_OUTPUT => telar::t!("layout.every_output"),
+        named => named.to_string(),
+    };
+    for (layer, area) in resolved.areas().filter(|(_, area)| area.above_fullscreen) {
+        report.warn(util::report::Finding::new(
+            file,
+            match resolved.output.as_str() {
+                NOMINAL_OUTPUT => format!("layers.{layer}.areas.{}.above_fullscreen", area.id),
+                named => format!(
+                    "layers.{layer} on {named}.areas.{}.above_fullscreen",
+                    area.id
+                ),
+            },
+            telar::t!("layout.scanout", area = area.id, output = output),
+        ));
+    }
+    report
+}
+
+/// The theme the lock screen would be drawn with, which is what decides whether its prompt can be read. The running config where there is one, and the file on disk where this answers in the CLI.
+pub(crate) fn lock_theme() -> config::theme::NordTheme {
+    config::config()
+        .unwrap_or_else(|| {
+            std::sync::Arc::new(config::Config::load_or_default(
+                &config::Config::default_path(),
+            ))
+        })
+        .resolve_theme()
 }
 
 fn undo() -> Result<String, String> {
@@ -241,14 +306,14 @@ fn add(args: &[&str]) -> Result<String, String> {
 
 /// Takes a placed module out of the layout, or the whole area when the id names one.
 ///
-/// Both, because both are addressed by id and a user who asks to remove `bar-top` means the bar. Which it was is in the reply, so an id that happens to name both kinds of thing does not act silently on the wrong one.
+/// Both, because both are addressed by id and a user who asks to remove `bar-top` means the bar. Which it was is in the reply, so an id that happens to name both kinds of thing does not act silently on the wrong one. The lock screen's prompt is the one area it refuses, since a lock with nothing to type a password into is a lockout (TA-8).
 fn remove(id: &str) -> Result<String, String> {
     let instance = InstanceId::new(id);
     let area = AreaId::new(id);
     let label = format!("Remove `{id}`");
     let id = id.to_string();
     layouts::edit(&label, move |layout, _| {
-        if let Some(at) = instance_in(layout, &instance) {
+        if let Some(at) = placement_of(layout, &instance) {
             return Ok((
                 vec![LayoutOp::DeleteInstance {
                     spot: at.spot,
@@ -286,7 +351,7 @@ fn move_instance(args: &[&str]) -> Result<String, String> {
 
     let label = format!("Move `{instance}`");
     layouts::edit(&label, move |layout, _| {
-        let from = instance_in(layout, &instance)
+        let from = placement_of(layout, &instance)
             .ok_or_else(|| nothing_called(layout, instance.as_str()))?;
         let to = group_named(layout, &group)?;
         let landing = spot_of(layout, &to)?;
@@ -315,6 +380,67 @@ fn move_instance(args: &[&str]) -> Result<String, String> {
     })
 }
 
+/// `output` narrows the region to the most specific rule that writes it for that screen, so a monitor that overrides it is edited there and every other screen keeps the shared one.
+pub(super) fn show_in_region(
+    id: AreaId,
+    picture: &std::path::Path,
+    output: Option<String>,
+) -> Result<String, String> {
+    let source = picture.display().to_string();
+    let label = format!("Show {source} in `{id}`");
+    layouts::edit(&label, move |layout, _| {
+        let site = match &output {
+            Some(output) => region_for(layout, &id, output)?,
+            None => area_in(layout, &id)?,
+        };
+        let area = area_of(layout, &site, &id)?;
+        let Some(AreaKind::WallpaperRegion {
+            rect,
+            fit,
+            transition,
+            ..
+        }) = &area.kind
+        else {
+            return Err(format!(
+                "`{id}` is {}, and only a wallpaper region shows a picture",
+                describe(area.kind.as_ref())
+            ));
+        };
+        let kind = AreaKind::WallpaperRegion {
+            rect: *rect,
+            source: Some(source.clone()),
+            fit: *fit,
+            transition: *transition,
+        };
+        Ok((
+            vec![LayoutOp::SetAreaKind {
+                site,
+                id: id.clone(),
+                kind: Box::new(Some(kind)),
+            }],
+            source.clone(),
+        ))
+    })
+}
+
+/// The site of the rule that writes `id` for `output`, preferring the one that names `output` most narrowly.
+fn region_for(layout: &Layout, id: &AreaId, output: &str) -> Result<Site, String> {
+    sites(layout)
+        .filter(|(site, layer)| {
+            site.workspace.is_none()
+                && site.output.matches(output)
+                && layer.areas.iter().any(|area| &area.id == id)
+        })
+        .max_by_key(|(site, _)| site.output.specificity())
+        .map(|(site, _)| site)
+        .ok_or_else(|| {
+            format!(
+                "no rule for {output} writes an area called `{id}`{}",
+                listing("areas", area_ids(layout))
+            )
+        })
+}
+
 /// Changes one property of a placed module: which module it shows, how big it is drawn, one of its options, one bound expression, or what a gesture on it runs.
 fn set(args: &[&str]) -> Result<String, String> {
     let instance = InstanceId::new(arg(args, 0, "instance")?);
@@ -327,7 +453,7 @@ fn set(args: &[&str]) -> Result<String, String> {
 
     let label = format!("Set `{key}` on `{instance}`");
     layouts::edit(&label, move |layout, _| {
-        let at = instance_in(layout, &instance)
+        let at = placement_of(layout, &instance)
             .ok_or_else(|| nothing_called(layout, instance.as_str()))?;
         let mut changed = spot_of(layout, &at.spot)?.children[at.index].clone();
         apply_key(&mut changed, &key, &value, at.spot.site.layer)?;
@@ -371,6 +497,13 @@ fn apply_key(
         }
         Some(("options", path)) => {
             put(&mut instance.options, path, as_toml(value))?;
+            let problems = catalogue()
+                .find(&module)
+                .map_or_else(Vec::new, |found| found.option_problems(&instance.options));
+            let written = |key: &str| path == key || path.starts_with(&format!("{key}."));
+            if let Some((key, why)) = problems.into_iter().find(|(key, _)| written(key)) {
+                return Err(format!("`{module}`: `{key}` {why}"));
+            }
         }
         Some(("bindings", path)) => {
             instance
@@ -445,195 +578,49 @@ fn as_toml(value: &str) -> toml::Value {
         .unwrap_or_else(|| toml::Value::String(value.to_string()))
 }
 
-/// Puts one part of the layout back to what the built-in layout says, or takes it away where the built-in layout has nothing to say about it.
+/// Puts one part of the layout back to what the layout it extends says — the built-in one, when it extends none — or takes it away where that has nothing to say about it ([`layout::reset`]).
 ///
-/// `all` and a layer name put every area back; an area id or an instance id puts that one back. **Something the layout no longer has is still a reset**, because a reset a user reaches for after removing the bar is exactly the one that has to put it back — so a target missing here is looked for in the shipped layout too, and only an id neither of them knows is refused.
-///
-/// **The output and workspace rules a layout writes are left where they are**: they are the shape of the file rather than something placed in it, and no operation addresses one, so a reset that claimed to remove them would be claiming more than it does.
+/// `all` and a layer name put every area back; an area id or an instance id puts that one back, and is looked for in the base too, since a reset reached for after removing the bar is exactly the one that has to put it back. Only an id neither of them knows is refused.
 fn reset(target: &str) -> Result<String, String> {
     let label = format!("Reset `{target}`");
     let target = target.to_string();
+    let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
     layouts::edit(&label, move |layout, _| {
-        let shipped = layout::built_in();
-        let said = format!("reset `{target}`");
-        if target == "all" {
-            return Ok((refill(layout, &shipped, &LayerKind::ALL), said));
-        }
-        if let Some(layer) = LayerKind::from_name(&target) {
-            return Ok((refill(layout, &shipped, &[layer]), said));
-        }
-        let area = AreaId::new(&target);
-        if let Some(site) = area_in(layout, &area)
-            .ok()
-            .or_else(|| area_in(&shipped, &area).ok())
-        {
-            return Ok((reset_area(layout, &shipped, &site, &area), said));
-        }
-        let instance = InstanceId::new(&target);
-        if let Some(at) =
-            instance_in(layout, &instance).or_else(|| instance_in(&shipped, &instance))
-        {
-            return Ok((reset_instance(layout, &shipped, &at, &instance), said));
-        }
-        Err(nothing_called(layout, &target))
-    })
-}
-
-/// Empties the named layers of every output rule and fills them again from the built-in layout's rule of the same match, which has nothing to say about a rule the user added — so a monitor rule's areas are taken away rather than replaced.
-fn refill(layout: &Layout, shipped: &Layout, layers: &[LayerKind]) -> Vec<LayoutOp> {
-    let mut ops = Vec::new();
-    for rule in &layout.outputs {
-        for kind in layers {
-            let site = Site {
-                output: rule.matches.clone(),
-                layer: *kind,
-            };
-            for area in &rule.layers.get(*kind).areas {
-                ops.push(LayoutOp::DeleteArea {
-                    site: site.clone(),
-                    id: area.id.clone(),
-                });
-            }
-            for (index, area) in areas_at(shipped, &site).iter().enumerate() {
-                ops.push(LayoutOp::InsertArea {
-                    site: site.clone(),
-                    index,
-                    area: Box::new(area.clone()),
-                });
-            }
-        }
-    }
-    ops
-}
-
-/// Takes one area out and puts the shipped one in its place — or only one of the two, when the layout no longer has it or the shipped layout never did.
-fn reset_area(layout: &Layout, shipped: &Layout, site: &Site, id: &AreaId) -> Vec<LayoutOp> {
-    let here = areas_at(layout, site);
-    let at = here.iter().position(|area| &area.id == id);
-    let mut ops = Vec::new();
-    if at.is_some() {
-        ops.push(LayoutOp::DeleteArea {
-            site: site.clone(),
-            id: id.clone(),
-        });
-    }
-    if let Some(area) = areas_at(shipped, site).iter().find(|area| &area.id == id) {
-        let shipped_at = areas_at(shipped, site)
-            .iter()
-            .position(|it| &it.id == id)
-            .unwrap_or(0);
-        ops.push(LayoutOp::InsertArea {
-            site: site.clone(),
-            // Back where it was, or where the shipped layout has it once the layout no longer says.
-            index: at.unwrap_or(shipped_at.min(here.len())),
-            area: Box::new(area.clone()),
-        });
-    }
-    ops
-}
-
-/// The same for one placed module. `at` is wherever it was found — in the layout, or in the shipped one when the layout has taken it out.
-fn reset_instance(layout: &Layout, shipped: &Layout, at: &At, id: &InstanceId) -> Vec<LayoutOp> {
-    let here = instance_in(layout, id);
-    let mut ops = Vec::new();
-    if let Some(here) = &here {
-        ops.push(LayoutOp::DeleteInstance {
-            spot: here.spot.clone(),
-            id: id.clone(),
-        });
-    }
-    if let Some(found) = instance_in(shipped, id)
-        && let Ok(group) = spot_of(shipped, &found.spot)
-    {
-        let room = spot_of(layout, &at.spot)
-            .map(|group| group.children.len())
-            .unwrap_or(0);
-        ops.push(LayoutOp::InsertInstance {
-            spot: at.spot.clone(),
-            index: match &here {
-                Some(here) => here.index,
-                None => found.index.min(room),
-            },
-            instance: Box::new(group.children[found.index].clone()),
-        });
-    }
-    ops
-}
-
-/// The areas one site holds, and none where the layout has no rule for that output.
-fn areas_at<'a>(layout: &'a Layout, site: &Site) -> &'a [Area] {
-    layout
-        .outputs
-        .iter()
-        .find(|rule| rule.matches == site.output)
-        .map(|rule| rule.layers.get(site.layer).areas.as_slice())
-        .unwrap_or_default()
-}
-
-/// Where an instance sits: the group it is in, and its position in that group.
-struct At {
-    spot: Spot,
-    index: usize,
-}
-
-/// Where `id` is placed in the layout's own rules, or `None`.
-///
-/// Only the output level, because that is all an operation can address: [`Site`] names an output rule and a layer, and what a workspace rule places is written inside that rule. [`nothing_called`] is what says so when an id is only there.
-fn instance_in(layout: &Layout, id: &InstanceId) -> Option<At> {
-    for rule in &layout.outputs {
-        for (kind, layer) in rule.layers.each() {
-            for area in &layer.areas {
-                for group in &area.groups {
-                    if let Some(index) = group.children.iter().position(|it| &it.id == id) {
-                        return Some(At {
-                            spot: Spot {
-                                site: Site {
-                                    output: rule.matches.clone(),
-                                    layer: kind,
-                                },
-                                area: area.id.clone(),
-                                group: group.id.clone(),
-                            },
-                            index,
-                        });
-                    }
+        let base = layout::reset::base_of(layout, &known);
+        let (area, instance) = (AreaId::new(&target), InstanceId::new(&target));
+        let aimed = match target.as_str() {
+            "all" => Aim::All,
+            named => match LayerKind::from_name(named) {
+                Some(layer) => Aim::Layer(layer),
+                None if site_of_area(layout, &area)
+                    .or_else(|| site_of_area(&base, &area))
+                    .is_some() =>
+                {
+                    Aim::Area(&area)
                 }
-            }
-        }
-    }
-    None
+                None => Aim::Instance(&instance),
+            },
+        };
+        layout::reset::ops(layout, &base, aimed)
+            .map(|ops| (ops, format!("reset `{target}`")))
+            .ok_or_else(|| nothing_called(layout, &target))
+    })
 }
 
 /// Which rule and layer an area is written in, or an error naming the areas there are.
 fn area_in(layout: &Layout, id: &AreaId) -> Result<Site, String> {
-    for rule in &layout.outputs {
-        for (kind, layer) in rule.layers.each() {
-            if layer.areas.iter().any(|area| &area.id == id) {
-                return Ok(Site {
-                    output: rule.matches.clone(),
-                    layer: kind,
-                });
-            }
-        }
-    }
-    Err(format!(
-        "there is no area called `{id}`{}",
-        listing("areas", area_ids(layout))
-    ))
+    site_of_area(layout, id).ok_or_else(|| {
+        format!(
+            "there is no area called `{id}`{}",
+            listing("areas", area_ids(layout))
+        )
+    })
 }
 
 fn area_of<'a>(layout: &'a Layout, site: &Site, id: &AreaId) -> Result<&'a Area, String> {
-    layout
-        .outputs
+    areas_at(layout, site)
         .iter()
-        .find(|rule| rule.matches == site.output)
-        .and_then(|rule| {
-            rule.layers
-                .get(site.layer)
-                .areas
-                .iter()
-                .find(|area| &area.id == id)
-        })
+        .find(|area| &area.id == id)
         .ok_or_else(|| format!("there is no area called `{id}`"))
 }
 
@@ -660,22 +647,17 @@ fn group_named(layout: &Layout, name: &str) -> Result<Spot, String> {
         None => (None, GroupId::new(name)),
     };
     let mut found: Vec<Spot> = Vec::new();
-    for rule in &layout.outputs {
-        for (kind, layer) in rule.layers.each() {
-            for holder in &layer.areas {
-                if area.as_ref().is_some_and(|wanted| &holder.id != wanted) {
-                    continue;
-                }
-                if group_of(holder, &group).is_some() {
-                    found.push(Spot {
-                        site: Site {
-                            output: rule.matches.clone(),
-                            layer: kind,
-                        },
-                        area: holder.id.clone(),
-                        group: group.clone(),
-                    });
-                }
+    for (site, layer) in sites(layout) {
+        for holder in &layer.areas {
+            if area.as_ref().is_some_and(|wanted| &holder.id != wanted) {
+                continue;
+            }
+            if group_of(holder, &group).is_some() {
+                found.push(Spot {
+                    site: site.clone(),
+                    area: holder.id.clone(),
+                    group: group.clone(),
+                });
             }
         }
     }
@@ -708,36 +690,12 @@ fn first_group(area: &Area, id: &AreaId) -> Result<GroupId, String> {
         })
 }
 
-/// An id no rule of this layout places, said with whatever the layout does have — and with the one case that looks like a missing id and is not.
+/// An id nothing in this layout places, said with whatever the layout does have.
 fn nothing_called(layout: &Layout, id: &str) -> String {
-    if in_a_workspace_rule(layout, id) {
-        return format!(
-            "`{id}` is placed by a workspace rule, and an edit addresses an output's own layers; a workspace rule is written in the layout file"
-        );
-    }
     format!(
         "nothing in this layout is called `{id}`{}",
         listing("modules", instance_ids(layout))
     )
-}
-
-/// Whether an id appears only inside a workspace rule, which no operation addresses.
-fn in_a_workspace_rule(layout: &Layout, id: &str) -> bool {
-    layout.outputs.iter().any(|rule| {
-        rule.workspaces.iter().any(|workspace| {
-            workspace.layers.each().into_iter().any(|(_, layer)| {
-                layer.areas.iter().any(|area| {
-                    area.id.as_str() == id
-                        || area.groups.iter().any(|group| {
-                            group
-                                .children
-                                .iter()
-                                .any(|instance| instance.id.as_str() == id)
-                        })
-                })
-            })
-        })
-    })
 }
 
 fn instance_ids(layout: &Layout) -> BTreeSet<String> {
@@ -762,11 +720,9 @@ fn group_ids(layout: &Layout) -> BTreeSet<String> {
 
 fn ids(layout: &Layout, mut of: impl FnMut(&Area, &mut BTreeSet<String>)) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
-    for rule in &layout.outputs {
-        for (_, layer) in rule.layers.each() {
-            for area in &layer.areas {
-                of(area, &mut ids);
-            }
+    for (_, layer) in sites(layout) {
+        for area in &layer.areas {
+            of(area, &mut ids);
         }
     }
     ids
@@ -920,30 +876,26 @@ impl layout::Catalogue for Descriptors {
     }
 
     fn has_representation(&self, module: &str, representation: Representation) -> bool {
-        self.find(module)
-            .is_some_and(|found| found.input(drawn_as(representation)).is_some())
+        self.find(module).is_some_and(|found| {
+            found
+                .input(surfaces::area::representation(representation))
+                .is_some()
+        })
     }
 
     fn is_read_only(&self, module: &str, representation: Representation) -> bool {
         self.find(module)
-            .and_then(|found| found.input(drawn_as(representation)))
+            .and_then(|found| found.input(surfaces::area::representation(representation)))
             .is_some_and(|input| input == ui::descriptor::Input::ReadOnly)
     }
 
     fn command_resolves(&self, line: &str) -> bool {
         super::resolves(line)
     }
-}
 
-/// The layout model's five placeable sizes as the descriptor table names them. The table has two more, `Panel` and `Popout`, which are opened rather than placed and so have no way to appear in a layout.
-fn drawn_as(representation: Representation) -> ui::host::Representation {
-    use ui::host::{Representation as Drawn, WidgetSize};
-    match representation {
-        Representation::Chip => Drawn::Chip,
-        Representation::WidgetS => Drawn::Widget(WidgetSize::S),
-        Representation::WidgetM => Drawn::Widget(WidgetSize::M),
-        Representation::WidgetL => Drawn::Widget(WidgetSize::L),
-        Representation::Card => Drawn::Card,
+    fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, String)> {
+        self.find(module)
+            .map_or_else(Vec::new, |found| found.option_problems(options))
     }
 }
 
@@ -988,6 +940,52 @@ mod tests {
         assert!(verdict.is_ok(), "{}", verdict.unwrap_err());
     }
 
+    /// DEC-17's cost note: one warning per area above fullscreen and per output it lands on, naming the output — every output a `*` rule reaches when `check` resolves without a compositor — and none for an area without the flag.
+    #[test]
+    fn an_area_above_fullscreen_is_said_to_keep_its_output_off_direct_scanout() {
+        let mut mine = layout::built_in();
+        let bar = mine.outputs[0]
+            .layers
+            .top
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "bar-top")
+            .expect("the built-in bar");
+        bar.above_fullscreen = Some(true);
+        let at = |output: &str| layout::resolve(&mine, &Default::default(), output, None).0;
+
+        telar::set_locale("en");
+        let checked = scanout(&at(NOMINAL_OUTPUT), "layouts/mine.toml");
+        assert!(checked.errors.is_empty());
+        let said: Vec<(&str, &str)> = checked
+            .warnings
+            .iter()
+            .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [(
+                "layers.top.areas.bar-top.above_fullscreen",
+                "`bar-top` is drawn above fullscreen windows, which keeps every output off direct scanout"
+            )]
+        );
+        let live = scanout(&at("DP-1"), "layouts/mine.toml");
+        assert_eq!(
+            live.warnings[0].message,
+            "`bar-top` is drawn above fullscreen windows, which keeps DP-1 off direct scanout"
+        );
+
+        telar::set_locale("es");
+        assert_eq!(
+            scanout(&at("DP-1"), "layouts/mine.toml").warnings[0].message,
+            "`bar-top` se dibuja sobre las ventanas a pantalla completa, lo que deja a DP-1 sin escaneo directo"
+        );
+        telar::set_locale("en");
+
+        let unflagged = layout::resolve(&layout::built_in(), &Default::default(), "DP-1", None).0;
+        assert!(scanout(&unflagged, "layouts/default.toml").is_clean());
+    }
+
     /// `check` answers from the files rather than from the shell, so it must refuse a name that is not there instead of reporting a clean layout it never read.
     #[test]
     fn checking_a_layout_that_is_not_there_is_an_error_not_a_clean_report() {
@@ -1001,6 +999,14 @@ mod tests {
     ///
     /// Its own directory rather than the user's, so these run beside the verbs that read the real one without either seeing the other's files.
     fn shell_with(test: &str, active: &str) -> std::rc::Rc<std::cell::RefCell<LayoutStore>> {
+        shell_holding(test, active, &layout::built_in())
+    }
+
+    fn shell_holding(
+        test: &str,
+        active: &str,
+        mine: &Layout,
+    ) -> std::rc::Rc<std::cell::RefCell<LayoutStore>> {
         ui::descriptor::install(crate::core::modules::MODULES);
         let dir = util::paths::isolated_root()
             .expect("a test process resolves under its scratch root")
@@ -1009,7 +1015,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("a layouts directory");
         std::fs::write(
             dir.join("mine.toml"),
-            toml::to_string_pretty(&layout::built_in()).expect("the shipped layout serializes"),
+            toml::to_string_pretty(mine).expect("the layout serializes"),
         )
         .expect("a layout to edit");
 
@@ -1037,6 +1043,56 @@ mod tests {
             .collect()
     }
 
+    /// The picture the background region `id` names for itself, as the store now holds it.
+    fn source_of(store: &LayoutStore, id: &str) -> Option<String> {
+        store
+            .active()
+            .outputs
+            .iter()
+            .flat_map(|rule| rule.layers.background.areas.iter())
+            .find(|area| area.id.as_str() == id)
+            .and_then(|area| match &area.kind {
+                Some(AreaKind::WallpaperRegion { source, .. }) => source.clone(),
+                _ => None,
+            })
+    }
+
+    /// `wallpaper set --region` is a layout edit: it writes the region's own `source`, which `layout undo` takes back, and it refuses an area that is not a wallpaper region rather than writing a picture nothing would draw.
+    #[test]
+    fn a_wallpaper_set_on_a_region_is_a_layout_edit_undo_takes_back() {
+        let store = shell_with("wallpaper-region", "mine");
+        let picture = util::paths::isolated_root()
+            .expect("a scratch root")
+            .join("layout-verbs-wallpaper-region")
+            .join("sea.png");
+        std::fs::write(&picture, b"a picture, as far as a path check goes").expect("a file");
+        let written = picture.display().to_string();
+        assert_eq!(source_of(&store.borrow(), "background"), None);
+
+        let reply = super::super::dispatch(&format!("wallpaper set {written} --region background"));
+        assert_eq!(reply, format!("ok {written}"));
+        assert_eq!(
+            source_of(&store.borrow(), "background").as_deref(),
+            Some(written.as_str()),
+            "the region names its own picture now"
+        );
+
+        undo().expect("the edit comes back out");
+        assert_eq!(
+            source_of(&store.borrow(), "background"),
+            None,
+            "and it follows [background] again"
+        );
+
+        let refused = super::super::dispatch(&format!("wallpaper set {written} --region bar-top"));
+        assert_eq!(
+            refused,
+            "err `bar-top` is a `bar` area, and only a wallpaper region shows a picture"
+        );
+        let refused = super::super::dispatch(&format!("wallpaper set {written} --region"));
+        assert_eq!(refused, "err missing argument <area> after --region");
+    }
+
     /// The sprint's own criterion: a layout is editable end to end over IPC, and one undo takes back the last edit whatever made it.
     ///
     /// Through the verbs rather than through the store, because what this has to prove is the whole path — the id a verb picks, the size it chooses for the area, the transaction it commits and the reply it sends — and each of those is a place the store's own tests cannot see.
@@ -1048,7 +1104,16 @@ mod tests {
         assert!(said.contains("battery"), "{said}");
         assert_eq!(run_of(&store.borrow(), "end"), ["notes", "battery"]);
 
-        set(&["battery", "options.show_percent", "true"]).expect("it sets an option");
+        let refused = set(&["battery", "options.show_percent", "true"])
+            .expect_err("a key the module does not declare is refused");
+        assert_eq!(
+            refused,
+            "`battery`: `show_percent` is not one of its options"
+        );
+        let refused = set(&["battery", "options.critical_level", "low"])
+            .expect_err("and so is a value its type cannot hold");
+        assert_eq!(refused, "`battery`: `critical_level` takes a whole number");
+        set(&["battery", "options.critical_level", "15"]).expect("it sets an option");
         assert_eq!(
             store
                 .borrow()
@@ -1059,9 +1124,9 @@ mod tests {
                 .flat_map(|area| area.groups.iter())
                 .flat_map(|group| group.children.iter())
                 .find(|it| it.id.as_str() == "battery")
-                .and_then(|it| it.options.get("show_percent"))
-                .and_then(toml::Value::as_bool),
-            Some(true)
+                .and_then(|it| it.options.get("critical_level"))
+                .and_then(toml::Value::as_integer),
+            Some(15)
         );
 
         move_instance(&["battery", "start", "0"]).expect("it moves");
@@ -1160,6 +1225,48 @@ mod tests {
             store.borrow().undo_label().is_none(),
             "and none of them left an undo entry"
         );
+    }
+
+    /// `layout edit` is the mode switch (F-10.33): a line the shell answers, which names what it takes, refuses what is not a layer or not a screen, and says so when there was nothing to switch off.
+    #[test]
+    fn the_edit_verb_reads_a_layer_and_a_screen() {
+        telar::set_locale("en");
+        for line in [
+            "layout edit desktop",
+            "layout edit lock DP-1",
+            "layout edit off",
+        ] {
+            assert!(super::super::resolves(line), "{line}");
+        }
+        assert_eq!(
+            edit(&[]).unwrap_err(),
+            "missing argument <background|desktop|top|overlay|lock|off>"
+        );
+        let refused = edit(&["sideways"]).unwrap_err();
+        assert!(
+            refused.contains("'sideways'") && refused.contains("overlay"),
+            "{refused}"
+        );
+        assert_eq!(edit(&["off"]), Ok("nothing was being edited".to_string()));
+        let nowhere = edit(&["top", "VGA-9"]).unwrap_err();
+        assert!(nowhere.contains("'VGA-9' is not a screen"), "{nowhere}");
+    }
+
+    /// F-10.35: the recovery flag refuses every edit, and a mode is one waiting to happen, so no layer's mode opens under it.
+    #[test]
+    fn the_edit_verb_is_refused_under_the_safe_layout() {
+        telar::set_locale("en");
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("layout-verbs-safe-edit");
+        layouts::install(
+            std::rc::Rc::new(std::cell::RefCell::new(LayoutStore::safe(dir))),
+            std::rc::Rc::new(|| {}),
+        );
+        for layer in ["background", "desktop", "top", "overlay", "lock"] {
+            let refused = edit(&[layer]).expect_err("refused under --safe-layout");
+            assert!(refused.contains("--safe-layout"), "{layer}: {refused}");
+        }
     }
 
     /// Every verb that changes a layout needs the store the shell owns, and in a process without one has to say so rather than answering as though it had edited something.
@@ -1273,33 +1380,100 @@ mod tests {
         assert!(refused.contains("holds no"), "{refused}");
     }
 
-    /// An id that only a workspace rule places looks exactly like a missing one, and the difference is what a user needs to hear: no operation addresses a rule's own layers.
+    /// A module a workspace rule places is addressed by its id like any other: the verbs find it in the rule that places it, and undo puts it back there.
     #[test]
-    fn an_id_only_a_workspace_rule_places_says_so() {
-        let layout: Layout = toml::from_str(
-            r#"
-            id = "test"
-            [[outputs]]
-            match = "*"
-            [[outputs.workspaces]]
-            match = "games"
-            [[outputs.workspaces.layers.top.areas]]
-            id = "bar-top"
-            [[outputs.workspaces.layers.top.areas.groups]]
-            id = "end"
-            place = "zone"
-            zone = "end"
-            [[outputs.workspaces.layers.top.areas.groups.children]]
-            id = "battery"
-            module = "battery"
-            "#,
-        )
-        .expect("it parses");
-        let said = nothing_called(&layout, "battery");
-        assert!(said.contains("workspace rule"), "{said}");
-        assert!(
-            nothing_called(&layout, "nothing-at-all").contains("nothing in this layout"),
-            "and an id nothing places at all is still what it was"
+    fn a_module_a_workspace_rule_places_is_edited_where_it_is_written() {
+        let mut mine = layout::built_in();
+        mine.outputs[0].workspaces.push(
+            toml::from_str(
+                r#"
+                match = "games"
+                [[layers.top.areas]]
+                id = "bar-top"
+                [[layers.top.areas.groups]]
+                id = "end"
+                [[layers.top.areas.groups.children]]
+                id = "games-battery"
+                module = "battery"
+                "#,
+            )
+            .expect("a workspace rule"),
         );
+        let store = shell_holding("workspace", "mine", &mine);
+        let in_games = |store: &LayoutStore| -> Vec<String> {
+            store.active().outputs[0].workspaces[0].layers.top.areas[0].groups[0]
+                .children
+                .iter()
+                .map(|it| it.id.to_string())
+                .collect()
+        };
+        assert_eq!(in_games(&store.borrow()), ["games-battery"]);
+
+        set(&["games-battery", "representation", "chip"]).expect("it is set where it is");
+        let said = remove("games-battery").expect("and removed from there");
+        assert!(said.contains("module"), "{said}");
+        assert!(in_games(&store.borrow()).is_empty());
+        assert_eq!(
+            run_of(&store.borrow(), "end"),
+            ["notes"],
+            "the output rule's own bar is untouched"
+        );
+
+        undo().expect("the removal comes back out");
+        assert_eq!(in_games(&store.borrow()), ["games-battery"]);
+        assert!(
+            nothing_called(store.borrow().active(), "nothing-at-all")
+                .contains("nothing in this layout"),
+            "and an id nothing places is still refused by name"
+        );
+    }
+
+    fn lock_ids(store: &LayoutStore) -> Vec<String> {
+        store.active().outputs[0]
+            .layers
+            .lock
+            .areas
+            .iter()
+            .map(|area| area.id.to_string())
+            .collect()
+    }
+
+    /// The lock screen's prompt is the one area `layout remove` refuses, and the refusal says what it is rather than failing as though it were not there (TA-8).
+    #[test]
+    fn the_lock_prompt_cannot_be_removed_over_ipc() {
+        let store = shell_with("prompt", "mine");
+        let before = store.borrow().active().clone();
+
+        let refused = remove("prompt").expect_err("it refuses");
+        assert!(
+            refused.contains("password prompt") && refused.contains("never removed"),
+            "{refused}"
+        );
+        assert_eq!(store.borrow().active(), &before, "and changes nothing");
+        assert!(store.borrow().undo_label().is_none());
+
+        remove("lock-readings")
+            .expect("while the rest of the lock layer is the user's to take away");
+        assert_eq!(lock_ids(&store.borrow()), ["prompt"]);
+    }
+
+    /// Resetting the lock layer puts the shipped prompt back where the user's stands, rather than taking it away to put it back: an edit that takes the prompt away is refused, however briefly.
+    #[test]
+    fn reset_puts_the_lock_layer_back_without_taking_the_prompt_away() {
+        let store = shell_with("reset-lock", "mine");
+        let shipped = layout::built_in().outputs[0].layers.lock.clone();
+
+        remove("lock-readings").expect("a reading goes");
+        reset("lock").expect("the layer comes back");
+        assert_eq!(store.borrow().active().outputs[0].layers.lock, shipped);
+
+        reset("prompt").expect("the prompt alone resets in place");
+        reset("all").expect("and so does everything");
+        assert_eq!(store.borrow().active().outputs[0].layers.lock, shipped);
+
+        for _ in 0..4 {
+            undo().expect("each reset comes back out");
+        }
+        assert_eq!(lock_ids(&store.borrow()), ["lock-readings", "prompt"]);
     }
 }

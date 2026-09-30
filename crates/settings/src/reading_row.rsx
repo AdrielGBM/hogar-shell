@@ -1,5 +1,5 @@
 [logic]
-use crate::field_row::{field_row, FieldRowProps};
+use ::ui::form::field_row::{field_row, FieldRowProps};
 use ::config::theme::FontRole;
 
 /// A label and a value the user cannot change — what a page of readings is made of.

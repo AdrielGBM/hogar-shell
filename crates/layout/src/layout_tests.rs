@@ -27,6 +27,20 @@ mod tests {
         fn command_resolves(&self, line: &str) -> bool {
             line.starts_with("panel toggle")
         }
+
+        fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, String)> {
+            match module {
+                "clock" => config::fields::check(
+                    &config::fields::section("clock").expect("[clock]"),
+                    options,
+                ),
+                _ => Vec::new(),
+            }
+        }
+    }
+
+    fn theme() -> config::theme::NordTheme {
+        config::theme::NordTheme::default()
     }
 
     fn layout(toml: &str) -> Layout {
@@ -343,6 +357,24 @@ mod tests {
         );
     }
 
+    /// A bar is rounded by its `shape.radius`; a `style.radius` beside it would be a second answer for the same corners, so it is reported where it is written rather than silently losing to the first.
+    #[test]
+    fn a_style_radius_on_a_bar_is_reported_rather_than_drawn() {
+        let rounded = layout(&ONE_BAR.replace(
+            "reserve = true\n",
+            "reserve = true\nstyle = { radius = 8, fill = \"surface\" }\n",
+        ));
+        let report = validate(&rounded, &Modules);
+        let warned: Vec<&str> = report.warnings.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            warned,
+            ["outputs.*.layers.top.areas.bar-top.style.radius"],
+            "{}",
+            report.render()
+        );
+        assert!(report.errors.is_empty(), "{}", report.render());
+    }
+
     #[test]
     fn a_workspace_rule_may_not_remove_a_reserving_area() {
         let parsed = layout(&format!(
@@ -468,7 +500,7 @@ mod tests {
         assert!(report.is_clean(), "{}", report.render());
 
         let resolved = alone(&parsed, "DP-1");
-        assert!(validate_resolved(&resolved, "layouts/test.toml").is_clean());
+        assert!(validate_resolved(&resolved, "layouts/test.toml", &theme()).is_clean());
     }
 
     #[test]
@@ -529,7 +561,7 @@ mod tests {
             "#,
         );
         let resolved = alone(&parsed, "DP-1");
-        let report = validate_resolved(&resolved, "layouts/test.toml");
+        let report = validate_resolved(&resolved, "layouts/test.toml", &theme());
         assert!(
             report.findings().any(|f| f.message.contains("no prompt")),
             "{}",
@@ -556,7 +588,7 @@ mod tests {
             rect = { x = 0.0, y = 0.0, w = 1.0, h = 1.0 }
             "#,
         );
-        let report = validate_resolved(&alone(&faded, "DP-1"), "layouts/test.toml");
+        let report = validate_resolved(&alone(&faded, "DP-1"), "layouts/test.toml", &theme());
         let keys: Vec<&str> = report.findings().map(|f| f.key.as_str()).collect();
         assert!(
             keys.iter().any(|k| k.ends_with("prompt.visible")),
@@ -604,6 +636,48 @@ mod tests {
         assert!(
             messages.iter().any(|m| m.contains("summon the dead")),
             "{messages:?}"
+        );
+    }
+
+    /// An instance option is declared once, on its module's options type, so a key that is not there — or a value its type cannot hold — is an error placed where it was written rather than an option that silently does nothing.
+    #[test]
+    fn an_option_the_module_does_not_declare_is_reported_where_it_was_written() {
+        let parsed = layout(&format!(
+            r#"{ONE_BAR}
+            [outputs.layers.top.areas.groups.children.options]
+            show_date = "yes"
+            date_format = "%A"
+            colour = "red"
+            "#
+        ));
+        let report = validate(&parsed, &Modules);
+        let found: Vec<(&str, &str, &str)> = report
+            .findings()
+            .map(|f| {
+                (
+                    f.file.to_str().unwrap_or(""),
+                    f.key.as_str(),
+                    f.message.as_str(),
+                )
+            })
+            .collect();
+        let at = "outputs.*.layers.top.areas.bar-top.groups.start.children.clock-1.options";
+        assert_eq!(
+            found,
+            [
+                (
+                    "layouts/test.toml",
+                    format!("{at}.colour").as_str(),
+                    "`clock`: `colour` is not one of its options"
+                ),
+                (
+                    "layouts/test.toml",
+                    format!("{at}.show_date").as_str(),
+                    "`clock`: `show_date` takes true or false"
+                ),
+            ],
+            "{}",
+            report.render()
         );
     }
 
@@ -681,6 +755,12 @@ mod tests {
                     shape: BarShape::default(),
                     autohide: None,
                 })),
+            },
+            LayoutOp::SetGroupStacked {
+                site: Site::everywhere(LayerKind::Top),
+                area: AreaId::new("bar-top"),
+                id: GroupId::new("start"),
+                stacked: Some(true),
             },
             LayoutOp::InsertArea {
                 site: Site::everywhere(LayerKind::Desktop),
@@ -799,7 +879,7 @@ mod tests {
                     mode: Some(config::Shape::Chips),
                     gap: Some(0.0),
                     spacing: Some(8.0),
-                    radius: Some(8.0),
+                    radius: Some(Corners::each(8.0, 0.0, 8.0, 0.0)),
                 },
                 autohide: Some(AutoHide::default()),
             },
@@ -838,11 +918,6 @@ mod tests {
             },
             AreaKind::Prompt {
                 rect: Some(Rect::default()),
-                style: PromptStyle {
-                    fill: Some("base".into()),
-                    radius: Some(8.0),
-                    opacity: Some(1.0),
-                },
             },
         ];
 
@@ -851,6 +926,22 @@ mod tests {
             let area = Area {
                 id: AreaId::new("a"),
                 kind: Some(kind),
+                reserve: Some(false),
+                above_fullscreen: Some(false),
+                within: Some(Within::Usable),
+                style: AreaStyle {
+                    fill: Some("surface".into()),
+                    radius: Some(Corners::each(12.0, 12.0, 0.0, 0.0)),
+                    opacity: Some(0.9),
+                    padding: Some(4.0),
+                    backdrop: Some(Backdrop::Blur),
+                },
+                visible: Some(Expr("true".into())),
+                remove: vec![GroupId::new("gone")],
+                actions: BTreeMap::from([(
+                    Trigger::ScrollUp,
+                    Action(vec!["panel toggle clock".into()]),
+                )]),
                 ..Area::default()
             };
             let report = validate::check_unknown_keys(&written_layout(area), &LayoutId::new("t"));
@@ -892,7 +983,6 @@ mod tests {
                 col_span: 2,
                 row_span: 3,
             },
-            GroupKind::SmartStack,
         ];
 
         for kind in placements {
@@ -907,6 +997,7 @@ mod tests {
                 groups: vec![Group {
                     id: GroupId::new("g"),
                     kind: Some(kind),
+                    stacked: Some(true),
                     ..Group::default()
                 }],
                 ..Area::default()
@@ -918,6 +1009,70 @@ mod tests {
                 report.render()
             );
         }
+    }
+
+    #[test]
+    fn a_stacked_group_keeps_the_place_it_was_given() {
+        let parsed = layout(
+            r#"
+            id = "t"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "grid"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "weather"
+            place = "cell"
+            col = 2
+            row = 1
+            stacked = true
+            [[outputs.layers.desktop.areas]]
+            id = "dock"
+            kind = "dock"
+            edge = "bottom"
+            thickness = 40
+            [[outputs.layers.desktop.areas.groups]]
+            id = "end"
+            place = "zone"
+            zone = "end"
+            stacked = true
+            [[outputs.layers.desktop.areas.groups]]
+            id = "start"
+            place = "zone"
+            zone = "start"
+            "#,
+        );
+        let resolved = alone(&parsed, "DP-1");
+        let groups: Vec<(String, GroupKind, bool)> = resolved
+            .layer(LayerKind::Desktop)
+            .expect("the desktop layer")
+            .areas
+            .iter()
+            .flat_map(|area| &area.groups)
+            .map(|group| (group.id.to_string(), group.kind, group.stacked))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                (
+                    "weather".to_string(),
+                    GroupKind::Cell {
+                        col: 2,
+                        row: 1,
+                        col_span: 1,
+                        row_span: 1
+                    },
+                    true
+                ),
+                ("end".to_string(), GroupKind::Zone { zone: Zone::End }, true),
+                (
+                    "start".to_string(),
+                    GroupKind::Zone { zone: Zone::Start },
+                    false
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -1074,7 +1229,7 @@ mod tests {
             "with the prompt last, so nothing the layer holds is stacked over it"
         );
         assert!(
-            validate_resolved(&resolved, "built-in").is_clean(),
+            validate_resolved(&resolved, "built-in", &theme()).is_clean(),
             "including a lock layer with its prompt"
         );
     }
@@ -1744,6 +1899,8 @@ mod tests {
             )),
             Err(StoreError::Safe)
         ));
+        assert!(matches!(store.undo(), Err(StoreError::Safe)));
+        assert!(matches!(store.redo(), Err(StoreError::Safe)));
         assert!(!store.has_unsaved());
     }
 
@@ -1812,6 +1969,780 @@ mod tests {
             std::fs::read_to_string(store.path_of(&mine)).unwrap(),
             broken,
             "the file the user has to fix is exactly as they left it"
+        );
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct Rounded {
+        radius: Corners,
+    }
+
+    fn radius_of(text: &str) -> Result<Corners, toml::de::Error> {
+        toml::from_str::<Rounded>(text).map(|it| it.radius)
+    }
+
+    /// A radius is the one number a person types, or four when the corners differ — and a layout written back keeps whichever shape it had, so an edit never turns a hand-written `8` into four eights.
+    #[test]
+    fn a_radius_is_one_number_or_four_corners() {
+        assert_eq!(radius_of("radius = 8").unwrap(), Corners::all(8.0));
+        assert_eq!(radius_of("radius = 6.5").unwrap(), Corners::all(6.5));
+        assert_eq!(
+            radius_of("radius = [12, 12.0, 0, 4]").unwrap(),
+            Corners::each(12.0, 12.0, 0.0, 4.0)
+        );
+        assert!(radius_of("radius = [1, 2, 3]").is_err(), "three corners");
+        assert!(radius_of("radius = [1, 2, 3, 4, 5]").is_err(), "five");
+        assert!(radius_of("radius = \"round\"").is_err(), "a word");
+
+        let uniform = toml::to_string(&Rounded {
+            radius: Corners::each(8.0, 8.0, 8.0, 8.0),
+        })
+        .unwrap();
+        assert_eq!(uniform.trim(), "radius = 8.0");
+        let per_corner = toml::to_string(&Rounded {
+            radius: Corners::each(12.0, 12.0, 0.0, 0.0),
+        })
+        .unwrap();
+        assert_eq!(
+            radius_of(&per_corner).unwrap(),
+            Corners::each(12.0, 12.0, 0.0, 0.0),
+            "{per_corner}"
+        );
+    }
+
+    /// A monitor rule that squares one bar's lower corners names the radius alone, and keeps the chips mode the bar was given everywhere.
+    #[test]
+    fn a_monitor_rule_changes_a_bar_s_corners_and_keeps_the_rest_of_its_shape() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            [outputs.layers.top.areas.shape]
+            mode = "chips"
+            radius = 8
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            [outputs.layers.top.areas.shape]
+            radius = [8, 8, 0, 0]
+            [outputs.layers.top.areas.style]
+            radius = [0, 0, 4, 4]
+            "#,
+        );
+        let shape_on = |output: &str| {
+            let resolved = alone(&parsed, output);
+            let area = resolved.layer(LayerKind::Top).unwrap().areas[0].clone();
+            let ResolvedAreaKind::Bar { shape, .. } = area.kind else {
+                panic!("a bar");
+            };
+            (shape, area.style.radius)
+        };
+        let (shape, style) = shape_on("DP-1");
+        assert_eq!(shape.radius, Some(Corners::each(8.0, 8.0, 0.0, 0.0)));
+        assert_eq!(shape.mode, Some(config::Shape::Chips), "kept from `*`");
+        assert_eq!(style, Some(Corners::each(0.0, 0.0, 4.0, 4.0)));
+        let (shape, style) = shape_on("HDMI-A-1");
+        assert_eq!(shape.radius, Some(Corners::all(8.0)));
+        assert_eq!(style, None);
+    }
+
+    const DEAD_ZONE: &str = r#"
+        id = "test"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        [outputs.layers.top.areas.actions]
+        press = ["panel toggle launcher"]
+        scroll_up = ["panel toggle volume"]
+        [[outputs]]
+        match = "DP-1"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        [outputs.layers.top.areas.actions]
+        press = ["panel toggle clock"]
+    "#;
+
+    /// A press on the bar between its chips is the area's own gesture, and a monitor rule rebinds one gesture without restating the other.
+    #[test]
+    fn an_area_s_actions_resolve_and_merge_by_gesture() {
+        let parsed = layout(DEAD_ZONE);
+        assert!(validate(&parsed, &Modules).is_clean());
+        let actions = |output: &str| {
+            alone(&parsed, output).layer(LayerKind::Top).unwrap().areas[0]
+                .actions
+                .iter()
+                .map(|(trigger, action)| (trigger.as_str(), action.0.join("; ")))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            actions("DP-1"),
+            [
+                ("press", "panel toggle clock".to_string()),
+                ("scroll_up", "panel toggle volume".to_string())
+            ]
+        );
+        assert_eq!(actions("HDMI-A-1")[0].1, "panel toggle launcher");
+    }
+
+    /// An area's command lines are checked on load exactly like an instance's, and refused on the lock layer the same way (TA-8).
+    #[test]
+    fn an_area_s_actions_are_checked_like_an_instance_s() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            [outputs.layers.top.areas.actions]
+            middle = ["summon the dead"]
+            [[outputs.layers.lock.areas]]
+            id = "readings"
+            kind = "grid"
+            [outputs.layers.lock.areas.actions]
+            press = ["panel toggle launcher"]
+            "#,
+        );
+        let report = validate(&parsed, &Modules);
+        let keys: Vec<(&str, &str)> = report
+            .findings()
+            .map(|f| (f.key.as_str(), f.message.as_str()))
+            .collect();
+        assert!(
+            keys.iter()
+                .any(|(key, message)| key.ends_with("bar-top.actions.middle")
+                    && message.contains("summon the dead")),
+            "{keys:?}"
+        );
+        assert!(
+            keys.iter().any(
+                |(key, message)| key.ends_with("lock.areas.readings.actions")
+                    && message.contains("readings, never controls")
+            ),
+            "{keys:?}"
+        );
+        assert!(
+            !validate::validate_lock(&parsed, &Modules).is_clean(),
+            "and the lock's own check, which decides the minimal lock, says so too"
+        );
+    }
+
+    /// One bar that reserves, and a workspace rule of the same output with nothing in it yet.
+    const RULED: &str = r#"
+        id = "test"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        reserve = true
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        place = "zone"
+        zone = "start"
+        [[outputs.workspaces]]
+        match = "games"
+    "#;
+
+    fn games(layer: LayerKind) -> Site {
+        Site::everywhere(layer).on_workspace("games")
+    }
+
+    fn bare_area(id: &str) -> Area {
+        Area {
+            id: AreaId::new(id),
+            ..Area::default()
+        }
+    }
+
+    /// Takes `edit` back and checks the layout is the one it started as, field for field and as written.
+    fn undoes_exactly(start: &Layout, edit: &LayoutOp) {
+        let mut edited = start.clone();
+        let back = ops::apply(&mut edited, edit).unwrap_or_else(|why| panic!("{edit:?}: {why}"));
+        assert_ne!(&edited, start, "{edit:?} changed nothing");
+        let again = ops::apply(&mut edited, &back).expect("the undo applies");
+        assert_eq!(
+            &edited, start,
+            "undoing {edit:?} did not restore the layout"
+        );
+        assert_eq!(
+            toml::to_string(&edited).unwrap(),
+            toml::to_string(start).unwrap()
+        );
+        let mut redone = edited.clone();
+        ops::apply(&mut redone, &again).expect("the redo applies");
+        ops::apply(&mut edited, edit).expect("the edit applies again");
+        assert_eq!(redone, edited, "redoing {edit:?} is the edit itself");
+    }
+
+    #[test]
+    fn every_edit_the_tools_add_can_be_taken_back_exactly() {
+        let start = layout(RULED);
+        let bar = Site::everywhere(LayerKind::Top);
+        let edits = [
+            LayoutOp::ReplaceArea {
+                site: bar.clone(),
+                id: AreaId::new("bar-top"),
+                area: Box::new(Area {
+                    kind: Some(AreaKind::Free {
+                        rect: Some(Rect::default()),
+                    }),
+                    ..bare_area("note")
+                }),
+            },
+            LayoutOp::SetAreaActions {
+                site: bar.clone(),
+                id: AreaId::new("bar-top"),
+                actions: BTreeMap::from([(
+                    Trigger::Secondary,
+                    Action(vec!["panel toggle clock".into()]),
+                )]),
+            },
+            LayoutOp::SetAreaStyle {
+                site: bar.clone(),
+                id: AreaId::new("bar-top"),
+                style: Box::new(AreaStyle {
+                    radius: Some(Corners::each(0.0, 0.0, 12.0, 12.0)),
+                    ..AreaStyle::default()
+                }),
+            },
+            LayoutOp::InsertOutputRule {
+                index: 1,
+                rule: Box::new(OutputRule {
+                    matches: OutputMatch("DP-1".into()),
+                    ..OutputRule::default()
+                }),
+            },
+            LayoutOp::DeleteOutputRule {
+                output: OutputMatch("*".into()),
+            },
+            LayoutOp::InsertWorkspaceRule {
+                output: OutputMatch("*".into()),
+                index: 0,
+                rule: Box::new(WorkspaceRule {
+                    matches: WorkspaceMatch("id:3".into()),
+                    ..WorkspaceRule::default()
+                }),
+            },
+            LayoutOp::DeleteWorkspaceRule {
+                output: OutputMatch("*".into()),
+                workspace: WorkspaceMatch("games".into()),
+            },
+            LayoutOp::InsertArea {
+                site: games(LayerKind::Desktop),
+                index: 0,
+                area: Box::new(Area {
+                    kind: Some(AreaKind::Grid {
+                        rect: None,
+                        cell: None,
+                        gap: None,
+                        anchor: None,
+                    }),
+                    ..bare_area("games-grid")
+                }),
+            },
+        ];
+        for edit in &edits {
+            undoes_exactly(&start, edit);
+        }
+
+        let mut with_override = start.clone();
+        ops::apply(
+            &mut with_override,
+            &LayoutOp::InsertArea {
+                site: games(LayerKind::Top),
+                index: 0,
+                area: Box::new(Area {
+                    groups: vec![Group {
+                        id: GroupId::new("start"),
+                        ..Group::default()
+                    }],
+                    ..bare_area("bar-top")
+                }),
+            },
+        )
+        .expect("a workspace rule may add to what a reserving bar holds");
+        undoes_exactly(
+            &with_override,
+            &LayoutOp::InsertInstance {
+                spot: Spot {
+                    site: games(LayerKind::Top),
+                    area: AreaId::new("bar-top"),
+                    group: GroupId::new("start"),
+                },
+                index: 0,
+                instance: Box::new(instance("battery-1", "battery")),
+            },
+        );
+        undoes_exactly(
+            &with_override,
+            &LayoutOp::SetAreaStyle {
+                site: games(LayerKind::Top),
+                id: AreaId::new("bar-top"),
+                style: Box::new(AreaStyle {
+                    opacity: Some(0.5),
+                    ..AreaStyle::default()
+                }),
+            },
+        );
+    }
+
+    /// An editor's first edit for one monitor or one workspace makes the level it lands in, and a second level with the same match would leave which one an edit means to chance.
+    #[test]
+    fn a_rule_is_made_once_and_an_edit_lands_in_it() {
+        let mut edited = layout(RULED);
+        ops::apply(
+            &mut edited,
+            &LayoutOp::InsertOutputRule {
+                index: 1,
+                rule: Box::new(OutputRule {
+                    matches: OutputMatch("DP-1".into()),
+                    ..OutputRule::default()
+                }),
+            },
+        )
+        .expect("a monitor rule is made");
+        ops::apply(
+            &mut edited,
+            &LayoutOp::InsertArea {
+                site: Site::new("DP-1", LayerKind::Desktop),
+                index: 0,
+                area: Box::new(Area {
+                    kind: Some(AreaKind::Free {
+                        rect: Some(Rect::default()),
+                    }),
+                    ..bare_area("only-here")
+                }),
+            },
+        )
+        .expect("and holds an area");
+        assert_eq!(
+            area_ids(&alone(&edited, "DP-1"), LayerKind::Desktop),
+            ["only-here"]
+        );
+        assert!(area_ids(&alone(&edited, "HDMI-A-1"), LayerKind::Desktop).is_empty());
+
+        assert_eq!(
+            ops::apply(
+                &mut edited,
+                &LayoutOp::InsertOutputRule {
+                    index: 0,
+                    rule: Box::new(OutputRule::default()),
+                },
+            )
+            .unwrap_err(),
+            OpError::RuleExists("outputs.*".into())
+        );
+        assert_eq!(
+            ops::apply(
+                &mut edited,
+                &LayoutOp::InsertWorkspaceRule {
+                    output: OutputMatch("*".into()),
+                    index: 0,
+                    rule: Box::new(WorkspaceRule {
+                        matches: WorkspaceMatch("games".into()),
+                        ..WorkspaceRule::default()
+                    }),
+                },
+            )
+            .unwrap_err(),
+            OpError::RuleExists("outputs.*.workspaces.games".into())
+        );
+        assert_eq!(
+            ops::apply(
+                &mut edited,
+                &LayoutOp::InsertArea {
+                    site: games(LayerKind::Lock),
+                    index: 0,
+                    area: Box::new(bare_area("x")),
+                },
+            )
+            .unwrap_err(),
+            OpError::NoLockLayer {
+                workspace: "games".into()
+            }
+        );
+        assert!(matches!(
+            ops::apply(
+                &mut edited,
+                &LayoutOp::DeleteArea {
+                    site: Site::everywhere(LayerKind::Top).on_workspace("nowhere"),
+                    id: AreaId::new("bar-top"),
+                },
+            ),
+            Err(OpError::NoWorkspaceRule { .. })
+        ));
+    }
+
+    /// TA-2's invariant held where the edit is made: a workspace rule changes what a reserving area holds, never whether it is there, what it reserves or how big it is.
+    #[test]
+    fn an_edit_in_a_workspace_rule_may_not_touch_reservation() {
+        let start = layout(RULED);
+        let refused = |edit: LayoutOp| {
+            let mut edited = start.clone();
+            let outcome = ops::apply(&mut edited, &edit);
+            assert!(
+                matches!(outcome, Err(OpError::Reservation(_))),
+                "{edit:?} gave {outcome:?}"
+            );
+            assert_eq!(edited, start, "and changed nothing");
+        };
+
+        refused(LayoutOp::InsertArea {
+            site: games(LayerKind::Top),
+            index: 0,
+            area: Box::new(Area {
+                kind: Some(AreaKind::Bar {
+                    edge: Some(config::Edge::Bottom),
+                    thickness: Some(40.0),
+                    length: None,
+                    offset: None,
+                    shape: BarShape::default(),
+                    autohide: None,
+                }),
+                reserve: Some(true),
+                ..bare_area("games-bar")
+            }),
+        });
+        refused(LayoutOp::InsertArea {
+            site: games(LayerKind::Top),
+            index: 0,
+            area: Box::new(Area {
+                kind: Some(AreaKind::Bar {
+                    edge: None,
+                    thickness: Some(64.0),
+                    length: None,
+                    offset: None,
+                    shape: BarShape::default(),
+                    autohide: None,
+                }),
+                ..bare_area("bar-top")
+            }),
+        });
+        refused(LayoutOp::InsertWorkspaceRule {
+            output: OutputMatch("*".into()),
+            index: 0,
+            rule: Box::new(WorkspaceRule {
+                matches: WorkspaceMatch("films".into()),
+                layers: SessionLayers {
+                    top: Layer {
+                        areas: Vec::new(),
+                        remove: vec![AreaId::new("bar-top")],
+                    },
+                    ..SessionLayers::default()
+                },
+            }),
+        });
+
+        let mut holding = start.clone();
+        ops::apply(
+            &mut holding,
+            &LayoutOp::InsertArea {
+                site: games(LayerKind::Top),
+                index: 0,
+                area: Box::new(bare_area("bar-top")),
+            },
+        )
+        .expect("naming the bar to change what it holds is allowed");
+        for edit in [
+            LayoutOp::SetAreaKind {
+                site: games(LayerKind::Top),
+                id: AreaId::new("bar-top"),
+                kind: Box::new(Some(AreaKind::Bar {
+                    edge: None,
+                    thickness: Some(64.0),
+                    length: None,
+                    offset: None,
+                    shape: BarShape::default(),
+                    autohide: None,
+                })),
+            },
+            LayoutOp::SetAreaFlags {
+                site: games(LayerKind::Top),
+                id: AreaId::new("bar-top"),
+                reserve: Some(false),
+                above_fullscreen: None,
+                visible: None,
+            },
+        ] {
+            let mut edited = holding.clone();
+            let outcome = ops::apply(&mut edited, &edit);
+            assert!(
+                matches!(outcome, Err(OpError::Reservation(_))),
+                "{edit:?} gave {outcome:?}"
+            );
+            assert_eq!(edited, holding);
+        }
+        assert!(
+            validate(&holding, &Modules).is_clean(),
+            "what the ops allowed, validation accepts"
+        );
+    }
+
+    /// The built-in layout's lock layer, where the prompt lives.
+    fn locked() -> Layout {
+        crate::built_in()
+    }
+
+    fn lock() -> Site {
+        Site::everywhere(LayerKind::Lock)
+    }
+
+    /// The prompt can be moved and restyled, never removed, turned into something else or given an expression that could hide it — by any edit, whatever made it (TA-8).
+    #[test]
+    fn an_edit_can_move_and_restyle_the_prompt_and_nothing_else() {
+        let start = locked();
+        let prompt = AreaId::new("prompt");
+        let refused = |edit: LayoutOp, expected: ops::PromptEdit| {
+            let mut edited = start.clone();
+            assert_eq!(
+                ops::apply(&mut edited, &edit),
+                Err(OpError::Prompt {
+                    id: AreaId::new("prompt"),
+                    refused: expected
+                }),
+                "{edit:?}"
+            );
+            assert_eq!(edited, start, "and changed nothing");
+        };
+
+        refused(
+            LayoutOp::DeleteArea {
+                site: lock(),
+                id: prompt.clone(),
+            },
+            ops::PromptEdit::Remove,
+        );
+        refused(
+            LayoutOp::DeleteOutputRule {
+                output: OutputMatch("*".into()),
+            },
+            ops::PromptEdit::Remove,
+        );
+        refused(
+            LayoutOp::SetAreaKind {
+                site: lock(),
+                id: prompt.clone(),
+                kind: Box::new(Some(AreaKind::Free {
+                    rect: Some(Rect::default()),
+                })),
+            },
+            ops::PromptEdit::ChangeKind,
+        );
+        refused(
+            LayoutOp::SetAreaKind {
+                site: lock(),
+                id: prompt.clone(),
+                kind: Box::new(None),
+            },
+            ops::PromptEdit::ChangeKind,
+        );
+        refused(
+            LayoutOp::ReplaceArea {
+                site: lock(),
+                id: prompt.clone(),
+                area: Box::new(bare_area("prompt")),
+            },
+            ops::PromptEdit::ChangeKind,
+        );
+        refused(
+            LayoutOp::SetAreaFlags {
+                site: lock(),
+                id: prompt.clone(),
+                reserve: None,
+                above_fullscreen: None,
+                visible: Some(Expr("$battery.percent > 50".into())),
+            },
+            ops::PromptEdit::Hide,
+        );
+
+        undoes_exactly(
+            &start,
+            &LayoutOp::SetAreaKind {
+                site: lock(),
+                id: prompt.clone(),
+                kind: Box::new(Some(AreaKind::Prompt {
+                    rect: Some(Rect {
+                        x: 0.1,
+                        y: 0.6,
+                        w: 0.3,
+                        h: 0.3,
+                    }),
+                })),
+            },
+        );
+        undoes_exactly(
+            &start,
+            &LayoutOp::SetAreaStyle {
+                site: lock(),
+                id: prompt.clone(),
+                style: Box::new(AreaStyle {
+                    fill: Some("base".into()),
+                    radius: Some(Corners::each(24.0, 24.0, 0.0, 0.0)),
+                    ..AreaStyle::default()
+                }),
+            },
+        );
+        undoes_exactly(
+            &start,
+            &LayoutOp::DeleteArea {
+                site: lock(),
+                id: AreaId::new("lock-readings"),
+            },
+        );
+    }
+
+    fn prompt_filled(fill: &str) -> Resolved {
+        alone(
+            &layout(&format!(
+                r#"
+                id = "test"
+                [[outputs]]
+                match = "*"
+                [[outputs.layers.lock.areas]]
+                id = "prompt"
+                kind = "prompt"
+                style = {{ fill = "{fill}" }}
+                "#
+            )),
+            "DP-1",
+        )
+    }
+
+    /// A prompt drawn on a card its own text cannot be read on is as much a lockout as a hidden one, so a fill below WCAG AA is refused — and a refusal is the minimal lock, not a quietly restyled prompt (TA-8).
+    #[test]
+    fn a_prompt_card_its_text_cannot_be_read_on_is_refused() {
+        let theme = theme();
+        for unreadable in ["text", "#eceff4", "subtle"] {
+            let report = validate_resolved(&prompt_filled(unreadable), "layouts/test.toml", &theme);
+            assert!(
+                report
+                    .findings()
+                    .any(|f| f.key.ends_with("prompt.style.fill") && f.message.contains("WCAG AA")),
+                "`{unreadable}` under the prompt's text: {}",
+                report.render()
+            );
+        }
+        for readable in ["surface", "base", "#000000"] {
+            let report = validate_resolved(&prompt_filled(readable), "layouts/test.toml", &theme);
+            assert!(report.is_clean(), "`{readable}`: {}", report.render());
+        }
+    }
+
+    /// The prompt's card is the area's own `style`, and it has to come back from the file it was written to: a style the prompt kept somewhere a file could not reach was a style the lock never drew.
+    #[test]
+    fn a_prompt_s_style_survives_being_written_and_read_back() {
+        let mut styled = locked();
+        let prompt = styled.outputs[0]
+            .layers
+            .lock
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "prompt")
+            .expect("the built-in lock has a prompt");
+        prompt.style = AreaStyle {
+            fill: Some("overlay".into()),
+            radius: Some(Corners::each(20.0, 20.0, 4.0, 4.0)),
+            opacity: Some(0.95),
+            ..AreaStyle::default()
+        };
+        let again = layout(&toml::to_string_pretty(&styled).unwrap());
+        assert_eq!(again, styled);
+        let resolved = alone(&again, "DP-1");
+        let drawn = resolved
+            .layer(LayerKind::Lock)
+            .and_then(|layer| layer.areas.iter().find(|area| area.id.as_str() == "prompt"))
+            .expect("it resolves");
+        assert_eq!(drawn.style.fill.as_deref(), Some("overlay"));
+        assert!(validate_resolved(&resolved, "layouts/test.toml", &theme()).is_clean());
+    }
+
+    fn thickness_of(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Option<f32> {
+        let (resolved, _) = resolve(layout, known, "DP-1", None);
+        resolved
+            .layer(LayerKind::Top)?
+            .areas
+            .iter()
+            .find(|area| area.id.as_str() == "bar-top")
+            .and_then(|area| match area.kind {
+                ResolvedAreaKind::Bar { thickness, .. } => Some(thickness),
+                _ => None,
+            })
+    }
+
+    fn thicken(layout: &mut Layout, to: f32) {
+        let bar = layout.outputs[0]
+            .layers
+            .top
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "bar-top")
+            .expect("the bar");
+        if let Some(AreaKind::Bar { thickness, .. }) = &mut bar.kind {
+            *thickness = Some(to);
+        }
+    }
+
+    /// A reset puts back what the layout the edited one extends says, laid over its own parents — and what the built-in one says when it extends none.
+    #[test]
+    fn a_reset_restores_from_the_layout_extended_and_else_from_the_built_in_one() {
+        let mut parent = built_in();
+        parent.id = LayoutId::new("parent");
+        thicken(&mut parent, 40.0);
+        let mut mine = built_in();
+        mine.id = LayoutId::new("mine");
+        mine.extends = Some(LayoutId::new("parent"));
+        thicken(&mut mine, 50.0);
+        let known = BTreeMap::from([
+            (parent.id.clone(), parent.clone()),
+            (mine.id.clone(), mine.clone()),
+        ]);
+        let bar = AreaId::new("bar-top");
+
+        let base = reset::base_of(&mine, &known);
+        let ops = reset::ops(&mine, &base, reset::Target::Area(&bar)).expect("the bar is known");
+        let mut reset = mine.clone();
+        ops::apply_all(&mut reset, &ops).expect("the reset applies");
+        assert_eq!(
+            thickness_of(&reset, &known),
+            Some(40.0),
+            "back to the parent's"
+        );
+
+        mine.extends = None;
+        let base = reset::base_of(&mine, &known);
+        let ops = reset::ops(&mine, &base, reset::Target::Area(&bar)).expect("the bar is known");
+        let mut reset = mine.clone();
+        ops::apply_all(&mut reset, &ops).expect("the reset applies");
+        assert_eq!(
+            thickness_of(&reset, &known),
+            thickness_of(&built_in(), &known),
+            "back to the built-in bar"
+        );
+        assert!(
+            reset::ops(
+                &mine,
+                &base,
+                reset::Target::Instance(&InstanceId::new("nothing"))
+            )
+            .is_none()
         );
     }
 }

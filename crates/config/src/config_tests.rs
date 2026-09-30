@@ -177,13 +177,7 @@ mod tests {
     #[test]
     fn shape_defaults_reproduce_todays_bar() {
         let cfg: Config = toml::from_str("").unwrap();
-        assert_eq!(cfg.shape.mode, Shape::Bar);
         assert!(!cfg.shape.frame);
-        assert_eq!(cfg.shape.gap, 0);
-        assert_eq!(
-            cfg.shape.radius, None,
-            "unset radius falls back to the theme"
-        );
         let shape = cfg.shape_from(None, None, None, None);
         assert_eq!(shape.mode, Shape::Bar);
         assert_eq!(shape.gap, 0);
@@ -193,20 +187,47 @@ mod tests {
 
     #[test]
     fn panels_and_open_mode_defaults() {
+        let none = toml::Table::new();
         let cfg: Config = toml::from_str("").unwrap();
-        assert_eq!(cfg.panels.drawer.width, 320.0);
-        assert_eq!(cfg.panels.float.width, 360);
-        assert_eq!(cfg.panels.float.height, 240);
-        assert_eq!(cfg.open_mode_for("clock"), OpenMode::Drawer);
+        let clock = cfg.presentation("clock", &none);
+        assert_eq!(clock.drawer_size(), (320.0, 280.0));
+        assert_eq!(clock.float_size("clock"), (360, 240));
+        assert_eq!(clock.popout_size(), (264.0, 300.0));
+        assert_eq!(clock.open_mode("clock"), OpenMode::Drawer);
+        let settings = cfg.presentation("settings", &none);
+        assert_eq!(
+            settings.open_mode("settings"),
+            OpenMode::Float,
+            "an application panel floats"
+        );
+        assert_eq!(settings.float_size("settings"), (920, 680));
 
         let floaty: Config = toml::from_str(
-            "[modules.clock]\nopen = \"float\"\n[panels.drawer]\nwidth = 400\n[panels.float]\nwidth = 480\nheight = 320\n",
+            "[modules.clock]\nopen = \"float\"\ndrawer_width = 400\nfloat_width = 480\nfloat_height = 320\n\
+             [modules.settings]\nvariant = \"filled\"\n",
         )
         .unwrap();
-        assert_eq!(floaty.open_mode_for("clock"), OpenMode::Float);
-        assert_eq!(floaty.panels.drawer.width, 400.0);
-        assert_eq!(floaty.panels.float.width, 480);
-        assert_eq!(floaty.panels.float.height, 320);
+        let clock = floaty.presentation("clock", &none);
+        assert_eq!(clock.open_mode("clock"), OpenMode::Float);
+        assert_eq!(clock.drawer_size().0, 400.0);
+        assert_eq!(clock.float_size("clock"), (480, 320));
+        let settings = floaty.presentation("settings", &none);
+        assert_eq!(
+            settings.open_mode("settings"),
+            OpenMode::Float,
+            "a `[modules.settings]` that says nothing about `open` leaves it floating"
+        );
+
+        let instance: toml::Table =
+            toml::from_str("drawer_width = 500\nopen = \"drawer\"\n").unwrap();
+        let placed = floaty.presentation("clock", &instance);
+        assert_eq!(placed.drawer_size().0, 500.0, "an instance's own size wins");
+        assert_eq!(placed.open_mode("clock"), OpenMode::Drawer);
+        assert_eq!(
+            placed.float_size("clock"),
+            (480, 320),
+            "and the module's fills in the rest"
+        );
     }
 
     #[test]
@@ -215,8 +236,11 @@ mod tests {
         let starter = Config::starter();
         let text = toml::to_string_pretty(&starter).expect("starter serializes");
         let parsed: Config = toml::from_str(&text).expect("starter re-parses");
-        assert_eq!(parsed.panels.drawer.width, starter.panels.drawer.width);
-        assert_eq!(parsed.panels.float.width, starter.panels.float.width);
+        assert_eq!(parsed.panels.drag_threshold, starter.panels.drag_threshold);
+        assert_eq!(
+            parsed.notifications.sidebar_size,
+            starter.notifications.sidebar_size
+        );
         // An unset coordinate is the one field type TOML has no value for, so it is the one that would break the write of a fresh config rather than merely round-trip oddly.
         assert_eq!(parsed.weather.latitude, None);
         assert_eq!(
@@ -294,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn spacing_and_radius_fall_back_to_the_theme_then_config_overrides() {
+    fn spacing_and_radius_fall_back_to_the_theme() {
         let theme = NordTheme::new();
         let bare: Config = toml::from_str("").unwrap();
         let unset = bare.shape_from(None, None, None, None);
@@ -303,8 +327,10 @@ mod tests {
         let cfg: Config = toml::from_str("[shape]\nradius=10\nspacing=4\n").unwrap();
         let area = cfg.shape_from(None, None, None, Some(2));
         assert_eq!(area.radius, 2.0, "the area's own radius wins");
-        assert_eq!(area.spacing, 4.0, "spacing falls to [shape]");
-        assert_eq!(cfg.shape_from(None, None, None, None).radius, 10.0);
+        assert_eq!(
+            area.spacing, theme.spacing,
+            "a retired `[shape] spacing` is no fallback: the theme is"
+        );
     }
 
     #[test]
@@ -814,10 +840,10 @@ accent = "orange"
     fn a_monitor_override_cannot_change_a_section_one_process_owns() {
         let dir = config_dir(
             "monitor-global-only",
-            "[general]\nlanguage = \"en\"\n\n[shape]\ngap = 0\n",
+            "[general]\nlanguage = \"en\"\n\n[shape]\nframe = false\n",
             Some((
                 "DP-1",
-                "[general]\nlanguage = \"es\"\n\n[audio]\nmax_volume = 200\n\n[shape]\ngap = 12\n",
+                "[general]\nlanguage = \"es\"\n\n[audio]\nmax_volume = 200\n\n[shape]\nframe = true\n",
             )),
         );
         let path = dir.join("config.toml");
@@ -829,8 +855,8 @@ accent = "orange"
             AudioConfig::default().max_volume,
             "[audio] is global-only — one volume service is shared across every output"
         );
-        assert_eq!(
-            cfg.shape.gap, 12,
+        assert!(
+            cfg.shape.frame,
             "a visual section is still the monitor's to set"
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -1006,17 +1032,14 @@ accent = "orange"
         assert_eq!(PanelsConfig::default().drag_threshold(), Some(48.0));
         let off = PanelsConfig {
             drag_threshold: 0.0,
-            ..PanelsConfig::default()
         };
         assert_eq!(off.drag_threshold(), None);
         let tiny = PanelsConfig {
             drag_threshold: 1.0,
-            ..PanelsConfig::default()
         };
         assert_eq!(tiny.drag_threshold(), Some(16.0));
         let nan = PanelsConfig {
             drag_threshold: f32::NAN,
-            ..PanelsConfig::default()
         };
         assert_eq!(nan.drag_threshold(), None);
 
@@ -1198,19 +1221,12 @@ accent = "orange"
 
     #[test]
     fn partial_override_takes_precedence_field_by_field() {
-        let toml = r#"
-[shape]
-mode = "bar"
-gap = 0
-spacing = 6
-radius = 10
-"#;
-        let cfg: Config = toml::from_str(toml).unwrap();
+        let cfg: Config = toml::from_str("[theme]\nspacing = 7\nradius = 11\n").unwrap();
         let overridden = cfg.shape_from(Some(Shape::Sections), Some(8), None, None);
         assert_eq!(overridden.mode, Shape::Sections, "mode overridden");
         assert_eq!(overridden.gap, 8, "gap overridden");
-        assert_eq!(overridden.spacing, 6.0, "spacing inherits the global");
-        assert_eq!(overridden.radius, 10.0, "radius inherits the global");
+        assert_eq!(overridden.spacing, 7.0, "spacing is the theme's");
+        assert_eq!(overridden.radius, 11.0, "radius is the theme's");
         let plain = cfg.shape_from(None, None, None, None);
         assert_eq!(plain.mode, Shape::Bar);
         assert_eq!(plain.gap, 0);
@@ -1243,9 +1259,12 @@ radius = 10
     fn module_override_parses_variant_and_accent() {
         let cfg: Config =
             toml::from_str("[modules.battery]\nvariant=\"filled\"\naccent=\"orange\"\n").unwrap();
-        assert_eq!(cfg.variant_for("battery"), Variant::Filled);
-        assert_eq!(cfg.accent_name_for("battery"), "orange");
-        assert_eq!(cfg.variant_for("clock"), Variant::Default);
-        assert_eq!(cfg.accent_name_for("clock"), "cyan");
+        let none = toml::Table::new();
+        let battery = cfg.presentation("battery", &none);
+        assert_eq!(battery.variant, Variant::Filled);
+        assert_eq!(cfg.accent_name(&battery), "orange");
+        let clock = cfg.presentation("clock", &none);
+        assert_eq!(clock.variant, Variant::Default);
+        assert_eq!(cfg.accent_name(&clock), "cyan");
     }
 }

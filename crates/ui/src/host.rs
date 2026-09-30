@@ -1,13 +1,13 @@
 //! What a module is told about the place it is built into, instead of reading it from ambient globals: a Rust builder takes the [`Host`] as its argument, and a parameterless `.rsx` entrypoint reads it with [`Host::current`].
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 
 use platform_wayland::EventSender;
 
 use telar::{Color, LayoutError};
 
-use config::{Config, Edge, ModuleOptions, ResolvedShape};
+use config::{Config, Edge, ModuleOptions, ModuleOverride, ResolvedShape};
 
 use crate::chrome::Chrome;
 
@@ -22,14 +22,9 @@ impl InstanceId {
         Self(Arc::from(id))
     }
 
-    /// One instance per module until the layout model gives instances ids of their own, so a chip, IPC and a keybind all reach the same instance and its state.
+    /// The id a module's state is kept under when a chip, IPC and a keybind all have to reach the same state, which they name by module.
     pub fn of_module(module: &str) -> Self {
         Self::new(module)
-    }
-
-    /// The module this instance is one of, the inverse of [`InstanceId::of_module`].
-    pub fn module(&self) -> &str {
-        &self.0
     }
 
     pub fn as_str(&self) -> &str {
@@ -37,10 +32,52 @@ impl InstanceId {
     }
 }
 
-/// State one instance keeps across every build of it, keyed by the instance so it outlives what a rebuild drops. A reading of the system every instance shares is a service instead.
+/// The instance a build speaks for: whose state it keeps, which module it is, and what its entry in the layout says over that module's defaults.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Instance {
+    pub id: InstanceId,
+    pub module: Arc<str>,
+    /// The instance's own `options`, laid over its module's by [`Instance::options`] and [`Instance::presentation`] (TA-2).
+    pub options: Arc<toml::Table>,
+}
+
+impl Instance {
+    pub fn new(id: InstanceId, module: &str, options: toml::Table) -> Self {
+        Self {
+            id,
+            module: Arc::from(module),
+            options: Arc::new(options),
+        }
+    }
+
+    /// A module reached by its id with no instance of the layout speaking for it — a preview, a dashboard card of another module, a panel of a module placed nowhere. Its defaults are its whole answer.
+    pub fn of_module(module: &str) -> Self {
+        Self::new(InstanceId::of_module(module), module, toml::Table::new())
+    }
+
+    /// The section `T`, with this instance's options over it when `T` is its module's own options type — the first its descriptor names. Another module's section is read as it is: an option is declared once, on the module that owns it.
+    pub fn options<T: ModuleOptions>(&self, config: &Config) -> T {
+        let own = crate::descriptor::find(&self.module)
+            .and_then(|descriptor| descriptor.options.first())
+            .is_some_and(|own| own.section == T::SECTION);
+        if own {
+            T::with_options(config, &self.options)
+        } else {
+            T::section(config).clone()
+        }
+    }
+
+    /// How this instance is dressed and how big what it opens is: `[modules.<id>]` with its own options over it.
+    pub fn presentation(&self, config: &Config) -> ModuleOverride {
+        config.presentation(&self.module, &self.options)
+    }
+}
+
+/// State one instance keeps across every build of it, keyed by the instance so it outlives what a rebuild drops, and forgotten once the layout stops placing that instance ([`forget`]). A reading of the system every instance shares is a service instead.
 pub struct InstanceStore<T: 'static> {
     init: fn() -> T,
     slots: Mutex<BTreeMap<InstanceId, Slot<T>>>,
+    listed: Once,
 }
 
 struct Slot<T> {
@@ -48,15 +85,54 @@ struct Slot<T> {
     subscribers: Vec<EventSender<T>>,
 }
 
+/// What [`forget`] reaches every store through, whatever it holds.
+trait Forgets: Sync {
+    fn forget(&self, instance: &InstanceId);
+}
+
+/// Every [`InstanceStore`] that has kept a value, listed by the store itself on first use, so forgetting an instance needs no list of stores kept by hand.
+static STORES: Mutex<Vec<&'static dyn Forgets>> = Mutex::new(Vec::new());
+
+/// Drops what every [`InstanceStore`] keeps for `instances`: the layout no longer places them, and an instance added later under the same id starts from its module's defaults rather than from a removed one's state (F-3.4).
+pub fn forget(instances: &[InstanceId]) {
+    let stores: Vec<&'static dyn Forgets> = STORES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    for store in stores {
+        for instance in instances {
+            store.forget(instance);
+        }
+    }
+}
+
+impl<T: Clone + Send + 'static> Forgets for InstanceStore<T> {
+    fn forget(&self, instance: &InstanceId) {
+        let gone = self
+            .slots
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(instance);
+        drop(gone);
+    }
+}
+
 impl<T: Clone + Send + 'static> InstanceStore<T> {
     pub const fn new(init: fn() -> T) -> Self {
         Self {
             init,
             slots: Mutex::new(BTreeMap::new()),
+            listed: Once::new(),
         }
     }
 
-    fn with_slot<R>(&self, instance: &InstanceId, f: impl FnOnce(&mut Slot<T>) -> R) -> R {
+    fn with_slot<R>(&'static self, instance: &InstanceId, f: impl FnOnce(&mut Slot<T>) -> R) -> R {
+        self.listed.call_once(|| {
+            STORES
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(self);
+        });
         let mut slots = self
             .slots
             .lock()
@@ -68,12 +144,12 @@ impl<T: Clone + Send + 'static> InstanceStore<T> {
         f(slot)
     }
 
-    pub fn get(&self, instance: &InstanceId) -> T {
+    pub fn get(&'static self, instance: &InstanceId) -> T {
         self.with_slot(instance, |slot| slot.value.clone())
     }
 
     /// Applies `change` to `instance`'s value and sends the result to that instance's subscribers. `change` runs under the store's lock, so it must not reach back into this store.
-    pub fn update(&self, instance: &InstanceId, change: impl FnOnce(&mut T)) -> T {
+    pub fn update(&'static self, instance: &InstanceId, change: impl FnOnce(&mut T)) -> T {
         self.with_slot(instance, |slot| {
             change(&mut slot.value);
             let value = slot.value.clone();
@@ -82,12 +158,12 @@ impl<T: Clone + Send + 'static> InstanceStore<T> {
         })
     }
 
-    pub fn set(&self, instance: &InstanceId, value: T) {
+    pub fn set(&'static self, instance: &InstanceId, value: T) {
         self.update(instance, |current| *current = value);
     }
 
     /// Registers `tx` for changes to `instance`'s value, sending the current one immediately so a surface starts in sync.
-    pub fn subscribe(&self, instance: &InstanceId, tx: EventSender<T>) {
+    pub fn subscribe(&'static self, instance: &InstanceId, tx: EventSender<T>) {
         self.with_slot(instance, |slot| {
             if tx.send(slot.value.clone()) {
                 slot.subscribers.push(tx);
@@ -182,6 +258,9 @@ pub struct Size {
 #[derive(Clone, Debug)]
 pub struct Host {
     pub instance: InstanceId,
+    module: Arc<str>,
+    /// The instance's own options, read through [`Host::options`] and [`Host::presentation`].
+    options: Arc<toml::Table>,
     pub representation: Representation,
     /// The box the representation is given. A chip has no length of its own along its bar, so that side is `f32::INFINITY`.
     pub extent: Size,
@@ -193,14 +272,14 @@ pub struct Host {
     /// The monitor the instance is on; `None` is the compositor's active output.
     pub output: Option<String>,
     pub audience: Audience,
-    /// Where [`Host::options`] reads from until instances carry options of their own.
+    /// The module defaults [`Host::options`] lays the instance's own options over, and every behaviour key.
     config: Arc<Config>,
 }
 
 impl Host {
-    /// A chip on a bar `thickness` across along `edge`, shaped by the global `[shape]`: what a chip is when nothing but the edge and the thickness is known about the bar it is on.
+    /// A chip on a bar `thickness` across along `edge`, shaped by the theme: what a chip is when nothing but the edge and the thickness is known about the bar it is on.
     pub fn chip(
-        instance: InstanceId,
+        instance: Instance,
         config: Arc<Config>,
         edge: Edge,
         thickness: f32,
@@ -220,7 +299,9 @@ impl Host {
             }
         };
         Self {
-            instance,
+            instance: instance.id,
+            module: instance.module,
+            options: instance.options,
             representation: Representation::Chip,
             extent,
             axis: Some(edge),
@@ -238,7 +319,7 @@ impl Host {
     /// An area carries its own box and shape, and several areas can share an edge, so the caller passes what it resolved. `config` stays, because it is what `host.options()` and every behaviour key are read from.
     #[allow(clippy::too_many_arguments)]
     pub fn placed(
-        instance: InstanceId,
+        instance: Instance,
         config: Arc<Config>,
         representation: Representation,
         extent: Size,
@@ -249,7 +330,9 @@ impl Host {
         output: Option<String>,
     ) -> Self {
         Self {
-            instance,
+            instance: instance.id,
+            module: instance.module,
+            options: instance.options,
             representation,
             extent,
             axis,
@@ -263,14 +346,16 @@ impl Host {
     }
 
     pub fn in_chrome(
-        instance: InstanceId,
+        instance: Instance,
         representation: Representation,
         chrome: &Chrome,
         extent: Size,
     ) -> Self {
         let theme = chrome.config.resolve_theme();
         Self {
-            instance,
+            instance: instance.id,
+            module: instance.module,
+            options: instance.options,
             representation,
             extent,
             axis: None,
@@ -283,13 +368,30 @@ impl Host {
         }
     }
 
-    /// `module`'s `representation`, `extent` across, placed inside what this host builds — a card on the dashboard's page.
+    /// `module`'s `representation`, `extent` across, placed inside what this host builds — a card on the dashboard's page. No instance speaks for it, so it reads its module's defaults.
     pub fn inner(&self, module: &str, representation: Representation, extent: Size) -> Self {
+        let inner = Instance::of_module(module);
         Self {
-            instance: InstanceId::of_module(module),
+            instance: inner.id,
+            module: inner.module,
+            options: inner.options,
             representation,
             extent,
             ..self.clone()
+        }
+    }
+
+    /// The module this host builds.
+    pub fn module(&self) -> &str {
+        &self.module
+    }
+
+    /// The instance this host builds, for whatever it opens to speak for the same one.
+    pub fn instance(&self) -> Instance {
+        Instance {
+            id: self.instance.clone(),
+            module: Arc::clone(&self.module),
+            options: Arc::clone(&self.options),
         }
     }
 
@@ -324,9 +426,14 @@ impl Host {
         }
     }
 
-    /// The module's settings, by the section type that holds them.
-    pub fn options<T: ModuleOptions>(&self) -> &T {
-        T::section(&self.config)
+    /// The module's settings, by the section type that holds them, with the instance's own options over its module's (TA-2).
+    pub fn options<T: ModuleOptions>(&self) -> T {
+        self.instance().options(&self.config)
+    }
+
+    /// How the instance is dressed and how big what it opens is.
+    pub fn presentation(&self) -> ModuleOverride {
+        self.instance().presentation(&self.config)
     }
 
     /// The whole config this build resolved, for a module whose content spans other modules' sections — the dashboard's pages, a panel's language.
@@ -388,10 +495,9 @@ mod tests {
     use crate::descriptor::Privacy;
 
     fn chip(edge: Edge, thickness: u32) -> Host {
-        let config: Config =
-            toml::from_str("[shape]\nmode=\"chips\"\ngap=0\nspacing=8\nradius=12\n").unwrap();
+        let config: Config = toml::from_str("[theme]\nspacing=8\nradius=12\n").unwrap();
         Host::chip(
-            InstanceId::new("clock"),
+            Instance::of_module("clock"),
             Arc::new(config),
             edge,
             thickness as f32,
@@ -425,7 +531,7 @@ mod tests {
         config.clock.show_date = !config.clock.show_date;
         let expected = config.clock.show_date;
         let host = Host::chip(
-            InstanceId::new("clock"),
+            Instance::of_module("clock"),
             Arc::new(config),
             Edge::Top,
             34.0,
@@ -434,6 +540,79 @@ mod tests {
             None,
         );
         assert_eq!(host.options::<config::ClockConfig>().show_date, expected);
+    }
+
+    fn unbuilt(_: &Host) -> crate::descriptor::Built {
+        Err(LayoutError::Engine("never built".to_string()))
+    }
+
+    const CLOCK: &[crate::descriptor::ModuleDescriptor] = &[crate::descriptor::ModuleDescriptor {
+        id: "clock",
+        name: "Clock",
+        icon: "clock",
+        options: &[crate::descriptor::OptionsType::of::<config::ClockConfig>()],
+        representations: crate::descriptor::Representations {
+            chip: Some(crate::descriptor::ChipDef::new(
+                unbuilt,
+                crate::descriptor::Input::ReadOnly,
+            )),
+            ..crate::descriptor::Representations::NONE
+        },
+        actions: &[],
+        sources: &[],
+    }];
+
+    fn placed(options: &str) -> Host {
+        crate::descriptor::install(CLOCK);
+        let config: Config = toml::from_str(
+            "[clock]\nshow_date = true\ndate_format = \"%d\"\n[temperature]\nunit = \"fahrenheit\"\n[modules.clock]\naccent = \"green\"\ndrawer_width = 360\n",
+        )
+        .unwrap();
+        Host::chip(
+            Instance::new(
+                InstanceId::new("clock-2"),
+                "clock",
+                toml::from_str(options).unwrap(),
+            ),
+            Arc::new(config),
+            Edge::Top,
+            34.0,
+            Color::TRANSPARENT,
+            Color::TRANSPARENT,
+            None,
+        )
+    }
+
+    /// TA-2's cascade: what an instance sets wins, what it leaves unset is its module's, and it reaches only its own module's section.
+    #[test]
+    fn an_instance_s_options_win_over_its_module_s_and_nothing_else_s() {
+        let host = placed(
+            "date_format = \"%A\"\nunit = \"celsius\"\naccent = \"red\"\npopout_width = 300\n",
+        );
+        let clock = host.options::<config::ClockConfig>();
+        assert_eq!(clock.date_format, "%A", "the instance's own value wins");
+        assert!(
+            clock.show_date,
+            "a key it does not set falls back to [clock]"
+        );
+        assert_eq!(
+            host.options::<config::TemperatureConfig>().unit,
+            config::TemperatureUnit::Fahrenheit,
+            "another module's section is not the clock's to override"
+        );
+        let presented = host.presentation();
+        assert_eq!(presented.accent.as_deref(), Some("red"));
+        assert_eq!(presented.popout_width, 300.0);
+        assert_eq!(
+            presented.drawer_width, 360.0,
+            "and [modules.clock] fills in the rest"
+        );
+
+        let bare = placed("");
+        assert_eq!(bare.options::<config::ClockConfig>().date_format, "%d");
+        assert_eq!(bare.presentation().accent.as_deref(), Some("green"));
+        assert_eq!(bare.module(), "clock");
+        assert_eq!(bare.instance().id, InstanceId::new("clock-2"));
     }
 
     #[test]
@@ -550,6 +729,23 @@ mod tests {
 
         let _rebuilt = telar::owner_scope();
         assert_eq!(COUNTS.get(&InstanceId::new("store-rebuilt")), 7);
+    }
+
+    static LABELS: InstanceStore<String> = InstanceStore::new(String::new);
+
+    /// F-3.4: an instance the layout stopped placing leaves nothing behind in any store, so one added later under its id starts fresh — and an instance still placed keeps what it had.
+    #[test]
+    fn a_forgotten_instance_starts_again_from_init_in_every_store() {
+        let (gone, kept) = (InstanceId::new("store-gone"), InstanceId::new("store-kept"));
+        COUNTS.set(&gone, 4);
+        LABELS.set(&gone, "left".to_string());
+        COUNTS.set(&kept, 9);
+
+        forget(std::slice::from_ref(&gone));
+
+        assert_eq!(COUNTS.get(&gone), 0);
+        assert_eq!(LABELS.get(&gone), "");
+        assert_eq!(COUNTS.get(&kept), 9);
     }
 
     #[test]

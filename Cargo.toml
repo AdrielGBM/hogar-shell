@@ -11,6 +11,7 @@ members = [
     "crates/surfaces",
     "crates/modules",
     "crates/settings",
+    "crates/editor",
     "apps/hogar-shell",
     "apps/spike",
 ]
@@ -26,6 +27,7 @@ default-members = [
     "crates/surfaces",
     "crates/modules",
     "crates/settings",
+    "crates/editor",
     "apps/hogar-shell",
 ]
 

@@ -6,7 +6,7 @@
 //!
 //! The lock layer is the one place that is not minimal, and for the same reason: the clock, the user and what is playing are what this shell's lock screen has shown since before it had a layout, and a fresh install that lost them would be a regression dressed as a default.
 
-use config::Edge;
+use config::{Edge, Shape};
 
 use crate::model::*;
 
@@ -65,7 +65,11 @@ fn top_bar() -> Area {
             thickness: Some(34.0),
             length: Some(Extent::Fill),
             offset: Some(0.0),
-            shape: BarShape::default(),
+            shape: BarShape {
+                mode: Some(Shape::Bar),
+                gap: Some(0.0),
+                ..BarShape::default()
+            },
             autohide: None,
         }),
         reserve: Some(true),
@@ -106,17 +110,14 @@ fn zone(id: &str, zone: Zone, modules: &[(&str, &str)]) -> Group {
                 ..Instance::default()
             })
             .collect(),
-        remove: Vec::new(),
+        ..Group::default()
     }
 }
 
 fn prompt() -> Area {
     Area {
         id: AreaId::new("prompt"),
-        kind: Some(AreaKind::Prompt {
-            rect: None,
-            style: PromptStyle::default(),
-        }),
+        kind: Some(AreaKind::Prompt { rect: None }),
         ..Area::default()
     }
 }
@@ -173,6 +174,6 @@ fn cell(id: &str, col: u32, row: u32, modules: &[(&str, &str)]) -> Group {
                 ..Instance::default()
             })
             .collect(),
-        remove: Vec::new(),
+        ..Group::default()
     }
 }

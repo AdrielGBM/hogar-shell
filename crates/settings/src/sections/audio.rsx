@@ -1,6 +1,6 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::text_row::{text_row, TextRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{parse_i32, persist, source};
 use ::config::AudioConfig;

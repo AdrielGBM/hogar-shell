@@ -2,7 +2,7 @@
 use crate::form::{persist, source};
 use crate::form_section::{FormSectionProps, form_section};
 use crate::save_row::{SaveRowProps, save_row};
-use crate::toggle_row::{ToggleRowProps, toggle_row};
+use ::ui::form::toggle_row::{ToggleRowProps, toggle_row};
 use ::config::theme::FontRole;
 use ::config::{ToastEvents, ToastsConfig};
 

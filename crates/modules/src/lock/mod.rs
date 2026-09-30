@@ -12,16 +12,16 @@ use std::sync::Arc;
 use ui::scale::space;
 
 use telar::{
-    AlignItems, App, Color, Component, Container, Input, JustifyContent, LayoutError, LayoutItem,
-    LayoutStyle, RectStyle, SizeDimension, StyledContainer, Text, WindowConfig, box_item,
-    reset_layout_runtime, set_theme, signal, use_theme,
+    AlignItems, App, BorderRadius, Color, Component, Container, Input, JustifyContent, LayoutError,
+    LayoutItem, LayoutStyle, RectStyle, SizeDimension, StyledContainer, Text, WindowConfig,
+    box_item, reset_layout_runtime, set_theme, signal, use_theme,
 };
 
 use config::Config;
 use config::theme::{FontRole, NordTheme};
 use layout::{
-    LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, PromptStyle, Rect, Resolved, ResolvedArea,
-    ResolvedAreaKind,
+    AreaStyle, LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, Rect, Resolved, ResolvedArea,
+    ResolvedAreaKind, prompt_card,
 };
 use services::lock::{self, LockState, Method, Screen};
 use surfaces::area::Surround;
@@ -84,11 +84,11 @@ impl App for LockApp {
             .clone()
             .filter(|_| self.screen == Screen::Configured)
         else {
-            return mount(minimal_screen);
+            return mount(|| minimal_screen(Prompting::Live));
         };
         let output = self.output.clone();
         let size = output_size(self.output.as_deref());
-        mount(move || screen(&config, &lock, output.as_deref(), size))
+        mount(move || screen(&config, &lock, output.as_deref(), size, Prompting::Live))
     }
 
     fn clear_color(&self) -> Option<Color> {
@@ -112,7 +112,46 @@ pub(crate) const PREVIEW_SCREEN: (f32, f32) = (960.0, 600.0);
 /// The lock screen as the session opener mounts it, for [`crate::preview`] — over the starter config and the layout the shell ships, since a preview has no session to read either from.
 pub(crate) fn screen_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let lock = LockLayout::of(&layout::built_in(), &BTreeMap::new());
-    screen(&Arc::new(Config::starter()), &lock, None, PREVIEW_SCREEN)
+    screen(
+        &Arc::new(Config::starter()),
+        &lock,
+        None,
+        PREVIEW_SCREEN,
+        Prompting::Live,
+    )
+}
+
+/// What the prompt on a screen does: take a password on a real lock, or stand in for one on the edit mode's preview of the lock layer (TA-8), where it takes nothing, submits nothing and says it is a preview.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prompting {
+    Live,
+    Preview,
+}
+
+/// The lock layer as lock mode previews it on an unlocked screen: the same areas, built the same way and for the same audience, over the same opaque background a lock surface clears to, with a prompt that takes nothing (TA-8). Building it takes no lock and touches no lock session.
+///
+/// A lock layer that cannot be built previews as the minimal lock, which is what a real lock would show for it. The whole box claims the pointer, as a lock surface would: nothing under the preview answers while it is up.
+pub fn preview(
+    config: &Arc<Config>,
+    lock: &LockLayout,
+    output: Option<&str>,
+    size: (f32, f32),
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let theme = use_theme::<NordTheme>();
+    let shown = screen(config, lock, output, size, Prompting::Preview).or_else(|err| {
+        tracing::warn!(
+            "the lock layer preview failed to build, previewing the minimal lock: {err}"
+        );
+        minimal_screen(Prompting::Preview)
+    })?;
+    Ok(Box::new(
+        StyledContainer::new(
+            whole_surface(),
+            move |_| RectStyle::filled(theme.base, 0.0),
+            vec![shown],
+        )?
+        .input_opaque(),
+    ))
 }
 
 fn mount(screen: impl FnOnce() -> Result<Box<dyn LayoutItem>, LayoutError>) -> Box<dyn Component> {
@@ -123,7 +162,7 @@ fn mount(screen: impl FnOnce() -> Result<Box<dyn LayoutItem>, LayoutError>) -> B
             reset_layout_runtime();
             // Fixed code a test builds: if even this fails no field can exist in this process, and dying leaves the compositor holding the lock for whatever takes it next.
             Box::new(
-                minimal_screen()
+                minimal_screen(Prompting::Live)
                     .and_then(WindowRoot::wrapping)
                     .expect("minimal lock failed to build"),
             )
@@ -139,6 +178,7 @@ fn screen(
     lock: &LockLayout,
     output: Option<&str>,
     size: (f32, f32),
+    prompting: Prompting,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
     let (resolved, report) = lock.resolve(output);
@@ -157,6 +197,7 @@ fn screen(
         config,
         theme,
         output,
+        layer: LayerKind::Lock,
         bounds: telar::Rect::new(0.0, 0.0, size.0, size.1),
         // Nothing reserves while the screen is locked: there are no windows to keep out of an edge, and a lock surface has no exclusive zone to ask for (TA-8).
         reserved: Reserved::default(),
@@ -170,9 +211,14 @@ fn screen(
         .iter()
         .position(|area| matches!(area.kind, ResolvedAreaKind::Prompt { .. }));
     if let Some(at) = prompt_at
-        && let ResolvedAreaKind::Prompt { rect, style } = &layer.areas[at].kind
+        && let ResolvedAreaKind::Prompt { rect } = &layer.areas[at].kind
     {
-        nodes[at] = Some(prompt_area(*rect, style, surround)?);
+        nodes[at] = Some(prompt_area(
+            *rect,
+            &layer.areas[at].style,
+            surround,
+            prompting,
+        )?);
     }
     for (at, area) in layer.areas.iter().enumerate() {
         if Some(at) == prompt_at {
@@ -211,6 +257,7 @@ fn reading_area(
                     config: &config,
                     theme,
                     output: output.as_deref(),
+                    layer: LayerKind::Lock,
                     bounds,
                     reserved: Reserved::default(),
                     audience: Audience::Anyone,
@@ -240,11 +287,12 @@ fn reading_area(
 /// The one area that answers: the password field, the line under it, and what else this machine can be unlocked with.
 fn prompt_area(
     rect: Rect,
-    style: &PromptStyle,
+    style: &AreaStyle,
     surround: Surround,
+    prompting: Prompting,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = surround.theme;
-    let mut column = prompt(theme)?;
+    let mut column = prompt(theme, prompting)?;
     column.extend(biometric_hint(surround.config, theme)?);
     let card = card(column, theme, style)?;
     let at = surfaces::area::within(rect, surround.bounds);
@@ -260,9 +308,9 @@ fn prompt_area(
 /// The minimal lock: the prompt alone, centred, on the surface's own background.
 ///
 /// Built from code rather than from a layout, and depending on nothing but [`LockState`], the theme and i18n. It is what a lock taken back after a crash mounts, and what every failure below falls back to (TA-8).
-pub(crate) fn minimal_screen() -> Result<Box<dyn LayoutItem>, LayoutError> {
+pub(crate) fn minimal_screen(prompting: Prompting) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let card = card(prompt(theme)?, theme, &PromptStyle::default())?;
+    let card = card(prompt(theme, prompting)?, theme, &AreaStyle::default())?;
     Ok(Box::new(Container::new(
         whole_surface()
             .flex_row()
@@ -272,7 +320,10 @@ pub(crate) fn minimal_screen() -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-fn prompt(theme: NordTheme) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
+fn prompt(theme: NordTheme, prompting: Prompting) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
+    if prompting == Prompting::Preview {
+        return Ok(vec![preview_field(theme)?, preview_badge(theme)?]);
+    }
     let state = signal(lock::current());
     platform_wayland::watch(lock::subscribe, move |next: LockState| state.set(next));
     Ok(vec![
@@ -308,16 +359,10 @@ fn biometric_hint(
 fn card(
     column: Vec<Box<dyn LayoutItem>>,
     theme: NordTheme,
-    style: &PromptStyle,
+    style: &AreaStyle,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let fill = style
-        .fill
-        .as_deref()
-        .map(|token| Color::from_hex(token).unwrap_or_else(|| theme.token(token)))
-        .unwrap_or(theme.surface);
-    // Validation keeps this at or above 0.9, so a prompt cannot be faded into its own background; a hand-edited file that got past it is clamped here rather than drawn as written.
-    let fill = fill.with_alpha(style.opacity.unwrap_or(1.0).clamp(0.9, 1.0));
-    let radius = style.radius.unwrap_or_else(rounding);
+    let fill = prompt_card(style, &theme);
+    let radius: BorderRadius = style.radius.map_or_else(|| rounding().into(), Into::into);
     Ok(Box::new(StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
@@ -325,7 +370,7 @@ fn card(
             .gap(space::xl())
             .width(CARD_WIDTH)
             .padding_all(space::xxl()),
-        move |_| RectStyle::filled(fill, radius),
+        move |_| RectStyle::filled(fill, 0.0).with_radius(radius),
         column,
     )?))
 }
@@ -416,6 +461,44 @@ fn field(
         },
         vec![box_item(input)],
     )?))
+}
+
+/// The password field as the preview draws it: the same box and the same placeholder, with nothing in it that takes a key or reaches `lock::submit`.
+fn preview_field(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let placeholder = box_item(Text::new(
+        || telar::t!("lock.password"),
+        LayoutStyle::new()
+            .flex_grow(1.0)
+            .height(theme.font(FontRole::Body) * 1.8),
+        move || theme.text_style(FontRole::Body, theme.muted),
+    )?);
+    let rounded = rounding();
+    Ok(Box::new(StyledContainer::new(
+        LayoutStyle::new()
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .padding_horizontal(space::xl())
+            .padding_vertical(space::md())
+            .width(SizeDimension::Percent(1.0)),
+        move |_| RectStyle::filled(theme.base, 0.0).with_radius(rounded.into()),
+        vec![placeholder],
+    )?))
+}
+
+/// Where the status line would be, the word that says this prompt is a picture of one.
+fn preview_badge(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let pill = StyledContainer::new(
+        LayoutStyle::new()
+            .padding_horizontal(space::md())
+            .padding_vertical(space::xs()),
+        move |_| RectStyle::filled(theme.accent, 0.0).with_radius(space::md().into()),
+        vec![box_item(Text::new(
+            || telar::t!("lock.preview"),
+            LayoutStyle::new(),
+            move || theme.text_style(FontRole::Caption, theme.base),
+        )?)],
+    )?;
+    centred(box_item(pill))
 }
 
 /// The line under the field: what the shell is waiting for, what went wrong, or how long the lockout has left.
@@ -656,10 +739,7 @@ mod tests {
     fn prompt_area_of() -> Area {
         Area {
             id: AreaId::new("prompt"),
-            kind: Some(AreaKind::Prompt {
-                rect: None,
-                style: PromptStyle::default(),
-            }),
+            kind: Some(AreaKind::Prompt { rect: None }),
             ..Area::default()
         }
     }
@@ -693,7 +773,7 @@ mod tests {
                     representation: Some(Representation::WidgetM),
                     ..Instance::default()
                 }],
-                remove: Vec::new(),
+                ..Group::default()
             }],
             ..Area::default()
         }
@@ -713,7 +793,7 @@ mod tests {
                     representation: Some(Representation::Chip),
                     ..Instance::default()
                 }],
-                remove: Vec::new(),
+                ..Group::default()
             }],
             ..Area::default()
         };
@@ -755,10 +835,20 @@ mod tests {
 
     /// Lays a lock screen out at screen size and answers with everything it draws.
     fn drawn(lock: &LockLayout, config: &Arc<Config>) -> Vec<DrawCommand> {
+        seed(config);
+        draw(
+            screen(config, lock, Some("DP-1"), SCREEN, Prompting::Live)
+                .expect("the lock screen builds"),
+        )
+    }
+
+    fn seed(config: &Arc<Config>) {
         telar::reset_layout_runtime();
         telar::set_locale("en");
         telar::set_theme(config.resolve_theme());
-        let item = screen(config, lock, Some("DP-1"), SCREEN).expect("the lock screen builds");
+    }
+
+    fn draw(item: Box<dyn LayoutItem>) -> Vec<DrawCommand> {
         let page = || {
             LayoutStyle::new()
                 .flex_column()
@@ -788,10 +878,14 @@ mod tests {
 
     /// Whether anything in this lock screen takes a typed character.
     fn typed(lock: &LockLayout, config: &Arc<Config>) -> EventResult {
-        telar::reset_layout_runtime();
-        telar::set_locale("en");
-        telar::set_theme(config.resolve_theme());
-        let item = screen(config, lock, Some("DP-1"), SCREEN).expect("the lock screen builds");
+        seed(config);
+        type_into(
+            screen(config, lock, Some("DP-1"), SCREEN, Prompting::Live)
+                .expect("the lock screen builds"),
+        )
+    }
+
+    fn type_into(item: Box<dyn LayoutItem>) -> EventResult {
         let mut page = Container::new(
             LayoutStyle::new()
                 .flex_column()
@@ -814,10 +908,9 @@ mod tests {
 
     /// Where, if anywhere, something in this lock screen answers the pointer.
     fn answer(lock: &LockLayout, config: &Arc<Config>) -> Option<(f32, f32)> {
-        telar::reset_layout_runtime();
-        telar::set_locale("en");
-        telar::set_theme(config.resolve_theme());
-        let item = screen(config, lock, Some("DP-1"), SCREEN).expect("the lock screen builds");
+        seed(config);
+        let item = screen(config, lock, Some("DP-1"), SCREEN, Prompting::Live)
+            .expect("the lock screen builds");
         ui::descriptor::input_answer(item, SCREEN.0, SCREEN.1).expect("it lays out")
     }
 
@@ -959,7 +1052,41 @@ mod tests {
     fn the_minimal_lock_builds_with_no_config_and_no_surface() {
         telar::reset_layout_runtime();
         telar::set_theme(NordTheme::new());
-        assert!(minimal_screen().is_ok());
+        assert!(minimal_screen(Prompting::Live).is_ok());
+    }
+
+    /// Lock mode's preview draws the lock layer with a prompt that says what it is and takes nothing: a keystroke that reaches the real prompt reaches nothing here, so nothing typed into the preview can be submitted (TA-8).
+    #[test]
+    fn the_preview_prompt_says_so_and_takes_no_password() {
+        ui::descriptor::install(PROBES);
+        let config = config_with(LockConfig::default());
+        let lock = locked_with(vec![prompt_area_of()]);
+
+        seed(&config);
+        let said = text_of(&draw(
+            preview(&config, &lock, Some("DP-1"), SCREEN).expect("the preview builds"),
+        ));
+        assert!(said.iter().any(|text| text == "Preview"), "{said:?}");
+        assert!(said.iter().any(|text| text == "Password"), "{said:?}");
+
+        seed(&config);
+        assert_eq!(
+            type_into(preview(&config, &lock, Some("DP-1"), SCREEN).expect("the preview builds")),
+            EventResult::Ignored,
+            "the live prompt takes this keystroke; the preview's must not"
+        );
+    }
+
+    /// A lock layer that cannot be built previews as the minimal lock a real lock would fall back to, with the preview's prompt rather than a live one.
+    #[test]
+    fn a_lock_layer_that_cannot_be_built_previews_as_the_minimal_lock() {
+        let config = config_with(LockConfig::default());
+        seed(&config);
+        let said = text_of(&draw(
+            preview(&config, &locked_with(Vec::new()), Some("DP-1"), SCREEN)
+                .expect("the preview falls back rather than failing"),
+        ));
+        assert!(said.iter().any(|text| text == "Preview"), "{said:?}");
     }
 
     #[test]

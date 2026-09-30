@@ -90,6 +90,11 @@ pub const SHORTCUT_TABLE: &[Shortcut] = &[
         description: "Lower the screen brightness",
         command: "brightness down",
     },
+    Shortcut {
+        id: "edit-layout",
+        description: "Edit the desktop layer of the focused screen",
+        command: "layout edit desktop",
+    },
 ];
 
 /// The request line a shortcut id runs, or `None` for an id the shell does not offer.

@@ -18,5 +18,4 @@ pub use panels::*;
 pub use system::*;
 pub use wallpaper::*;
 
-pub(crate) use panels::{SETTINGS_CHROME, application_panel};
 pub use system::glob_matches;

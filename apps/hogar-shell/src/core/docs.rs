@@ -532,32 +532,24 @@ const RETIRED_NAMESPACES: &[&str] = &[
     "hogar-shell-picker",
 ];
 
-/// Whether `text` still writes a retired config key the way a config file would — a line opening `[bars]` or
-/// `[bars.top]`, not `see_also: [bars]` (a front-matter list of page ids, which happens to share the bracket
-/// syntax) and not the bare word, which is also ordinary English (a media card's "bars", a screen's "corners").
-fn mentions_retired_key(text: &str, key: &str) -> bool {
-    if key.contains('.') {
-        return text.contains(key);
-    }
-    text.lines().any(|line| {
-        let line = line.trim_start();
-        line.starts_with(&format!("[{key}]")) || line.starts_with(&format!("[{key}."))
-    })
-}
-
-/// Retired `[stack]` fields moved to the layout's `stack` area, so prose naming `` `[stack]` `` on the same line
-/// as one of them reads as documenting a config key that no longer exists — even though it never writes the
-/// `stack.edge` form [`mentions_retired_key`] catches, because prose says "`[stack]` — `edge`, `align`, `width`"
-/// rather than `[stack.edge]`.
-const STACK_RETIRED_FIELDS: &[&str] = &["edge", "align", "width"];
-
-fn mentions_stack_section_with_retired_field(text: &str) -> bool {
-    text.lines().any(|line| {
-        line.contains("[stack]")
-            && STACK_RETIRED_FIELDS
-                .iter()
-                .any(|field| line_names_word(line, field))
-    })
+/// Whether `text` still writes a retired config key the way a config file or its prose would.
+///
+/// A whole section is found as a line opening `[bars]` or `[bars.top]`, not `see_also: [bars]` (a front-matter list of page ids, which happens to share the bracket syntax) and not the bare word, which is also ordinary English (a media card's "bars", a screen's "corners"). A key inside a section is found spelled dotted (`stack.edge`), or as prose writes it — its table's header and its own name on one line, "`[stack]` — `edge`, `align`" — where a `*` in the key is the `<id>` prose puts in its place.
+fn mentions_retired_key(text: &str, retired: &check::Retired) -> bool {
+    let key = retired.key;
+    let Some((table, field)) = key.rsplit_once('.') else {
+        return text.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with(&format!("[{key}]")) || line.starts_with(&format!("[{key}."))
+        });
+    };
+    let header = format!("[{}]", table.replace('*', "<id>"));
+    // A bar's `shape.mode` is the layout spelling of the key that replaced `[shape] mode`, so only the section form is stale.
+    let dotted = !matches!(retired.home, check::Home::BarShape(_)) && text.contains(key);
+    dotted
+        || text
+            .lines()
+            .any(|line| line.contains(&header) && line_names_word(line, field))
 }
 
 /// Whether `word` appears in `line` as a whole word rather than as a substring of something longer — `width`
@@ -584,15 +576,13 @@ fn no_hand_written_doc_mentions_a_retired_key_or_namespace() {
             continue;
         }
         let label = path.display();
-        for key in check::RETIRED {
-            if mentions_retired_key(&text, key) {
-                failures.push(format!("{label}: mentions the retired key `{key}`"));
+        for retired in check::RETIRED {
+            if mentions_retired_key(&text, retired) {
+                failures.push(format!(
+                    "{label}: mentions the retired key `{}`",
+                    retired.key
+                ));
             }
-        }
-        if mentions_stack_section_with_retired_field(&text) {
-            failures.push(format!(
-                "{label}: pairs `[stack]` with a retired field (`edge`, `align` or `width`) on one line"
-            ));
         }
         if compositor_rules_page(&path) {
             continue;

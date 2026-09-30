@@ -8,7 +8,8 @@ telar::rsx_modules!();
 
 pub use crate::built_in::layout as built_in;
 pub use crate::model::*;
-pub use crate::ops::{LayoutOp, OpError, Site, Spot};
+pub use crate::ops::{LayoutOp, OpError, PromptEdit, Site, Spot};
+pub use crate::placed::Placed;
 pub use crate::resolve::{
     ActiveWorkspace, Paint, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedGroup,
     ResolvedInstance, ResolvedLayer, resolve,

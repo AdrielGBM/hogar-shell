@@ -1,7 +1,7 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::text_row::{text_row, TextRowProps};
-use crate::enum_row::{enum_row, EnumRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
+use ::ui::form::enum_row::{enum_row, EnumRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{WEEKDAYS, join_csv, parse_u64, persist, source, split_csv};
 use ::config::DashboardConfig;

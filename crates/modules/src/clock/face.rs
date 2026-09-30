@@ -32,8 +32,8 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let show_date = settings.show_date && !host.is_small();
     let extent = host.extent;
 
-    let format = settings.time_format(chip).to_string();
-    let date_format = settings.date_format(chip).to_string();
+    let format = settings.time_format(&chip).to_string();
+    let date_format = settings.date_format(&chip).to_string();
     let started = chrono::Local::now();
     let first = started.format(&format).to_string();
     let glyphs = first.chars().count();

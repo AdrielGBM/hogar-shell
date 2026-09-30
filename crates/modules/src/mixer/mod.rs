@@ -69,7 +69,7 @@ impl Row {
 
 /// The panel behind the volume chip's right-click, and the audio settings page's live half.
 pub fn mixer_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    mixer_view(*host.options::<AudioConfig>(), use_theme::<NordTheme>())
+    mixer_view(host.options::<AudioConfig>(), use_theme::<NordTheme>())
 }
 
 /// The mixer itself, taking its config and theme rather than reading the surface's, so a caller that already resolved them does not have to be a surface for this to build.

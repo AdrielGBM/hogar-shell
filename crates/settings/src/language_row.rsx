@@ -1,6 +1,7 @@
 [logic]
-use crate::field_row::{field_row, FieldRowProps};
-use crate::form::{LANGUAGES, record_field};
+use ::ui::form::field_row::{field_row, FieldRowProps};
+use ::ui::form::recorder::record_field;
+use crate::form::LANGUAGES;
 use ::config::theme::FontRole;
 
 /// The UI language, as a cycle rather than a picker: there are two of them, and each press both stores the code and broadcasts it, so every surface on screen switches with the form.

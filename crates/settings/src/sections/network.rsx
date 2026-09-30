@@ -1,7 +1,7 @@
 [logic]
 use crate::form_section::{form_section, FormSectionProps};
-use crate::toggle_row::{toggle_row, ToggleRowProps};
-use crate::text_row::{text_row, TextRowProps};
+use ::ui::form::toggle_row::{toggle_row, ToggleRowProps};
+use ::ui::form::text_row::{text_row, TextRowProps};
 use crate::save_row::{save_row, SaveRowProps};
 use crate::form::{parse_u32, persist, source};
 use ::config::NetworkConfig;

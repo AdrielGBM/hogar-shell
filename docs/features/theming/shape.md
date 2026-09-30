@@ -15,21 +15,17 @@ see_also: [bars, panels, palettes, widgets]
 
 ## Shape modes
 
-`[shape] mode` — `bar`, `sections` or `chips`. One solid strip, the three zones as separate plates, or a plate
-per module. Every module and every surface works in all three, on all four edges; that is a standing rule of
-the project rather than a coincidence.
+A bar's shape is its own: a `Bar` area's `shape` table in the layout — `mode`, `gap`, `spacing` and `radius`.
+`mode` is `bar`, `sections` or `chips`: one solid strip, the three zones as separate plates, or a plate per
+module. Every module and every surface works in all three, on all four edges; that is a standing rule of the
+project rather than a coincidence.
 
-`[shape]` — `mode`, `gap`, `frame`, `inactive_size`, plus `spacing` and `radius`, which are unset by default so
-they fall back to the theme's values.
+What a bar leaves unset follows the theme: `spacing` and `radius` are the palette's, `mode` is `bar` and `gap`
+is 0 — an edge-to-edge bar. Floating is opt-in. The built-in layout's bar says `mode = "bar"` and `gap = 0`
+itself, so a fresh install draws the strip it always has. See [`BarShape`](../../reference/layout.md) in the
+layout reference.
 
-`gap` defaults to 0 — an edge-to-edge bar. Floating is opt-in.
-
-**Per bar**, a `Bar` area's own `shape` table overrides `mode`, `gap`, `spacing` and `radius` for that area
-alone. All four are unset by default, so a bar follows `[shape]` until its layout entry says otherwise — see
-[`BarShape`](../../reference/layout.md) in the layout reference.
-
-`frame` draws a ring around the screen, which is what makes a floating bar look intentional rather than
-detached.
+`[shape]` keeps the one thing every bar shares: `frame` draws a ring around the screen out of every bar.
 
 ## A widget in a screen corner
 

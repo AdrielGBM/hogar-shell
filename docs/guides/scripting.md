@@ -65,12 +65,21 @@ hogar-shell layout set <instance> <key> <value> # change one property of a place
 hogar-shell layout reset <id|layer|all>        # put a part of the layout back to the built-in one
 hogar-shell layout undo                        # take back the last edit, whatever made it
 hogar-shell layout redo                        # make the edit that was last taken back again
+hogar-shell layout edit <layer|off> [output]   # edit one layer on one screen, or stop
 ```
 
 Every edit — `add`, `remove`, `move`, `set`, `reset` — is one transaction, so `layout undo` takes back one
-command whatever else made the edit before it: a gesture, a popover, or another line of a script. There is no
-`layout edit` verb yet — that is the mode switch a future edit-mode framework owns, not this table. See the
-[Layout reference](../reference/layout.md) for what a layout file holds.
+command whatever else made the edit before it: a gesture, a popover, or another line of a script.
+
+`layout edit` is not an edit itself: it opens the edit mode of one layer — `background`, `desktop`, `top`,
+`overlay` or `lock` — on the screen named, or the focused one. One layer is edited at a time, so entering a mode
+leaves the last; Esc, the strip's Done button or `layout edit off` end it — a first Esc only clears what is
+selected. Everything the pointer does in a mode has a key as well: the arrows select, Shift+arrows move, Ctrl+arrows
+resize, Enter customizes, Delete removes, `m` switches mode, and `?` lists the rest. `lock` is a preview drawn over the
+unlocked session and is refused while the session is locked. Under `--safe-layout` every mode is refused, like
+every edit.
+
+See the [Layout reference](../reference/layout.md) for what a layout file holds.
 
 ## Saying something
 

@@ -7,7 +7,7 @@ use telar::{PreviewEntry, PreviewSurface};
 use config::{Config, Edge, Variant};
 
 use crate::chrome::Chrome;
-use crate::host::{Host, InstanceId, Representation, Size};
+use crate::host::{Host, Instance, Representation, Size};
 use crate::module::module_foreground;
 
 const BAR: f32 = 34.0;
@@ -58,7 +58,7 @@ pub fn bar_chip_with(edit: impl FnOnce(&mut Config)) -> Host {
     let chrome = chrome_with(edit);
     let theme = chrome.config.resolve_theme();
     let host = Host::placed(
-        InstanceId::new("preview"),
+        Instance::of_module("preview"),
         Arc::clone(&chrome.config),
         Representation::Chip,
         Size {
@@ -101,7 +101,7 @@ pub fn host_on(
     extent: Size,
 ) -> Host {
     Host::in_chrome(
-        InstanceId::of_module(module),
+        Instance::of_module(module),
         representation,
         &Chrome::global(config, None),
         extent,

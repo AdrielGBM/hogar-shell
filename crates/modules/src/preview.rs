@@ -60,7 +60,7 @@ pub fn entries() -> Vec<PreviewEntry> {
         PreviewEntry {
             component_name: "lock",
             preview_name: "Minimal lock",
-            build: crate::lock::minimal_screen,
+            build: || crate::lock::minimal_screen(crate::lock::Prompting::Live),
             surface: Some(PreviewSurface::new(
                 crate::lock::PREVIEW_SCREEN.0,
                 crate::lock::PREVIEW_SCREEN.1,

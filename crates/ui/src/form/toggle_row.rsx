@@ -1,8 +1,8 @@
 [logic]
-use crate::field_row::{field_row, FieldRowProps};
-use crate::form::record_field;
+use crate::form::field_row::{field_row, FieldRowProps};
+use crate::form::recorder::record_field;
 
-/// A labelled switch, bound to the signal a section seeds from `config.toml`. The switch itself is the catalogue's, so it looks like every other one in the shell.
+/// A labelled switch bound to `value`. The switch itself is the catalogue's, so it looks like every other one in the shell.
 pub struct Props {
     #[props(into)]
     pub label: Reactive<String> = Reactive::of(String::new),

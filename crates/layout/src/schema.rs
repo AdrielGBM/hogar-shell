@@ -32,7 +32,6 @@ const ORDER: &[&str] = &[
     "AreaStyle",
     "BarShape",
     "AutoHide",
-    "PromptStyle",
     "Rect",
     "Gradient",
     "GradientStop",
@@ -132,17 +131,23 @@ pub fn reference() -> Layout {
                 thickness: Some(96.0),
             },
         ),
-        area(
-            "note",
-            AreaKind::Free {
-                rect: Some(Rect {
-                    x: 0.7,
-                    y: 0.1,
-                    w: 0.25,
-                    h: 0.2,
-                }),
+        Area {
+            style: AreaStyle {
+                radius: Some(Corners::each(16.0, 16.0, 0.0, 16.0)),
+                ..AreaStyle::default()
             },
-        ),
+            ..area(
+                "note",
+                AreaKind::Free {
+                    rect: Some(Rect {
+                        x: 0.7,
+                        y: 0.1,
+                        w: 0.25,
+                        h: 0.2,
+                    }),
+                },
+            )
+        },
     ]);
     layout
 }
@@ -333,7 +338,12 @@ mod tests {
             crate::resolve::resolve(&again, &std::collections::BTreeMap::new(), "DP-1", None);
         assert!(report.is_clean(), "{}", report.render());
         assert!(
-            crate::validate::validate_resolved(&resolved, "reference").is_clean(),
+            crate::validate::validate_resolved(
+                &resolved,
+                "reference",
+                &config::theme::NordTheme::default()
+            )
+            .is_clean(),
             "the reference has to be a layout the shell would draw"
         );
         assert_eq!(

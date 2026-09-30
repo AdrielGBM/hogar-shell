@@ -40,7 +40,7 @@ const LYRICS_HEIGHT: f32 = 200.0;
 const LYRIC_REVEAL_MARGIN: f32 = 28.0;
 
 pub fn page(host: &Host, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let Playhead { player, position } = playhead(host.options::<DashboardConfig>());
+    let Playhead { player, position } = playhead(&host.options::<DashboardConfig>());
     let mut cards = vec![PageCard::Module("media")];
     if host.config().lyrics.enabled {
         cards.push(PageCard::Own(lyrics_card(player, position, theme)));

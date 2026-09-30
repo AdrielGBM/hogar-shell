@@ -2,30 +2,33 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use telar::{
-    AlignItems, Clip, ClippedItem, Color, Container, JustifyContent, LayoutError, LayoutItem,
-    LayoutStyle, RectStyle, Slots, StyledContainer, box_transform, motion::Animated, track_layout,
+    AlignItems, BorderRadius, Clip, ClippedItem, Color, Container, JustifyContent, LayoutError,
+    LayoutItem, LayoutStyle, RectStyle, RwSignal, Slots, StyledContainer, box_transform,
+    motion::Animated, track_layout,
 };
 
+use crate::actions::{Bound, Wheel};
 use crate::area::Surround;
 use crate::layer_window::{LayerWindowContext, Reserved};
-use crate::transient::chips::{self, Site};
+use crate::rects;
+use crate::transient::chips::Site;
 use crate::transient::standoff;
 use config::theme::NordTheme;
 use config::{Config, Edge, ResolvedShape, Shape, Variant};
 use layout::{
-    AutoHide, BarShape, Extent, GroupKind, LayerKind, ResolvedArea, ResolvedAreaKind,
-    ResolvedGroup, ResolvedInstance, Zone,
+    AreaStyle, AutoHide, BarShape, Corners, Extent, GroupId, GroupKind, LayerKind, ResolvedArea,
+    ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Zone,
 };
-use ui::descriptor::{ChipDef, ChipFrame, ModuleDescriptor};
-use ui::host::{Host, InstanceId, Representation, Size};
-use ui::layout::painted_chrome;
+use ui::descriptor::{Built, ChipDef, ChipFrame, ModuleDescriptor};
+use ui::host::{Audience, Host, Instance, InstanceId, Representation, Size};
+use ui::layout::{fill, painted_chrome};
 use ui::module::{DragOpen, module_foreground, resting_fill};
 use ui::module_shell::{ModuleShellProps, module_shell};
 use ui::placeholder::placeholder;
 
 /// Builds the content tree for `area`, branching on its resolved `mode` (bar/sections/chips); visual properties come from gap/spacing/radius, not mode.
 ///
-/// Everything that says where the bar's parts go comes off the area and off what surrounds it on the output: the edge it hangs off, how thick it is, how far it runs and the zones it holds. `surround.config` stays for what is behaviour rather than arrangement — `[popouts] enabled`, `[panels] drag_threshold`, `[theme] opacity` and `[shape] frame` — and for the global `[shape]` and `[modules.<id>]` defaults the area's and the instance's own overrides are laid over.
+/// Everything that says where the bar's parts go comes off the area and off what surrounds it on the output: the edge it hangs off, how thick it is, how far it runs, its shape and the zones it holds. `surround.config` stays for what is behaviour rather than arrangement — `[popouts] enabled`, `[panels] drag_threshold`, `[theme] opacity` and `[shape] frame` — and for the `[modules.<id>]` defaults each instance's own options are laid over.
 ///
 /// The node places itself. One window is the whole output, so the bar is an absolute box at the strip it occupies rather than a child that fills its parent: without that the three zones would divide the screen instead of the strip.
 pub fn build_bar(
@@ -49,6 +52,7 @@ pub fn build_bar(
         )));
     };
     let config = surround.config;
+    let own_corners = shape.radius;
     let shape = bar_shape(config, shape);
     let run = run_of(
         edge,
@@ -74,6 +78,8 @@ pub fn build_bar(
         edge,
         thickness,
         shape,
+        corners: bar_corners(config, own_corners, shape),
+        dress: Dress::of(config, &area.style, &surround.theme),
         abut: ends_abut(length, offset, run),
         theme: surround.theme,
         output: surround.output,
@@ -88,6 +94,8 @@ pub fn build_bar(
             surround.bounds,
         ),
         site,
+        area,
+        surround,
     };
     match shape.mode {
         Shape::Bar => build_whole_bar(&chrome, &zones, modules),
@@ -188,21 +196,29 @@ fn strip_of(
     }
 }
 
-/// The area's own shape over the global `[shape]`, and the theme under both.
+/// The area's own shape, and the theme under whatever it leaves unset.
 ///
-/// The model measures gap, spacing and radius as floats where `[shape]` has always taken whole pixels, so they are rounded on the way in rather than the config being widened to match: each is a distance in logical px, and no part of the shell draws a fraction of one.
+/// The model measures gap, spacing and radius as floats where a resolved shape takes whole pixels, so they are rounded on the way in: each is a distance in logical px, and no part of the shell draws a fraction of one.
+///
+/// The one radius it answers is the largest corner's, which is what the chips on the bar nest their own inside; the strip itself is rounded corner by corner ([`bar_corners`]).
 pub fn bar_shape(config: &Config, shape: BarShape) -> ResolvedShape {
     let px = |value: Option<f32>| value.map(|px| px.round() as u32);
     config.shape_from(
         shape.mode,
         px(shape.gap),
         px(shape.spacing),
-        px(shape.radius),
+        px(shape.radius.map(Corners::largest)),
     )
 }
 
-/// A bar's three zones, each the instances placed in it.
-type Zones<'a> = [(Vec<&'a ResolvedInstance>, Zone); 3];
+/// One thing a zone lays out: a chip, or a stacked group's chips shown one at a time in one place.
+enum Slot<'a> {
+    Chip(&'a ResolvedGroup, &'a ResolvedInstance),
+    Stacked(&'a ResolvedGroup),
+}
+
+/// A bar's three zones, each what is placed in it.
+type Zones<'a> = [(Vec<Slot<'a>>, Zone); 3];
 
 /// The area's groups gathered into the three runs a bar draws. Several groups may name the same zone, so a zone is every group that claimed it in the order they were placed, rather than one group's children.
 fn zones_of(groups: &[ResolvedGroup]) -> Zones<'_> {
@@ -210,7 +226,14 @@ fn zones_of(groups: &[ResolvedGroup]) -> Zones<'_> {
         groups
             .iter()
             .filter(|group| matches!(group.kind, GroupKind::Zone { zone } if zone == wanted))
-            .flat_map(|group| group.children.iter())
+            .flat_map(|group| match group.stacked {
+                true => vec![Slot::Stacked(group)],
+                false => group
+                    .children
+                    .iter()
+                    .map(|instance| Slot::Chip(group, instance))
+                    .collect(),
+            })
             .collect()
     };
     [
@@ -235,6 +258,8 @@ struct BarFrame<'a> {
     /// How thick the area is across its edge, which is the only size a chip on it is given.
     thickness: f32,
     shape: ResolvedShape,
+    corners: BorderRadius,
+    dress: Dress,
     /// Whether the leading and trailing ends meet something; see [`ends_abut`].
     abut: (bool, bool),
     theme: NordTheme,
@@ -245,25 +270,8 @@ struct BarFrame<'a> {
     autohide: Option<AutoHide>,
     /// Where this bar's chips are, for whatever hangs off one of them.
     site: Site,
-}
-
-impl BarFrame<'_> {
-    /// The host a chip is built under.
-    ///
-    /// Keyed by the module rather than by the placed instance's own id: a chip's press, a keybind and `hogar-shell panel toggle` all name a module, so a chip that kept its state under a layout id would stop sharing it with the three ways the same instance is reached from outside the bar. Giving those an instance to name is one change, and this is not it.
-    fn host(&self, id: &str, accent: Color, foreground: Color) -> Host {
-        Host::placed(
-            InstanceId::of_module(id),
-            Arc::clone(self.config),
-            Representation::Chip,
-            chip_extent(self.edge, self.thickness),
-            Some(self.edge),
-            self.shape,
-            accent,
-            foreground,
-            self.output.map(str::to_string),
-        )
-    }
+    area: &'a ResolvedArea,
+    surround: Surround<'a>,
 }
 
 /// The box a chip is given: the area's thickness across it, and no length of its own along it.
@@ -287,22 +295,45 @@ enum Granularity {
     Chip,
 }
 
-/// What the bar paints over the strip it occupies — and so, by [`painted_chrome`], what it claims for the window's input region.
-///
-/// Under `[shape] frame` the bars *are* the ring: each one fills its own strip flat, whatever its mode, because that is what a continuous band around the screen is made of now that no surface draws one. Otherwise only `bar` mode has a background of its own: in `sections` and `chips` the bar between two chips is a hole, and a press there belongs to the window underneath rather than to the shell.
-fn strip_fill(config: &Config, mode: Shape, token: Color) -> Color {
-    if config.shape.frame || matches!(mode, Shape::Bar) {
-        return token.with_alpha(config.opacity());
+/// One owner per pixel: a bar is never [`crate::area::dressed`], because its strip already paints the whole box; the style is read into that paint instead, and its corners stay `shape.radius`, which its chips nest inside.
+#[derive(Clone, Copy)]
+struct Dress {
+    fill: Option<Color>,
+    alpha: f32,
+    padding: Option<f32>,
+}
+
+impl Dress {
+    fn of(config: &Config, style: &AreaStyle, theme: &NordTheme) -> Self {
+        Self {
+            fill: style
+                .fill
+                .as_deref()
+                .map(|fill| layout::color_of(fill, theme)),
+            alpha: style
+                .opacity
+                .unwrap_or_else(|| config.opacity())
+                .clamp(0.0, 1.0),
+            padding: style.padding,
+        }
     }
-    Color::TRANSPARENT
+}
+
+/// A `fill` of the area's own paints the strip in any mode; under `[shape] frame` every bar fills its strip flat to make the ring; otherwise only `bar` mode has a background, so in `sections` and `chips` a press between chips belongs to the window underneath ([`painted_chrome`]).
+fn strip_fill(config: &Config, mode: Shape, dress: Dress, token: Color) -> Color {
+    match dress.fill {
+        Some(own) => own.with_alpha(dress.alpha),
+        None if config.shape.frame || matches!(mode, Shape::Bar) => token.with_alpha(dress.alpha),
+        None => Color::TRANSPARENT,
+    }
 }
 
 /// What a section's panel or a resting chip paints. Nothing while a frame is up: the bar has already filled its strip flat, and a second fill over those pixels is a darker band along every edge the two share.
-fn inner_fill(config: &Config, token: Color) -> Color {
+fn inner_fill(config: &Config, dress: Dress, token: Color) -> Color {
     if config.shape.frame {
         return Color::TRANSPARENT;
     }
-    token.with_alpha(config.opacity())
+    token.with_alpha(dress.alpha)
 }
 
 /// Takes an autohiding bar off its edge, and brings it back when the pointer reaches the strip it left behind.
@@ -337,16 +368,33 @@ fn hiding(chrome: &BarFrame, bar: StyledContainer) -> StyledContainer {
 /// Cuts the bar off at its own strip.
 ///
 /// A chip is routinely a shade wider than the strip its zone was given — a padded box is narrower than the bar and a square chip is sized from the bar itself — and while a bar had a surface of its own, the surface cut that overhang off for nothing. With one window per layer there is no surface to cut it: the overhang lands on the desktop, drawn but claimed by nothing, so a press on it reaches the application underneath. The clip is at the bar's root rather than at a zone for exactly that reason: what a zone cuts is one run running into another, and what this cuts is the bar running off its own edge.
-fn strip_clipped(chrome: StyledContainer) -> Box<dyn LayoutItem> {
-    Box::new(ClippedItem::new(Box::new(chrome), Clip::both()))
+///
+/// The cut is inside what hides the bar, so it travels with it: a chip overhanging a vertical bar's inner edge stays cut while the bar is away, instead of the overhang sliding into a cut that stayed where the bar was shown and claiming more of the screen than its peek (F-10.30).
+fn strip_clipped(chrome: &BarFrame, bar: StyledContainer) -> Built {
+    let clipped = ClippedItem::new(Box::new(bar), Clip::both());
+    let placed = StyledContainer::new(
+        crate::area::at(chrome.strip),
+        |_| RectStyle::default(),
+        vec![Box::new(clipped)],
+    )?;
+    Ok(Box::new(hiding(chrome, placed)))
 }
 
-/// How far a bar's own background is rounded. A ring made of rounded pills is four floating bars rather than a frame, so under `[shape] frame` the strip is square. Its rounded *inner* corners went with the surface that drew them: a concave corner at the junction of two strips lies inside neither, so no area can paint it (F-10.23).
-fn bar_radius(config: &Config, shape: ResolvedShape) -> f32 {
+/// How far each corner of a bar's own background is rounded: the bar's own corners where it names them, else the one radius its shape resolved to. A ring made of rounded pills is four floating bars rather than a frame, so under `[shape] frame` the strip is square. Its rounded *inner* corners went with the surface that drew them: a concave corner at the junction of two strips lies inside neither, so no area can paint it (F-10.23).
+fn bar_corners(config: &Config, own: Option<Corners>, shape: ResolvedShape) -> BorderRadius {
     if config.shape.frame {
-        0.0
-    } else {
-        shape.radius
+        return BorderRadius::zero();
+    }
+    let px = |corner: f32| corner.round().max(0.0);
+    match own {
+        Some(corners) => Corners::each(
+            px(corners.top_left()),
+            px(corners.top_right()),
+            px(corners.bottom_right()),
+            px(corners.bottom_left()),
+        )
+        .into(),
+        None => BorderRadius::all(shape.radius),
     }
 }
 
@@ -361,13 +409,13 @@ fn build_whole_bar(
         shape,
         abut,
         theme,
-        strip,
         ..
     } = *chrome;
-    let base = strip_fill(config, Shape::Bar, theme.base);
+    let base = strip_fill(config, Shape::Bar, chrome.dress, theme.base);
     let spacing = shape.spacing;
+    let padding = chrome.dress.padding.unwrap_or_else(|| shape.padding());
     // The whole bar already pads every side by `padding`, so an end that meets another bar is only owed the rest of a chip's worth of air.
-    let ends = end_air(abut, (spacing - shape.padding()).max(0.0));
+    let ends = end_air(abut, (spacing - padding).max(0.0));
     let mut slots = Vec::with_capacity(3);
     for (entries, in_zone) in zones {
         // Modules blend into the shared surface (transparent rest); STRETCH makes every chip the bar's height so text pills and icon chips line up. The hover/press (and Filled) highlight rounds at the theme's chip radius, matching chip mode.
@@ -387,20 +435,27 @@ fn build_whole_bar(
             items,
         )?);
     }
-    let radius = bar_radius(config, shape);
+    let corners = chrome.corners;
     let style = axis(
-        crate::area::at(strip)
-            .align_items(AlignItems::CENTER)
-            .padding_all(shape.padding()),
+        fill().align_items(AlignItems::CENTER).padding_all(padding),
         edge,
     );
-    Ok(strip_clipped(hiding(
+    strip_clipped(
         chrome,
         painted_chrome(
-            StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
+            crate::area::empty_space(
+                chrome.area,
+                chrome.surround,
+                StyledContainer::new(
+                    style,
+                    move |_r| RectStyle::filled(base, 0.0).with_radius(corners),
+                    slots,
+                )?,
+                base.a > 0.0,
+            ),
             base,
         ),
-    )))
+    )
 }
 
 fn build_units(
@@ -415,12 +470,11 @@ fn build_units(
         shape,
         abut,
         theme,
-        strip,
         ..
     } = *chrome;
     let spacing = shape.spacing;
     // Section: modules share a per-zone surface panel (wrapped in `unit`); Chip: each module is its own free-standing pill, no `unit`.
-    let surface = inner_fill(config, theme.surface);
+    let surface = inner_fill(config, chrome.dress, theme.surface);
     let (rest, shell_radius) = match granularity {
         Granularity::Section => (Color::TRANSPARENT, shape.chip_radius()),
         Granularity::Chip => (surface, shape.chip_radius()),
@@ -450,18 +504,29 @@ fn build_units(
     }
     // No gap between the zones here: there are only ever three of them, so the only two joins it could space are the two the sides already hold open with a margin of their own (see [`zone`]). Both applying left twice the air at exactly the place a side is cut — a hole where the rest of the bar has one chip's worth.
     let style = axis(
-        crate::area::at(strip).align_items(AlignItems::STRETCH),
+        fill()
+            .align_items(AlignItems::STRETCH)
+            .padding_all(chrome.dress.padding.unwrap_or(0.0)),
         edge,
     );
-    let base = strip_fill(config, shape.mode, theme.base);
-    let radius = bar_radius(config, shape);
-    Ok(strip_clipped(hiding(
+    let base = strip_fill(config, shape.mode, chrome.dress, theme.base);
+    let corners = chrome.corners;
+    strip_clipped(
         chrome,
         painted_chrome(
-            StyledContainer::new(style, move |_r| RectStyle::filled(base, radius), slots)?,
+            crate::area::empty_space(
+                chrome.area,
+                chrome.surround,
+                StyledContainer::new(
+                    style,
+                    move |_r| RectStyle::filled(base, 0.0).with_radius(corners),
+                    slots,
+                )?,
+                base.a > 0.0,
+            ),
             base,
         ),
-    )))
+    )
 }
 
 /// Shared surface panel behind a zone's modules (sections mode); children STRETCH with no inner padding so a filled chip reaches the panel edges instead of leaving a thin sliver.
@@ -562,7 +627,7 @@ struct Wrapper {
     radius: f32,
 }
 
-/// A box wrapped around a module's own content to carry what its chip cannot: a wheel handler and the surface a chip rests on for a self-managed module (which has no [`module_shell`] to put either on), and the pointer tracking behind a hover popout. They live here rather than on the chip so a self-managed module gets them on the same terms as any other; the wrapper shrink-wraps its child, so the rect it tracks and the surface it paints are the chip's own.
+/// A box wrapped around a module's own content to carry what its chip cannot: a wheel handler, the presses its layout binds and the surface a chip rests on for a self-managed module (which has no [`module_shell`] to put them on), and the pointer tracking behind a hover popout. They live here rather than on the chip so a self-managed module gets them on the same terms as any other; the wrapper shrink-wraps its child, so the rect it tracks and the surface it paints are the chip's own.
 ///
 /// `cross` is what the wrapper would otherwise silently change. A chip is a direct zone child under `AlignItems::STRETCH`, so it fills the bar's thickness; a wrapper that centred it instead would shrink every popout-bearing chip to its content. A self-managed module lays itself out and is centred, as it was before any wrapper existed.
 ///
@@ -570,8 +635,9 @@ struct Wrapper {
 fn chip_wrapper(
     content: Box<dyn LayoutItem>,
     on_scroll: Option<Wheel>,
-    popout: Option<(&str, Site)>,
+    popout: Option<(Instance, Site)>,
     dress: Wrapper,
+    presses: &Bound,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let Wrapper {
         cross,
@@ -587,25 +653,24 @@ fn chip_wrapper(
         style.flex_shrink(0.0)
     };
     let style = axis(style, edge);
-    let mut wrapper = painted_chrome(
+    let mut wrapper = presses.presses(painted_chrome(
         StyledContainer::new(
             style,
             move |_r| RectStyle::filled(fill, radius),
             vec![content],
         )?,
         fill,
-    );
+    ));
     if let Some(on_scroll) = on_scroll {
         wrapper = wrapper.on_scroll(move |dx, dy| on_scroll(dx, dy));
     }
-    if let Some((module, site)) = popout {
+    if let Some((instance, site)) = popout {
         // Tracked before the handler that reads it is attached, so the popout has a rect the first time the pointer arrives.
         let rect = track_layout(wrapper.layout_node())
             .expect("a container registers its rect")
             .read_only();
-        let module = module.to_string();
         wrapper = wrapper.on_hover(move |entered| {
-            crate::popout::hover(&module, site.anchor(rect.get()), entered)
+            crate::popout::hover(&instance, site.anchor(rect.get()), entered)
         });
     }
     Ok(Box::new(wrapper))
@@ -641,71 +706,176 @@ fn axis(style: LayoutStyle, edge: Edge) -> LayoutStyle {
     }
 }
 
-/// The container variant a placed chip draws with: its own `variant` option, else the module's `[modules.<id>]` override.
-fn instance_variant(config: &Config, instance: &ResolvedInstance) -> Variant {
-    instance
-        .options
-        .get("variant")
-        .and_then(|value| value.clone().try_into().ok())
-        .unwrap_or_else(|| config.variant_for(&instance.module))
+/// What a chip speaks for: its state keyed by the module, and its entry's own options.
+///
+/// Keyed by the module rather than by the placed instance's own id: a chip's press, a keybind and `hogar-shell panel toggle` all name a module, so a chip that kept its state under a layout id would stop sharing it with the three ways the same instance is reached from outside the bar. The options are the entry's own, so what it draws and what it opens follow what the layout says about it (TA-2).
+fn chip_instance(instance: &ResolvedInstance) -> Instance {
+    Instance::new(
+        InstanceId::of_module(&instance.module),
+        &instance.module,
+        instance.options.clone(),
+    )
 }
 
-/// The accent-token name a placed chip draws with: its own `accent` option, else the module's, else the global one.
-fn instance_accent_name<'a>(config: &'a Config, instance: &'a ResolvedInstance) -> &'a str {
-    match instance
-        .options
-        .get("accent")
-        .and_then(|value| value.as_str())
-    {
-        Some(accent) => accent,
-        None => config.accent_name_for(&instance.module),
-    }
-}
-
-/// Builds each instance's content and wraps it in its base container; a module no id answers to, one with no chip, and a chip whose build fails or panics are each drawn as a [placeholder](ui::placeholder) where declared, so the mistake stays on screen.
+/// Builds each thing a zone lays out; a module no id answers to, one with no chip, and a chip whose build fails or panics are each drawn as a [placeholder](ui::placeholder) where declared, so the mistake stays on screen.
+///
+/// A group has no box of its own on a bar — its chips share their zone with every other group's — so where it is is the smallest rect around its chips, except for a stacked group, which is one box.
 fn build_items(
     chrome: &BarFrame,
-    instances: &[&ResolvedInstance],
+    slots: &[Slot],
     modules: &[ModuleDescriptor],
     rest: Color,
     radius: f32,
 ) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
-    let config = chrome.config;
-    let mut items: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(instances.len());
-    for instance in instances {
+    let kit = Rc::new(ChipKit::of(chrome, modules, rest, radius));
+    let mut items: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(slots.len());
+    let mut spans: Vec<(&GroupId, Vec<RwSignal<telar::Rect>>)> = Vec::new();
+    for slot in slots {
+        match slot {
+            Slot::Chip(group, instance) => {
+                let (item, rect) = kit.chip(&group.id, instance)?;
+                let at = match spans.iter().position(|(id, _)| **id == group.id) {
+                    Some(at) => at,
+                    None => {
+                        spans.push((&group.id, Vec::new()));
+                        spans.len() - 1
+                    }
+                };
+                spans[at].1.extend(rect);
+                items.push(item);
+            }
+            Slot::Stacked(group) => items.push(kit.stacked(group, chrome.surround)?),
+        }
+    }
+    for (group, rects) in spans {
+        rects::track_spanning(kit.at.group(group), rects);
+    }
+    Ok(items)
+}
+
+/// A chip, and the rect it is tracked by in [`rects`].
+type Tracked = (Box<dyn LayoutItem>, Option<RwSignal<telar::Rect>>);
+
+/// Everything building one chip of a bar needs, owned, so a stacked group on the bar can build its chips again whenever it is cycled.
+struct ChipKit {
+    config: Arc<Config>,
+    edge: Edge,
+    thickness: f32,
+    shape: ResolvedShape,
+    theme: NordTheme,
+    output: Option<String>,
+    site: Site,
+    modules: Rc<[ModuleDescriptor]>,
+    rest: Color,
+    radius: f32,
+    /// The bar itself in [`rects`], which each chip is registered under.
+    at: rects::Node,
+    audience: Audience,
+}
+
+impl ChipKit {
+    fn of(chrome: &BarFrame, modules: &[ModuleDescriptor], rest: Color, radius: f32) -> Self {
+        Self {
+            config: Arc::clone(chrome.config),
+            edge: chrome.edge,
+            thickness: chrome.thickness,
+            shape: chrome.shape,
+            theme: chrome.theme,
+            output: chrome.output.map(str::to_string),
+            site: chrome.site.clone(),
+            modules: modules.into(),
+            rest,
+            radius,
+            at: rects::Node::area(chrome.output, chrome.surround.layer, &chrome.area.id),
+            audience: chrome.surround.audience,
+        }
+    }
+
+    /// The host a chip is built under.
+    fn host(&self, instance: Instance, accent: Color, foreground: Color) -> Host {
+        Host::placed(
+            instance,
+            Arc::clone(&self.config),
+            Representation::Chip,
+            chip_extent(self.edge, self.thickness),
+            Some(self.edge),
+            self.shape,
+            accent,
+            foreground,
+            self.output.clone(),
+        )
+    }
+
+    /// One instance's chip, registered in [`rects`] under `group`, and the rect it is tracked by.
+    fn chip(&self, group: &GroupId, instance: &ResolvedInstance) -> Result<Tracked, LayoutError> {
+        let config = &self.config;
         let id = &instance.module;
-        let variant = instance_variant(config, instance);
-        let accent = chrome
-            .theme
-            .accent_by_name(instance_accent_name(config, instance));
-        let host = chrome.host(id, accent, module_foreground(variant, accent, chrome.theme));
-        let placed = ui::descriptor::lookup(modules, id)
+        let at = self.at.instance(group, &instance.id);
+        let speaks_for = chip_instance(instance);
+        let presentation = speaks_for.presentation(config);
+        let variant = presentation.variant;
+        let accent = self.theme.accent_by_name(config.accent_name(&presentation));
+        let host = self.host(
+            speaks_for,
+            accent,
+            module_foreground(variant, accent, self.theme),
+        );
+        let menu = crate::menu::on(at.clone(), self.audience);
+        let placed = ui::descriptor::lookup(&self.modules, id)
             .and_then(|module| Some((*module, module.representations.chip?)));
         let Some((module, chip)) = placed else {
-            items.push(placeholder(id, None, &host, chrome.theme)?);
-            continue;
+            let item = placeholder(id, None, &host, self.theme, menu)?;
+            let rect = rects::track(at, item.layout_node());
+            return Ok((item, rect));
         };
         let look = Look {
             variant,
-            rest,
+            rest: self.rest,
             accent,
-            radius,
-            edge: chrome.edge,
+            radius: self.radius,
+            edge: self.edge,
             popout: module.representations.popout.is_some() && config.popouts.enabled,
-            drag_open: drag_open_for(config, &module, chrome.edge),
-            site: chrome.site.clone(),
+            drag_open: drag_open_for(config, &module, self.edge),
+            site: self.site.clone(),
+            bound: Bound::of(&instance.actions, self.audience).with_menu(menu.clone()),
         };
-        let style = chip_box(&chip, chrome.edge);
+        let style = chip_box(&chip, self.edge);
         let built = host.clone();
-        let item = ui::descriptor::guard(id, &host, style, move || {
+        let item = ui::descriptor::guard(id, &host, style, menu, move || {
             placed_chip(&module, &chip, &built, look)
         })?;
-        if let Some(rect) = track_layout(item.layout_node()) {
-            chips::register(id, chrome.site.clone(), rect);
+        let rect = track_layout(item.layout_node());
+        if let Some(rect) = rect {
+            rects::track_chip(
+                at,
+                rect,
+                rects::Chip {
+                    instance: host.instance(),
+                    site: self.site.clone(),
+                },
+            );
         }
-        items.push(item);
+        Ok((item, rect))
     }
-    Ok(items)
+
+    /// A stacked group's chips, one at a time where one chip would be.
+    fn stacked(self: &Rc<Self>, group: &ResolvedGroup, surround: Surround) -> Built {
+        let key = (self.output.clone(), self.at.area.clone(), group.id.clone());
+        let style = axis(
+            LayoutStyle::new()
+                .align_items(AlignItems::STRETCH)
+                .flex_shrink(0.0),
+            self.edge,
+        );
+        let kit = Rc::clone(self);
+        let id = group.id.clone();
+        let node =
+            crate::area::smart_stack(key, &group.children, style, surround, move |instance, _| {
+                kit.chip(&id, instance).map(|(item, _)| item)
+            })?;
+        rects::track(self.at.group(&group.id), node.layout_node());
+        Ok(node)
+    }
 }
 
 /// How a chip is dressed on this bar, resolved before its build so the build can run where a failure is caught.
@@ -718,6 +888,8 @@ struct Look {
     popout: bool,
     drag_open: Option<DragOpen>,
     site: Site,
+    /// What the layout binds to this instance's gestures, each in place of the chip's own for that gesture alone, and its context menu on a secondary press nothing is bound to.
+    bound: Bound,
 }
 
 /// The box a chip's failure is caught in, carrying the part the chip plays in its zone: a filler takes the room left over, an elastic chip gives up length, and every other chip holds its own.
@@ -742,8 +914,8 @@ fn placed_chip(
             module.id
         )))
     })?;
-    let popout = look.popout.then(|| (module.id, look.site.clone()));
-    let wheel = wheel(chip, host);
+    let popout = look.popout.then(|| (host.instance(), look.site.clone()));
+    let wheel = look.bound.wheel(wheel(chip, host));
     if chip.is_bare() {
         return bare_chip(
             content,
@@ -753,10 +925,11 @@ fn placed_chip(
             look.edge,
             resting_fill(look.variant, look.rest, look.accent),
             look.radius,
+            &look.bound,
         );
     }
     // Handed over bare: the chip shell dispatches every press with its own rect in scope, a panel toggle and a press of the chip's own alike, so whatever this opens can hang off the chip without being told where it is.
-    let on_press: Option<Rc<dyn Fn()>> = match chip.press {
+    let own_press: Option<Rc<dyn Fn()>> = match chip.press {
         Some(press) => Some(Rc::new(press)),
         None if opens_panel(module) => {
             let id = module.id;
@@ -776,7 +949,9 @@ fn placed_chip(
             .inset(host.inset())
             .vertical(host.is_vertical())
             .elastic(chip.elastic)
-            .on_press(on_press)
+            .on_press(look.bound.press(own_press))
+            .on_long_press(look.bound.long_press())
+            .on_alt_press(look.bound.alt_press())
             .on_scroll(wheel)
             .drag_open(look.drag_open)
             .build(),
@@ -803,12 +978,11 @@ fn placed_chip(
                 fill: Color::TRANSPARENT,
                 radius: 0.0,
             },
+            &Bound::default(),
         ),
         None => Ok(shell),
     }
 }
-
-type Wheel = Rc<dyn Fn(f32, f32)>;
 
 /// The chip's wheel handler bound to the host it was built under, so a notch acts on this bar's options rather than the global config.
 fn wheel(chip: &ChipDef, host: &Host) -> Option<Wheel> {
@@ -817,21 +991,23 @@ fn wheel(chip: &ChipDef, host: &Host) -> Option<Wheel> {
     Some(Rc::new(move |dx, dy| scroll(&host, dx, dy)))
 }
 
-/// A self-managed module skips `module_shell` — it lays itself out and takes its own presses — so its wheel handler, popout tracking and the surface it rests on go on a wrapper with no padding or hover state.
+/// A self-managed module skips `module_shell` — it lays itself out and takes its own presses — so its wheel handler, the presses its layout binds, popout tracking and the surface it rests on go on a wrapper with no padding or hover state. What the module answers itself stays its own: it is inside the wrapper, and answers first.
+#[allow(clippy::too_many_arguments)]
 fn bare_chip(
     content: Box<dyn LayoutItem>,
     chip: &ChipDef,
     wheel: Option<Wheel>,
-    popout: Option<(&str, Site)>,
+    popout: Option<(Instance, Site)>,
     edge: Edge,
     resting: Color,
     radius: f32,
+    bound: &Bound,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let fill = match chip.frame {
         ChipFrame::Filler => Color::TRANSPARENT,
         _ => resting,
     };
-    if wheel.is_none() && popout.is_none() && fill == Color::TRANSPARENT {
+    if wheel.is_none() && popout.is_none() && fill == Color::TRANSPARENT && !bound.has_presses() {
         return Ok(content);
     }
     chip_wrapper(
@@ -845,6 +1021,7 @@ fn bare_chip(
             fill,
             radius,
         },
+        bound,
     )
 }
 
@@ -882,6 +1059,7 @@ mod tests {
                 config: &config,
                 theme: NordTheme::new(),
                 output: None,
+                layer: LayerKind::Top,
                 bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
                 reserved,
                 audience: ui::host::Audience::Owner,
@@ -928,6 +1106,16 @@ mod tests {
         shaped_bar_area(edge, thickness, zones, BarShape::default(), None)
     }
 
+    /// [`bar_area`] drawn in `shape`.
+    fn bar_in(shape: BarShape, edge: Edge, thickness: f32, zones: [&[&str]; 3]) -> ResolvedArea {
+        shaped_bar_area(edge, thickness, zones, shape, None)
+    }
+
+    /// A bar's own shape as a layout file writes it.
+    fn shape_of(text: &str) -> BarShape {
+        toml::from_str(text).expect("a bar shape")
+    }
+
     /// [`bar_area`], with its shape and autohide named explicitly instead of defaulted.
     fn shaped_bar_area(
         edge: Edge,
@@ -972,6 +1160,7 @@ mod tests {
             within: layout::Within::Output,
             style: layout::AreaStyle::default(),
             visible: None,
+            actions: Default::default(),
             groups,
         }
     }
@@ -980,6 +1169,7 @@ mod tests {
         ResolvedGroup {
             id: layout::GroupId::new(id),
             kind: GroupKind::Zone { zone },
+            stacked: false,
             children: ids.iter().map(|id| instance(id)).collect(),
         }
     }
@@ -1013,7 +1203,7 @@ mod tests {
         let config = Config::default();
         let shape = config.shape_from(None, None, None, None);
         Host::placed(
-            InstanceId::new("dummy"),
+            Instance::of_module("dummy"),
             Arc::new(config),
             Representation::Chip,
             chip_extent(edge, 32.0),
@@ -1211,7 +1401,7 @@ mod tests {
         let mut wrapped = chip_wrapper(
             chip,
             None,
-            Some(("volume", test_site(Edge::Top))),
+            Some((Instance::of_module("volume"), test_site(Edge::Top))),
             Wrapper {
                 cross: AlignItems::STRETCH,
                 edge: Edge::Top,
@@ -1219,6 +1409,7 @@ mod tests {
                 fill: Color::TRANSPARENT,
                 radius: 0.0,
             },
+            &Bound::default(),
         )
         .unwrap();
 
@@ -1267,15 +1458,16 @@ mod tests {
                 reset_layout_runtime();
                 set_theme(theme);
                 OPENED.with(|opened| opened.borrow_mut().clear());
-                let cfg: Config = toml::from_str(&format!("[shape]\nmode=\"{mode}\"\n")).unwrap();
+                let cfg = Config::default();
                 let area = area_of(
                     edge,
                     32.0,
-                    BarShape::default(),
+                    shape_of(&format!("mode=\"{mode}\"\n")),
                     None,
                     vec![ResolvedGroup {
                         id: layout::GroupId::new("start"),
                         kind: GroupKind::Zone { zone: Zone::Start },
+                        stacked: false,
                         children: vec![
                             styled_instance("dummy", config::Variant::Filled, "green"),
                             instance(broken),
@@ -1389,15 +1581,83 @@ mod tests {
         }
     }
 
+    /// F-10.38 on a bar: the area's `fill` is the strip's colour in every mode and its `opacity` stands in for `[theme] opacity` on everything the bar paints — with the strip the one rect that carries it, rounded by the bar's own shape rather than by the `style.radius` beside it.
+    #[test]
+    fn a_bars_own_style_is_its_strip_painted_once() {
+        let theme = NordTheme::new();
+        let green = Color::from_hex("#00ff00").unwrap();
+        for mode in ["bar", "sections", "chips"] {
+            reset_layout_runtime();
+            set_theme(theme);
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\nradius=6\n"));
+            let mut area = bar_in(shape, Edge::Top, 32.0, [&["dummy"], &[], &[]]);
+            area.style = AreaStyle {
+                fill: Some("#00ff00".to_string()),
+                radius: Some(Corners::all(9.0)),
+                opacity: Some(0.4),
+                padding: Some(3.0),
+                backdrop: None,
+            };
+            let bar = built(&cfg, &area, &registry(), (400.0, 32.0)).expect("the bar builds");
+            let page = Container::new(
+                LayoutStyle::new().flex_row().width(400.0).height(32.0),
+                vec![bar],
+            )
+            .unwrap();
+            let root = page.layout_node();
+            let tree = telar::ComponentList::new(page);
+            compute_layout(
+                root,
+                AvailableSpace::Definite(400.0),
+                AvailableSpace::Definite(32.0),
+            )
+            .unwrap();
+
+            let painted = |fill: Color| -> Vec<(telar::Rect, BorderRadius)> {
+                tree.commands()
+                    .iter()
+                    .filter_map(|command| match command {
+                        telar::DrawCommand::Rect { rect, style }
+                            if style.fill == Some(telar::Paint::Solid(fill)) =>
+                        {
+                            Some((*rect, style.radius))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            };
+            assert_eq!(
+                painted(green.with_alpha(0.4)),
+                [(
+                    telar::Rect::new(0.0, 0.0, 400.0, 32.0),
+                    BorderRadius::all(6.0)
+                )],
+                "{mode}: the strip is the one rect in the area's fill, at its opacity, rounded by `shape.radius`"
+            );
+            if mode == "chips" {
+                assert!(
+                    !painted(theme.surface.with_alpha(0.4)).is_empty(),
+                    "{mode}: a resting chip is painted at the bar's own opacity too"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_self_managed_module_rests_on_a_chip_like_its_neighbours() {
         let surfaces = |mode: &str, def: ChipDef| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
             let registry = vec![module("probe", def)];
-            let cfg: Config = toml::from_str(&format!("[shape]\nmode=\"{mode}\"\n")).unwrap();
-            let area = bar_area(Edge::Top, 32.0, [&[], &["probe"], &[]]);
-            let surface = telar::Paint::Solid(inner_fill(&cfg, NordTheme::new().surface));
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\n"));
+            let area = bar_in(shape, Edge::Top, 32.0, [&[], &["probe"], &[]]);
+            let surface = telar::Paint::Solid(inner_fill(
+                &cfg,
+                Dress::of(&cfg, &AreaStyle::default(), &NordTheme::new()),
+                NordTheme::new().surface,
+            ));
             let bar = built(&cfg, &area, &registry, (400.0, 32.0)).expect("the bar builds");
             let page = Container::new(
                 LayoutStyle::new().flex_row().width(400.0).height(32.0),
@@ -1446,9 +1706,9 @@ mod tests {
     #[test]
     fn every_mode_builds_a_tree() {
         for mode in ["bar", "sections", "chips"] {
-            let toml = format!("[shape]\nmode=\"{mode}\"\ngap=6\nradius=10\nspacing=8\n");
-            let cfg: Config = toml::from_str(&toml).unwrap();
-            let area = bar_area(Edge::Top, 32.0, [&["dummy"], &["dummy"], &["dummy"]]);
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\ngap=6\nradius=10\nspacing=8\n"));
+            let area = bar_in(shape, Edge::Top, 32.0, [&["dummy"], &["dummy"], &["dummy"]]);
             reset_layout_runtime();
             set_theme(NordTheme::new());
             let bar = built(&cfg, &area, &registry(), (1920.0, 32.0));
@@ -1466,9 +1726,9 @@ mod tests {
         let midpoint = |start: &[&str], mode: &str| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config =
-                toml::from_str(&format!("[shape]\nmode=\"{mode}\"\nspacing=8\n")).unwrap();
-            let area = bar_area(Edge::Top, 32.0, [start, &["centred"], &["dummy"]]);
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\nspacing=8\n"));
+            let area = bar_in(shape, Edge::Top, 32.0, [start, &["centred"], &["dummy"]]);
             let bar = built(&cfg, &area, &registry(), (BAR, 32.0)).expect("the bar builds");
             compute_layout(
                 bar.layout_node(),
@@ -1610,9 +1870,9 @@ mod tests {
         let probe = |mode: &str, neighbours: &[ResolvedArea], zones: [&[&str]; 3]| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config =
-                toml::from_str(&format!("[shape]\nmode=\"{mode}\"\nspacing=8\n")).unwrap();
-            let area = bar_area(Edge::Left, 32.0, zones);
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\nspacing=8\n"));
+            let area = bar_in(shape, Edge::Left, 32.0, zones);
             let bar = built_amid(&cfg, &area, neighbours, &registry(), (32.0, LENGTH))
                 .expect("the bar builds");
             let page = Container::new(
@@ -1679,8 +1939,9 @@ mod tests {
         let kept = |module: &str| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config = toml::from_str("[shape]\nmode=\"chips\"\nspacing=8\n").unwrap();
-            let area = bar_area(Edge::Top, 32.0, [&["wide", module], &["dummy"], &[]]);
+            let cfg = Config::default();
+            let shape = shape_of("mode=\"chips\"\nspacing=8\n");
+            let area = bar_in(shape, Edge::Top, 32.0, [&["wide", module], &["dummy"], &[]]);
             let bar = built(&cfg, &area, &registry(), (600.0, 32.0)).expect("the bar builds");
             compute_layout(
                 bar.layout_node(),
@@ -1734,8 +1995,9 @@ mod tests {
                 chip(overrunner).self_managed().on_scroll(nudge),
             ),
         ];
-        let cfg: Config = toml::from_str("[shape]\nmode=\"bar\"\nspacing=8\n").unwrap();
-        let area = bar_area(Edge::Left, 32.0, [&["overrunner"], &["dummy"], &[]]);
+        let cfg = Config::default();
+        let shape = shape_of("mode=\"bar\"\nspacing=8\n");
+        let area = bar_in(shape, Edge::Left, 32.0, [&["overrunner"], &["dummy"], &[]]);
         let bar = built(&cfg, &area, &registry, (32.0, BAR)).expect("the bar builds");
         let page = Container::new(
             LayoutStyle::new().flex_column().width(32.0).height(BAR),
@@ -1792,9 +2054,10 @@ mod tests {
         let gap_before_centre = |mode: &str| {
             reset_layout_runtime();
             set_theme(NordTheme::new());
-            let cfg: Config =
-                toml::from_str(&format!("[shape]\nmode=\"{mode}\"\nspacing=8\n")).unwrap();
-            let area = bar_area(
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\nspacing=8\n"));
+            let area = bar_in(
+                shape,
                 Edge::Top,
                 32.0,
                 [
@@ -1856,9 +2119,10 @@ mod tests {
 
         reset_layout_runtime();
         set_theme(NordTheme::new());
-        let cfg: Config =
-            toml::from_str("[shape]\nmode=\"sections\"\nspacing=8\nradius=8\n").unwrap();
-        let area = bar_area(
+        let cfg = Config::default();
+        let shape = shape_of("mode=\"sections\"\nspacing=8\nradius=8\n");
+        let area = bar_in(
+            shape,
             Edge::Top,
             32.0,
             [&["wide", "wide", "wide", "wide"], &["dummy"], &[]],
@@ -1909,10 +2173,38 @@ mod tests {
         );
     }
 
+    /// DEC-18 took `[shape]` away as a fallback, so the built-in layout carries what those defaults gave: the shipped bar is the one solid, edge-hugging strip a fresh install always drew, rounded and spaced by the theme — and a config still writing the retired keys changes nothing about it.
+    #[test]
+    fn the_built_in_bar_keeps_the_shape_the_old_defaults_gave() {
+        let theme = Config::starter().resolve_theme();
+        let top = layout::built_in()
+            .outputs
+            .into_iter()
+            .flat_map(|rule| rule.layers.top.areas)
+            .find_map(|area| match area.kind {
+                Some(layout::AreaKind::Bar { shape, .. }) => Some(shape),
+                _ => None,
+            })
+            .expect("the built-in layout has a bar");
+        for config in [
+            Config::starter(),
+            toml::from_str("[shape]\nmode = \"chips\"\ngap = 12\nspacing = 30\nradius = 20\n")
+                .expect("a config with the retired keys still parses"),
+        ] {
+            let shape = bar_shape(&config, top);
+            assert_eq!(
+                (shape.mode, shape.gap, shape.spacing, shape.radius),
+                (Shape::Bar, 0, theme.spacing, theme.radius)
+            );
+            assert_eq!(config.gap_of(&shape), 0, "it hugs its edge");
+        }
+    }
+
     #[test]
     fn center_only_sections_builds_a_notch() {
-        let cfg: Config = toml::from_str("[shape]\nmode=\"sections\"\ngap=8\nradius=12\n").unwrap();
-        let area = bar_area(Edge::Top, 34.0, [&[], &["dummy"], &[]]);
+        let cfg = Config::default();
+        let shape = shape_of("mode=\"sections\"\ngap=8\nradius=12\n");
+        let area = bar_in(shape, Edge::Top, 34.0, [&[], &["dummy"], &[]]);
         reset_layout_runtime();
         set_theme(NordTheme::new());
         assert!(built(&cfg, &area, &registry(), (1920.0, 34.0)).is_ok());
@@ -1921,9 +2213,9 @@ mod tests {
     #[test]
     fn vertical_bar_builds_in_every_mode() {
         for mode in ["bar", "sections", "chips"] {
-            let toml = format!("[shape]\nmode=\"{mode}\"\nradius=8\n");
-            let cfg: Config = toml::from_str(&toml).unwrap();
-            let area = bar_area(Edge::Left, 44.0, [&["dummy"], &[], &["dummy"]]);
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\nradius=8\n"));
+            let area = bar_in(shape, Edge::Left, 44.0, [&["dummy"], &[], &["dummy"]]);
             reset_layout_runtime();
             set_theme(NordTheme::new());
             assert!(
@@ -1957,7 +2249,7 @@ mod tests {
             let wrapped = chip_wrapper(
                 Box::new(chip),
                 None,
-                Some(("clock", test_site(edge))),
+                Some((Instance::of_module("clock"), test_site(edge))),
                 Wrapper {
                     cross: AlignItems::STRETCH,
                     edge,
@@ -1965,6 +2257,7 @@ mod tests {
                     fill: Color::TRANSPARENT,
                     radius: 0.0,
                 },
+                &Bound::default(),
             )
             .unwrap();
             // The zone the bar puts a chip in: along the bar, stretching its children across it.
@@ -2072,6 +2365,356 @@ mod tests {
                 across(strip) <= PEEK + 0.5,
                 "{edge:?}: the hidden bar claims {}px of the screen, where only its {PEEK}px peek is on it",
                 across(strip)
+            );
+            for claim in &claimed {
+                assert!(
+                    across(claim) <= PEEK + 0.5,
+                    "{edge:?}: {claim:?} reaches past the {PEEK}px peek, which is all of the bar left on screen (F-10.30)"
+                );
+            }
+        }
+    }
+
+    thread_local! {
+        static RAN: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+        static OWN: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Stands in for the IPC table: every line an action runs is written down, and answered.
+    fn listen_for_actions() {
+        RAN.with(|ran| ran.borrow_mut().clear());
+        OWN.with(|own| own.borrow_mut().clear());
+        services::command::set_runner(
+            |line| {
+                RAN.with(|ran| ran.borrow_mut().push(line.to_string()));
+                "ok".to_string()
+            },
+            |_| true,
+        );
+    }
+
+    fn ran() -> Vec<String> {
+        RAN.with(|ran| std::mem::take(&mut *ran.borrow_mut()))
+    }
+
+    fn own() -> Vec<&'static str> {
+        OWN.with(|own| std::mem::take(&mut *own.borrow_mut()))
+    }
+
+    fn own_press() {
+        OWN.with(|own| own.borrow_mut().push("press"));
+    }
+
+    fn own_scroll(_: &Host, _: f32, dy: f32) {
+        OWN.with(|own| own.borrow_mut().push(if dy > 0.0 { "up" } else { "down" }));
+    }
+
+    /// A chip with a press and a wheel of its own, which is what a bound action has to take the place of.
+    fn gestured() -> Vec<ModuleDescriptor> {
+        vec![
+            module(
+                "pressy",
+                chip(dummy).on_press(own_press).on_scroll(own_scroll),
+            ),
+            module("dummy", chip(dummy)),
+            module("wanted", chip(wanted)),
+            module("unwanted", chip(unwanted)),
+        ]
+    }
+
+    fn actions(
+        bound: &[(layout::Trigger, &str)],
+    ) -> std::collections::BTreeMap<layout::Trigger, layout::Action> {
+        bound
+            .iter()
+            .map(|(trigger, line)| (*trigger, layout::Action(vec![line.to_string()])))
+            .collect()
+    }
+
+    const SCREEN: (f32, f32) = (600.0, 600.0);
+
+    /// `area` built and laid out on [`SCREEN`], ready for events.
+    fn laid(area: &ResolvedArea, modules: &[ModuleDescriptor]) -> telar::ComponentList {
+        let bar = built(&Config::default(), area, modules, SCREEN).expect("the bar builds");
+        let page = Container::new(
+            LayoutStyle::new().width(SCREEN.0).height(SCREEN.1),
+            vec![bar],
+        )
+        .expect("a screen");
+        let root = page.layout_node();
+        let tree = telar::ComponentList::new(page);
+        compute_layout(
+            root,
+            AvailableSpace::Definite(SCREEN.0),
+            AvailableSpace::Definite(SCREEN.1),
+        )
+        .expect("the bar lays out");
+        tree
+    }
+
+    fn middle(rect: telar::Rect) -> (f64, f64) {
+        (
+            f64::from(rect.x + rect.width / 2.0),
+            f64::from(rect.y + rect.height / 2.0),
+        )
+    }
+
+    fn where_is(area: &ResolvedArea, group: &str, instance: &str) -> telar::Rect {
+        rects::rect(
+            &rects::Node::area(None, LayerKind::Top, &area.id)
+                .instance(&GroupId::new(group), &layout::InstanceId::new(instance)),
+        )
+        .unwrap_or_else(|| panic!("`{instance}` is in the registry"))
+    }
+
+    fn tap(tree: &mut telar::ComponentList, at: (f64, f64), button: telar::PointerButton) {
+        let source = telar::PointerSource::Mouse;
+        tree.on_event(&telar::Event::PointerMoved {
+            x: at.0,
+            y: at.1,
+            source: source.clone(),
+        });
+        tree.on_event(&telar::Event::PointerPressed {
+            x: at.0,
+            y: at.1,
+            button,
+            source: source.clone(),
+        });
+        tree.on_event(&telar::Event::PointerReleased {
+            x: at.0,
+            y: at.1,
+            button,
+            source,
+        });
+    }
+
+    fn wheel_at(tree: &mut telar::ComponentList, at: (f64, f64), dy: f32) {
+        tree.on_event(&telar::Event::PointerMoved {
+            x: at.0,
+            y: at.1,
+            source: telar::PointerSource::Mouse,
+        });
+        tree.on_event(&telar::Event::Scrolled {
+            delta: telar::ScrollDelta::Pixels { x: 0.0, y: dy },
+            x: at.0,
+            y: at.1,
+        });
+    }
+
+    /// Every trigger an instance binds runs its own chain, and each one in place of what the chip would have done with that gesture: the chip's own press and wheel never fire.
+    #[test]
+    fn every_gesture_a_chip_binds_runs_its_action_instead_of_the_chips_own() {
+        use layout::Trigger;
+        use telar::PointerButton;
+        for edge in Edge::ALL {
+            reset_layout_runtime();
+            set_theme(NordTheme::new());
+            listen_for_actions();
+            let _scope = telar::owner_scope();
+            let mut area = bar_area(edge, 32.0, [&[], &["pressy"], &[]]);
+            area.groups[1].children[0].actions = actions(&[
+                (Trigger::Press, "probe press"),
+                (Trigger::LongPress, "probe long"),
+                (Trigger::Middle, "probe middle"),
+                (Trigger::Secondary, "probe secondary"),
+                (Trigger::ScrollUp, "probe up"),
+                (Trigger::ScrollDown, "probe down"),
+            ]);
+            let mut tree = laid(&area, &gestured());
+            let chip = middle(where_is(&area, "center", "pressy"));
+
+            tap(&mut tree, chip, PointerButton::Primary);
+            assert_eq!(ran(), ["probe press"], "{edge:?}");
+            tap(&mut tree, chip, PointerButton::Auxiliary);
+            assert_eq!(ran(), ["probe middle"], "{edge:?}");
+            tap(&mut tree, chip, PointerButton::Secondary);
+            assert_eq!(ran(), ["probe secondary"], "{edge:?}");
+            wheel_at(&mut tree, chip, 60.0);
+            assert_eq!(ran(), ["probe up"], "{edge:?}");
+            wheel_at(&mut tree, chip, -60.0);
+            assert_eq!(ran(), ["probe down"], "{edge:?}");
+            wheel_at(&mut tree, chip, 20.0);
+            assert!(
+                ran().is_empty(),
+                "{edge:?}: a fraction of a notch runs nothing"
+            );
+
+            if edge == Edge::Top {
+                tree.on_event(&telar::Event::PointerPressed {
+                    x: chip.0,
+                    y: chip.1,
+                    button: PointerButton::Primary,
+                    source: telar::PointerSource::Mouse,
+                });
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                tree.on_event(&telar::Event::PointerReleased {
+                    x: chip.0,
+                    y: chip.1,
+                    button: PointerButton::Primary,
+                    source: telar::PointerSource::Mouse,
+                });
+                assert_eq!(ran(), ["probe long"], "a held press is the long one");
+            }
+            assert!(
+                own().is_empty(),
+                "{edge:?}: the chip's own press and wheel gave way"
+            );
+        }
+    }
+
+    /// A bound press takes the press and nothing else: the chip's own wheel still turns.
+    #[test]
+    fn a_bound_press_leaves_the_chips_own_wheel_alone() {
+        use layout::Trigger;
+        reset_layout_runtime();
+        set_theme(NordTheme::new());
+        listen_for_actions();
+        let _scope = telar::owner_scope();
+        let mut area = bar_area(Edge::Top, 32.0, [&["pressy"], &[], &[]]);
+        area.groups[0].children[0].actions = actions(&[(Trigger::Press, "probe press")]);
+        let mut tree = laid(&area, &gestured());
+        let chip = middle(where_is(&area, "start", "pressy"));
+
+        tap(&mut tree, chip, telar::PointerButton::Primary);
+        wheel_at(&mut tree, chip, 60.0);
+        assert_eq!(ran(), ["probe press"]);
+        assert_eq!(own(), ["up"], "the wheel is still the chip's");
+    }
+
+    /// A bar's own actions answer only on its empty part. A press on a chip is the chip's whether or not it answers one, and so is the wheel over it — which, unlike a press, an input-opaque chip lets through to the bar.
+    #[test]
+    fn a_bar_answers_its_own_actions_only_where_no_chip_is() {
+        use layout::Trigger;
+        use telar::PointerButton;
+        for edge in Edge::ALL {
+            reset_layout_runtime();
+            set_theme(NordTheme::new());
+            listen_for_actions();
+            let _scope = telar::owner_scope();
+            let mut area = bar_area(edge, 32.0, [&["pressy"], &[], &["dummy"]]);
+            area.actions = actions(&[
+                (Trigger::Press, "bar press"),
+                (Trigger::Secondary, "bar secondary"),
+                (Trigger::ScrollUp, "bar up"),
+            ]);
+            area.groups[0].children[0].actions = actions(&[(Trigger::Press, "chip press")]);
+            let mut tree = laid(&area, &gestured());
+            let pressy = middle(where_is(&area, "start", "pressy"));
+            let quiet = middle(where_is(&area, "end", "dummy"));
+            let strip = strip(&Config::default(), &area, &[], SCREEN);
+            let empty = middle(strip);
+
+            tap(&mut tree, pressy, PointerButton::Primary);
+            assert_eq!(ran(), ["chip press"], "{edge:?}: the chip's own action");
+            tap(&mut tree, quiet, PointerButton::Primary);
+            tap(&mut tree, quiet, PointerButton::Secondary);
+            wheel_at(&mut tree, quiet, 60.0);
+            assert!(
+                ran().is_empty(),
+                "{edge:?}: a chip that answers nothing is still not the bar's empty space"
+            );
+            tap(&mut tree, empty, PointerButton::Primary);
+            tap(&mut tree, empty, PointerButton::Secondary);
+            wheel_at(&mut tree, empty, 60.0);
+            assert_eq!(
+                ran(),
+                ["bar press", "bar secondary", "bar up"],
+                "{edge:?}: the empty part of the bar"
+            );
+        }
+    }
+
+    /// Nothing binds on the lock layer, whatever the file says: validation refuses it, and the build does not take its word for that.
+    #[test]
+    fn a_bar_built_for_the_lock_binds_no_action() {
+        use layout::Trigger;
+        reset_layout_runtime();
+        set_theme(NordTheme::new());
+        listen_for_actions();
+        let _scope = telar::owner_scope();
+        let mut area = bar_area(Edge::Top, 32.0, [&["pressy"], &[], &[]]);
+        area.actions = actions(&[(Trigger::Press, "bar press")]);
+        area.groups[0].children[0].actions = actions(&[(Trigger::Press, "chip press")]);
+        let config = Arc::new(Config::default());
+        let bar = build_bar(
+            &area,
+            Surround {
+                config: &config,
+                theme: NordTheme::new(),
+                output: None,
+                layer: LayerKind::Lock,
+                bounds: telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1),
+                reserved: Reserved::default(),
+                audience: ui::host::Audience::Anyone,
+            },
+            &gestured(),
+        )
+        .expect("the bar builds");
+        let page = Container::new(
+            LayoutStyle::new().width(SCREEN.0).height(SCREEN.1),
+            vec![bar],
+        )
+        .expect("a screen");
+        let root = page.layout_node();
+        let mut tree = telar::ComponentList::new(page);
+        compute_layout(
+            root,
+            AvailableSpace::Definite(SCREEN.0),
+            AvailableSpace::Definite(SCREEN.1),
+        )
+        .expect("the bar lays out");
+        let chip = rects::rect(
+            &rects::Node::area(None, LayerKind::Lock, &area.id)
+                .instance(&GroupId::new("start"), &layout::InstanceId::new("pressy")),
+        )
+        .expect("the chip is in the registry");
+
+        tap(&mut tree, middle(chip), telar::PointerButton::Primary);
+        tap(&mut tree, (300.0, 16.0), telar::PointerButton::Primary);
+        assert!(ran().is_empty());
+    }
+
+    /// A stacked group on a bar is one chip at a time where one chip would be: only the chip on show is built, the wheel over it moves on, and the group is one box in the registry.
+    #[test]
+    fn a_stacked_group_on_a_bar_shows_one_chip_at_a_time() {
+        for edge in Edge::ALL {
+            reset_layout_runtime();
+            set_theme(NordTheme::new());
+            BUILT.with(|built| built.borrow_mut().clear());
+            let _scope = telar::owner_scope();
+            let mut area = bar_area(edge, 32.0, [&[], &[], &["wanted", "unwanted"]]);
+            area.groups[2].stacked = true;
+            let mut tree = laid(&area, &gestured());
+            assert_eq!(
+                BUILT.with(|built| built.borrow().clone()),
+                ["wanted"],
+                "{edge:?}: only the chip on show"
+            );
+            let group = rects::rect(
+                &rects::Node::area(None, LayerKind::Top, &area.id).group(&GroupId::new("end")),
+            )
+            .expect("the stack is in the registry");
+            let shown = where_is(&area, "end", "wanted");
+            assert!(
+                group.contains(shown.x + 1.0, shown.y + 1.0),
+                "{edge:?}: the chip on show is inside its stack"
+            );
+            let strip = strip(&Config::default(), &area, &[], SCREEN);
+            let (end_x, end_y) = (group.x + group.width, group.y + group.height);
+            let (strip_x, strip_y) = (strip.x + strip.width, strip.y + strip.height);
+            assert!(
+                match edge.is_horizontal() {
+                    true => strip_x - end_x < strip.width / 4.0,
+                    false => strip_y - end_y < strip.height / 4.0,
+                },
+                "{edge:?}: a stack in the end zone sits at the end, {group:?} of {strip:?}"
+            );
+
+            wheel_at(&mut tree, middle(group), 60.0);
+            assert_eq!(
+                BUILT.with(|built| built.borrow().last().copied()),
+                Some("unwanted"),
+                "{edge:?}: a notch shows the next chip"
             );
         }
     }

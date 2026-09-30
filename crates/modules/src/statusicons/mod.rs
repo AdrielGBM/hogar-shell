@@ -204,7 +204,7 @@ fn icon(
 
 /// The cluster's content: the configured icons in a row (or a column on a vertical bar).
 pub fn cluster(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = host.options::<config::StatusIconsConfig>().clone();
+    let config = host.options::<config::StatusIconsConfig>();
     let theme = telar::use_theme::<NordTheme>();
     let fg = host.foreground;
     let size = host.icon_size();

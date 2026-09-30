@@ -91,6 +91,7 @@ Its geometry is written *in this table*, beside the keys below: `kind` says whic
 | `visible` | An expression that decides whether the area draws. An invisible area contributes nothing to the input region. |
 | `groups` | A run of instances inside an area, and how the area places it. |
 | `remove` | Ids of groups an earlier level placed that this one takes away. |
+| `actions` | What each gesture on the area's own background runs — a press or a scroll that lands between its instances rather than on one. Refused on the lock layer, which holds readings, never controls. |
 
 ## `AreaKind::Bar`
 
@@ -101,8 +102,8 @@ A strip along one edge: today's bar.
 | `edge` | Which edge of the output the strip hugs. |
 | `thickness` | How thick the strip is, across the edge. |
 | `length` | How far it runs along the edge. |
-| `offset` | Where it starts along the edge, as a fraction of the edge, so several bars can share one. |
-| `shape` | A bar's own shape, overriding the global `[shape]` where it is set. |
+| `offset` | Where it starts along the edge, in pixels from the edge's start, so several bars can share one. |
+| `shape` | A bar's shape: whether it is one surface, sections or chips, how far it floats and how round it is. What it leaves unset follows the theme. |
 | `autohide` | A bar that hides itself off its edge and comes back when the pointer reaches the strip it leaves behind. |
 
 ## `AreaKind::Grid`
@@ -134,7 +135,7 @@ A region of the output that draws a wallpaper of its own.
 | Key | What it is |
 | --- | --- |
 | `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
-| `source` | A path to the picture this region shows. Left out, it shows whatever `[background]` is set to — so changing the desktop's picture stays a `[background]` edit and a `hogar-shell wallpaper set` rather than a layout edit. |
+| `source` | A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one. |
 | `fit` | How the picture is fitted to the region. |
 | `transition` | How a wallpaper changes to the next one. |
 
@@ -170,12 +171,11 @@ A rectangle placed by hand.
 
 ## `AreaKind::Prompt`
 
-The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden.
+The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden. Its card is drawn from the area's own `style`: `fill`, `radius` and `opacity`, the fill held to a contrast the field's text can be read on and the opacity to 0.9 or above.
 
 | Key | What it is |
 | --- | --- |
 | `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
-| `style` | How the lock layer's prompt is drawn. |
 
 ## `AreaStyle`
 
@@ -183,22 +183,22 @@ Per-area appearance. Every field is optional because the theme answers whatever 
 
 | Key | What it is |
 | --- | --- |
-| `fill` | A theme token name or a hex colour. |
-| `radius` | How far the corners are rounded, in logical pixels. |
-| `opacity` | How opaque the area is drawn, from 0 to 1. |
-| `padding` | How far the area holds its contents off its own edges. |
+| `fill` | A theme token name or a hex colour, painted across the area's whole box under what it holds. A bar paints it as its strip in place of the theme's base, and a wallpaper region shows it wherever its picture does not reach. Behind the lock's prompt it is the card the password field sits on, and one the field's text cannot be read on — below WCAG AA, 4.5:1 — is refused, because an unreadable prompt is a lockout too. |
+| `radius` | How far the corners are rounded, in logical pixels: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]`. A wallpaper region or a texture is cut to it. A bar is rounded by its own `shape.radius`, so one written here on a bar is reported and not drawn. |
+| `opacity` | How opaque the area's own paint is, from 0 to 1, whatever alpha its `fill` names: the fill, everything a bar paints — its strip, sections and resting chips — in place of `[theme] opacity`, a wallpaper region's picture, or a texture on top of its own `opacity`. What the area holds is drawn as it is. The lock's prompt is kept at 0.9 or above: a prompt faded into its background is a lockout. |
+| `padding` | How far the area holds its contents off its own edges. A bar that names none pads by half its spacing in `bar` mode and not at all in the others. |
 | `backdrop` | What happens to what is behind an area. |
 
 ## `BarShape`
 
-A bar's own shape, overriding the global `[shape]` where it is set.
+A bar's shape: whether it is one surface, sections or chips, how far it floats and how round it is. What it leaves unset follows the theme.
 
 | Key | What it is |
 | --- | --- |
 | `mode` | Whether the bar is one surface, three sections or a chip per module: `bar`, `sections` or `chips`. |
 | `gap` | How far the bar floats from its edge and from the screen's sides. |
 | `spacing` | The space between two modules on it. |
-| `radius` | How far its corners are rounded. |
+| `radius` | How far its corners are rounded: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]` so a bar that meets another at a corner can square that corner alone. |
 
 ## `AutoHide`
 
@@ -208,16 +208,6 @@ A bar that hides itself off its edge and comes back when the pointer reaches the
 | --- | --- |
 | `peek` | How much of the bar stays on screen while it is hidden, and therefore how big the rectangle that reveals it is. |
 | `on_hover` | Whether resting the pointer on that strip is enough to bring the bar back. With it off the bar is revealed by pulling inward from the edge instead, which is a deliberate gesture rather than something a pointer crossing the screen can trigger. |
-
-## `PromptStyle`
-
-How the lock layer's prompt is drawn.
-
-| Key | What it is |
-| --- | --- |
-| `fill` | A theme token name or a hex colour for the card behind the field. |
-| `radius` | How far its corners are rounded. |
-| `opacity` | Kept at or above 0.9 by validation: a prompt faded into its background is a lockout. |
 
 ## `Rect`
 
@@ -277,6 +267,7 @@ A run of instances inside an area, and how the area places it.
 | --- | --- |
 | `id` | What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`. |
 | `kind` | Where in its area the group sits. `place` says which way, and the keys that way needs follow it. |
+| `stacked` | Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set. |
 | `children` | One placed module. |
 | `remove` | Ids of instances an earlier level placed that this one takes away. |
 
@@ -308,7 +299,7 @@ One placed module.
 | `id` | What IPC, a rule and another level of the same layout address this placed module by. Unique across the whole layout, readable, and never reused — `clock`, then `clock-2`. |
 | `module` | The module descriptor this instance shows. Required the first time the instance is named. |
 | `representation` | How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`. |
-| `options` | Option overrides for this instance alone, on top of the module's global defaults. |
+| `options` | Option overrides for this instance alone, over its module's defaults: any key of the module's own section (`[clock]` for a clock), and any of `[modules.<id>]` — `accent`, `variant`, `open` and the sizes of what it opens. A key the module does not have is an error. |
 | `bindings` | Properties driven by an expression instead of a fixed value, keyed by the property's path. |
 | `actions` | What each gesture on this instance runs. |
 

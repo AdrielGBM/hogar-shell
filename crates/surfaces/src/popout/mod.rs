@@ -8,7 +8,7 @@ use telar::{Color, LayoutError, LayoutItem, LayoutStyle, RectStyle, StyledContai
 
 use ui::chrome::Chrome;
 use ui::descriptor;
-use ui::host::{Host, InstanceId, Representation, Size};
+use ui::host::{Host, Instance, Representation, Size};
 
 use crate::transient::{self, Anchor, Place, Spec};
 
@@ -55,8 +55,8 @@ pub fn close() {
     transient::close(ID);
 }
 
-/// Both directions are scheduled rather than acted on: an instant open would fire on a bar the pointer is only crossing, and an instant close while it crosses towards the card.
-pub fn hover(module_id: &str, anchor: Anchor, entered: bool) {
+/// Both directions are scheduled rather than acted on: an instant open would fire on a bar the pointer is only crossing, and an instant close while it crosses towards the card. The card is the hovered chip's instance's, sized by its options.
+pub fn hover(instance: &Instance, anchor: Anchor, entered: bool) {
     let config = config::config_for(anchor.output.as_deref());
     if !config.popouts.enabled {
         return;
@@ -64,13 +64,13 @@ pub fn hover(module_id: &str, anchor: Anchor, entered: bool) {
     let generation = bump();
     if entered {
         // Re-entering the chip under an open card has already voided the pending close, so nothing is left to schedule.
-        if showing(module_id) {
+        if showing(&instance.module) {
             return;
         }
-        let module = module_id.to_string();
+        let instance = instance.clone();
         timeout(config.popouts.open_after(), move || {
             if current(generation) {
-                open(&module, anchor);
+                open(&instance, anchor);
             }
         });
     } else {
@@ -99,7 +99,8 @@ fn keep_open(entered: bool) {
     });
 }
 
-fn open(module_id: &str, anchor: Anchor) {
+fn open(instance: &Instance, anchor: Anchor) {
+    let module_id = &*instance.module;
     if !descriptor::has_popout(module_id) {
         return;
     }
@@ -108,11 +109,11 @@ fn open(module_id: &str, anchor: Anchor) {
         return;
     }
     STATE.with(|s| s.borrow_mut().target = Some(module_id.to_string()));
-    let module = module_id.to_string();
+    let instance = instance.clone();
     transient::open(Spec::new(
         ID,
         Place::Beside(anchor),
-        Rc::new(move |chrome: &Chrome| popout_content(&module, chrome)),
+        Rc::new(move |chrome: &Chrome| popout_content(&instance, chrome)),
     ));
 }
 
@@ -138,24 +139,21 @@ pub(crate) fn preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
         default_sink: speakers.to_string(),
         default_source: String::new(),
     });
-    popout_content("volume", &ui::preview::chrome())
+    popout_content(&Instance::of_module("volume"), &ui::preview::chrome())
 }
 
 pub fn popout_content(
-    module_id: &str,
+    instance: &Instance,
     chrome: &Chrome,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let popouts = chrome.config.popouts;
+    let (width, height) = instance.presentation(&chrome.config).popout_size();
     let host = Host::in_chrome(
-        InstanceId::of_module(module_id),
+        instance.clone(),
         Representation::Popout,
         chrome,
-        Size {
-            width: popouts.card_width(),
-            height: popouts.card_height(),
-        },
+        Size { width, height },
     );
-    let card = descriptor::place(module_id, &host, LayoutStyle::new().flex_column())?;
+    let card = descriptor::place(&instance.module, &host, LayoutStyle::new().flex_column())?;
     Ok(Box::new(
         StyledContainer::new(
             LayoutStyle::new(),
@@ -196,6 +194,12 @@ mod tests {
     fn a_module_with_no_card_builds_a_placeholder_popout() {
         telar::reset_layout_runtime();
         telar::set_theme(Config::starter().resolve_theme());
-        assert!(popout_content("nothing-registered", &ui::preview::chrome()).is_ok());
+        assert!(
+            popout_content(
+                &Instance::of_module("nothing-registered"),
+                &ui::preview::chrome()
+            )
+            .is_ok()
+        );
     }
 }

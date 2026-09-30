@@ -1,11 +1,9 @@
 [logic]
-use crate::field_row::{field_row, FieldRowProps};
-use crate::form::record_field;
+use crate::form::field_row::{field_row, FieldRowProps};
+use crate::form::recorder::record_field;
 use ::config::theme::FontRole;
 
-/// A labelled text field, bound to the signal a section seeds from `config.toml` and writes back on save.
-///
-/// `record_field` runs here, before the row is built, which is the half of the form contract this component carries: a form's fields must be registered before its Save button drains them.
+/// A labelled text field bound to `value`.
 pub struct Props {
     #[props(into)]
     pub label: Reactive<String> = Reactive::of(String::new),
@@ -18,9 +16,9 @@ let value = props.value;
 record_field(&value);
 let placeholder = props.placeholder;
 let label = props.label;
-let rad = ::ui::scale::corner::md();
+let rad = crate::scale::corner::md();
 
 [view]
 field_row label:(Reactive::of(move || label.get()))
-    box grow:1 pad_x:(::ui::scale::space::md()) pad_y:(::ui::scale::space::sm()) fill:$theme.base radius:rad
+    box grow:1 pad_x:(crate::scale::space::md()) pad_y:(crate::scale::space::sm()) fill:$theme.base radius:rad
         input value:$value placeholder:placeholder.get() color:$theme.text font_size:$theme.font(FontRole::Body)

@@ -35,10 +35,10 @@ Two reasons, both practical:
 | Want | Use |
 | --- | --- |
 | a colour | `[theme.colors]` |
-| an accent | `[theme] accent`, or `[modules.<id>] accent` |
+| an accent | `[theme] accent`, or an instance's `accent` / `[modules.<id>] accent` |
 | type | `[theme] font_family`, `[theme.fonts.*]` |
 | size | `[theme.scale]` |
-| roundness and gaps | `[shape]`, `[panels]`, a `Bar` area's own `shape`, or an area's `style.radius` |
+| roundness and gaps | `[theme] radius` / `spacing`, a `Bar` area's own `shape`, or an area's `style.radius` |
 
 Reach for `tokens.toml` only when none of those covers it.
 

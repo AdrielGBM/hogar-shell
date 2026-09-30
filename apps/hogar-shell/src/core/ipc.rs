@@ -34,7 +34,7 @@ pub fn socket_path() -> PathBuf {
 /// Shuts the shell down: drops every open transient, then exits. Transients are dropped first so the compositor sees them unmapped rather than the connection simply dying, and the IPC socket is removed on the way out — which is why this lives beside the socket rather than beside the transient registry it empties.
 pub(crate) fn request_quit() {
     // Before the transients go: a layout edit made in the last quarter second is still waiting for the store to settle, and a shell on its way out is not going to settle it (TA-7).
-    crate::core::layouts::flush();
+    surfaces::layouts::flush();
     transient::close_all();
     let _ = std::fs::remove_file(socket_path());
     tracing::info!("shutting down on request");

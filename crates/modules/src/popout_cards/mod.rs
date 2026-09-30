@@ -18,7 +18,7 @@ use util::reactive::{Live, derive, derive_pair, fixed, fixed_text};
 pub fn volume(host: &Host) -> Card {
     audio_card(
         AudioSide::Output,
-        host.options::<AudioConfig>(),
+        &host.options::<AudioConfig>(),
         use_theme::<NordTheme>(),
     )
 }
@@ -26,7 +26,7 @@ pub fn volume(host: &Host) -> Card {
 pub fn mic(host: &Host) -> Card {
     audio_card(
         AudioSide::Input,
-        host.options::<AudioConfig>(),
+        &host.options::<AudioConfig>(),
         use_theme::<NordTheme>(),
     )
 }
@@ -77,7 +77,7 @@ pub fn memory(_host: &Host) -> Card {
 
 pub fn temperature(host: &Host) -> Card {
     temperature_card(
-        host.options::<TemperatureConfig>(),
+        &host.options::<TemperatureConfig>(),
         use_theme::<NordTheme>(),
     )
 }

@@ -596,8 +596,8 @@ fn badge_text(unread: u32) -> String {
 /// The drawer panel: a header (title, Do-Not-Disturb toggle, clear-all) over the full history, newest first, each card click-to-dismiss. Opening it marks the history read.
 pub fn bell_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     bell_view(
-        host.options::<NotificationsConfig>(),
-        host.options::<StackConfig>(),
+        &host.options::<NotificationsConfig>(),
+        &host.options::<StackConfig>(),
     )
 }
 

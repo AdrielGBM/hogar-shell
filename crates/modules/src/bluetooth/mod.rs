@@ -42,7 +42,7 @@ pub fn chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
 /// The panel: the adapter's controls over the devices it knows about.
 pub fn bluetooth_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    bluetooth_view(*host.options::<BluetoothConfig>())
+    bluetooth_view(host.options::<BluetoothConfig>())
 }
 
 /// The panel's whole content, taking its config rather than reading the surface's, so a caller that already resolved one — a drawer, a float — does not have to be a surface for this to build.

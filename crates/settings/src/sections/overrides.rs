@@ -3,12 +3,16 @@
 use std::rc::Rc;
 use ui::descriptor::ModuleDescriptor;
 
-use telar::{Container, LayoutError, LayoutItem, LayoutStyle, RwSignal, signal};
+use telar::{
+    Children, Container, LayoutError, LayoutItem, LayoutStyle, Reactive, RwSignal, signal,
+};
 
 use crate::form::*;
 use crate::table::*;
 use config::theme::NordTheme;
-use config::{BatteryConfig, BatteryWarning, ModuleOverride, OpenMode, Variant};
+use config::{BatteryConfig, BatteryWarning, ModuleOverride};
+use ui::form::enum_row::{EnumRowProps, enum_row};
+use ui::form::text_row::{TextRowProps, text_row};
 
 /// Every module in the installed table a bar can place, which is every one with a chip, sorted by id.
 fn bar_modules() -> Vec<&'static ModuleDescriptor> {
@@ -39,11 +43,13 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
 
     struct Fields {
         id: String,
+        /// What the module's table holds besides these rows — the sizes an instance's popover edits — so saving the rows keeps it.
+        existing: ModuleOverride,
         variant: RwSignal<String>,
         accent: RwSignal<String>,
         open: RwSignal<String>,
-        width: RwSignal<String>,
-        height: RwSignal<String>,
+        float_width: RwSignal<String>,
+        float_height: RwSignal<String>,
     }
 
     let mut fields: Vec<Fields> = Vec::with_capacity(ids.len());
@@ -53,41 +59,52 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
         let entry = Fields {
             variant: signal(variant_str(existing.variant).to_string()),
             accent: signal(existing.accent.clone().unwrap_or_default()),
-            open: signal(open_mode_str(existing.open).to_string()),
-            width: signal(opt_num(existing.width)),
-            height: signal(opt_num(existing.height)),
+            open: signal(open_mode_str(existing.open_mode(&id)).to_string()),
+            float_width: signal(opt_num(existing.float_width)),
+            float_height: signal(opt_num(existing.float_height)),
             id: id.clone(),
+            existing,
         };
         rows.push(subheader(move || id.clone(), theme)?);
-        rows.push(enum_field(
-            || telar::t!("settings.field.variant_style"),
-            entry.variant,
-            VARIANT_STYLES,
-            theme,
+        rows.push(enum_row(
+            EnumRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.variant_style")))
+                .value(entry.variant)
+                .options(VARIANT_STYLES)
+                .build(),
+            Children::default(),
         )?);
-        rows.push(text_field(
-            || telar::t!("settings.field.accent"),
-            entry.accent,
-            "(theme)",
-            theme,
+        rows.push(text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.accent")))
+                .value(entry.accent)
+                .placeholder("(theme)")
+                .build(),
+            Children::default(),
         )?);
-        rows.push(enum_field(
-            || telar::t!("settings.field.open"),
-            entry.open,
-            OPEN_MODES,
-            theme,
+        rows.push(enum_row(
+            EnumRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.open")))
+                .value(entry.open)
+                .options(OPEN_MODES)
+                .build(),
+            Children::default(),
         )?);
-        rows.push(text_field(
-            || telar::t!("settings.field.width"),
-            entry.width,
-            "(panels)",
-            theme,
+        rows.push(text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.float_width")))
+                .value(entry.float_width)
+                .placeholder("(default)")
+                .build(),
+            Children::default(),
         )?);
-        rows.push(text_field(
-            || telar::t!("settings.field.height"),
-            entry.height,
-            "(panels)",
-            theme,
+        rows.push(text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.float_height")))
+                .value(entry.float_height)
+                .placeholder("(default)")
+                .build(),
+            Children::default(),
         )?);
         fields.push(entry);
     }
@@ -100,15 +117,19 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 let overrides: std::collections::HashMap<String, ModuleOverride> = fields
                     .iter()
                     .filter_map(|entry| {
+                        let open = parse_open_mode(&entry.open.peek());
                         let value = ModuleOverride {
                             variant: parse_variant(&entry.variant.peek()),
                             accent: opt_string(&entry.accent.peek()),
-                            open: parse_open_mode(&entry.open.peek()),
-                            width: opt_u32(&entry.width.peek()),
-                            height: opt_u32(&entry.height.peek()),
+                            // Written only when it is not what the module opens as anyway, so an application panel keeps floating by default.
+                            open: (open != ModuleOverride::default().open_mode(&entry.id))
+                                .then_some(open),
+                            float_width: opt_u32(&entry.float_width.peek()),
+                            float_height: opt_u32(&entry.float_height.peek()),
+                            ..entry.existing.clone()
                         };
                         // A module left entirely at its defaults gets no table at all, so the file keeps only the overrides a user actually made rather than thirty empty sections.
-                        if is_default_override(&value) {
+                        if value == ModuleOverride::default() {
                             None
                         } else {
                             Some((entry.id.clone(), value))
@@ -121,14 +142,6 @@ pub(crate) fn module_overrides_section() -> Result<Box<dyn LayoutItem>, LayoutEr
         telar::Children::default(),
     )?;
     section(|| telar::t!("settings.section.modules"), rows, save, theme)
-}
-
-fn is_default_override(value: &ModuleOverride) -> bool {
-    value.variant == Variant::Default
-        && value.accent.is_none()
-        && value.open == OpenMode::default()
-        && value.width.is_none()
-        && value.height.is_none()
 }
 
 /// The `[[battery.warn_levels]]` editor: one card per warning, with Add and Remove.
@@ -150,7 +163,6 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 id,
                 warning.level.to_string(),
                 "20",
-                theme,
                 |entry: &mut BatteryWarning, text| entry.level = parse_i32(text, entry.level),
             )?;
             let title = bound_field(
@@ -159,7 +171,6 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 id,
                 warning.title.clone(),
                 "(default)",
-                theme,
                 |entry: &mut BatteryWarning, text| entry.title = text.to_string(),
             )?;
             let message = bound_field(
@@ -168,7 +179,6 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 id,
                 warning.message.clone(),
                 "(default)",
-                theme,
                 |entry: &mut BatteryWarning, text| entry.message = text.to_string(),
             )?;
             let icon = bound_field(
@@ -177,7 +187,6 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 id,
                 warning.icon.clone(),
                 "battery-low",
-                theme,
                 |entry: &mut BatteryWarning, text| entry.icon = text.to_string(),
             )?;
             let critical = bound_toggle(
@@ -185,7 +194,6 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
                 &list,
                 id,
                 warning.critical,
-                theme,
                 |entry: &mut BatteryWarning, on| entry.critical = on,
             )?;
             entry_card(
@@ -199,8 +207,8 @@ pub(crate) fn battery_warnings_section() -> Result<Box<dyn LayoutItem>, LayoutEr
 
     let add = {
         let list = Rc::clone(&list);
-        save_button(
-            SaveButtonProps::props()
+        telar::button(
+            telar::ButtonProps::props()
                 .label(telar::Reactive::of(|| telar::t!("settings.list.add")))
                 .on_press(std::rc::Rc::new(move || {
                     list.add(BatteryWarning::default())

@@ -38,8 +38,8 @@ pub use lock::{LockHandle, lock_session, lock_supported, session_is_locked};
 pub use lock_notify::{CompositorLock, LOCK_NOTIFIER_INTERFACE, compositor_lock};
 pub use platform::{
     EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken, app_watch,
-    background_effect_supported, detached, enumerate_outputs, interval, live_surfaces,
-    on_outputs_changed, open_layer_window, open_reservation, outputs, run_on_start,
+    background_effect_supported, detached, enumerate_outputs, interval, layer_restack_supported,
+    live_surfaces, on_outputs_changed, open_layer_window, open_reservation, outputs, run_on_start,
     set_surface_fonts, timeout, unwatch, watch,
 };
 pub use power::{

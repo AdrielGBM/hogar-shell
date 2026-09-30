@@ -12,6 +12,6 @@ pub struct Props {
 let label = props.label;
 
 [view]
-row align:center gap:(::ui::scale::space::md()) width:100%
+row align:center gap:(crate::scale::space::md()) width:100%
     text "{label.get()}" width:120 color:$theme.subtle font_size:$theme.font(FontRole::Body)
     children

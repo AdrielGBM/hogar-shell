@@ -3,8 +3,8 @@
 //! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
 use telar::{
-    AlignItems, Container, Input, LayoutError, LayoutItem, LayoutStyle, ReactiveList, RwSignal,
-    SizeDimension, StyledContainer, Text, VirtualList, box_item, signal,
+    AlignItems, Children, Container, Input, LayoutError, LayoutItem, LayoutStyle, Reactive,
+    ReactiveList, RwSignal, SizeDimension, StyledContainer, Text, VirtualList, box_item, signal,
 };
 use ui::scale::{paint, space};
 
@@ -13,6 +13,7 @@ use crate::table::*;
 use config::LauncherConfig;
 use config::theme::{FontRole, NordTheme};
 use services::apps::{self, App};
+use ui::form::text_row::{TextRowProps, text_row};
 use ui::icon::icon_view;
 
 /// How many rows either side of the window are built ahead, so a fast scroll does not show a blank strip while the next batch is constructed.
@@ -41,11 +42,13 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let sink = installed;
     platform_wayland::watch(apps::subscribe, move |apps| sink.set(apps));
 
-    let search = text_field(
-        || telar::t!("settings.field.search"),
-        query,
-        "firefox",
-        theme,
+    let search = text_row(
+        TextRowProps::props()
+            .label(Reactive::of(|| telar::t!("settings.field.search")))
+            .value(query)
+            .placeholder("firefox")
+            .build(),
+        Children::default(),
     )?;
 
     let source_apps = installed.read_only();

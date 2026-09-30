@@ -13,6 +13,7 @@ use telar::{
     begin_batch, build_surface_handler, end_batch,
 };
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
+use smithay_client_toolkit::globals::ProvidesBoundGlobal;
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop::channel::{
     Channel, Event as ChannelEvent, Sender as ChannelSender, channel,
@@ -24,6 +25,7 @@ use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notifier_v1::ExtIdleNotifierV1;
 use smithay_client_toolkit::reexports::protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
 use smithay_client_toolkit::reexports::protocols::ext::session_lock::v1::client::ext_session_lock_surface_v1::ExtSessionLockSurfaceV1;
+use smithay_client_toolkit::reexports::protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::keyboard::{
     KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers,
@@ -771,6 +773,8 @@ pub(crate) struct Scaling {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct DriverFacts {
     pub(crate) lock_supported: bool,
+    /// Whether the bound `zwlr_layer_shell_v1` is version 2 or later, the first that can move a mapped surface to another layer. Settled at bind time.
+    pub(crate) layer_restack_supported: bool,
     /// Unlike the one above, this is not settled at bind time: the blur capability arrives as an event and can be withdrawn, so this is rewritten every time the manager says so.
     pub(crate) background_effect_supported: bool,
     /// The compositor's word on whether the session is locked, whoever locked it — live like the blur capability: settled at driver init by the notifier's first read, then rewritten by every `locked` and `unlocked` the live notification receives. [`CompositorLock::CannotTell`] until then, and for good where the compositor has no `hyprland-lock-notify-v1`.
@@ -781,6 +785,7 @@ thread_local! {
     static FACTS: RefCell<DriverFacts> = const {
         RefCell::new(DriverFacts {
             lock_supported: false,
+            layer_restack_supported: false,
             background_effect_supported: false,
             compositor_lock: CompositorLock::CannotTell,
         })
@@ -802,6 +807,11 @@ pub(crate) fn update_driver_facts(write: impl FnOnce(&mut DriverFacts)) {
 /// Like [`lock_supported`](crate::lock_supported) and [`idle_supported`](crate::idle_supported), this reads driver state, so outside a running event loop it answers false because there is no driver rather than because the compositor lacks the protocol. Those are different answers: `advertises("ext_background_effect_manager_v1")` is the one to ask from a bare CLI process, and it reports only the global — no registry read can see a capability, which is the half this function exists to add.
 pub fn background_effect_supported() -> bool {
     with_driver_facts(|facts| facts.background_effect_supported)
+}
+
+/// Whether a layer window can be moved to another layer while it is up: `zwlr_layer_shell_v1` version 2 or later. Where it cannot, [`LayerWindowHandle::set_layer`] is dropped with a log line and the window stays on the layer it was opened on. Like [`background_effect_supported`], this reads driver state, so outside a running event loop it answers false.
+pub fn layer_restack_supported() -> bool {
+    with_driver_facts(|facts| facts.layer_restack_supported)
 }
 
 impl Driver {
@@ -1012,7 +1022,19 @@ where
         .bind::<WpCursorShapeManagerV1, Driver, ()>(&qh, 1..=1, ())
         .inspect_err(|e| tracing::info!("wp-cursor-shape-v1 unavailable: {e}"))
         .ok();
-    FACTS.with(|facts| facts.borrow_mut().lock_supported = lock_manager.is_some());
+    let layer_restack_supported =
+        ProvidesBoundGlobal::<ZwlrLayerShellV1, 1>::bound_global(&layer_shell)
+            .is_ok_and(|shell| shell.version() >= 2);
+    if !layer_restack_supported {
+        tracing::info!(
+            "zwlr_layer_shell_v1 is older than version 2, so a layer window cannot move to another layer"
+        );
+    }
+    FACTS.with(|facts| {
+        let mut facts = facts.borrow_mut();
+        facts.lock_supported = lock_manager.is_some();
+        facts.layer_restack_supported = layer_restack_supported;
+    });
 
     let mut driver = Driver {
         registry_state: RegistryState::new(&globals),

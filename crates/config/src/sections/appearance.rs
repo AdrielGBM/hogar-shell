@@ -25,38 +25,21 @@ pub enum Shape {
     Chips,
 }
 
-/// Global shape settings. `gap` defaults to 0 (edge-to-edge bar; floating is opt-in). `spacing`/`radius` are unset by default so they fall back to the theme's values — set them here (or per-bar) to override the theme.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+/// What every bar shares about its shape. A bar's own mode, gap, spacing and radius are its `shape` in the layout; what it leaves unset follows the theme.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct ShapeConfig {
-    pub mode: Shape,
+    /// Draw the bars as one ring around the screen: each bar fills its strip flat and square, and none floats off its edge.
     pub frame: bool,
-    pub gap: u32,
-    pub spacing: Option<u32>,
-    pub radius: Option<u32>,
-    pub inactive_size: u32,
-}
-
-impl Default for ShapeConfig {
-    fn default() -> Self {
-        Self {
-            mode: Shape::Bar,
-            frame: false,
-            gap: 0,
-            spacing: None,
-            radius: None,
-            inactive_size: 6,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResolvedShape {
     pub mode: Shape,
     pub gap: u32,
-    /// Resolved from per-bar → global `[shape]` → theme.
+    /// The bar's own, else the theme's.
     pub spacing: f32,
-    /// Resolved from per-bar → global `[shape]` → theme.
+    /// The bar's own, else the theme's.
     pub radius: f32,
 }
 

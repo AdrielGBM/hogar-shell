@@ -5,7 +5,7 @@ use ::config::theme::NordTheme;
 use ::services::lockkeys::{self, LockKeys};
 
 let host = ui::host::Host::current()?;
-let config = *host.options::<::config::LockStatusConfig>();
+let config = host.options::<::config::LockStatusConfig>();
 
 let keys = signal(lockkeys::current().unwrap_or_else(lockkeys::read));
 let listed = keys.read_only();

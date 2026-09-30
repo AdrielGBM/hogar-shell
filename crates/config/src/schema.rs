@@ -58,7 +58,12 @@ fn section_structs() -> HashMap<&'static str, &'static str> {
     .collect()
 }
 
-fn doc_for(structure: &str, field: &str) -> Option<&'static str> {
+/// Every top-level section the schema documents.
+pub(crate) fn section_names() -> Vec<&'static str> {
+    section_structs().into_keys().collect()
+}
+
+pub(crate) fn doc_for(structure: &str, field: &str) -> Option<&'static str> {
     CONFIG_DOCS
         .iter()
         .find(|(s, f, _)| *s == structure && *f == field)
@@ -102,6 +107,9 @@ pub enum Entry {
     },
 }
 
+/// `[modules]` holds one table per module id, each the same struct, so the reference prints that one under a placeholder id — quoted, which keeps the printed file a config the shell parses.
+const MODULE_TABLE: (&str, &str, &str) = ("modules", "modules.\"<id>\"", "ModuleOverride");
+
 /// Every section of the reference, or one of them, as data rather than as text. An unknown section name is an error listing the real ones, so a typo answers with the menu rather than with nothing.
 pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
     let structs = section_structs();
@@ -111,10 +119,13 @@ pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
         .as_table()
         .ok_or_else(|| "the default config is not a table".to_string())?;
 
+    let (modules, module_path, module_struct) = MODULE_TABLE;
     if let Some(name) = section
         && !structs.contains_key(name)
+        && name != modules
     {
         let mut known: Vec<&str> = structs.keys().copied().collect();
+        known.push(modules);
         known.sort_unstable();
         return Err(format!(
             "unknown section '{name}'; known sections: {}",
@@ -122,6 +133,8 @@ pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
         ));
     }
 
+    let presentation = toml::Value::try_from(crate::ModuleOverride::default())
+        .map_err(|e| format!("serializing the module defaults: {e}"))?;
     let mut sections = Vec::new();
     for (name, structure) in ordered_sections(&structs) {
         if section.is_some_and(|wanted| wanted != name) {
@@ -130,13 +143,29 @@ pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
         let Some(value) = table.get(name).and_then(toml::Value::as_table) else {
             continue;
         };
-        sections.push(Table {
-            path: name.to_string(),
-            doc: doc_for(structure, ""),
-            entries: walk(name, value, structure),
-        });
+        sections.push((
+            name,
+            Table {
+                path: name.to_string(),
+                doc: doc_for(structure, ""),
+                entries: walk(name, value, structure),
+            },
+        ));
     }
-    Ok(sections)
+    if section.is_none_or(|wanted| wanted == modules)
+        && let Some(value) = presentation.as_table()
+    {
+        sections.push((
+            modules,
+            Table {
+                path: module_path.to_string(),
+                doc: doc_for(module_struct, ""),
+                entries: walk(module_path, value, module_struct),
+            },
+        ));
+    }
+    sections.sort_by_key(|(name, _)| *name);
+    Ok(sections.into_iter().map(|(_, table)| table).collect())
 }
 
 /// One table's entries: its own keys, then the optional ones serde left out, then its sub-tables, then its lists of tables.
@@ -263,7 +292,7 @@ fn type_of(structure: &str, field: &str) -> Option<&'static str> {
 }
 
 /// The struct backing a section path — `background` or `widgets.clock` — by walking the field types.
-fn struct_for(path: &str) -> Option<&'static str> {
+pub(crate) fn struct_for(path: &str) -> Option<&'static str> {
     let mut parts = path.split('.');
     let mut current = *section_structs().get(parts.next()?)?;
     for part in parts {

@@ -6,12 +6,14 @@
 //!
 //! **Reservation is an output-level fact, never a workspace one.** A strip's thickness is summed across every layer of the output's own rules, so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7).
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use platform_wayland::{Anchor, Layer, LayerConfig, OutputDescriptor, SurfaceHandle};
+use telar::{RwSignal, signal};
 
 use config::{Config, Edge};
 use layout::{
@@ -23,7 +25,8 @@ use util::report::Report;
 use crate::area::ShellAreas;
 use crate::layer_window::{Content, LayerPlan, LayerWindows, Reconciled, Reserved};
 
-/// One output's arrangement, owned for as long as the pass that planned it: the config it resolves module behaviour against, what the layout said about it, and how big it is.
+/// One output's arrangement: the config it resolves module behaviour against, what the layout said about it, what its edges reserve and how big it is.
+#[derive(Clone)]
 pub struct Desktop {
     pub output: Option<String>,
     pub config: Arc<Config>,
@@ -38,6 +41,19 @@ impl Desktop {
             output: self.output.as_deref(),
             config: &self.config,
             resolved: &self.resolved,
+            reserved: self.reserved,
+            size: self.size,
+        }
+    }
+
+    /// This screen with `layout` resolved in place of what it was resolved from: the same config, size, reservation and workspace.
+    fn resolving(&self, layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Self {
+        let output = self.output.as_deref().unwrap_or(NOMINAL_OUTPUT);
+        let (resolved, _) = resolve(layout, known, output, self.resolved.workspace.as_ref());
+        Self {
+            output: self.output.clone(),
+            config: Arc::clone(&self.config),
+            resolved,
             reserved: self.reserved,
             size: self.size,
         }
@@ -76,9 +92,10 @@ impl Shell {
     /// The strips go first, so an edge that stopped reserving gives its zone back before anything else is measured against the screen it was on — otherwise every surface would be configured once against the old zone and again a frame later.
     pub fn reconcile(&mut self, desktops: &[Desktop], content: Content) -> Done {
         self.reconcile_strips(desktops);
-        publish_stacks(desktops);
+        publish(desktops);
         let plans: Vec<LayerPlan<'_>> = desktops.iter().map(Desktop::plan).collect();
         let windows = self.windows.reconcile(&plans, content);
+        RECONCILED.with(|reconciled| reconciled.update(|n| *n = n.wrapping_add(1)));
         tracing::info!(
             windows = self.windows.len(),
             mapped = windows.mapped,
@@ -267,6 +284,7 @@ fn output_config(path: &Path, global: &Arc<Config>, output: Option<&str>) -> Arc
 #[derive(Clone, Debug, PartialEq)]
 pub struct StackSite {
     pub output: Option<String>,
+    /// The window the stack is drawn in, which is what holding it open for a card means: the overlay one for a stack above fullscreen, whatever layer it was written on.
     pub layer: LayerKind,
     pub area: AreaId,
     pub policy: StackOutputPolicy,
@@ -274,38 +292,115 @@ pub struct StackSite {
 }
 
 thread_local! {
-    static STACKS: std::cell::RefCell<Vec<StackSite>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PUBLISHED: RefCell<Rc<[Desktop]>> = RefCell::new(Rc::from([]));
+    static RECONCILED: RwSignal<u64> = telar::detached(|| signal(0));
+    static PREVIEW: RwSignal<Option<Rc<[Desktop]>>> = telar::detached(|| signal(None));
+}
+
+/// Every output's arrangement as the windows show it: what the last reconcile left, or the preview drawn in its place while an edit is undecided. An output that went away is no longer in it.
+///
+/// Reactive: read inside an effect or a build, it runs again once the next reconcile has brought the windows in line, and whenever a preview starts, moves or ends, so what it reads is always what the windows already show.
+pub fn desktops() -> Rc<[Desktop]> {
+    previewing().unwrap_or_else(planned)
+}
+
+/// Every output's arrangement as the last reconcile left it, whatever a preview shows over it: what the store holds, on screen. Reactive, like [`desktops`].
+pub fn planned() -> Rc<[Desktop]> {
+    RECONCILED.with(|reconciled| reconciled.with(|_| ()));
+    PUBLISHED.with(|published| Rc::clone(&published.borrow()))
+}
+
+/// The arrangement a preview is showing, or `None` while the windows show what was reconciled. Reactive.
+pub fn previewing() -> Option<Rc<[Desktop]>> {
+    PREVIEW.with(|preview| preview.get())
+}
+
+/// Draws `layout` in the windows in place of what they were reconciled from, resolved for the same screens and workspaces, until [`end_preview`] or the next preview: an edit's live preview, never written and never recorded.
+///
+/// Only what the windows draw follows it, and only in the windows whose areas it changes. What each edge reserves, which windows are mapped and where a card is routed stay as reconciled until the layout is committed, so a drag never re-tiles the user's windows on the way (T-7.3). Read inside an effect, this follows every reconcile too, so a screen plugged in mid-gesture shows the preview as well.
+pub fn preview(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) {
+    let planned = planned();
+    let replanned: Rc<[Desktop]> = planned
+        .iter()
+        .map(|desktop| desktop.resolving(layout, known))
+        .collect();
+    let unchanged = replanned
+        .iter()
+        .zip(planned.iter())
+        .all(|(preview, reconciled)| preview.resolved == reconciled.resolved);
+    match unchanged {
+        true => end_preview(),
+        false => PREVIEW.with(|preview| preview.set(Some(replanned))),
+    }
+}
+
+/// Puts what was reconciled back on screen, rebuilding only the windows a preview had changed.
+pub fn end_preview() {
+    PREVIEW.with(|preview| {
+        if preview.peek_with(Option::is_some) {
+            preview.set(None);
+        }
+    });
+}
+
+/// The instance of `module` that what its id opens — a panel, the notification centre — speaks for when no chip of it was pressed: the first on `output`, then the first on any output, else none of the layout's, which leaves the module's defaults (TA-2).
+///
+/// Read without subscribing: it answers a toggle, and a build that asked would be rebuilt by every reconcile after.
+pub fn instance_of(module: &str, output: Option<&str>) -> ui::host::Instance {
+    let placed = PUBLISHED.with(|published| {
+        let desktops = published.borrow();
+        let first_on = |wanted: Option<&str>| {
+            desktops
+                .iter()
+                .filter(|desktop| wanted.is_none() || desktop.output.as_deref() == wanted)
+                .flat_map(|desktop| desktop.resolved.instances())
+                .find(|instance| instance.module == module)
+                .cloned()
+        };
+        first_on(output).or_else(|| first_on(None))
+    });
+    match placed {
+        Some(placed) => ui::host::Instance::new(
+            ui::host::InstanceId::of_module(module),
+            module,
+            placed.options,
+        ),
+        None => ui::host::Instance::of_module(module),
+    }
 }
 
 /// Every stack area of every output, in the order a card is offered to them: output by output, bottom layer first, and in each layer in z-order.
 pub fn stacks() -> Vec<StackSite> {
-    STACKS.with(|stacks| stacks.borrow().clone())
+    PUBLISHED.with(|published| {
+        published
+            .borrow()
+            .iter()
+            .flat_map(|desktop| {
+                desktop
+                    .resolved
+                    .areas()
+                    .filter_map(|(layer, area)| match &area.kind {
+                        ResolvedAreaKind::Stack {
+                            output_policy,
+                            routes,
+                            ..
+                        } => Some(StackSite {
+                            output: desktop.output.clone(),
+                            layer: crate::layer_window::window_of(layer, area),
+                            area: area.id.clone(),
+                            policy: output_policy.clone(),
+                            routes: routes.clone(),
+                        }),
+                        _ => None,
+                    })
+            })
+            .collect()
+    })
 }
 
-pub fn publish_stacks(desktops: &[Desktop]) {
-    let sites = desktops
-        .iter()
-        .flat_map(|desktop| {
-            desktop
-                .resolved
-                .areas()
-                .filter_map(|(layer, area)| match &area.kind {
-                    ResolvedAreaKind::Stack {
-                        output_policy,
-                        routes,
-                        ..
-                    } => Some(StackSite {
-                        output: desktop.output.clone(),
-                        layer,
-                        area: area.id.clone(),
-                        policy: output_policy.clone(),
-                        routes: routes.clone(),
-                    }),
-                    _ => None,
-                })
-        })
-        .collect();
-    STACKS.with(|stacks| *stacks.borrow_mut() = sites);
+/// Makes `desktops` what [`desktops`] and [`stacks`] answer. Ahead of the windows' own reconcile, because the areas they rebuild ask [`stacks`] where a card goes.
+pub fn publish(desktops: &[Desktop]) {
+    PUBLISHED.with(|published| *published.borrow_mut() = Rc::from(desktops));
 }
 
 /// The strip that carves `thickness` off `edge` of `output` out of every window's idea of the screen. It draws nothing and takes no input: it exists to hold an exclusive zone.

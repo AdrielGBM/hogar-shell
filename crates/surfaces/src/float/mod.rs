@@ -9,14 +9,15 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use ui::chrome::{Chrome, content_radius};
 use ui::descriptor::Built;
-use ui::host::{Host, InstanceId, Representation, Size};
+use ui::host::{Host, Instance, Representation, Size};
 
 /// There is no resize grip: a layer surface has no interactive-resize protocol, and a client-drawn grip reads the laid-out rects the input region is carved from, so throttling it throttles the pointer.
-pub(crate) fn content(module_id: &str, chrome: &Chrome) -> Built {
+pub(crate) fn content(instance: &Instance, chrome: &Chrome) -> Built {
     let theme = use_theme::<NordTheme>();
-    let (width, height) = chrome.config.float_size_for(module_id);
+    let module_id = &*instance.module;
+    let (width, height) = instance.presentation(&chrome.config).float_size(module_id);
     let host = Host::in_chrome(
-        InstanceId::of_module(module_id),
+        instance.clone(),
         Representation::Panel,
         chrome,
         Size {

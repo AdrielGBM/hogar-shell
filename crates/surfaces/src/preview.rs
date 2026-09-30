@@ -20,8 +20,7 @@ const SCREEN: (f32, f32) = (940.0, 940.0);
 
 /// The previews this crate registers by hand, for the surfaces whose content is still built by a Rust function. The drawer is not among them: its panel is `drawer_panel.rsx`, so its preview is a `[preview]` block there.
 pub fn entries() -> Vec<PreviewEntry> {
-    let config = config::config().unwrap_or_else(|| Arc::new(Config::starter()));
-    let popouts = config.popouts;
+    let (popout_width, popout_height) = config::ModuleOverride::default().popout_size();
     vec![
         PreviewEntry {
             component_name: "bar",
@@ -54,10 +53,7 @@ pub fn entries() -> Vec<PreviewEntry> {
             component_name: "popout",
             preview_name: "Hover card",
             build: crate::popout::preview,
-            surface: Some(PreviewSurface::new(
-                popouts.card_width(),
-                popouts.card_height(),
-            )),
+            surface: Some(PreviewSurface::new(popout_width, popout_height)),
         },
     ]
 }
@@ -77,6 +73,7 @@ fn area_preview(
         theme: config.resolve_theme(),
         config: &config,
         output: None,
+        layer,
         bounds: Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1),
         reserved: Reserved::of(&resolved, &config),
         audience: ui::host::Audience::Owner,
@@ -124,6 +121,7 @@ pub fn bar_strip() -> Option<Rect> {
             theme: config.resolve_theme(),
             config: &config,
             output: None,
+            layer: LayerKind::Top,
             bounds: Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1),
             reserved: Reserved::of(&resolved, &config),
             audience: ui::host::Audience::Owner,
@@ -134,5 +132,5 @@ pub fn bar_strip() -> Option<Rect> {
 /// Which module the drawer is showing, which is decided by the chip that opened it and so has to be put in scope before the panel builds. `clock` because it needs nothing from the machine to draw.
 pub fn drawer() {
     let chrome = ui::preview::chrome();
-    crate::drawer::set_drawer_host("clock", &chrome);
+    crate::drawer::set_drawer_host(&ui::host::Instance::of_module("clock"), &chrome);
 }

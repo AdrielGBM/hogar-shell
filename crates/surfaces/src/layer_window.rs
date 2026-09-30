@@ -63,7 +63,7 @@ pub struct Reserved {
 impl Reserved {
     /// What `resolved` takes off each edge of the output it describes.
     ///
-    /// The config is here for the one part of the answer the model cannot give: a bar floats at its gap from its edge, and a bar that floats reserves that air too, or a window would tile under it. The gap falls back to `[shape] gap` as often as it is written on the area, so it is resolved where the config is rather than baked into a layout that would then stop following it.
+    /// The config is here for the one part of the answer the model cannot give: a bar floats at its gap from its edge, and a bar that floats reserves that air too, or a window would tile under it. The gap is the bar's own, except that `[shape] frame` takes it away, so it is resolved where the config is.
     ///
     /// Only an output-level area may reserve, so the bars read here are the ones every workspace on the screen shares.
     pub fn of(resolved: &Resolved, config: &Config) -> Self {
@@ -184,7 +184,7 @@ impl LayerWindows {
                     output: plan.output.map(str::to_owned),
                     layer,
                 };
-                let resolved = plan.resolved.layer(layer).cloned().unwrap_or_default();
+                let resolved = WindowAreas::of(plan.resolved, layer);
                 match self.index_of(&key) {
                     Some(index) => self.live[index].1.adopt(resolved, plan, content, &mut done),
                     None => self.open(key, resolved, plan, &mut done),
@@ -199,7 +199,12 @@ impl LayerWindows {
         self.holder.set(
             self.live
                 .iter()
-                .map(|(key, window)| (key.clone(), Rc::downgrade(&window.presence)))
+                .map(|(key, window)| LiveWindow {
+                    key: key.clone(),
+                    presence: Rc::downgrade(&window.presence),
+                    demands: Rc::downgrade(&window.demands),
+                    generation: window.generation.clone(),
+                })
                 .collect(),
         );
         crate::transient::prune(
@@ -246,6 +251,12 @@ impl LayerWindows {
             .map(|window| Rc::clone(&window.demands))
     }
 
+    /// Whether that window's own areas are set aside for an edit mode drawing them elsewhere (see [`Concealment`]).
+    pub fn is_concealed(&self, output: Option<&str>, layer: LayerKind) -> bool {
+        self.window(output, layer)
+            .is_some_and(|window| window.generation.is_concealed())
+    }
+
     pub fn len(&self) -> usize {
         self.live.len()
     }
@@ -269,7 +280,7 @@ impl LayerWindows {
     fn open(
         &mut self,
         key: WindowKey,
-        resolved: ResolvedLayer,
+        resolved: WindowAreas,
         plan: &LayerPlan<'_>,
         done: &mut Reconciled,
     ) {
@@ -278,7 +289,7 @@ impl LayerWindows {
         };
         let layer = LiveLayer::new(resolved);
         let config = LiveConfig::new(Arc::clone(plan.config));
-        let demands = Rc::new(Demands::default());
+        let demands = Rc::new(Demands::new(wlr));
         let screen = Rc::new(Cell::new(Screen {
             size: plan.size,
             reserved: plan.reserved,
@@ -296,9 +307,10 @@ impl LayerWindows {
             let shown = shown.clone();
             let areas = Rc::clone(&self.areas);
             move || {
+                let on = demands.layer();
                 let handle = Rc::new(open_layer_window(
                     output.clone(),
-                    wlr,
+                    on,
                     namespace,
                     LayerApp {
                         kind,
@@ -312,12 +324,12 @@ impl LayerWindows {
                         areas: Rc::clone(&areas),
                     },
                 ));
-                demands.rebind(Rc::downgrade(&handle));
+                demands.rebind(Rc::downgrade(&handle), on);
                 handle
             }
         };
         let presence = Presence::new(while_empty(key.layer), Box::new(surface));
-        presence.set_draws(layer_draws(&layer.get()));
+        presence.set_draws(window_draws(&layer.get()));
         done.opened += 1;
         self.live.push((
             key,
@@ -349,7 +361,7 @@ struct Window {
 impl Window {
     fn adopt(
         &self,
-        resolved: ResolvedLayer,
+        resolved: WindowAreas,
         plan: &LayerPlan<'_>,
         content: Content,
         done: &mut Reconciled,
@@ -365,7 +377,7 @@ impl Window {
             self.generation.bump();
             done.rebuilt += 1;
         }
-        self.presence.set_draws(layer_draws(&self.layer.get()));
+        self.presence.set_draws(window_draws(&self.layer.get()));
     }
 }
 
@@ -380,18 +392,18 @@ impl Drop for Window {
 ///
 /// A shared cell rather than a plain value, for the reason [`LiveConfig`] is one: the window outlives any one layout, and after an edit it is the same window with something else to show. The reconcile writes, the window's next build reads.
 #[derive(Clone)]
-pub struct LiveLayer(Rc<RefCell<Rc<ResolvedLayer>>>);
+pub struct LiveLayer(Rc<RefCell<Rc<WindowAreas>>>);
 
 impl LiveLayer {
-    pub fn new(layer: ResolvedLayer) -> Self {
+    pub fn new(layer: WindowAreas) -> Self {
         Self(Rc::new(RefCell::new(Rc::new(layer))))
     }
 
-    pub fn get(&self) -> Rc<ResolvedLayer> {
+    pub fn get(&self) -> Rc<WindowAreas> {
         Rc::clone(&self.0.borrow())
     }
 
-    pub fn set(&self, layer: ResolvedLayer) {
+    pub fn set(&self, layer: WindowAreas) {
         *self.0.borrow_mut() = Rc::new(layer);
     }
 
@@ -520,10 +532,16 @@ impl Drop for Hold {
     }
 }
 
+/// The live windows as the last reconcile left them, for what reaches a window by its key without owning the host: the transient registry and an edit mode.
 #[derive(Clone, Default)]
 pub struct Holder(Rc<RefCell<Vec<LiveWindow>>>);
 
-type LiveWindow = (WindowKey, Weak<Presence>);
+struct LiveWindow {
+    key: WindowKey,
+    presence: Weak<Presence>,
+    demands: Weak<Demands>,
+    generation: Generation,
+}
 
 impl Holder {
     fn set(&self, live: Vec<LiveWindow>) {
@@ -535,13 +553,35 @@ impl Holder {
             .0
             .borrow()
             .iter()
-            .find(|(live, _)| live == key)
-            .and_then(|(_, presence)| presence.upgrade())?;
+            .find(|live| live.key == *key)
+            .and_then(|live| live.presence.upgrade())?;
         (!presence.shut.get()).then(|| Hold::new(&presence))
     }
 
+    /// What that window's mounted nodes ask of the compositor, and where anything else asks it for more.
+    pub fn demands(&self, key: &WindowKey) -> Option<Rc<Demands>> {
+        self.0
+            .borrow()
+            .iter()
+            .find(|live| live.key == *key)
+            .and_then(|live| live.demands.upgrade())
+    }
+
+    /// Sets that window's own areas aside for as long as the token lives. `None` where the window is not open.
+    pub fn conceal(&self, key: &WindowKey) -> Option<Concealment> {
+        self.0
+            .borrow()
+            .iter()
+            .find(|live| live.key == *key && live.presence.strong_count() > 0)
+            .map(|live| Concealment::new(&live.generation))
+    }
+
     pub fn keys(&self) -> Vec<WindowKey> {
-        self.0.borrow().iter().map(|(key, _)| key.clone()).collect()
+        self.0
+            .borrow()
+            .iter()
+            .map(|live| live.key.clone())
+            .collect()
     }
 }
 
@@ -561,40 +601,82 @@ impl ScreenFeed {
     }
 }
 
-/// Which build of its areas a window is on. Bumping it rebuilds the areas and nothing else, so a layout edit leaves the transients above them — and whatever the user is doing in one — exactly as they were.
+/// Which build of its areas a window is on, and whether that build draws them at all. Bumping it rebuilds the areas and nothing else, so a layout edit leaves the transients above them — and whatever the user is doing in one — exactly as they were.
 #[derive(Clone, Default)]
-struct Generation(Rc<Cell<Option<RwSignal<u64>>>>);
+struct Generation {
+    signal: Rc<Cell<Option<RwSignal<u64>>>>,
+    /// How many [`Concealment`]s set this window's areas aside.
+    concealed: Rc<Cell<usize>>,
+}
 
 impl Generation {
     fn bump(&self) {
-        if let Some(signal) = self.0.get().filter(RwSignal::is_alive) {
+        if let Some(signal) = self.signal.get().filter(RwSignal::is_alive) {
             signal.update(|n| *n = n.wrapping_add(1));
         }
     }
 
     fn attach(&self, signal: RwSignal<u64>) {
-        self.0.set(Some(signal));
+        self.signal.set(Some(signal));
+    }
+
+    fn is_concealed(&self) -> bool {
+        self.concealed.get() > 0
+    }
+}
+
+/// A window's own areas set aside for as long as this lives: an edit mode on a compositor that cannot raise the window draws the same areas in the overlay window instead (TA-4, R-6), and the window underneath must not draw them a second time. The window keeps its surface, its mapped state and its transients; only its areas are rebuilt, empty now and again once the last token goes.
+pub struct Concealment(Generation);
+
+impl Concealment {
+    fn new(generation: &Generation) -> Self {
+        generation.concealed.set(generation.concealed.get() + 1);
+        generation.bump();
+        Self(generation.clone())
+    }
+}
+
+impl Drop for Concealment {
+    fn drop(&mut self) {
+        let concealed = &self.0.concealed;
+        concealed.set(concealed.get().saturating_sub(1));
+        self.0.bump();
     }
 }
 
 /// What one window's content asks of the compositor, as against what its layout puts in it.
 ///
-/// Both answers are renegotiated the moment they change rather than read once per build, because both are about what is mounted *now*: a `wl_surface` has exactly one keyboard interactivity, and the launcher that wants the keyboard opens and closes without the window it lives in being rebuilt. A demand is a token, so a node takes its own back by dropping one and disturbs nothing else's.
-#[derive(Default)]
+/// Every answer is renegotiated the moment it changes rather than read once per build, because each is about what is mounted *now*: a `wl_surface` has exactly one keyboard interactivity and one layer, and the launcher that wants the keyboard opens and closes without the window it lives in being rebuilt. A demand is a token, so a node takes its own back by dropping one and disturbs nothing else's.
 pub struct Demands {
     window: RefCell<Weak<LayerWindowHandle>>,
+    /// The layer the window is opened on and goes back to once nothing raises it.
+    home: Layer,
     keyboard: RefCell<BTreeMap<u64, KeyboardMode>>,
+    raises: RefCell<BTreeMap<u64, Layer>>,
     next: Cell<u64>,
-    /// What the compositor was last told. A layer window is created taking no keyboard at all and with no blur region, so neither is pushed until something asks for more.
+    /// What the compositor was last told. A layer window is created taking no keyboard at all, on the layer it was opened on and with no blur region, so none is pushed until something asks for more.
     sent_keyboard: Cell<KeyboardMode>,
+    sent_layer: Cell<Layer>,
     sent_blur: RefCell<Vec<Rect>>,
 }
 
 impl Demands {
+    pub fn new(home: Layer) -> Self {
+        Self {
+            window: RefCell::new(Weak::new()),
+            home,
+            keyboard: RefCell::new(BTreeMap::new()),
+            raises: RefCell::new(BTreeMap::new()),
+            next: Cell::new(0),
+            sent_keyboard: Cell::new(KeyboardMode::None),
+            sent_layer: Cell::new(home),
+            sent_blur: RefCell::new(Vec::new()),
+        }
+    }
+
     /// Asks the window to take the keyboard at least this way for as long as the token lives. What the window negotiates is the maximum of every live demand: `None` < `OnDemand` < `Exclusive`.
     pub fn keyboard(self: &Rc<Self>, want: KeyboardMode) -> Demand {
-        let id = self.next.get();
-        self.next.set(id + 1);
+        let id = self.token();
         self.keyboard.borrow_mut().insert(id, want);
         self.settle_keyboard();
         Demand {
@@ -613,24 +695,58 @@ impl Demands {
             .unwrap_or(KeyboardMode::None)
     }
 
+    /// Moves the window up to `to` for as long as the token lives — an edit mode lifting the desktop above the user's windows (TA-4). The window sits on the highest of its own layer and every live raise, so a raise below where it already is changes nothing, and the last token dropped puts it back where it was opened.
+    ///
+    /// Asked for whether or not the compositor can do it: below `zwlr_layer_shell_v1` version 2 the request is dropped and logged, and the window stays put. [`platform_wayland::layer_restack_supported`] is the question to ask first, for a caller with another way to show the window's content (R-6).
+    pub fn raise(self: &Rc<Self>, to: Layer) -> Demand {
+        let id = self.token();
+        self.raises.borrow_mut().insert(id, to);
+        self.settle_layer();
+        Demand {
+            demands: Rc::clone(self),
+            id,
+        }
+    }
+
+    /// The layer the window is asked to be on: its own, or the highest a live [`raise`](Self::raise) asks for.
+    pub fn layer(&self) -> Layer {
+        self.raises
+            .borrow()
+            .values()
+            .copied()
+            .chain([self.home])
+            .max_by_key(|layer| layer_rank(*layer))
+            .unwrap_or(self.home)
+    }
+
     /// What the compositor is currently asked to blur behind.
     pub fn blur_region(&self) -> Vec<Rect> {
         self.sent_blur.borrow().clone()
     }
 
-    /// Points the demands at a surface, which for the overlay layer happens again every time its window is reopened.
+    fn token(&self) -> u64 {
+        let id = self.next.get();
+        self.next.set(id + 1);
+        id
+    }
+
+    /// Points the demands at a surface opened on `layer`, which for the overlay layer happens again every time its window is reopened.
     ///
     /// What was already pushed is forgotten with the surface that held it: a new one is created taking no keyboard and with no blur region, so both have to be asked for again rather than diffed against what a surface that no longer exists was told.
-    fn rebind(&self, window: Weak<LayerWindowHandle>) {
+    fn rebind(&self, window: Weak<LayerWindowHandle>, layer: Layer) {
         *self.window.borrow_mut() = window;
         self.sent_keyboard.set(KeyboardMode::None);
+        self.sent_layer.set(layer);
         self.sent_blur.borrow_mut().clear();
         self.settle_keyboard();
+        self.settle_layer();
     }
 
     fn withdraw(&self, id: u64) {
         self.keyboard.borrow_mut().remove(&id);
+        self.raises.borrow_mut().remove(&id);
         self.settle_keyboard();
+        self.settle_layer();
     }
 
     fn settle_keyboard(&self) {
@@ -641,6 +757,17 @@ impl Demands {
         self.sent_keyboard.set(wanted);
         if let Some(window) = self.window.borrow().upgrade() {
             window.set_keyboard(interactivity(wanted));
+        }
+    }
+
+    fn settle_layer(&self) {
+        let wanted = self.layer();
+        if wanted == self.sent_layer.get() {
+            return;
+        }
+        self.sent_layer.set(wanted);
+        if let Some(window) = self.window.borrow().upgrade() {
+            window.set_layer(wanted);
         }
     }
 
@@ -658,7 +785,7 @@ impl Demands {
     }
 }
 
-/// One node's standing request of its window, withdrawn when this is dropped — which is what makes the window's keyboard the maximum of what is mounted now rather than of everything that ever asked.
+/// One node's standing request of its window, withdrawn when this is dropped — which is what makes the window's keyboard and layer the maximum of what is mounted now rather than of everything that ever asked.
 pub struct Demand {
     demands: Rc<Demands>,
     id: u64,
@@ -676,6 +803,16 @@ fn keyboard_rank(mode: KeyboardMode) -> u8 {
         KeyboardMode::None => 0,
         KeyboardMode::OnDemand => 1,
         KeyboardMode::Exclusive => 2,
+    }
+}
+
+/// Bottom to top, in the order the compositor stacks them; the background, and any layer this build does not know, at the bottom.
+fn layer_rank(layer: Layer) -> u8 {
+    match layer {
+        Layer::Bottom => 1,
+        Layer::Top => 2,
+        Layer::Overlay => 3,
+        _ => 0,
     }
 }
 
@@ -712,9 +849,50 @@ pub fn area_draws(area: &ResolvedArea) -> bool {
         || area.groups.iter().any(|group| !group.children.is_empty())
 }
 
-/// Whether a layer has anything to show, which is whether its window is on screen at all.
-pub fn layer_draws(layer: &ResolvedLayer) -> bool {
-    layer.areas.iter().any(area_draws)
+/// Whether a window has anything to show, which is whether it is on screen at all.
+///
+/// An area above fullscreen holds the overlay window open for as long as it exists, drawing or not (DEC-17): it is the one kind of overlay content the user asked to keep, and the scanout it costs is what `layout check` warns about.
+pub fn window_draws(window: &WindowAreas) -> bool {
+    window
+        .areas
+        .iter()
+        .any(|(_, area)| area.above_fullscreen || area_draws(area))
+}
+
+/// The window an area is drawn in: its own layer's, except that an area above fullscreen is drawn in the overlay window, the one layer a fullscreen window leaves on screen (DEC-17, F-6.2). The lock layer has no window, and is above everything already.
+pub fn window_of(home: LayerKind, area: &ResolvedArea) -> LayerKind {
+    match area.above_fullscreen && home != LayerKind::Lock {
+        true => LayerKind::Overlay,
+        false => home,
+    }
+}
+
+/// What one window draws, each area with the layer it was written on.
+///
+/// For every window but the overlay one that is its own layer's areas less those lifted above fullscreen. The overlay window draws those lifted areas first, bottom layer first, and its own layer's over them, so a notification still lands on top of a bar.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WindowAreas {
+    pub areas: Vec<(LayerKind, ResolvedArea)>,
+}
+
+impl WindowAreas {
+    pub fn of(resolved: &Resolved, window: LayerKind) -> Self {
+        let areas = LayerKind::SESSION
+            .into_iter()
+            .filter_map(|home| Some((home, resolved.layer(home)?)))
+            .flat_map(|(home, layer)| layer.areas.iter().map(move |area| (home, area)))
+            .filter(|(home, area)| window_of(*home, area) == window)
+            .map(|(home, area)| (home, area.clone()))
+            .collect();
+        Self { areas }
+    }
+
+    /// One layer's areas, all of them written on it.
+    pub fn home(layer: LayerKind, areas: ResolvedLayer) -> Self {
+        Self {
+            areas: areas.areas.into_iter().map(|area| (layer, area)).collect(),
+        }
+    }
 }
 
 /// What turns one resolved area into the node its layer's window mounts.
@@ -740,6 +918,8 @@ pub struct AreaContext<'a> {
     pub area: &'a ResolvedArea,
     /// Which layer's window the area is being built into. An area does not carry its own layer, because which layer it is on is a property of where it was written.
     pub layer: LayerKind,
+    /// The layer the area was written on: `layer` itself, except for an area above fullscreen, which is written on its own layer and drawn in the overlay window.
+    pub home: LayerKind,
     pub output: Option<&'a str>,
     /// The global config merged with this monitor's override: behaviour, theme and module defaults, which stay in `config.toml` while placement moves to the layout.
     pub config: &'a Arc<Config>,
@@ -805,59 +985,142 @@ impl LayerApp {
     fn build_areas(
         &self,
         theme: ScopedTheme,
-    ) -> impl Fn() -> Result<Box<dyn LayoutItem>, LayoutError> + 'static {
+    ) -> impl Fn(&WindowAreas) -> Result<Box<dyn LayoutItem>, LayoutError> + 'static {
         let (kind, output) = (self.kind, self.output.clone());
-        let (layer, config) = (self.layer.clone(), self.config.clone());
+        let config = self.config.clone();
         let (screen, demands) = (Rc::clone(&self.screen), Rc::clone(&self.demands));
         let areas = Rc::clone(&self.areas);
-        move || {
+        let generation = self.generation.clone();
+        move |drawn| {
             let config = config.get();
             let resolved = config.resolve_theme();
             theme.set(resolved);
             services::locale::attach(config.language());
-            let layer = layer.get();
+            if generation.is_concealed() {
+                watch_blur(Rc::clone(&demands), Vec::new());
+                return Container::new(whole_window(), Vec::new()).map(box_item);
+            }
             let screen = screen.get();
-            let blur_available = background_effect_supported();
-            let mut nodes = Vec::with_capacity(layer.areas.len());
-            let mut blurring = Vec::new();
-            for area in &layer.areas {
-                // Its own owner, so the chrome an area provides — the global one here, a bar's own shape inside it — reaches only that area.
-                let _area = telar::owner_scope();
-                ui::chrome::Chrome::global(Arc::clone(&config), output.clone()).provide();
-                let built = areas.build(&AreaContext {
-                    area,
-                    layer: kind,
+            let (nodes, blurring) = build_window_areas(
+                areas.as_ref(),
+                drawn,
+                &Building {
+                    window: kind,
                     output: output.as_deref(),
                     config: &config,
                     theme: resolved,
-                    bounds: screen.reserved.box_of(area.within, screen.size),
+                    size: screen.size,
                     reserved: screen.reserved,
-                    blur_available,
                     demands: &demands,
-                    output_size: screen.size,
-                });
-                let node = match built {
-                    Ok(node) => node,
-                    Err(error) => {
-                        tracing::error!(
-                            area = %area.id,
-                            layer = %kind,
-                            "the area failed to build: {error}"
-                        );
-                        continue;
-                    }
-                };
-                if blurs(area)
-                    && let Some(rect) = track_layout(node.layout_node())
-                {
-                    blurring.push(rect);
-                }
-                nodes.push(node);
-            }
+                },
+            );
             watch_blur(Rc::clone(&demands), blurring);
             Container::new(whole_window(), nodes).map(box_item)
         }
     }
+
+    /// What the window draws now — its reconciled areas, or a preview's in their place — with the build they belong to: a reconcile's generation, and a count that moves only when what is drawn changes, so a preview rebuilds just the windows whose areas it touched.
+    fn drawing(&self, generation: RwSignal<u64>) -> impl Fn() -> Vec<Drawing> + 'static {
+        let layer = self.layer.clone();
+        let key = WindowKey {
+            output: self.output.clone(),
+            layer: self.kind,
+        };
+        let last = RefCell::new((0u64, layer.get()));
+        move || {
+            let build = generation.get();
+            let drawn = previewed(&key).unwrap_or_else(|| layer.get());
+            let mut last = last.borrow_mut();
+            if *last.1 != *drawn {
+                *last = (last.0.wrapping_add(1), Rc::clone(&drawn));
+            }
+            vec![Drawing {
+                build,
+                version: last.0,
+                areas: drawn,
+            }]
+        }
+    }
+}
+
+/// One build of a window's areas: see [`LayerApp::drawing`].
+struct Drawing {
+    build: u64,
+    version: u64,
+    areas: Rc<WindowAreas>,
+}
+
+/// What a preview draws in the window `key`, while one is showing.
+fn previewed(key: &WindowKey) -> Option<Rc<WindowAreas>> {
+    let desktops = crate::reconcile::previewing()?;
+    let desktop = desktops
+        .iter()
+        .find(|desktop| desktop.output == key.output)?;
+    Some(Rc::new(WindowAreas::of(&desktop.resolved, key.layer)))
+}
+
+/// The window a set of areas is being built into, and what about its screen they are built against.
+pub struct Building<'a> {
+    pub window: LayerKind,
+    pub output: Option<&'a str>,
+    pub config: &'a Arc<Config>,
+    pub theme: NordTheme,
+    pub size: (f32, f32),
+    pub reserved: Reserved,
+    pub demands: &'a Rc<Demands>,
+}
+
+/// One node per area of `drawn`, in z-order, and the tracked rect of each that asks to blur what is behind it. An area that fails to build is logged and left out, so the rest still draw.
+///
+/// What a layer window builds its own areas with, and what an edit mode builds a layer it cannot raise with, into the overlay window instead (TA-4, R-6): one renderer, whichever window the areas land in.
+pub fn build_window_areas(
+    areas: &dyn Areas,
+    drawn: &WindowAreas,
+    building: &Building<'_>,
+) -> (Vec<Box<dyn LayoutItem>>, Vec<RwSignal<Rect>>) {
+    let blur_available = background_effect_supported();
+    let mut nodes = Vec::with_capacity(drawn.areas.len());
+    let mut blurring = Vec::new();
+    for (home, area) in &drawn.areas {
+        // Its own owner, so the chrome an area provides — the global one here, a bar's own shape inside it — reaches only that area.
+        let _area = telar::owner_scope();
+        ui::chrome::Chrome::global(
+            Arc::clone(building.config),
+            building.output.map(str::to_string),
+        )
+        .provide();
+        let built = areas.build(&AreaContext {
+            area,
+            layer: building.window,
+            home: *home,
+            output: building.output,
+            config: building.config,
+            theme: building.theme,
+            bounds: building.reserved.box_of(area.within, building.size),
+            reserved: building.reserved,
+            blur_available,
+            demands: building.demands,
+            output_size: building.size,
+        });
+        let node = match built {
+            Ok(node) => node,
+            Err(error) => {
+                tracing::error!(
+                    area = %area.id,
+                    layer = %building.window,
+                    "the area failed to build: {error}"
+                );
+                continue;
+            }
+        };
+        if blurs(area)
+            && let Some(rect) = track_layout(node.layout_node())
+        {
+            blurring.push(rect);
+        }
+        nodes.push(node);
+    }
+    (nodes, blurring)
 }
 
 /// Keeps the window's blur region in step with where layout actually put the areas that asked to blur.
@@ -891,6 +1154,7 @@ impl App for LayerApp {
         let generation = signal(0u64);
         self.generation.attach(generation);
         let build = self.build_areas(theme);
+        let drawing = self.drawing(generation);
         let screen = signal(self.screen.get());
         self.shown.attach(screen);
         let key = WindowKey {
@@ -904,9 +1168,9 @@ impl App for LayerApp {
         let content = provide_theme(theme, move || {
             let areas = ReactiveList::with_style(
                 whole_window(),
-                move || vec![generation.get()],
-                |build: &u64| *build,
-                move |_| build(),
+                drawing,
+                |drawing: &Drawing| (drawing.build, drawing.version),
+                move |drawing: Drawing| build(&drawing.areas),
             )?;
             let transients =
                 ui::chrome::or_empty("transient layer", crate::transient::layer(key, frame));
@@ -914,7 +1178,7 @@ impl App for LayerApp {
         })
         .map(box_item);
         let root = ui::chrome::or_empty(self.kind.as_str(), content);
-        Box::new(WindowRoot::new(root))
+        Box::new(WindowRoot::new(Box::new(crate::menu::Pointed::new(root))))
     }
 
     /// Nothing behind the areas: a layer window covers its whole output, and whatever an area does not paint is whatever is under the window.
@@ -981,6 +1245,11 @@ mod tests {
         ResolvedLayer { areas }
     }
 
+    /// What a top window draws when `areas` are all its layer has.
+    fn drawn(areas: Vec<ResolvedArea>) -> WindowAreas {
+        WindowAreas::home(LayerKind::Top, layer(areas))
+    }
+
     /// A screen the size of the headless surface, so an area filling its bounds fills the frame.
     fn screen() -> Screen {
         Screen {
@@ -1005,9 +1274,11 @@ mod tests {
             within: layout::Within::Output,
             style: AreaStyle::default(),
             visible: None,
+            actions: Default::default(),
             groups: vec![ResolvedGroup {
                 id: GroupId::new("start"),
                 kind: GroupKind::Zone { zone: Zone::Start },
+                stacked: false,
                 children: modules.iter().map(instance).collect(),
             }],
         }
@@ -1038,6 +1309,7 @@ mod tests {
             within: layout::Within::Output,
             style: AreaStyle::default(),
             visible: None,
+            actions: Default::default(),
             groups: Vec::new(),
         }
     }
@@ -1257,6 +1529,126 @@ mod tests {
         );
     }
 
+    fn empty_grid() -> ResolvedArea {
+        ResolvedArea {
+            id: AreaId::new("desktop"),
+            kind: ResolvedAreaKind::Grid {
+                rect: layout::Rect::default(),
+                cell: 80.0,
+                gap: 16.0,
+                anchor: layout::Anchor::TopLeft,
+            },
+            reserve: false,
+            above_fullscreen: false,
+            within: layout::Within::Usable,
+            style: AreaStyle::default(),
+            visible: None,
+            actions: Default::default(),
+            groups: Vec::new(),
+        }
+    }
+
+    /// Desktop mode on a desktop with nothing placed yet: the grid draws nothing, so its window is off screen until the edit mode holds it — and the edit mode reaches it by key, through the holder, since it does not own the host.
+    #[test]
+    fn a_hold_puts_an_empty_desktop_on_screen_and_letting_go_hides_it_again() {
+        let config = config();
+        let resolved = resolved(&[
+            (LayerKind::Top, layer(vec![bar("bar-top", &["clock"])])),
+            (LayerKind::Desktop, layer(vec![empty_grid()])),
+        ]);
+        let mut windows = host();
+        windows.reconcile(&[plan(&config, &resolved)], Content::Rebuild);
+        assert!(!windows.is_mapped(Some(SCREEN), LayerKind::Desktop));
+
+        let key = WindowKey {
+            output: Some(SCREEN.into()),
+            layer: LayerKind::Desktop,
+        };
+        let editing = windows
+            .holder()
+            .hold(&key)
+            .expect("the desktop window is up");
+        assert!(windows.is_mapped(Some(SCREEN), LayerKind::Desktop));
+        windows.reconcile(&[plan(&config, &resolved)], Content::Rebuild);
+        assert!(
+            windows.is_mapped(Some(SCREEN), LayerKind::Desktop),
+            "an edit committed mid-mode rebuilds the areas and leaves the hold alone"
+        );
+
+        drop(editing);
+        assert!(!windows.is_mapped(Some(SCREEN), LayerKind::Desktop));
+        assert!(
+            windows.is_open(Some(SCREEN), LayerKind::Desktop),
+            "hidden, not closed: the desktop keeps its surface"
+        );
+    }
+
+    /// T-6.1's state-restore criterion at the host: an edit mode raises the window it edits above the user's windows, holds it on screen and takes the keyboard in the overlay window, and letting all three go leaves every window as it was.
+    #[test]
+    fn raising_a_window_and_letting_go_puts_its_layer_keyboard_and_mapping_back() {
+        let config = config();
+        let resolved = only_bars();
+        let mut windows = host();
+        windows.reconcile(&[plan(&config, &resolved)], Content::Rebuild);
+        let state = |windows: &LayerWindows| -> Vec<(Layer, KeyboardMode, bool)> {
+            LayerKind::SESSION
+                .iter()
+                .map(|&layer| {
+                    let demands = windows.demands(Some(SCREEN), layer).expect("open");
+                    (
+                        demands.layer(),
+                        demands.keyboard_wanted(),
+                        windows.is_mapped(Some(SCREEN), layer),
+                    )
+                })
+                .collect()
+        };
+        let before = state(&windows);
+
+        for edited in [LayerKind::Background, LayerKind::Desktop] {
+            let key = WindowKey {
+                output: Some(SCREEN.into()),
+                layer: edited,
+            };
+            let demands = windows.holder().demands(&key).expect("open");
+            let host = windows
+                .holder()
+                .demands(&WindowKey {
+                    output: Some(SCREEN.into()),
+                    layer: LayerKind::Overlay,
+                })
+                .expect("the overlay window is tracked before it has a surface");
+            let held = windows.holder().hold(&key).expect("open");
+            let raised = demands.raise(Layer::Overlay);
+            let keyboard = host.keyboard(KeyboardMode::Exclusive);
+            assert_eq!(demands.layer(), Layer::Overlay);
+            assert!(windows.is_mapped(Some(SCREEN), edited));
+
+            windows.reconcile(&[plan(&config, &resolved)], Content::Rebuild);
+            assert_eq!(
+                demands.layer(),
+                Layer::Overlay,
+                "an edit committed mid-mode leaves the window where the mode put it"
+            );
+
+            drop((raised, keyboard, held));
+            assert_eq!(state(&windows), before, "after editing {edited}");
+        }
+    }
+
+    /// A raise is a floor, not a move: asking a window to be lower than it is changes nothing, and two raises settle on the higher until both are gone.
+    #[test]
+    fn a_window_sits_on_the_highest_of_its_own_layer_and_every_raise() {
+        let demands = Rc::new(Demands::new(Layer::Top));
+        let lower = demands.raise(Layer::Bottom);
+        assert_eq!(demands.layer(), Layer::Top);
+        let higher = demands.raise(Layer::Overlay);
+        drop(lower);
+        assert_eq!(demands.layer(), Layer::Overlay);
+        drop(higher);
+        assert_eq!(demands.layer(), Layer::Top);
+    }
+
     #[test]
     fn a_bar_with_no_modules_and_no_fill_of_its_own_draws_nothing() {
         assert!(!area_draws(&bar("bar-top", &[])));
@@ -1282,9 +1674,9 @@ mod tests {
 
     #[test]
     fn a_layer_draws_when_any_one_of_its_areas_does() {
-        assert!(!layer_draws(&ResolvedLayer::default()));
-        assert!(!layer_draws(&layer(vec![bar("a", &[]), bar("b", &[])])));
-        assert!(layer_draws(&layer(vec![
+        assert!(!window_draws(&WindowAreas::default()));
+        assert!(!window_draws(&drawn(vec![bar("a", &[]), bar("b", &[])])));
+        assert!(window_draws(&drawn(vec![
             bar("a", &[]),
             bar("b", &["clock"])
         ])));
@@ -1321,7 +1713,7 @@ mod tests {
     /// A window's blur region is asked for again only where it differs, because the region is double-buffered state that costs a commit.
     #[test]
     fn a_blur_region_is_pushed_only_where_it_differs_from_what_the_compositor_has() {
-        let demands = Demands::default();
+        let demands = Demands::new(Layer::Top);
         let strip = vec![Rect::new(0.0, 0.0, 1920.0, 34.0)];
         assert!(demands.blur_region().is_empty());
 
@@ -1441,9 +1833,9 @@ mod tests {
         let app = LayerApp {
             kind: LayerKind::Top,
             output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(layer(vec![bar("bar-top", &["clock"])])),
+            layer: LiveLayer::new(drawn(vec![bar("bar-top", &["clock"])])),
             config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::default()),
+            demands: Rc::new(Demands::new(Layer::Top)),
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
@@ -1480,6 +1872,186 @@ mod tests {
         crate::transient::close_all();
     }
 
+    fn counting_app(kind: LayerKind, resolved: &Resolved, built: &Rc<Cell<u32>>) -> LayerApp {
+        LayerApp {
+            kind,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(WindowAreas::of(resolved, kind)),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::new(window_layer(kind).expect("a session layer").0)),
+            screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(Counting(Rc::clone(built))),
+        }
+    }
+
+    /// An edit's preview reaches the windows whose areas it changes and no others, and ending it puts back exactly what was reconciled — the same arrangement, not a copy of it — rebuilding only what the preview had touched.
+    #[test]
+    fn a_preview_rebuilds_only_the_windows_it_changes_and_ending_it_puts_back_what_was_reconciled()
+    {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        let known = BTreeMap::new();
+        let stored = layout::built_in();
+        let (resolved, _) = layout::resolve(&stored, &known, SCREEN, None);
+        crate::reconcile::publish(&[crate::reconcile::Desktop {
+            output: Some(SCREEN.to_string()),
+            config: config(),
+            resolved: resolved.clone(),
+            reserved: Reserved::of(&resolved, &config()),
+            size: (1920.0, 1080.0),
+        }]);
+        let reconciled = crate::reconcile::desktops();
+        let (top, wallpaper) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+        let _top = counting_app(LayerKind::Top, &resolved, &top).root();
+        let _wallpaper = counting_app(LayerKind::Background, &resolved, &wallpaper).root();
+        assert_eq!((top.get(), wallpaper.get()), (1, 1));
+
+        crate::reconcile::preview(&stored, &known);
+        assert!(
+            crate::reconcile::previewing().is_none(),
+            "a draft that resolves to what is on screen shows nothing new"
+        );
+
+        let mut draft = stored.clone();
+        layout::ops::apply(
+            &mut draft,
+            &layout::LayoutOp::MoveInstance {
+                from: layout::Spot {
+                    site: layout::Site::everywhere(LayerKind::Top),
+                    area: AreaId::new("bar-top"),
+                    group: GroupId::new("center"),
+                },
+                to: layout::Spot {
+                    site: layout::Site::everywhere(LayerKind::Top),
+                    area: AreaId::new("bar-top"),
+                    group: GroupId::new("end"),
+                },
+                id: InstanceId::new("clock"),
+                index: 0,
+            },
+        )
+        .expect("the clock moves");
+        crate::reconcile::preview(&draft, &known);
+        assert_eq!(
+            (top.get(), wallpaper.get()),
+            (2, 1),
+            "the bar is drawn from the draft and the wallpaper is left alone"
+        );
+        let shown = crate::reconcile::desktops();
+        assert!(!Rc::ptr_eq(&shown, &reconciled));
+        assert_eq!(shown[0].reserved, reconciled[0].reserved);
+
+        crate::reconcile::preview(&draft, &known);
+        assert_eq!(top.get(), 2, "the same draft again rebuilds nothing");
+
+        crate::reconcile::end_preview();
+        assert_eq!((top.get(), wallpaper.get()), (3, 1));
+        assert!(Rc::ptr_eq(&crate::reconcile::desktops(), &reconciled));
+    }
+
+    /// TA-4's fallback draws a layer's areas in the overlay window, so the window they came from must stop drawing them for exactly as long as that lasts — and must go back to drawing them without anyone rebuilding it by hand.
+    #[test]
+    fn a_concealed_window_builds_none_of_its_areas_until_the_last_token_goes() {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        let areas = Rc::new(Cell::new(0));
+        let app = LayerApp {
+            kind: LayerKind::Desktop,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(drawn(vec![bar("bar-top", &["clock"])])),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::new(Layer::Bottom)),
+            screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(Counting(Rc::clone(&areas))),
+        };
+        let _root = app.root();
+        assert_eq!(areas.get(), 1);
+
+        let first = Concealment::new(&app.generation);
+        let second = Concealment::new(&app.generation);
+        assert_eq!(areas.get(), 1, "concealed, the rebuild draws no area");
+        drop(first);
+        assert_eq!(areas.get(), 1, "still concealed while one token lives");
+        drop(second);
+        assert_eq!(
+            areas.get(),
+            2,
+            "the last token going builds the areas again"
+        );
+    }
+
+    thread_local! {
+        static SEEN: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn reads_its_options(host: &ui::host::Host) -> ui::descriptor::Built {
+        let format = host.options::<config::ClockConfig>().date_format;
+        SEEN.with(|seen| seen.borrow_mut().push(format));
+        Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?))
+    }
+
+    const READER: &[ui::descriptor::ModuleDescriptor] = &[ui::descriptor::ModuleDescriptor {
+        id: "reader",
+        name: "Reader",
+        icon: "circle",
+        options: &[ui::descriptor::OptionsType::of::<config::ClockConfig>()],
+        representations: ui::descriptor::Representations {
+            chip: Some(ui::descriptor::ChipDef::new(
+                reads_its_options,
+                ui::descriptor::Input::ReadOnly,
+            )),
+            ..ui::descriptor::Representations::NONE
+        },
+        actions: &[],
+        sources: &[],
+    }];
+
+    /// A layout edit that changes one instance's options — `layout set reader options.date_format …`, or any commit — reaches the module: the window rebuilds its areas and the instance draws with the value its entry now says.
+    #[test]
+    fn an_edit_to_an_instance_s_options_re_renders_it_with_the_new_value() {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        ui::descriptor::install(READER);
+        SEEN.with(|seen| seen.borrow_mut().clear());
+        let placed = |format: Option<&str>| {
+            let mut area = bar("bar-top", &["reader"]);
+            if let Some(format) = format {
+                area.groups[0].children[0].options.insert(
+                    "date_format".to_string(),
+                    toml::Value::String(format.to_string()),
+                );
+            }
+            drawn(vec![area])
+        };
+        let app = LayerApp {
+            kind: LayerKind::Top,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(placed(None)),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::new(Layer::Top)),
+            screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(crate::area::ShellAreas),
+        };
+        let _root = app.root();
+        let section = config::ClockConfig::default().date_format;
+
+        app.layer.set(placed(Some("%A")));
+        app.generation.bump();
+        app.layer.set(placed(None));
+        app.generation.bump();
+        assert_eq!(
+            SEEN.with(|seen| seen.borrow().clone()),
+            [section.clone(), "%A".to_string(), section],
+            "built from the section, then the instance's own value, then the section again once the option is gone"
+        );
+    }
+
     struct Pressable(Rc<Cell<u32>>);
 
     impl Areas for Pressable {
@@ -1509,9 +2081,9 @@ mod tests {
         let app = LayerApp {
             kind: LayerKind::Top,
             output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(layer(vec![bar("bar-top", &["clock"])])),
+            layer: LiveLayer::new(drawn(vec![bar("bar-top", &["clock"])])),
             config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::default()),
+            demands: Rc::new(Demands::new(Layer::Top)),
             screen: Rc::new(Cell::new(Screen {
                 size: (400.0, 300.0),
                 reserved: Reserved::default(),
@@ -1657,9 +2229,9 @@ mod tests {
         LayerApp {
             kind,
             output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(layer(areas)),
+            layer: LiveLayer::new(drawn(areas)),
             config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::default()),
+            demands: Rc::new(Demands::new(Layer::Top)),
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
@@ -1673,11 +2245,11 @@ mod tests {
         let mut blurring = bar("bar-top", &["clock"]);
         blurring.style.backdrop = Some(Backdrop::Blur);
 
-        let demands = Rc::new(Demands::default());
+        let demands = Rc::new(Demands::new(Layer::Top));
         let app = LayerApp {
             kind: LayerKind::Top,
             output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(layer(vec![blurring])),
+            layer: LiveLayer::new(drawn(vec![blurring])),
             config: LiveConfig::new(config()),
             demands: Rc::clone(&demands),
             screen: Rc::new(Cell::new(screen())),
@@ -1771,6 +2343,278 @@ mod tests {
                     painted, 0,
                     "the {kind} window resolves nothing, so its tree paints nothing"
                 );
+            }
+        }
+    }
+
+    /// DEC-17: an area above fullscreen is drawn in its output's overlay window, under the overlay layer's own areas, and holds that window open for as long as it exists — drawing or not. Its reservation is still the model's, and taking it away closes the window, since the output cannot scan out while the surface exists.
+    #[test]
+    fn an_area_above_fullscreen_is_drawn_in_the_overlay_window_and_holds_it_open() {
+        let config = config();
+        let mut windows = host();
+        let mut flagged = bar("bar-top", &["clock"]);
+        flagged.above_fullscreen = true;
+        let above = resolved(&[
+            (LayerKind::Top, layer(vec![flagged.clone()])),
+            (LayerKind::Overlay, layer(vec![bar("hud", &["stack"])])),
+        ]);
+        let ids = |window: LayerKind| -> Vec<(LayerKind, String)> {
+            WindowAreas::of(&above, window)
+                .areas
+                .iter()
+                .map(|(home, area)| (*home, area.id.to_string()))
+                .collect()
+        };
+        assert!(ids(LayerKind::Top).is_empty(), "the top window lets it go");
+        assert_eq!(
+            ids(LayerKind::Overlay),
+            [
+                (LayerKind::Top, "bar-top".to_string()),
+                (LayerKind::Overlay, "hud".to_string())
+            ],
+            "under the overlay layer's own areas, and still said to be written on top"
+        );
+        let alone = resolved(&[(LayerKind::Top, layer(vec![flagged.clone()]))]);
+        assert_eq!(
+            plan(&config, &alone).reserved.top,
+            34.0,
+            "it reserves what the model says"
+        );
+        windows.reconcile(&[plan(&config, &alone)], Content::Rebuild);
+        assert!(windows.is_open(Some(SCREEN), LayerKind::Overlay));
+        assert!(windows.is_mapped(Some(SCREEN), LayerKind::Overlay));
+        assert!(
+            !windows.is_mapped(Some(SCREEN), LayerKind::Top),
+            "the top window has nothing else to show"
+        );
+
+        let mut empty = bar("bar-top", &[]);
+        empty.above_fullscreen = true;
+        let nothing_in_it = resolved(&[(LayerKind::Top, layer(vec![empty]))]);
+        windows.reconcile(&[plan(&config, &nothing_in_it)], Content::Rebuild);
+        assert!(
+            windows.is_open(Some(SCREEN), LayerKind::Overlay),
+            "the flag holds the window open whether or not the area draws anything"
+        );
+
+        windows.reconcile(&[plan(&config, &only_bars())], Content::Rebuild);
+        assert!(
+            !windows.is_open(Some(SCREEN), LayerKind::Overlay),
+            "once the area is gone the output can scan out again"
+        );
+        assert!(windows.is_mapped(Some(SCREEN), LayerKind::Top));
+    }
+
+    fn dot(_: &ui::host::Host) -> ui::descriptor::Built {
+        Ok(Box::new(Container::new(
+            LayoutStyle::new().width(20.0).height(20.0),
+            Vec::new(),
+        )?))
+    }
+
+    const fn dot_module(id: &'static str) -> ui::descriptor::ModuleDescriptor {
+        ui::descriptor::ModuleDescriptor {
+            id,
+            name: id,
+            icon: "circle",
+            options: &[],
+            representations: ui::descriptor::Representations {
+                chip: Some(ui::descriptor::ChipDef::new(
+                    dot,
+                    ui::descriptor::Input::ReadOnly,
+                )),
+                ..ui::descriptor::Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        }
+    }
+
+    const DOTS: &[ui::descriptor::ModuleDescriptor] = &[dot_module("dot-a"), dot_module("dot-b")];
+
+    fn bar_on(
+        edge: Edge,
+        start: &[&str],
+        end: &[&str],
+        autohide: Option<layout::AutoHide>,
+    ) -> ResolvedArea {
+        let mut area = bar("bar", start);
+        area.kind = ResolvedAreaKind::Bar {
+            edge,
+            thickness: 34.0,
+            length: Extent::Fill,
+            offset: 0.0,
+            shape: BarShape::default(),
+            autohide,
+        };
+        area.groups.push(ResolvedGroup {
+            id: GroupId::new("end"),
+            kind: GroupKind::Zone { zone: Zone::End },
+            stacked: false,
+            children: end.iter().map(instance).collect(),
+        });
+        area
+    }
+
+    fn app_of(kind: LayerKind, areas: WindowAreas) -> LayerApp {
+        let wlr = window_layer(kind).expect("a session layer").0;
+        LayerApp {
+            kind,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(areas),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::new(wlr)),
+            screen: Rc::new(Cell::new(Screen {
+                size: (600.0, 400.0),
+                reserved: Reserved::default(),
+            })),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(crate::area::ShellAreas),
+        }
+    }
+
+    fn laid_out(root: &mut Box<dyn Component>) {
+        root.on_event(&telar::Event::WindowResized {
+            width: 600,
+            height: 400,
+        });
+    }
+
+    /// The registry is what is on screen: after a layout edit an instance is where the edit put it and nowhere else, a group with nothing left in it is gone, and the area is the strip its bar takes — on every edge.
+    #[test]
+    fn the_registry_follows_a_layout_edit_on_every_edge() {
+        for edge in Edge::ALL {
+            telar::reset_layout_runtime();
+            set_theme(Config::default().resolve_theme());
+            ui::descriptor::install(DOTS);
+            let scope = telar::owner_scope();
+            let owner = scope.id();
+            let app = app_of(
+                LayerKind::Top,
+                WindowAreas::home(
+                    LayerKind::Top,
+                    layer(vec![bar_on(edge, &["dot-a", "dot-b"], &[], None)]),
+                ),
+            );
+            let mut root = app.root();
+            laid_out(&mut root);
+            let at = crate::rects::Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar"));
+            let (start, end) = (GroupId::new("start"), GroupId::new("end"));
+            let (a, b) = (InstanceId::new("dot-a"), InstanceId::new("dot-b"));
+            let rect = |node: &crate::rects::Node| crate::rects::rect(node);
+
+            let strip = rect(&at).expect("the bar is registered");
+            let across = if edge.is_horizontal() {
+                strip.height
+            } else {
+                strip.width
+            };
+            assert_eq!(across, 34.0, "{edge:?}: the area is its strip");
+            let first = rect(&at.instance(&start, &a)).expect("dot-a");
+            let second = rect(&at.instance(&start, &b)).expect("dot-b");
+            let group = rect(&at.group(&start)).expect("the start group");
+            for chip in [first, second] {
+                assert!(
+                    group.contains(chip.x + 1.0, chip.y + 1.0)
+                        && strip.contains(chip.x + 1.0, chip.y + 1.0),
+                    "{edge:?}: {chip:?} is inside its group {group:?} and its bar {strip:?}"
+                );
+            }
+            assert!(
+                rect(&at.group(&end)).is_none(),
+                "{edge:?}: an empty group has no rect"
+            );
+
+            app.layer.set(WindowAreas::home(
+                LayerKind::Top,
+                layer(vec![bar_on(edge, &["dot-a"], &["dot-b"], None)]),
+            ));
+            app.generation.bump();
+            laid_out(&mut root);
+            assert!(
+                rect(&at.instance(&start, &b)).is_none(),
+                "{edge:?}: not where it was"
+            );
+            let moved = rect(&at.instance(&end, &b)).expect("dot-b, moved");
+            let far = |r: telar::Rect| if edge.is_horizontal() { r.x } else { r.y };
+            assert!(
+                far(moved)
+                    > far(strip)
+                        + (if edge.is_horizontal() {
+                            strip.width
+                        } else {
+                            strip.height
+                        }) / 2.0,
+                "{edge:?}: at the far end of the bar, {moved:?} of {strip:?}"
+            );
+
+            app.layer.set(WindowAreas::home(
+                LayerKind::Top,
+                layer(vec![bar_on(edge, &[], &["dot-b"], None)]),
+            ));
+            app.generation.bump();
+            laid_out(&mut root);
+            assert!(
+                rect(&at.instance(&start, &a)).is_none(),
+                "{edge:?}: removed"
+            );
+            assert!(
+                rect(&at.group(&start)).is_none(),
+                "{edge:?}: and its group with it"
+            );
+            assert!(rect(&at.instance(&end, &b)).is_some());
+            drop((root, scope));
+            telar::dispose_owner(owner);
+        }
+    }
+
+    /// A bar above fullscreen still works on every edge, hidden or not: it is built into the overlay window, registered under the layer it was written on, and what its chips open hangs off them in the overlay window, the window they are in (DEC-9).
+    #[test]
+    fn a_bar_above_fullscreen_is_built_in_the_overlay_window_on_every_edge() {
+        for edge in Edge::ALL {
+            for autohide in [
+                None,
+                Some(layout::AutoHide {
+                    peek: 2.0,
+                    on_hover: true,
+                }),
+            ] {
+                telar::reset_layout_runtime();
+                set_theme(Config::default().resolve_theme());
+                ui::descriptor::install(DOTS);
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let mut flagged = bar_on(edge, &["dot-a"], &[], autohide);
+                flagged.above_fullscreen = true;
+                let resolved = resolved(&[(LayerKind::Top, layer(vec![flagged]))]);
+                let app = app_of(
+                    LayerKind::Overlay,
+                    WindowAreas::of(&resolved, LayerKind::Overlay),
+                );
+                let mut root = app.root();
+                laid_out(&mut root);
+
+                let at =
+                    crate::rects::Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar"));
+                let strip =
+                    crate::rects::rect(&at).expect("registered under the layer it was written on");
+                let across = if edge.is_horizontal() {
+                    strip.height
+                } else {
+                    strip.width
+                };
+                assert_eq!(across, 34.0, "{edge:?} {autohide:?}");
+                let found = crate::transient::chips::find("dot-a", None, Some(SCREEN))
+                    .expect("its chip opens things");
+                assert_eq!(
+                    found.anchor.layer,
+                    LayerKind::Overlay,
+                    "{edge:?} {autohide:?}: what the chip opens lives in the chip's window"
+                );
+                assert_eq!(found.anchor.edge, edge);
+                drop((root, scope));
+                telar::dispose_owner(owner);
             }
         }
     }

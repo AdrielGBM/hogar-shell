@@ -164,53 +164,18 @@ impl Config {
         .to_string()
     }
 
-    /// The container variant for a module id, `Default` when it has no `[modules.<id>]` override.
-    pub fn variant_for(&self, id: &str) -> Variant {
-        self.modules.get(id).map(|m| m.variant).unwrap_or_default()
+    /// How `module` is presented: its `[modules.<id>]` table with an instance's own `options` over it (TA-2), so a chip, the panel it opens and the card it shows on hover are all dressed and sized by one answer.
+    pub fn presentation(&self, module: &str, options: &toml::Table) -> ModuleOverride {
+        let defaults = self.modules.get(module).cloned().unwrap_or_default();
+        crate::options::overlaid(&defaults, options, crate::fields::presentation_keys())
     }
 
-    /// The accent-token name for a module id: its `[modules.<id>] accent` override, else the global `[theme] accent`; resolve via [`NordTheme::accent_by_name`](crate::NordTheme).
-    pub fn accent_name_for(&self, id: &str) -> &str {
-        self.modules
-            .get(id)
-            .and_then(|m| m.accent.as_deref())
-            .unwrap_or(&self.theme.accent)
+    /// The accent-token name a module drawn with `presentation` uses: its own, else the global `[theme] accent`; resolve via [`NordTheme::accent_by_name`](crate::NordTheme).
+    pub fn accent_name<'a>(&'a self, presentation: &'a ModuleOverride) -> &'a str {
+        presentation.accent.as_deref().unwrap_or(&self.theme.accent)
     }
 
-    /// How a module's panel opens when clicked: its `[modules.<id>] open` override, else a drawer — except for the application panels, which have no drawer-sized form (see [`APPLICATION_PANELS`]).
-    pub fn open_mode_for(&self, id: &str) -> OpenMode {
-        match self.modules.get(id) {
-            Some(over) => over.open,
-            None if application_panel(id).is_some() => OpenMode::Float,
-            None => OpenMode::default(),
-        }
-    }
-
-    /// How big `id`'s float opens: its `[modules.<id>]` size override, else the global `[panels.float]`.
-    ///
-    /// Per-module rather than one number for every float because the panels are not one kind of thing. A media float is a card; the settings float is an application with a nav pane down its left-hand side, and a size that suits one makes the other either cramped or mostly empty. The fallback keeps `[panels.float]` meaning what it always did — nothing has to be said per module for a module that does not care.
-    pub fn float_size_for(&self, id: &str) -> (u32, u32) {
-        let over = self.modules.get(id);
-        let (width, height) =
-            application_panel(id).unwrap_or((self.panels.float.width, self.panels.float.height));
-        (
-            over.and_then(|m| m.width).unwrap_or(width),
-            over.and_then(|m| m.height).unwrap_or(height),
-        )
-    }
-
-    /// How tall the settings application's page area is: the surface it opens in, less its header and chrome.
-    ///
-    /// It has to be a number rather than "the rest of the box" because a scroll area is a layout *leaf* — its content is laid out as its own root, so nothing inside contributes to its height and a viewport with no height of its own measures zero and clips every form away. The same rule the launcher's result list is sized by.
-    pub fn settings_page_height(&self) -> f32 {
-        let surface = match self.open_mode_for("settings") {
-            OpenMode::Float => self.float_size_for("settings").1 as f32,
-            OpenMode::Drawer => self.panels.drawer.max_height,
-        };
-        (surface - SETTINGS_CHROME).max(160.0)
-    }
-
-    /// The same three-step fallback — what was asked for, then global `[shape]`, then the theme — against the overrides an area of the layout writes on itself.
+    /// A shape from what an area of the layout writes on itself, with the theme under whatever it leaves unset.
     ///
     /// Taken as four loose options rather than as a struct because the layout model owns the struct these now come from, and `crates/config` is below it: a parameter of that type here would invert the dependency and make the config crate need the model that is built on top of it.
     pub fn shape_from(
@@ -220,16 +185,13 @@ impl Config {
         spacing: Option<u32>,
         radius: Option<u32>,
     ) -> ResolvedShape {
-        let g = &self.shape;
         ResolvedShape {
-            mode: mode.unwrap_or(g.mode),
-            gap: gap.unwrap_or(g.gap),
+            mode: mode.unwrap_or_default(),
+            gap: gap.unwrap_or(0),
             spacing: spacing
-                .or(g.spacing)
                 .map(|s| s as f32)
                 .unwrap_or_else(|| self.resolve_theme().spacing),
             radius: radius
-                .or(g.radius)
                 .map(|r| r as f32)
                 .unwrap_or_else(|| self.resolve_theme().radius),
         }
@@ -308,12 +270,9 @@ impl Config {
 
     /// The space between two stacked cards — a run of toasts, a run of notification popups.
     ///
-    /// The shell's own `spacing` token, which is also what separates two chips on a bar: they are the same question asked one level out, and answering it twice is how two stacks of cards end up with different rhythms for no reason anybody chose. Read from the global `[shape] spacing` rather than a bar's, since a stack hangs off no bar in particular.
+    /// The shell's own `spacing` token, which is also what separates two chips on a bar: they are the same question asked one level out, and answering it twice is how two stacks of cards end up with different rhythms for no reason anybody chose. The theme's rather than a bar's, since a stack hangs off no bar in particular.
     pub fn card_gap(&self) -> f32 {
-        self.shape
-            .spacing
-            .map(|spacing| spacing as f32)
-            .unwrap_or_else(|| self.resolve_theme().spacing)
+        self.resolve_theme().spacing
     }
 
     /// How opaque the shell paints itself, `0.2`–`1` — every bar, panel, card and flash, from `[theme] opacity`. One key rather than one per surface: a shell whose drawer is translucent and whose bar is not is not a preference anybody holds, it is two settings that drifted.

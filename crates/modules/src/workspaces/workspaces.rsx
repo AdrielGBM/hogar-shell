@@ -10,7 +10,7 @@ fn focus(id: i32) {
 }
 
 let host = ui::host::Host::current()?;
-let config = host.options::<::config::WorkspacesConfig>().clone();
+let config = host.options::<::config::WorkspacesConfig>();
 let output = host.output.clone();
 
 let occupied_background = config.occupied_background;
@@ -31,7 +31,6 @@ platform_wayland::watch(hyprland::subscribe, move |snap: Snapshot| {
 
 let style = PillStyle {
     theme: use_theme::<NordTheme>(),
-    // Pills round like the sibling chips instead of a fixed radius, so they follow the theme/`[shape]` radius.
     radius: host.corner_radius(),
     // A stretched horizontal chip can't derive its width from its height, so size both sides to make a square.
     side: host.thickness(),
