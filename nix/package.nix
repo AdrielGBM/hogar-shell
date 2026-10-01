@@ -47,6 +47,11 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = "${src}/Cargo.lock";
 
+  # `[patch.crates-io]` names `../telar` (DEC-10), so the checkout has to sit beside the unpacked source; writable, since the transpiler may write into it.
+  postUnpack = ''
+    cp -r --no-preserve=mode ${telarSrc} "$NIX_BUILD_TOP/telar"
+  '';
+
   nativeBuildInputs = [
     cargo-telar
     installShellFiles
