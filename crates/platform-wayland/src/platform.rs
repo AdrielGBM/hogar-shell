@@ -82,7 +82,7 @@ thread_local! {
     // Where `interval`/`watch` file their registration tokens while a surface's handler runs, so the driver can drop them with that surface. `None` outside a surface (app-level setup), where sources are process-lived.
     static CURRENT_SOURCES: RefCell<Option<SourceSink>> = const { RefCell::new(None) };
     // Surfaces opened on the UI thread (layer windows and reservation strips); the driver drains and mounts them.
-    static DYN_QUEUE: RefCell<Vec<PendingSurface>> = const { RefCell::new(Vec::new()) };
+    static DYN_QUEUE: Pending = const { Pending(RefCell::new(Vec::new())) };
     // App-level setup to run once on the driver thread after the loop is up (see `run_on_start`).
     static STARTUP: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
     // The driver's live view of the compositor's outputs, so `outputs()` needs no second Wayland connection.
@@ -138,6 +138,17 @@ struct PendingSurface {
     // `None` for a reservation-only strip (no rsx handler, just its exclusive zone).
     handler: Option<BoxedHandler>,
     link: Arc<SurfaceLink>,
+}
+
+/// The surfaces opened and not mounted yet.
+///
+/// Its own drop runs only as the thread ends, when thread-locals are torn down in an order nothing may rely on: a handler still waiting here was built against telar state that can be gone by then, and dropping it would reach for that state. So what is left is let go of without being dropped — it never reached the compositor, and the thread is ending (F-9).
+struct Pending(RefCell<Vec<PendingSurface>>);
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        std::mem::forget(std::mem::take(self.0.get_mut()));
+    }
 }
 
 /// Runs the handler closure with the current surface's sink installed, which is where `interval`/`watch` file their registration tokens so the surface's timers and channels die with it. Restored afterwards.
@@ -1115,7 +1126,8 @@ where
         crate::lock::poll(&mut driver, &compositor, &qh, &conn, &loop_handle);
 
         // Mount the layer windows and reservation strips opened since the last turn.
-        let pending: Vec<PendingSurface> = DYN_QUEUE.with(|q| std::mem::take(&mut *q.borrow_mut()));
+        let pending: Vec<PendingSurface> =
+            DYN_QUEUE.with(|q| std::mem::take(&mut *q.0.borrow_mut()));
         for p in pending {
             create_surface_entry(
                 &mut driver,
@@ -1463,7 +1475,7 @@ pub fn open_layer_window<A: App + 'static>(
         surface_fonts(),
     );
     DYN_QUEUE.with(|q| {
-        q.borrow_mut().push(PendingSurface {
+        q.0.borrow_mut().push(PendingSurface {
             config: LayerConfig::whole_output(output, layer, namespace.into()),
             handler: Some(handler),
             link: Arc::clone(&link),
@@ -1476,7 +1488,7 @@ pub fn open_layer_window<A: App + 'static>(
 pub fn open_reservation(spec: LayerConfig) -> SurfaceHandle {
     let link = Arc::new(SurfaceLink::default());
     DYN_QUEUE.with(|q| {
-        q.borrow_mut().push(PendingSurface {
+        q.0.borrow_mut().push(PendingSurface {
             config: spec,
             handler: None,
             link: Arc::clone(&link),
