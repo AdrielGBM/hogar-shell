@@ -13,7 +13,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use config::scheme;
 use config::theme::NordTheme;
-use telar::Color;
 use util::report::{Finding, Report};
 
 use crate::merge::merge_layers;
@@ -32,9 +31,6 @@ pub trait Catalogue {
     /// What is wrong with an instance of `module` setting `options`, as `(key, why)`: a key the module does not declare, or a value of the wrong kind.
     fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, String)>;
 }
-
-/// The smallest prompt that is still usable, as a fraction of the output. Anything smaller is a lockout on a large monitor as surely as a hidden one.
-const SMALLEST_PROMPT: f32 = 0.05;
 
 /// Everything wrong with `layout` that does not depend on which output it is shown on.
 pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
@@ -153,7 +149,7 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
     }
     // Only a fill the layout chose is judged: the theme's own surface is what the minimal lock draws too, so refusing it would fall back to the same card.
     if style.fill.is_some() {
-        let card = composed(prompt_card(style, theme), theme.base);
+        let card = prompt_backdrop(style, theme);
         if !scheme::is_readable(theme.text, card) {
             report.error(Finding::new(
                 file,
@@ -200,7 +196,14 @@ fn keys_of_kind(kind: &str) -> &'static [&'static str] {
     match kind {
         "bar" => &["edge", "thickness", "length", "offset", "shape", "autohide"],
         "grid" => &["rect", "cell", "gap", "anchor"],
-        "stack" => &["anchor", "width", "output_policy", "routes"],
+        "stack" => &[
+            "anchor",
+            "offset",
+            "width",
+            "output_policy",
+            "routes",
+            "launcher",
+        ],
         "wallpaper_region" => &["rect", "source", "fit", "transition"],
         "texture" => &["rect", "image", "gradient", "tile", "blend", "opacity"],
         "dock" => &["edge", "thickness"],
@@ -628,14 +631,4 @@ fn instances_of(layer: &Layer) -> impl Iterator<Item = (&Area, &Group, &Instance
                 .map(move |instance| (area, group, instance))
         })
     })
-}
-
-/// `top` painted over an opaque `under`, which is the colour a reader actually sees through a translucent card.
-fn composed(top: Color, under: Color) -> Color {
-    let mix = |over: f32, back: f32| over * top.a + back * (1.0 - top.a);
-    Color::rgb(
-        mix(top.r, under.r),
-        mix(top.g, under.g),
-        mix(top.b, under.b),
-    )
 }

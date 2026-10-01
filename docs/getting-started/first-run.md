@@ -13,11 +13,12 @@ see_also: [install, configuration, per-monitor]
 # First run
 
 The first start writes an annotated `~/.config/hogar-shell/config.toml` and draws the built-in layout, which
-puts a bar on screen. Nothing else is created until something needs it.
+puts a bar and a clock face on screen. Nothing else is created until something needs it.
 
 ## What is on screen
 
-A top bar with a default set of modules, the wallpaper layer, and nothing else. Panels, the launcher, the OSD
+A top bar with a default set of modules, a clock face in the middle of the desktop, the wallpaper layer, and
+nothing else. Panels, the launcher, the OSD
 and the toast stack are nodes that exist only while they are open — an idle session carries no overlay.
 
 ## The first three changes

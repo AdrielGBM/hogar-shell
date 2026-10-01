@@ -11,8 +11,8 @@ use config::{
     WeatherConfig, WorkspacesConfig,
 };
 use ui::descriptor::{
-    ActionDef, Built, CardDef, ChipDef, FieldDef, Input, ModuleDescriptor, OptionsType, PanelDef,
-    Privacy, Representations, SourceDef, WidgetDef,
+    ActionDef, Built, CardDef, Category, ChipDef, FieldDef, Input, ModuleDescriptor, OptionsType,
+    PanelDef, Privacy, Representations, SourceDef, WidgetDef,
 };
 use ui::host::{Host, WidgetSize};
 
@@ -81,6 +81,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "activewindow",
         name: "Active window",
         icon: "app-window",
+        category: Category::Windows,
         options: &[OptionsType::of::<ActiveWindowConfig>()],
         representations: Representations {
             chip: Some(
@@ -105,6 +106,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "battery",
         name: "Battery",
         icon: "battery",
+        category: Category::System,
         options: &[OptionsType::of::<BatteryConfig>()],
         representations: Representations {
             chip: Some(
@@ -136,6 +138,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "bluetooth",
         name: "Bluetooth",
         icon: "bluetooth",
+        category: Category::Network,
         options: &[OptionsType::of::<BluetoothConfig>()],
         representations: Representations {
             chip: Some(ChipDef::new(modules::bluetooth::chip, Input::ReadOnly).square()),
@@ -153,6 +156,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "brightness",
         name: "Brightness",
         icon: "sun",
+        category: Category::System,
         options: &[OptionsType::of::<BrightnessConfig>()],
         representations: Representations {
             chip: Some(
@@ -177,6 +181,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "clock",
         name: "Clock",
         icon: "clock",
+        category: Category::Time,
         options: &[OptionsType::of::<ClockConfig>()],
         representations: Representations {
             chip: Some(ChipDef::new(
@@ -201,6 +206,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "cpu",
         name: "CPU",
         icon: "cpu",
+        category: Category::System,
         options: &[
             OptionsType::of::<DashboardConfig>(),
             OptionsType::of::<TemperatureConfig>(),
@@ -225,6 +231,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "dashboard",
         name: "Dashboard",
         icon: "layout-dashboard",
+        category: Category::Shell,
         options: &[OptionsType::of::<DashboardConfig>()],
         representations: Representations {
             chip: Some(ChipDef::new(modules::dashboard::dashboard_chip, Input::ReadOnly).square()),
@@ -241,6 +248,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "gpu",
         name: "GPU",
         icon: "gpu",
+        category: Category::System,
         options: &[
             OptionsType::of::<GpuConfig>(),
             OptionsType::of::<TemperatureConfig>(),
@@ -265,6 +273,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "kblayout",
         name: "Keyboard layout",
         icon: "keyboard",
+        category: Category::System,
         options: &[],
         representations: Representations {
             chip: Some(
@@ -284,6 +293,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "launcher",
         name: "Launcher",
         icon: "search",
+        category: Category::Shell,
         options: &[OptionsType::of::<LauncherConfig>()],
         representations: Representations {
             chip: Some(
@@ -301,6 +311,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "lockstatus",
         name: "Lock keys",
         icon: "lock",
+        category: Category::System,
         options: &[OptionsType::of::<LockStatusConfig>()],
         representations: Representations {
             chip: Some(
@@ -321,6 +332,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "logo",
         name: "Logo",
         icon: "circle-dot",
+        category: Category::Shell,
         options: &[OptionsType::of::<GeneralConfig>()],
         representations: Representations {
             chip: Some(
@@ -337,6 +349,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "media",
         name: "Media",
         icon: "music",
+        category: Category::Media,
         options: &[
             OptionsType::of::<MediaConfig>(),
             OptionsType::of::<VisualiserConfig>(),
@@ -369,6 +382,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "memory",
         name: "Memory",
         icon: "memory-stick",
+        category: Category::System,
         options: &[OptionsType::of::<DashboardConfig>()],
         representations: Representations {
             chip: Some(ChipDef::new(
@@ -390,6 +404,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "mic",
         name: "Microphone",
         icon: "mic",
+        category: Category::Media,
         options: &[OptionsType::of::<AudioConfig>()],
         representations: Representations {
             chip: Some(
@@ -413,6 +428,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "mixer",
         name: "Mixer",
         icon: "sliders-horizontal",
+        category: Category::Media,
         options: &[OptionsType::of::<AudioConfig>()],
         representations: Representations {
             chip: Some(
@@ -435,6 +451,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "netspeed",
         name: "Network speed",
         icon: "arrow-down-up",
+        category: Category::Network,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(
@@ -456,6 +473,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "network",
         name: "Network",
         icon: "wifi",
+        category: Category::Network,
         options: &[OptionsType::of::<NetworkConfig>()],
         representations: Representations {
             chip: Some(
@@ -482,6 +500,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "notes",
         name: "Notes",
         icon: "sticky-note",
+        category: Category::Info,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(modules::notes::notes_chip, Input::ReadOnly).square()),
@@ -498,6 +517,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "notifications",
         name: "Notifications",
         icon: "bell",
+        category: Category::Info,
         options: &[
             OptionsType::of::<NotificationsConfig>(),
             OptionsType::of::<StackConfig>(),
@@ -526,6 +546,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "session",
         name: "Session",
         icon: "power",
+        category: Category::Shell,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(modules::session::power_chip, Input::ReadOnly).square()),
@@ -548,6 +569,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "settings",
         name: "Settings",
         icon: "settings",
+        category: Category::Shell,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(settings::panel::settings_chip, Input::ReadOnly).square()),
@@ -565,6 +587,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "spacer",
         name: "Spacer",
         icon: "move-horizontal",
+        category: Category::Shell,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(|_host| modules::spacer::spacer(), Input::ReadOnly).filler()),
@@ -578,6 +601,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "statusicons",
         name: "Status icons",
         icon: "signal",
+        category: Category::System,
         options: &[OptionsType::of::<StatusIconsConfig>()],
         representations: Representations {
             chip: Some(ChipDef::new(modules::statusicons::cluster, Input::ReadOnly)),
@@ -590,6 +614,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "temperature",
         name: "Temperature",
         icon: "thermometer",
+        category: Category::System,
         options: &[OptionsType::of::<TemperatureConfig>()],
         representations: Representations {
             chip: Some(ChipDef::new(
@@ -611,6 +636,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "tray",
         name: "Tray",
         icon: "panel-bottom",
+        category: Category::Windows,
         options: &[OptionsType::of::<TrayConfig>()],
         representations: Representations {
             chip: Some(
@@ -630,6 +656,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "user",
         name: "User",
         icon: "circle-user-round",
+        category: Category::Info,
         options: &[OptionsType::of::<DashboardConfig>()],
         representations: Representations {
             widget: reading(SMALL_AND_MEDIUM, modules::user::widget),
@@ -645,6 +672,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "utilities",
         name: "Utilities",
         icon: "wrench",
+        category: Category::Shell,
         options: &[
             OptionsType::of::<UtilitiesConfig>(),
             OptionsType::of::<RecorderConfig>(),
@@ -669,6 +697,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "visualiser",
         name: "Visualiser",
         icon: "audio-lines",
+        category: Category::Media,
         options: &[OptionsType::of::<VisualiserConfig>()],
         representations: Representations {
             widget: reading(EVERY_SIZE, modules::visualiser::widget),
@@ -684,6 +713,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "volume",
         name: "Volume",
         icon: "volume-2",
+        category: Category::Media,
         options: &[OptionsType::of::<AudioConfig>()],
         representations: Representations {
             chip: Some(
@@ -709,6 +739,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "weather",
         name: "Weather",
         icon: "cloud-sun",
+        category: Category::Info,
         options: &[
             OptionsType::of::<WeatherConfig>(),
             OptionsType::of::<TemperatureConfig>(),
@@ -727,6 +758,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "windowinfo",
         name: "Window info",
         icon: "app-window",
+        category: Category::Windows,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(modules::windowinfo::window_chip, Input::ReadOnly).square()),
@@ -743,6 +775,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
         id: "workspaces",
         name: "Workspaces",
         icon: "layout-grid",
+        category: Category::Windows,
         options: &[OptionsType::of::<WorkspacesConfig>()],
         representations: Representations {
             chip: Some(
@@ -1314,8 +1347,14 @@ mod tests {
         let owner = scope.id();
         let area = AreaId::new("inspected");
         let group = GroupId::new("group");
-        let written = Written::area(&layout::built_in(), Some("DP-1"), LayerKind::Desktop, &area)
-            .expect("the built-in layout covers every screen");
+        let written = Written::area(
+            &layout::built_in(),
+            Some("DP-1"),
+            LayerKind::Desktop,
+            &area,
+            None,
+        )
+        .expect("the built-in layout covers every screen");
         let edit = editor::session::Edit::new("Inspect");
         let mut built = 0;
         for module in MODULES {
@@ -1334,6 +1373,7 @@ mod tests {
                 "grid",
                 popover::shown(&config, module.id, &toml::Table::new()),
                 written.instance(&group, &id),
+                None,
             );
             for field in module.option_fields() {
                 let row =

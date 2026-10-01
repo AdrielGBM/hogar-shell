@@ -18,6 +18,7 @@ use layout::{
 
 use super::args::arg;
 use super::{Command, Target};
+use surfaces::catalogue::Descriptors;
 use surfaces::layouts;
 
 pub(crate) const LAYOUT: Target = Target {
@@ -259,6 +260,7 @@ fn add(args: &[&str]) -> Result<String, String> {
 
     known_module(&module)?;
     let label = format!("Add `{module}`");
+    let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
     layouts::edit(&label, move |layout, _| {
         let at = area_in(layout, &area)?;
         let found = area_of(layout, &at, &area)?;
@@ -286,7 +288,7 @@ fn add(args: &[&str]) -> Result<String, String> {
             )
         })?;
         allowed_on(at.layer, &module, representation)?;
-        let id = free_instance_id(layout, &module);
+        let id = layout::ops::free_instance_id(layout, &known, &module);
 
         Ok((
             vec![LayoutOp::InsertInstance {
@@ -497,9 +499,7 @@ fn apply_key(
         }
         Some(("options", path)) => {
             put(&mut instance.options, path, as_toml(value))?;
-            let problems = catalogue()
-                .find(&module)
-                .map_or_else(Vec::new, |found| found.option_problems(&instance.options));
+            let problems = catalogue().option_problems(&module, &instance.options);
             let written = |key: &str| path == key || path.starts_with(&format!("{key}."));
             if let Some((key, why)) = problems.into_iter().find(|(key, _)| written(key)) {
                 return Err(format!("`{module}`: `{key}` {why}"));
@@ -747,24 +747,6 @@ fn named<T: Copy>(all: &[T], spelling: impl Fn(T) -> &'static str) -> String {
         .join("|")
 }
 
-/// An id no instance in this layout has, derived from the module's own name: `clock`, then `clock-2`.
-///
-/// Readable and unique rather than generated (F-10.3), because a layout file is hand-edited and IPC addresses an instance by this name for as long as it exists.
-fn free_instance_id(layout: &Layout, module: &str) -> InstanceId {
-    let taken = instance_ids(layout);
-    if !taken.contains(module) {
-        return InstanceId::new(module);
-    }
-    let mut nth = 2;
-    loop {
-        let id = format!("{module}-{nth}");
-        if !taken.contains(&id) {
-            return InstanceId::new(id);
-        }
-        nth += 1;
-    }
-}
-
 /// The size an area holds a module at: the first one the area can arrange that the module declares.
 ///
 /// A bar holds chips, a grid holds widgets, and a free rectangle or a stack holds a card — so the size follows from where the module was put rather than being one more thing to say. The fallbacks matter as much as the first choice: a module with no chip is still worth putting on a bar if it has a small widget.
@@ -853,50 +835,9 @@ fn allowed_on(
     ))
 }
 
+/// The descriptors and the command table this binary ships, which is what `layout check`, `layout add` and the lock's own check ask (`config check` takes the table as an argument for the same reason, `check::command`).
 pub(crate) fn catalogue() -> Descriptors {
-    Descriptors(crate::core::modules::MODULES)
-}
-
-/// What the layout model has to ask the module table.
-///
-/// It lives here rather than in `crates/layout` because that crate deliberately knows nothing about modules or the IPC table — the whole point of `Catalogue` is that the model can be validated by a test that states its own three modules. This is the real answer, wired to the descriptors this binary ships.
-///
-/// **It carries the table rather than reading the installed one.** `ui::descriptor::install` runs in `setup_shell`, and these verbs answer in the CLI process where nothing has run it, so an installed-table lookup answers `None` for every module the binary has — which came out as `layout check` calling `clock` an unknown module. `config check` already takes the table as an argument for the same reason (`check::command`).
-pub(crate) struct Descriptors(&'static [ui::descriptor::ModuleDescriptor]);
-
-impl Descriptors {
-    fn find(&self, module: &str) -> Option<&'static ui::descriptor::ModuleDescriptor> {
-        ui::descriptor::lookup(self.0, module)
-    }
-}
-
-impl layout::Catalogue for Descriptors {
-    fn knows_module(&self, module: &str) -> bool {
-        self.find(module).is_some()
-    }
-
-    fn has_representation(&self, module: &str, representation: Representation) -> bool {
-        self.find(module).is_some_and(|found| {
-            found
-                .input(surfaces::area::representation(representation))
-                .is_some()
-        })
-    }
-
-    fn is_read_only(&self, module: &str, representation: Representation) -> bool {
-        self.find(module)
-            .and_then(|found| found.input(surfaces::area::representation(representation)))
-            .is_some_and(|input| input == ui::descriptor::Input::ReadOnly)
-    }
-
-    fn command_resolves(&self, line: &str) -> bool {
-        super::resolves(line)
-    }
-
-    fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, String)> {
-        self.find(module)
-            .map_or_else(Vec::new, |found| found.option_problems(options))
-    }
+    Descriptors::new(crate::core::modules::MODULES, super::resolves)
 }
 
 #[cfg(test)]
@@ -1348,6 +1289,105 @@ mod tests {
             allowed_on(LayerKind::Top, "tray", Representation::Chip).is_ok(),
             "it is the lock layer's rule alone"
         );
+    }
+
+    /// **The controls ban, every way in** (TA-8): every module this binary ships, drawn every way it declares that answers the pointer, is refused on the lock layer by the edit mode's palette, by a drop onto a lock grid, by `layout add`, and by the check a lock is taken with — which names it, so the minimal lock it falls back to is explained after unlocking.
+    #[test]
+    fn no_control_reaches_the_lock_layer_by_any_way_in() {
+        let store = shell_with("controls-ban", "mine");
+        let readings = AreaId::new("lock-readings");
+        let mine = store.borrow().active().clone();
+        let desktop = surfaces::reconcile::Desktop {
+            output: Some("DP-1".to_string()),
+            config: std::sync::Arc::new(config::Config::default()),
+            resolved: layout::resolve(&mine, store.borrow().all(), "DP-1", None).0,
+            reserved: Default::default(),
+            size: (1920.0, 1080.0),
+        };
+        let mut controls = 0;
+        for module in crate::core::modules::MODULES {
+            for representation in Representation::ALL {
+                let input = module.input(surfaces::area::representation(representation));
+                if input != Some(ui::descriptor::Input::Interactive) {
+                    continue;
+                }
+                controls += 1;
+                let what = format!("{} as {}", module.id, representation.as_str());
+
+                assert_ne!(
+                    editor::modes::offered(module, LayerKind::Lock),
+                    Some(representation),
+                    "the palette offers {what}"
+                );
+                let dropped = editor::modes::added(
+                    &mine,
+                    &desktop,
+                    LayerKind::Lock,
+                    &readings,
+                    &editor::modes::Adding {
+                        module: module.id,
+                        representation,
+                        at: None,
+                        near: (0, 0),
+                    },
+                );
+                assert!(dropped.is_err(), "a drop places {what}");
+                assert!(
+                    allowed_on(LayerKind::Lock, module.id, representation).is_err(),
+                    "`layout add` places {what}"
+                );
+
+                let mut written = mine.clone();
+                written.outputs[0].layers.lock.areas[0].groups[0]
+                    .children
+                    .push(Instance {
+                        id: InstanceId::new("hand-edited"),
+                        module: Some(module.id.to_string()),
+                        representation: Some(representation),
+                        ..Instance::default()
+                    });
+                let report = layout::validate_lock(&written, &catalogue());
+                assert!(
+                    report
+                        .errors
+                        .iter()
+                        .any(|found| found.key.ends_with("children.hand-edited.module")),
+                    "loading {what} says nothing: {}",
+                    report.render()
+                );
+                assert!(
+                    modules::lock::LockLayout::checked(
+                        &written,
+                        store.borrow().all(),
+                        &catalogue(),
+                        &lock_theme(),
+                        &[],
+                        "layouts/mine.toml",
+                    )
+                    .is_err(),
+                    "a lock is taken with {what}"
+                );
+            }
+            let _ = add(&[module.id, "lock-readings"]);
+        }
+        assert!(
+            controls > 0,
+            "this binary ships no control, so this proves nothing"
+        );
+        let catalogue = catalogue();
+        for area in &store.borrow().active().outputs[0].layers.lock.areas {
+            for child in area.groups.iter().flat_map(|group| &group.children) {
+                let (Some(module), Some(representation)) = (&child.module, child.representation)
+                else {
+                    continue;
+                };
+                assert!(
+                    catalogue.is_read_only(module, representation),
+                    "`layout add` placed `{module}` as {} on the lock layer",
+                    representation.as_str()
+                );
+            }
+        }
     }
 
     /// A written value keeps the type it spells, so `set` needs no second grammar for types — and anything that spells no TOML value is the string it is.

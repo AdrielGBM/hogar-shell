@@ -2,7 +2,7 @@
 //!
 //! It is built in code rather than read from a file so that it cannot go missing, cannot fail to parse, and is there to fall back to when the user's own layout does not resolve. It is read-only: the first edit to it forks a copy under a name of the user's own ([`crate::store::LayoutStore::fork`]).
 //!
-//! It is deliberately the smallest arrangement that is still a usable desktop — one top bar with the workspaces, the clock and notes, and the column notifications arrive in, which is what a fresh install has shown since before layouts existed. Anything more would be a preference the shell had decided on the user's behalf and that every new user would have to undo.
+//! It is deliberately the smallest arrangement that is still a usable desktop — one top bar with the workspaces, the clock and notes, the clock face in the middle of the desktop, and the column notifications arrive in. Anything more would be a preference the shell had decided on the user's behalf and that every new user would have to undo.
 //!
 //! The lock layer is the one place that is not minimal, and for the same reason: the clock, the user and what is playing are what this shell's lock screen has shown since before it had a layout, and a fresh install that lost them would be a regression dressed as a default.
 
@@ -22,6 +22,10 @@ pub fn layout() -> Layout {
                     areas: vec![wallpaper()],
                     remove: Vec::new(),
                 },
+                desktop: Layer {
+                    areas: vec![desktop_clock()],
+                    remove: Vec::new(),
+                },
                 top: Layer {
                     areas: vec![top_bar()],
                     remove: Vec::new(),
@@ -34,7 +38,6 @@ pub fn layout() -> Layout {
                     areas: vec![lock_readings(), prompt()],
                     remove: Vec::new(),
                 },
-                ..Layers::default()
             },
             workspaces: Vec::new(),
         }],
@@ -57,11 +60,42 @@ fn wallpaper() -> Area {
     }
 }
 
+/// The clock face on the desktop, where the old `[widgets.clock]` put it by default: centred on the output, held 48 px off its edges, at the medium size. An ordinary instance on an ordinary grid, so moving it, resizing it or taking it away is an edit like any other.
+fn desktop_clock() -> Area {
+    Area {
+        id: AreaId::new("widgets"),
+        kind: Some(AreaKind::Grid {
+            rect: None,
+            cell: None,
+            gap: None,
+            anchor: Some(Anchor::Center),
+        }),
+        style: AreaStyle {
+            padding: Some(48.0),
+            ..AreaStyle::default()
+        },
+        groups: vec![cell("clock", 0, 0, &[("clock-2", "clock")])],
+        ..Area::default()
+    }
+}
+
 fn top_bar() -> Area {
     Area {
-        id: AreaId::new("bar-top"),
+        groups: vec![
+            zone("start", Zone::Start, &[("workspaces", "workspaces")]),
+            zone("center", Zone::Center, &[("clock", "clock")]),
+            zone("end", Zone::End, &[("notes", "notes")]),
+        ],
+        ..bar(AreaId::new("bar-top"), Edge::Top)
+    }
+}
+
+/// The shipped bar on `edge`, holding nothing: the whole edge, 34 px thick, one surface flush with the edge, reserving its strip. What a bar made in the editor starts as.
+pub fn bar(id: AreaId, edge: Edge) -> Area {
+    Area {
+        id,
         kind: Some(AreaKind::Bar {
-            edge: Some(Edge::Top),
+            edge: Some(edge),
             thickness: Some(34.0),
             length: Some(Extent::Fill),
             offset: Some(0.0),
@@ -73,11 +107,6 @@ fn top_bar() -> Area {
             autohide: None,
         }),
         reserve: Some(true),
-        groups: vec![
-            zone("start", Zone::Start, &[("workspaces", "workspaces")]),
-            zone("center", Zone::Center, &[("clock", "clock")]),
-            zone("end", Zone::End, &[("notes", "notes")]),
-        ],
         ..Area::default()
     }
 }
@@ -88,9 +117,11 @@ fn stack() -> Area {
         id: AreaId::new("stack"),
         kind: Some(AreaKind::Stack {
             anchor: Some(Anchor::TopRight),
+            offset: None,
             width: Some(380.0),
             output_policy: Some(StackOutputPolicy::Focused),
             routes: Vec::new(),
+            launcher: None,
         }),
         within: Some(Within::Usable),
         ..Area::default()

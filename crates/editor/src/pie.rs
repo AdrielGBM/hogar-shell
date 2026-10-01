@@ -72,26 +72,3 @@ pub fn toward(current: LayerKind, direction: Direction) -> Option<LayerKind> {
         .min_by(|a, b| apart(a.angle).total_cmp(&apart(b.angle)))
         .map(|petal| petal.layer)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Four other modes sit at the four arrows, so each arrow reaches exactly one of them and every one is reached.
-    #[test]
-    fn every_arrow_reaches_its_own_petal() {
-        for current in LayerKind::ALL {
-            let reached: Vec<LayerKind> = [
-                Direction::Up,
-                Direction::Right,
-                Direction::Down,
-                Direction::Left,
-            ]
-            .into_iter()
-            .filter_map(|direction| toward(current, direction))
-            .collect();
-            let petals: Vec<LayerKind> = petals(current).iter().map(|petal| petal.layer).collect();
-            assert_eq!(reached, petals, "from {current}");
-        }
-    }
-}

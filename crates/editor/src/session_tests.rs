@@ -1,6 +1,6 @@
 //! What an edit must leave behind: exactly what was there before when it is reverted, however it was reverted, and exactly one entry in the one history when it is committed, whichever part of the layout it changed.
 //!
-//! Driven the way a tool drives it — a box with a transacted drag fed real pointer events, a popover registered on the dismiss stack — against a store installed as the running shell's, redrawn through a real reconcile. Nothing reserves an edge, because a headless reconcile that opens a reservation strip aborts at thread exit (F-9).
+//! Driven the way a tool drives it — a box with a transacted drag fed real pointer events, a popover registered on the dismiss stack — against a store installed as the running shell's, redrawn through a real reconcile.
 
 #[cfg(test)]
 mod tests {

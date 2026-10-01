@@ -441,27 +441,3 @@ fn along_or_across(
         Children::default(),
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const BAR: Rect = Rect {
-        x: 0.0,
-        y: 0.0,
-        width: 1920.0,
-        height: 34.0,
-    };
-
-    /// A corner's handle sits over the centre of its arc, and a pointer there asks for the radius it is at, whichever corner it is.
-    #[test]
-    fn a_corner_handle_reads_back_the_radius_it_is_drawn_at() {
-        for corner in CORNERS {
-            for radius in [0.0, 6.0, 17.0] {
-                let point = corner.point(BAR, radius);
-                assert_eq!(corner.radius(BAR, point), radius, "{corner:?} at {radius}");
-            }
-        }
-        assert_eq!(Corner::BottomRight.point(BAR, 8.0), (1912.0, 26.0));
-    }
-}

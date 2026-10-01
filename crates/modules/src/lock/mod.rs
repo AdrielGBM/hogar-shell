@@ -20,8 +20,8 @@ use telar::{
 use config::Config;
 use config::theme::{FontRole, NordTheme};
 use layout::{
-    AreaStyle, LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, Rect, Resolved, ResolvedArea,
-    ResolvedAreaKind, prompt_card,
+    AreaId, AreaStyle, Catalogue, LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, Rect, Resolved,
+    ResolvedArea, ResolvedAreaKind, prompt_card,
 };
 use services::lock::{self, LockState, Method, Screen};
 use surfaces::area::Surround;
@@ -46,6 +46,48 @@ impl LockLayout {
             layout: layout.clone(),
             known: known.clone(),
         }
+    }
+
+    /// The lock layer of `layout` when a locked screen may be drawn from it, or everything that rules it out — which is the minimal lock (TA-8).
+    ///
+    /// Every rule has to hold on each of `outputs` (every screen there is, or the nominal one where none is known): every instance a reading, no action bound, a prompt that cannot be hidden, covered, faded or left unreadable, and a layer that resolves. Only the lock layer is judged, so a mistyped bar never costs the user the lock screen they configured. `file` is where the findings say the layout lives.
+    pub fn checked(
+        layout: &Layout,
+        known: &BTreeMap<LayoutId, Layout>,
+        catalogue: &dyn Catalogue,
+        theme: &NordTheme,
+        outputs: &[Option<&str>],
+        file: &str,
+    ) -> Result<Self, Report> {
+        let report = Self::problems(layout, known, catalogue, theme, outputs, file);
+        match report.errors.is_empty() {
+            true => Ok(Self::of(layout, known)),
+            false => Err(report),
+        }
+    }
+
+    /// Everything [`checked`](Self::checked) finds wrong with the lock layer of `layout`, without keeping a copy of it.
+    pub fn problems(
+        layout: &Layout,
+        known: &BTreeMap<LayoutId, Layout>,
+        catalogue: &dyn Catalogue,
+        theme: &NordTheme,
+        outputs: &[Option<&str>],
+        file: &str,
+    ) -> Report {
+        let mut report = layout::validate_lock(layout, catalogue);
+        let nominal = [None];
+        let outputs = match outputs.is_empty() {
+            true => &nominal[..],
+            false => outputs,
+        };
+        for output in outputs {
+            let (resolved, resolving) =
+                layout::resolve(layout, known, output.unwrap_or(NOMINAL_OUTPUT), None);
+            report.merge(resolving);
+            report.merge(layout::validate_resolved(&resolved, file, theme));
+        }
+        report
     }
 
     /// The lock layer for one output, and whatever could not be resolved.
@@ -130,28 +172,61 @@ pub enum Prompting {
 
 /// The lock layer as lock mode previews it on an unlocked screen: the same areas, built the same way and for the same audience, over the same opaque background a lock surface clears to, with a prompt that takes nothing (TA-8). Building it takes no lock and touches no lock session.
 ///
-/// A lock layer that cannot be built previews as the minimal lock, which is what a real lock would show for it. The whole box claims the pointer, as a lock surface would: nothing under the preview answers while it is up.
+/// `lock` is the layer as [`LockLayout::checked`] answered for it: one it refused, with why, previews as the minimal lock a real lock would fall back to, and says why over it — as does a layer that cannot be built. The whole box claims the pointer, as a lock surface would: nothing under the preview answers while it is up.
 pub fn preview(
     config: &Arc<Config>,
-    lock: &LockLayout,
+    lock: Result<&LockLayout, &str>,
     output: Option<&str>,
     size: (f32, f32),
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let shown = screen(config, lock, output, size, Prompting::Preview).or_else(|err| {
-        tracing::warn!(
-            "the lock layer preview failed to build, previewing the minimal lock: {err}"
-        );
-        minimal_screen(Prompting::Preview)
-    })?;
+    let built = lock.map_err(str::to_string).and_then(|lock| {
+        screen(config, lock, output, size, Prompting::Preview).map_err(|err| err.to_string())
+    });
+    let mut shown = Vec::new();
+    match built {
+        Ok(screen) => shown.push(screen),
+        Err(why) => {
+            tracing::info!("the lock layer previews as the minimal lock: {why}");
+            shown.push(minimal_screen(Prompting::Preview)?);
+            shown.push(fallen_back(theme, why)?);
+        }
+    }
     Ok(Box::new(
         StyledContainer::new(
             whole_surface(),
             move |_| RectStyle::filled(theme.base, 0.0),
-            vec![shown],
+            shown,
         )?
         .input_opaque(),
     ))
+}
+
+/// Over a preview that fell back, why a locked screen would show the minimal lock instead of the layout.
+fn fallen_back(theme: NordTheme, why: String) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let said = telar::t!("lock.preview_fallback", why = why);
+    let note = StyledContainer::new(
+        LayoutStyle::new()
+            .max_width(CARD_WIDTH * 2.0)
+            .padding_horizontal(space::lg())
+            .padding_vertical(space::sm()),
+        move |_| RectStyle::filled(theme.surface, 0.0).with_radius(space::md().into()),
+        vec![box_item(Text::new(
+            move || said.clone(),
+            LayoutStyle::new(),
+            move || theme.text_style(FontRole::Caption, theme.warning),
+        )?)],
+    )?;
+    Ok(Box::new(Container::new(
+        LayoutStyle::new()
+            .absolute()
+            .inset_start(0.0)
+            .inset_top(space::xxl() * 3.0)
+            .width(SizeDimension::Percent(1.0))
+            .flex_row()
+            .justify_content(JustifyContent::CENTER),
+        vec![box_item(note)],
+    )?))
 }
 
 fn mount(screen: impl FnOnce() -> Result<Box<dyn LayoutItem>, LayoutError>) -> Box<dyn Component> {
@@ -214,6 +289,7 @@ fn screen(
         && let ResolvedAreaKind::Prompt { rect } = &layer.areas[at].kind
     {
         nodes[at] = Some(prompt_area(
+            &layer.areas[at].id,
             *rect,
             &layer.areas[at].style,
             surround,
@@ -237,7 +313,7 @@ fn screen(
 ///
 /// Inert rather than merely unwired: a reading that registered a target despite its module declaring none — a card's own chrome, a placeholder, a scroll area — would otherwise take a press on a screen where nothing may be pressed. The gate is read on every event and every region query, so nothing inside can act however it was built (F-5.4).
 ///
-/// The box it goes in is the whole surface, because the area inside positions itself absolutely against it; a wrapper the size of its content would move the area it wraps.
+/// The box it goes in is the whole surface, laid over the boxes of the areas before it rather than after them, because the area inside positions itself absolutely against it; a wrapper the size of its content, or one in the flow, would move the area it wraps.
 fn reading_area(
     area: &ResolvedArea,
     surround: Surround,
@@ -276,7 +352,7 @@ fn reading_area(
     )?;
     Ok(Box::new(
         StyledContainer::new(
-            whole_surface(),
+            stacked(),
             |_| RectStyle::filled(Color::TRANSPARENT, 0.0),
             vec![Box::new(built) as Box<dyn LayoutItem>],
         )?
@@ -284,8 +360,9 @@ fn reading_area(
     ))
 }
 
-/// The one area that answers: the password field, the line under it, and what else this machine can be unlocked with.
+/// The one area that answers: the password field, the line under it, and what else this machine can be unlocked with. Its place is in the rect registry like every other area's, which is what lock mode moves and selects it by.
 fn prompt_area(
+    id: &AreaId,
     rect: Rect,
     style: &AreaStyle,
     surround: Surround,
@@ -296,13 +373,18 @@ fn prompt_area(
     column.extend(biometric_hint(surround.config, theme)?);
     let card = card(column, theme, style)?;
     let at = surfaces::area::within(rect, surround.bounds);
-    Ok(Box::new(Container::new(
+    let area = Container::new(
         surfaces::area::at(at)
             .flex_row()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER),
         vec![card],
-    )?))
+    )?;
+    surfaces::rects::track(
+        surfaces::rects::Node::area(surround.output, LayerKind::Lock, id),
+        area.layout_node(),
+    );
+    Ok(Box::new(area))
 }
 
 /// The minimal lock: the prompt alone, centred, on the surface's own background.
@@ -385,6 +467,11 @@ fn whole_surface() -> LayoutStyle {
     LayoutStyle::new()
         .width(SizeDimension::Percent(1.0))
         .height(SizeDimension::Percent(1.0))
+}
+
+/// The whole surface, over whatever else is on it: one area's box among the others.
+fn stacked() -> LayoutStyle {
+    whole_surface().absolute().inset_start(0.0).inset_top(0.0)
 }
 
 /// How big the monitor a lock surface covers is, for the fractions a layout is written in. A screen the compositor has not measured yet falls back to a common size rather than laying every area out at nothing.
@@ -607,6 +694,7 @@ mod tests {
             id: "probe",
             name: "Probe",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 widget: Some(WidgetDef {
@@ -626,6 +714,7 @@ mod tests {
             id: "control",
             name: "Control",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 chip: Some(ui::descriptor::ChipDef::new(
@@ -647,6 +736,7 @@ mod tests {
             id: "broken",
             name: "Broken",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 widget: Some(WidgetDef {
@@ -663,6 +753,7 @@ mod tests {
             id: "panicky",
             name: "Panicky",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 widget: Some(WidgetDef {
@@ -1064,14 +1155,16 @@ mod tests {
 
         seed(&config);
         let said = text_of(&draw(
-            preview(&config, &lock, Some("DP-1"), SCREEN).expect("the preview builds"),
+            preview(&config, Ok(&lock), Some("DP-1"), SCREEN).expect("the preview builds"),
         ));
         assert!(said.iter().any(|text| text == "Preview"), "{said:?}");
         assert!(said.iter().any(|text| text == "Password"), "{said:?}");
 
         seed(&config);
         assert_eq!(
-            type_into(preview(&config, &lock, Some("DP-1"), SCREEN).expect("the preview builds")),
+            type_into(
+                preview(&config, Ok(&lock), Some("DP-1"), SCREEN).expect("the preview builds")
+            ),
             EventResult::Ignored,
             "the live prompt takes this keystroke; the preview's must not"
         );
@@ -1083,10 +1176,34 @@ mod tests {
         let config = config_with(LockConfig::default());
         seed(&config);
         let said = text_of(&draw(
-            preview(&config, &locked_with(Vec::new()), Some("DP-1"), SCREEN)
+            preview(&config, Ok(&locked_with(Vec::new())), Some("DP-1"), SCREEN)
                 .expect("the preview falls back rather than failing"),
         ));
         assert!(said.iter().any(|text| text == "Preview"), "{said:?}");
+    }
+
+    /// A lock layer the lock's own check refuses previews as the minimal lock, with the reason over it — what the edit mode shows so that what is edited is what a lock would draw.
+    #[test]
+    fn a_refused_lock_layer_previews_as_the_minimal_lock_and_says_why() {
+        ui::descriptor::install(PROBES);
+        let config = config_with(LockConfig::default());
+        seed(&config);
+        let said = text_of(&draw(
+            preview(
+                &config,
+                Err("the prompt is too faint"),
+                Some("DP-1"),
+                SCREEN,
+            )
+            .expect("the preview builds"),
+        ));
+        assert!(said.iter().any(|text| text == "Preview"), "{said:?}");
+        assert!(
+            said.iter()
+                .any(|text| text.contains("minimal lock") && text.contains("too faint")),
+            "{said:?}"
+        );
+        assert!(!said.iter().any(|text| text.contains(PUBLIC)), "{said:?}");
     }
 
     #[test]

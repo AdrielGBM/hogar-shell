@@ -794,9 +794,31 @@ fn every_area() -> Vec<layout::ResolvedArea> {
             format!("stack-{anchor:?}"),
             ResolvedAreaKind::Stack {
                 anchor,
+                offset: layout::Offset::ZERO,
                 width: 380.0,
                 output_policy: layout::StackOutputPolicy::Here,
                 routes: Vec::new(),
+                launcher: false,
+            },
+            Vec::new(),
+        ));
+        let outward = |side: surfaces::pinned::Side| match side {
+            surfaces::pinned::Side::Start => -4000.0,
+            surfaces::pinned::Side::Middle | surfaces::pinned::Side::End => 4000.0,
+        };
+        let (across, down) = surfaces::pinned::sides(anchor);
+        areas.push(area_of(
+            format!("stack-{anchor:?}-pushed-off"),
+            ResolvedAreaKind::Stack {
+                anchor,
+                offset: layout::Offset {
+                    x: outward(across),
+                    y: outward(down),
+                },
+                width: 380.0,
+                output_policy: layout::StackOutputPolicy::Here,
+                routes: Vec::new(),
+                launcher: false,
             },
             Vec::new(),
         ));

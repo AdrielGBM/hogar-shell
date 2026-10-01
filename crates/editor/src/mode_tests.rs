@@ -1,6 +1,6 @@
 //! What entering and leaving an edit mode must leave behind: every window exactly as it was, whichever mode, whichever screen, and whether the screen stayed or went.
 //!
-//! At the level of the live windows rather than of a running compositor: what the host asks of the compositor is the layer each window is asked to be on, the keyboard it negotiates and whether it is on screen at all, and those are what the windows answer here. Nothing in these layouts reserves an edge, because a headless reconcile that opens a reservation strip aborts at thread exit (F-9).
+//! At the level of the live windows rather than of a running compositor: what the host asks of the compositor is the layer each window is asked to be on, the keyboard it negotiates and whether it is on screen at all, and those are what the windows answer here.
 
 #[cfg(test)]
 mod tests {
@@ -10,7 +10,7 @@ mod tests {
     use std::sync::Arc;
 
     use config::Config;
-    use layout::{LayerKind, Layout, LayoutStore};
+    use layout::{LayerKind, LayoutStore};
     use platform_wayland::{KeyboardMode, Layer, OutputDescriptor};
     use surfaces::layer_window::Content;
     use surfaces::reconcile::{Desktop, Shell, plan};
@@ -30,25 +30,12 @@ mod tests {
         }
     }
 
-    /// The shipped layout with nothing reserving an edge.
-    fn unreserved() -> Layout {
-        let mut layout = layout::built_in();
-        for rule in &mut layout.outputs {
-            for layer in LayerKind::ALL {
-                for area in &mut rule.layers.get_mut(layer).areas {
-                    area.reserve = Some(false);
-                }
-            }
-        }
-        layout
-    }
-
     fn planned(screens: &[&str]) -> Vec<Desktop> {
         let outputs: Vec<OutputDescriptor> = screens.iter().map(|name| screen(name)).collect();
         plan(
             &util::paths::config_dir().join("config.toml"),
             &Arc::new(Config::default()),
-            &unreserved(),
+            &layout::built_in(),
             &BTreeMap::new(),
             &outputs,
             &|_| None,
@@ -234,10 +221,10 @@ mod tests {
             (LayerKind::Background, false),
             (LayerKind::Lock, true),
         ] {
-            shell.reconcile(&planned(&[LEFT, RIGHT]), Content::Keep);
+            shell.reconcile(&planned(&[LEFT, RIGHT]), Content::Changed);
             mode::enter_as(layer, Some(RIGHT), &compositor(restack)).unwrap();
 
-            shell.reconcile(&planned(&[LEFT]), Content::Keep);
+            shell.reconcile(&planned(&[LEFT]), Content::Changed);
 
             assert_eq!(mode::current(), None, "{layer} ended with its screen");
             assert!(!transient::is_open(&format!("edit:{RIGHT}")));
@@ -249,7 +236,7 @@ mod tests {
     fn a_screen_plugged_in_elsewhere_leaves_the_mode_alone() {
         let mut shell = shell_on(&[LEFT]);
         let entered = mode::enter_as(LayerKind::Top, Some(LEFT), &compositor(true)).unwrap();
-        shell.reconcile(&planned(&[LEFT, RIGHT]), Content::Keep);
+        shell.reconcile(&planned(&[LEFT, RIGHT]), Content::Changed);
         assert_eq!(mode::current(), Some(entered));
         mode::leave();
     }

@@ -14,7 +14,7 @@ use layout::LayerKind;
 use surfaces::rects::{self, Node, Part};
 use ui::descriptor::Built;
 
-use crate::host::{passthrough, whole};
+use crate::host::{passthrough, see_through, whole};
 use crate::mode::Mode;
 use crate::session::{self, Selection};
 
@@ -45,7 +45,7 @@ pub(crate) fn tool(mode: &Mode) -> Built {
     )?;
     Ok(Box::new(passthrough(
         whole(),
-        vec![Box::new(targets), Box::new(outline)],
+        vec![see_through(targets)?, see_through(outline)?],
     )?))
 }
 
@@ -79,11 +79,9 @@ fn target(area: Node) -> Built {
             .styled_by(move || surfaces::area::at(rects::rect(&placed).unwrap_or_default()))
             .on_pointer_move(move |x, y| seen.set((x, y)))
             .on_press(move || {
-                let Some(point) = pressed() else {
-                    return;
-                };
-                let placed = rects::on(area.output.as_deref(), area.layer);
-                session::select(session::pick(&session::selected(), point, &placed));
+                if let Some(point) = pressed() {
+                    press_at(&area, point);
+                }
             })
             .on_alt_press(move |button| {
                 if button != PointerButton::Secondary {
@@ -97,8 +95,15 @@ fn target(area: Node) -> Built {
     ))
 }
 
+/// Selects what a press at `point` on the area `area` names is on: the smallest thing there, or on a second press the thing around it.
+pub(crate) fn press_at(area: &Node, point: (f32, f32)) {
+    crate::mode::clear_refusal();
+    let placed = rects::on(area.output.as_deref(), area.layer);
+    session::select(session::pick(&session::selected(), point, &placed));
+}
+
 /// Selects what a secondary press at `point` is on and opens its menu there. What is selected already stays selected where the press is inside it, so a menu asked for on a selected group is the group's area's rather than its smallest child's.
-fn menu_at(area: &Node, point: (f32, f32)) {
+pub(crate) fn menu_at(area: &Node, point: (f32, f32)) {
     let placed = rects::on(area.output.as_deref(), area.layer);
     let current = session::selected();
     let inside = current.node().is_some_and(|node| {
@@ -123,7 +128,7 @@ fn menu_at(area: &Node, point: (f32, f32)) {
         window: LayerKind::Overlay,
         at: Some(point),
     }) {
-        tracing::info!("no context menu: {why}");
+        crate::mode::refuse(why);
     }
 }
 
@@ -140,74 +145,4 @@ fn outline(node: Node, theme: NordTheme) -> Built {
         .styled_by(move || surfaces::area::at(rects::rect(&node).unwrap_or_default()))
         .input_transparent(),
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use telar::Rect;
-
-    use layout::{AreaId, GroupId, InstanceId};
-
-    use crate::session::Selection;
-
-    use super::*;
-
-    fn bar() -> Node {
-        Node::area(Some("DP-1"), LayerKind::Top, &AreaId::new("bar-top"))
-    }
-
-    /// A bar, its centre zone and the clock in it, one inside the other, and the end zone beside them.
-    fn placed() -> Vec<(Node, Rect)> {
-        let center = GroupId::new("center");
-        vec![
-            (bar(), Rect::new(0.0, 0.0, 1920.0, 34.0)),
-            (bar().group(&center), Rect::new(900.0, 0.0, 120.0, 34.0)),
-            (
-                bar().instance(&center, &InstanceId::new("clock")),
-                Rect::new(920.0, 2.0, 80.0, 30.0),
-            ),
-            (
-                bar().group(&GroupId::new("end")),
-                Rect::new(1800.0, 0.0, 120.0, 34.0),
-            ),
-        ]
-    }
-
-    /// The smallest thing under the pointer is what a click selects, and clicking it again climbs to what holds it — instance, group, area — and round again.
-    #[test]
-    fn a_click_selects_the_smallest_thing_and_the_next_click_the_one_around_it() {
-        let placed = placed();
-        let on_the_clock = (950.0, 10.0);
-        let center = GroupId::new("center");
-        let mut selected = Selection::None;
-        let mut picked = Vec::new();
-        for _ in 0..4 {
-            selected = session::pick(&selected, on_the_clock, &placed);
-            picked.push(selected.clone());
-        }
-        assert_eq!(
-            picked,
-            [
-                Selection::Instance(bar().instance(&center, &InstanceId::new("clock"))),
-                Selection::Group(bar().group(&center)),
-                Selection::Area(bar()),
-                Selection::Instance(bar().instance(&center, &InstanceId::new("clock"))),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_click_elsewhere_starts_again_from_the_smallest_there_and_a_click_on_nothing_selects_nothing()
-     {
-        let placed = placed();
-        let clock = session::pick(&Selection::None, (950.0, 10.0), &placed);
-        assert_eq!(
-            session::pick(&clock, (1850.0, 10.0), &placed),
-            Selection::Group(bar().group(&GroupId::new("end")))
-        );
-        assert_eq!(
-            session::pick(&clock, (500.0, 500.0), &placed),
-            Selection::None
-        );
-    }
 }

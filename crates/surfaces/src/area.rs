@@ -20,7 +20,8 @@ use telar::{
 
 use crate::actions::{Bound, EmptySpace, NOTCH};
 use crate::layer_window::{
-    AreaContext, Areas, Building, LayerWindowContext, Reserved, WindowAreas, build_window_areas,
+    AreaContext, Areas, Blur, Building, LayerWindowContext, Reserved, WindowAreas, blur_of,
+    build_window_areas,
 };
 use crate::reconcile::Desktop;
 use crate::rects;
@@ -87,7 +88,7 @@ pub fn stand_in(desktop: &Desktop, layer: LayerKind) -> Built {
     let window = LayerWindowContext::current().ok_or_else(|| {
         LayoutError::Engine("a stand-in layer is built inside a layer window".to_string())
     })?;
-    let (nodes, _) = build_window_areas(
+    let nodes = build_window_areas(
         &ShellAreas,
         &WindowAreas::of(&desktop.resolved, layer),
         &Building {
@@ -201,6 +202,7 @@ pub fn free(area: &ResolvedArea, rect: Rect, surround: Surround) -> Built {
                 area,
                 group,
                 LayoutStyle::new().flex_column(),
+                None,
                 surround,
                 |instance, node, surround| {
                     place(
@@ -221,12 +223,16 @@ pub fn free(area: &ResolvedArea, rect: Rect, surround: Surround) -> Built {
     Ok(Box::new(empty_space(
         area,
         surround,
-        dressed(
-            &area.style,
-            &surround.theme,
-            region(rect, surround).flex_column(),
-            groups,
-        )?,
+        frosted(
+            dressed(
+                &area.style,
+                &surround.theme,
+                region(rect, surround).flex_column(),
+                groups,
+            )?,
+            area,
+            surround,
+        ),
         is_filled(&area.style, &surround.theme),
     )))
 }
@@ -242,27 +248,151 @@ pub fn grid(
     anchor: Anchor,
     surround: Surround,
 ) -> Built {
+    let live = placing(area, surround);
+    let slide = surround.config.animation.tween_ms(200, 2_000);
     let placed = area
         .groups
         .iter()
-        .map(|group| cell_group(area, group, cell, gap, surround))
+        .map(|group| {
+            cell_group(area, group, (cell, gap), live, surround)
+                .map(|built| Box::new(telar::animate_layout(built, slide)) as Box<dyn LayoutItem>)
+        })
         .collect::<Result<Vec<_>, LayoutError>>()?;
-    let block = Container::new(tracks(covered(area), cell, gap), placed)?;
+    let block = Container::new(tracks(covered(area), cell, gap), placed)?
+        .styled_by(move || live.with(|now| tracks(covered(now), cell, gap)));
     let (vertical, horizontal) = anchored(anchor);
     Ok(Box::new(empty_space(
         area,
         surround,
-        dressed(
-            &area.style,
-            &surround.theme,
-            region(rect, surround)
-                .flex_row()
-                .align_items(align_items(vertical))
-                .justify_content(justify(horizontal)),
-            vec![Box::new(block) as Box<dyn LayoutItem>],
-        )?,
+        frosted(
+            dressed(
+                &area.style,
+                &surround.theme,
+                region(rect, surround)
+                    .flex_row()
+                    .align_items(align_items(vertical))
+                    .justify_content(justify(horizontal)),
+                vec![Box::new(block) as Box<dyn LayoutItem>],
+            )?,
+            area,
+            surround,
+        ),
         is_filled(&area.style, &surround.theme),
     )))
+}
+
+/// Which grid a live placement is of: the output, the window it is drawn in, the layer it is written on and its id.
+type GridKey = (Option<String>, LayerKind, LayerKind, AreaId);
+
+/// One grid built now, by the token its build took, and the arrangement it places its groups from.
+type Placing = (u64, RwSignal<ResolvedArea>);
+
+thread_local! {
+    /// Every grid built into a layer window now, with the arrangement it places its groups from.
+    static GRIDS: RefCell<HashMap<GridKey, Vec<Placing>>> = RefCell::new(HashMap::new());
+    static GRID_TOKENS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The arrangement `area`'s groups are placed from for as long as its grid lives, which [`move_cells`] moves them in. Outside a layer window nothing moves it, and the grid is placed once.
+fn placing(area: &ResolvedArea, surround: Surround) -> RwSignal<ResolvedArea> {
+    let live = signal(area.clone());
+    let Some(window) = LayerWindowContext::current() else {
+        return live;
+    };
+    let key = (
+        surround.output.map(str::to_string),
+        window.layer,
+        surround.layer,
+        area.id.clone(),
+    );
+    let token = GRID_TOKENS.with(|next| {
+        next.set(next.get().wrapping_add(1));
+        next.get()
+    });
+    GRIDS.with(|grids| {
+        grids
+            .borrow_mut()
+            .entry(key.clone())
+            .or_default()
+            .push((token, live))
+    });
+    telar::on_cleanup(move || {
+        GRIDS.with(|grids| {
+            let mut grids = grids.borrow_mut();
+            if let Some(held) = grids.get_mut(&key) {
+                held.retain(|(own, _)| *own != token);
+                if held.is_empty() {
+                    grids.remove(&key);
+                }
+            }
+        })
+    });
+    live
+}
+
+/// Moves the groups of every grid built for `area` in the window `window` of `output`, written on `home`, to the cells `area` places them on, where they slide; answers whether a grid built now took it. The one change to a built grid that keeps its nodes: see [`moves_only`].
+pub fn move_cells(
+    output: Option<&str>,
+    window: LayerKind,
+    home: LayerKind,
+    area: &ResolvedArea,
+) -> bool {
+    let key = (output.map(str::to_string), window, home, area.id.clone());
+    let live: Vec<RwSignal<ResolvedArea>> = GRIDS.with(|grids| {
+        grids
+            .borrow()
+            .get(&key)
+            .map(|held| held.iter().map(|(_, live)| *live).collect())
+            .unwrap_or_default()
+    });
+    let alive: Vec<RwSignal<ResolvedArea>> =
+        live.into_iter().filter(|live| live.is_alive()).collect();
+    for live in &alive {
+        if live.peek_with(|now| now != area) {
+            live.set(area.clone());
+        }
+    }
+    !alive.is_empty()
+}
+
+/// Whether `now` is `was` with its groups on other cells and nothing else changed: the same grid holding the same groups, in the same order, with the same instances. A grid changed that way keeps its nodes and slides them ([`move_cells`]) rather than being built again.
+pub fn moves_only(was: &ResolvedArea, now: &ResolvedArea) -> bool {
+    if !matches!(now.kind, ResolvedAreaKind::Grid { .. }) || was.groups.len() != now.groups.len() {
+        return false;
+    }
+    let mut placed_as_before = now.clone();
+    for (group, before) in placed_as_before.groups.iter_mut().zip(&was.groups) {
+        group.kind = before.kind;
+    }
+    placed_as_before == *was
+}
+
+/// Where the block of cells a grid draws sits when the area itself is placed at `region`: inside its padding, as big as the cells its groups cover and aligned by its anchor — what a pointer over the grid is read against to find the cell under it. `None` for an area that is no grid.
+pub fn grid_block(area: &ResolvedArea, region: telar::Rect) -> Option<telar::Rect> {
+    let ResolvedAreaKind::Grid {
+        cell, gap, anchor, ..
+    } = area.kind
+    else {
+        return None;
+    };
+    let pad = area.style.padding.unwrap_or(0.0);
+    let (width, height) = (
+        (region.width - 2.0 * pad).max(0.0),
+        (region.height - 2.0 * pad).max(0.0),
+    );
+    let extent = covered(area).extent(cell, gap);
+    let (vertical, horizontal) = anchored(anchor);
+    let offset = |align: Align, room: f32| match align {
+        Align::Start => 0.0,
+        Align::Center => room / 2.0,
+        Align::End => room,
+    };
+    Some(telar::Rect::new(
+        region.x + pad + offset(horizontal, width - extent.width),
+        region.y + pad + offset(vertical, height - extent.height),
+        extent.width,
+        extent.height,
+    ))
 }
 
 /// A dock: a strip hugging `edge`, `thickness` across and the whole of that edge long, its groups sharing the length in zone order.
@@ -283,15 +413,19 @@ pub fn dock(area: &ResolvedArea, edge: Edge, thickness: f32, surround: Surround)
     Ok(Box::new(empty_space(
         area,
         surround,
-        dressed(
-            &area.style,
-            &surround.theme,
-            region(Rect::default(), surround)
-                .flex_row()
-                .align_items(align_items(vertical))
-                .justify_content(justify(horizontal)),
-            vec![Box::new(strip) as Box<dyn LayoutItem>],
-        )?,
+        frosted(
+            dressed(
+                &area.style,
+                &surround.theme,
+                region(Rect::default(), surround)
+                    .flex_row()
+                    .align_items(align_items(vertical))
+                    .justify_content(justify(horizontal)),
+                vec![Box::new(strip) as Box<dyn LayoutItem>],
+            )?,
+            area,
+            surround,
+        ),
         is_filled(&area.style, &surround.theme),
     )))
 }
@@ -383,6 +517,7 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
     if let Some(opacity) = area.style.opacity {
         painted = painted.with_opacity(move || opacity);
     }
+    let painted = frosted(painted, area, surround);
     Ok(rounded(
         &area.style,
         empty_space(area, surround, painted, false),
@@ -454,6 +589,12 @@ struct Opened {
 thread_local! {
     /// Kept across the rebuilds that replace a region's node, so a rebuild can fade from what was showing.
     static OPENED: RefCell<HashMap<RegionKey, Opened>> = RefCell::new(HashMap::new());
+}
+
+/// The size, in its own pixels, of the picture the area `id` on the screen `output` last drew — a region's, a texture's — where it drew one: what a nine-slice's insets are measured in.
+pub fn picture_size(output: Option<&str>, id: &AreaId) -> Option<(u32, u32)> {
+    opened(&(output.map(str::to_string), id.clone()))
+        .map(|shown| (shown.image.width, shown.image.height))
 }
 
 fn opened(key: &RegionKey) -> Option<Opened> {
@@ -637,6 +778,7 @@ pub fn texture(area: &ResolvedArea, surround: Surround) -> Built {
     )?
     .with_opacity(move || opacity)
     .with_blend(move || blend_mode);
+    let painted = frosted(painted, area, surround);
     Ok(rounded(
         &area.style,
         empty_space(area, surround, painted, false),
@@ -704,6 +846,17 @@ pub fn dressed(
         )?,
         fill.unwrap_or(Color::TRANSPARENT),
     ))
+}
+
+/// How far across the shell blurs what its own surface drew under an area styled `backdrop = "blur"`.
+pub const BACKDROP_BLUR: f32 = 24.0;
+
+/// `painted` over a blurred copy of what the same surface drew under it, where `area` asks for a blur nothing but this surface can give ([`Blur::InSurface`]); unchanged otherwise, the compositor's blur being asked for by the window instead.
+fn frosted(painted: StyledContainer, area: &ResolvedArea, surround: Surround) -> StyledContainer {
+    match blur_of(surround.layer, area) {
+        Some(Blur::InSurface) => painted.with_backdrop_blur(|| BACKDROP_BLUR),
+        Some(Blur::Compositor) | None => painted,
+    }
 }
 
 fn corners(style: &AreaStyle) -> BorderRadius {
@@ -806,7 +959,7 @@ fn covered(area: &ResolvedArea) -> Footprint {
         },
         |so_far, group| {
             let (col, row) = origin_of(group);
-            let span = span_of(group);
+            let span = cells_of(group);
             Footprint {
                 columns: so_far.columns.max(col.saturating_add(span.columns)),
                 rows: so_far.rows.max(row.saturating_add(span.rows)),
@@ -815,11 +968,12 @@ fn covered(area: &ResolvedArea) -> Footprint {
     )
 }
 
-/// `build` is handed the surround again because a Smart Stack builds its child later, whenever it is cycled.
+/// `build` is handed the surround again because a Smart Stack builds its child later, whenever it is cycled. `follows` keeps the group's box in step with where a live placement moves it.
 fn arranged(
     area: &ResolvedArea,
     group: &ResolvedGroup,
     style: LayoutStyle,
+    follows: Option<Box<dyn Fn() -> LayoutStyle>>,
     surround: Surround,
     build: impl Fn(&ResolvedInstance, &rects::Node, Surround) -> Built + 'static,
 ) -> Built {
@@ -854,7 +1008,10 @@ fn arranged(
             .map(|instance| build(instance, surround))
             .collect::<Result<Vec<_>, LayoutError>>()?,
     };
-    let node = Container::new(style, items)?;
+    let node = match follows {
+        Some(follows) => Container::new(style, items)?.styled_by(follows),
+        None => Container::new(style, items)?,
+    };
     rects::track(at.group(&group.id), node.layout_node());
     Ok(Box::new(node))
 }
@@ -1092,28 +1249,41 @@ impl Kept {
     }
 }
 
-/// One group on its cells, its instances down the box those cells make, each at the footprint its own size asks for.
-fn cell_group(
-    area: &ResolvedArea,
-    group: &ResolvedGroup,
-    cell: f32,
-    gap: f32,
-    surround: Surround,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let span = span_of(group);
+/// Where a group sits on its grid's tracks, and the column its instances are laid down.
+fn on_cells(group: &ResolvedGroup, gap: f32) -> LayoutStyle {
+    let span = cells_of(group);
     let style = LayoutStyle::new().flex_column().gap(gap);
-    let style = match group.kind {
+    match group.kind {
         GroupKind::Cell { col, row, .. } => style
             .grid_column(line(cell_at(col)), span.columns)
             .grid_row(line(cell_at(row)), span.rows),
         _ => style
             .grid_column_span(span.columns)
             .grid_row_span(span.rows),
+    }
+}
+
+/// One group on its cells, its instances down the box those cells make, each at the footprint its own size asks for. It follows the cells `live` places it on, and slides there.
+fn cell_group(
+    area: &ResolvedArea,
+    group: &ResolvedGroup,
+    (cell, gap): (f32, f32),
+    live: RwSignal<ResolvedArea>,
+    surround: Surround,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let id = group.id.clone();
+    let fallback = group.clone();
+    let follows = move || {
+        live.with(|now| match now.groups.iter().find(|held| held.id == id) {
+            Some(now) => on_cells(now, gap),
+            None => on_cells(&fallback, gap),
+        })
     };
     arranged(
         area,
         group,
-        style,
+        on_cells(group, gap),
+        Some(Box::new(follows)),
         surround,
         move |instance, node, surround| {
             place(
@@ -1161,6 +1331,7 @@ fn run(
         area,
         group,
         style,
+        None,
         surround,
         move |instance, node, surround| place(instance, node, extent, Some(edge), fill(), surround),
     )
@@ -1265,8 +1436,8 @@ fn footprint(instance: &ResolvedInstance) -> Footprint {
     }
 }
 
-/// The cells a group covers: the span it was placed with, widened to hold its instances down the column they are laid out in.
-fn span_of(group: &ResolvedGroup) -> Footprint {
+/// The cells a group covers: the span it was placed with, widened to hold its instances down the column they are laid out in — or, stacked, the largest of them.
+pub fn cells_of(group: &ResolvedGroup) -> Footprint {
     let asked = match group.kind {
         GroupKind::Cell {
             col_span, row_span, ..
@@ -1474,6 +1645,7 @@ mod tests {
             id: "probe",
             name: "probe",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: widget(probe),
             actions: &[],
@@ -1483,6 +1655,7 @@ mod tests {
             id: "filler",
             name: "filler",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: widget(filler),
             actions: &[],
@@ -1639,7 +1812,7 @@ mod tests {
     /// A widget covers the cells its size steps to, whatever span the group was written with: a placement says where a widget is, and how big it is is the widget's own answer.
     #[test]
     fn a_group_covers_its_widget_even_where_it_was_placed_on_one_cell() {
-        let span = span_of(&group(cell(0, 0), vec![instance("clock", Placed::WidgetM)]));
+        let span = cells_of(&group(cell(0, 0), vec![instance("clock", Placed::WidgetM)]));
         assert_eq!((span.columns, span.rows), (4, 2));
         assert_eq!(
             span.extent(80.0, 16.0),
@@ -1647,7 +1820,7 @@ mod tests {
             "and the box those cells make is the footprint's own"
         );
 
-        let wide = span_of(&group(
+        let wide = cells_of(&group(
             GroupKind::Cell {
                 col: 0,
                 row: 0,
@@ -1662,7 +1835,7 @@ mod tests {
             "a span wider than the widget is the group's, a span narrower is the widget's"
         );
 
-        let stacked = span_of(&group(
+        let stacked = cells_of(&group(
             cell(0, 0),
             vec![
                 instance("clock", Placed::WidgetM),
@@ -1967,6 +2140,44 @@ mod tests {
         );
     }
 
+    fn backdrop_blurs(tree: &telar::ComponentList) -> Vec<f32> {
+        tree.commands()
+            .iter()
+            .filter_map(|command| match command {
+                telar::DrawCommand::PushLayer { backdrop_blur, .. } if *backdrop_blur > 0.0 => {
+                    Some(*backdrop_blur)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// F-2.12, F-10.49: what is under an area of the background layer is the pictures its own surface drew, so the shell frosts them itself, on any compositor; an area of a layer application windows sit among leaves its blur to the compositor, and its own paint stays unblurred.
+    #[test]
+    fn a_background_area_styled_to_blur_frosts_what_its_own_surface_drew_under_it() {
+        reset_layout_runtime();
+        let dir = scratch("frosted");
+        let own = picture_file(&dir, "own.png", [255, 0, 0, 255]);
+        let config = Arc::new(Config::starter());
+        set_theme(config.resolve_theme());
+        let _scope = telar::owner_scope();
+        let mut frosted = region_area("frosted", Rect::default(), &own, Transition::None);
+        frosted.style.backdrop = Some(layout::Backdrop::Blur);
+
+        let on_background = Surround {
+            layer: LayerKind::Background,
+            ..surrounded(&config)
+        };
+        let tree = drawn(build(&frosted, on_background).expect("a region builds"));
+        assert_eq!(backdrop_blurs(&tree), [BACKDROP_BLUR]);
+
+        let tree = drawn(build(&frosted, surrounded(&config)).expect("a region builds"));
+        assert!(
+            backdrop_blurs(&tree).is_empty(),
+            "the desktop layer's blur is the compositor's"
+        );
+    }
+
     /// A rebuild is how a region's own picture changes — `wallpaper set --region` is a layout edit — and a fresh node has nothing of the old picture to fade from, so the region remembers what it showed and starts there.
     #[test]
     fn a_region_rebuilt_for_a_new_picture_fades_from_the_one_it_showed() {
@@ -2102,6 +2313,7 @@ mod tests {
             id: "weather",
             name: "weather",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: widget(weather),
             actions: &[],
@@ -2111,6 +2323,7 @@ mod tests {
             id: "calendar",
             name: "calendar",
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: widget(calendar),
             actions: &[],

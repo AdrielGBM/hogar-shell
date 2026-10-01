@@ -1,6 +1,6 @@
 //! Context menus on every item and area (TA-4): a secondary press on a chip, a widget, a card or an area's empty space opens one, and so does the menu key (or Shift+F10) on what has the focus, in an edit mode and outside one.
 //!
-//! **What is in it.** An instance's module's own actions, "Customize…", a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), "Remove" and "Edit <layer>…"; an area's own bound actions, "Customize…" and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config (TA-7). Nothing is offered on the lock layer (TA-8).
+//! **What is in it.** An instance's module's own actions, "Customize…", a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), "Remove" and "Edit <layer>…"; an area's own bound actions, "Customize…", what the tools for its kind add ([`add_area_rows`]) and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config (TA-7). Nothing is offered on the lock layer (TA-8).
 //!
 //! **Where.** A menu is a transient laid over the whole window it was asked in (F-2.3, DEC-9): the item's own, or the overlay window where that layer is hidden or an edit mode's host is over it. It opens at the pointer, or on the item when the keyboard asked, and never past an edge of the screen.
 //!
@@ -26,9 +26,10 @@ use surfaces::transient::{self, Anchor, Place, Spec};
 use ui::chrome::Chrome;
 use ui::descriptor::{Built, ModuleDescriptor};
 
+use crate::mode::{self, said};
+use crate::popover;
 use crate::session::{self, EditError};
-use crate::written::Written;
-use crate::{mode, popover};
+use crate::written::{Written, known};
 
 /// The transient every context menu is, one at a time.
 pub const ID: &str = "editor:menu";
@@ -46,8 +47,17 @@ struct Shown {
     entries: Vec<MenuEntry>,
 }
 
+/// The rows a tool adds to the menu of every area of one kind, given the area as the screen shows it and the node it is.
+pub type AreaRows = fn(&ResolvedArea, &Node) -> Vec<MenuEntry>;
+
 thread_local! {
     static SHOWN: RefCell<Option<Shown>> = const { RefCell::new(None) };
+    static AREA_ROWS: RefCell<Vec<(&'static str, AreaRows)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Adds `rows` to the menu of every area of the kind `kind` (`wallpaper_region`, … as the layout file spells it), after "Customize…" and before "Edit <layer>…". Registered inside [`crate::install`].
+pub fn add_area_rows(kind: &'static str, rows: AreaRows) {
+    AREA_ROWS.with(|tools| tools.borrow_mut().push((kind, rows)));
 }
 
 /// Makes every secondary press and menu key the surfaces offer a menu for open one here. Installed once, before any window builds.
@@ -65,8 +75,13 @@ pub fn open(asked: Asked) -> Result<(), EditError> {
     if node.layer == LayerKind::Lock {
         return Err(EditError::Refused(telar::t!("editor.menu.lock")));
     }
-    let desktop = desktop_of(&node)?;
-    let area = area_of(&desktop, &node)?;
+    let desktop =
+        reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
+    let area = desktop
+        .resolved
+        .area(node.layer, &node.area)
+        .cloned()
+        .ok_or_else(|| EditError::gone(&node.area))?;
     let entries = match &node.part {
         Part::Instance(group, id) => instance_entries(&desktop, &area, &node, group, id)?,
         Part::Area | Part::Group(_) => area_entries(
@@ -121,7 +136,7 @@ pub(crate) fn open_selected() -> bool {
         window: LayerKind::Overlay,
         at: None,
     }) {
-        tracing::info!("no context menu: {why}");
+        mode::refuse(why);
     }
     true
 }
@@ -163,27 +178,6 @@ fn style(theme: NordTheme) -> MenuStyle {
     }
 }
 
-fn desktop_of(node: &Node) -> Result<Desktop, EditError> {
-    reconcile::desktops()
-        .iter()
-        .find(|desktop| desktop.output == node.output)
-        .cloned()
-        .ok_or_else(|| gone(&node.area))
-}
-
-fn area_of(desktop: &Desktop, node: &Node) -> Result<ResolvedArea, EditError> {
-    desktop
-        .resolved
-        .layer(node.layer)
-        .and_then(|layer| layer.areas.iter().find(|area| area.id == node.area))
-        .cloned()
-        .ok_or_else(|| gone(&node.area))
-}
-
-fn gone(area: &AreaId) -> EditError {
-    EditError::Refused(telar::t!("editor.popover.gone", id = area.to_string()))
-}
-
 /// An instance's rows: its module's actions, customizing it, moving it where it is drawn the other way, removing it and editing its layer — or, for a placeholder, the rows that fix it.
 fn instance_entries(
     desktop: &Desktop,
@@ -198,7 +192,7 @@ fn instance_entries(
         .find(|held| held.id == *group)
         .and_then(|held| held.children.iter().find(|child| child.id == *id))
         .cloned()
-        .ok_or_else(|| gone(&node.area))?;
+        .ok_or_else(|| EditError::gone(&node.area))?;
     let drawn = ui::descriptor::find(&resolved.module).filter(|module| {
         module
             .input(surfaces::area::representation(resolved.representation))
@@ -256,16 +250,33 @@ fn area_entries(area: &ResolvedArea, node: &Node) -> Vec<MenuEntry> {
         "",
         move || said(popover::open_area(customized.clone())),
     ));
+    let tools: Vec<AreaRows> = AREA_ROWS.with(|tools| {
+        tools
+            .borrow()
+            .iter()
+            .filter(|(kind, _)| *kind == area.kind.name())
+            .map(|(_, rows)| *rows)
+            .collect()
+    });
+    for tool in tools {
+        rows.extend(tool(area, node));
+    }
+    if !matches!(area.kind, ResolvedAreaKind::Prompt { .. }) {
+        let removed = node.clone();
+        let name = kind_name(&area.kind);
+        rows.push(MenuEntry::row(
+            telar::t!("editor.menu.remove"),
+            "",
+            move || said(remove_area(&removed, &name)),
+        ));
+    }
     rows.extend(edit_row(node));
     rows
 }
 
 /// "Edit <layer>…", unless that layer is the one being edited on this screen already.
 fn edit_row(node: &Node) -> Option<MenuEntry> {
-    let editing = mode::current().is_some_and(|mode| {
-        mode.layer == node.layer && node.output.as_deref() == Some(mode.output.as_str())
-    });
-    if editing {
+    if mode::editing(node) {
         return None;
     }
     let (layer, output) = (node.layer, node.output.clone());
@@ -306,17 +317,29 @@ fn move_row(node: &Node, resolved: &ResolvedInstance, name: &str, to: Destinatio
     })
 }
 
-/// A row's outcome, which is nowhere to show once the menu that offered it has closed: an edit refused says why in the log.
-fn said(done: Result<(), EditError>) {
-    if let Err(why) = done {
-        tracing::info!("{why}");
-    }
-}
-
 /// Takes the instance `node` names out of the layout being edited, as one undo entry.
 pub fn remove(node: &Node, name: &str) -> Result<(), EditError> {
-    let desktop = desktop_of(node)?;
+    let desktop =
+        reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
     let ops = removal(&session::draft().peek(), &desktop, node)?;
+    commit(telar::t!("editor.menu.removed", name = name), ops)
+}
+
+/// Takes the area `node` names off its screen, as one undo entry: out of the rule that writes it, and over whatever broader level still places it there ([`crate::written::area_removal`]).
+pub fn remove_area(node: &Node, name: &str) -> Result<(), EditError> {
+    let desktop =
+        reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
+    let layout = session::draft().peek();
+    let known = known();
+    let ops = crate::written::area_removal(
+        &layout,
+        &known,
+        &desktop.resolving(&layout, &known).resolved,
+        node.layer,
+        &node.area,
+        crate::variant::editing().as_ref(),
+    )
+    .map_err(EditError::Refused)?;
     commit(telar::t!("editor.menu.removed", name = name), ops)
 }
 
@@ -325,8 +348,8 @@ pub fn reset(node: &Node, id: &InstanceId, name: &str) -> Result<(), EditError> 
     let layout = session::draft().peek();
     let base = layout::reset::base_of(&layout, &known());
     let ops = layout::reset::ops(&layout, &base, layout::reset::Target::Instance(id))
-        .ok_or_else(|| gone(&node.area))?;
-    commit(telar::t!("editor.menu.reset_done", name = name), ops)
+        .ok_or_else(|| EditError::gone(&node.area))?;
+    commit(telar::t!("editor.menu.instance_reset", name = name), ops)
 }
 
 /// Moves the instance `node` names into `to`, drawn the way `to` draws it, keeping its id, options and bindings: a chip becomes a widget and back without becoming another instance (TA-3). One undo entry.
@@ -336,50 +359,78 @@ fn convert(
     name: &str,
     to: &Destination,
 ) -> Result<(), EditError> {
-    let desktop = desktop_of(node)?;
+    let desktop =
+        reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
     let layout = session::draft().peek();
+    let label = telar::t!("editor.menu.moved", name = name, place = to.place.clone());
+    if to.onto_grid {
+        let ops = crate::modes::desktop::moved_onto(
+            &layout,
+            &desktop,
+            node,
+            (to.layer, &to.area),
+            to.representation,
+            None,
+        )?;
+        return commit(label, ops);
+    }
     let mut ops = removal(&layout, &desktop, node)?;
     let mut after = layout.clone();
-    layout::ops::apply_all(&mut after, &ops).map_err(refused)?;
+    layout::ops::apply_all(&mut after, &ops)?;
     let moved = Instance {
-        id: resolved.id.clone(),
-        module: Some(resolved.module.clone()),
         representation: Some(to.representation),
-        options: resolved.options.clone(),
-        bindings: resolved.bindings.clone(),
-        actions: resolved.actions.clone(),
+        ..crate::modes::desktop::placed_as(resolved)
     };
-    let written = Written::area(&after, node.output.as_deref(), to.layer, &to.area)
-        .map_err(EditError::Refused)?;
-    ops.push(written.instance(&to.group, &resolved.id).op(&moved));
-    commit(
-        telar::t!("editor.menu.moved", name = name, place = to.place.clone()),
-        ops,
+    let written = Written::area(
+        &after,
+        node.output.as_deref(),
+        to.layer,
+        &to.area,
+        crate::variant::editing().as_ref(),
     )
+    .map_err(EditError::Refused)?;
+    ops.extend(written.instance(&to.group, &resolved.id).ops(&moved));
+    commit(label, ops)
 }
 
-/// What takes the instance `node` names off its screen: out of the rule that writes it, and, where a broader rule or a layout this one extends still places it there, named in the `remove` of its group as well.
-fn removal(layout: &Layout, desktop: &Desktop, node: &Node) -> Result<Vec<LayoutOp>, EditError> {
+/// What takes the instance `node` names off its screen: out of the rule that writes it, and, where a broader rule or a layout this one extends still places it there, named in the `remove` of its group as well. A grid's group left with nothing in it goes too, and a stack left with one widget is a widget again ([`crate::modes::desktop::tidied`]).
+pub(crate) fn removal(
+    layout: &Layout,
+    desktop: &Desktop,
+    node: &Node,
+) -> Result<Vec<LayoutOp>, EditError> {
     let Part::Instance(group, id) = &node.part else {
-        return Err(EditError::Refused(telar::t!("editor.popover.nothing")));
+        return Err(EditError::nothing());
     };
     let known = known();
     let mut after = layout.clone();
     let mut ops = Vec::new();
-    while placed(&after, &known, desktop, node, id) {
-        if ops.len() == 2 {
+    for round in 0.. {
+        if !placed(&after, &known, desktop, node, id) {
+            break;
+        }
+        if round == 2 {
             return Err(EditError::Refused(telar::t!(
                 "editor.menu.still_placed",
                 id = id.to_string()
             )));
         }
-        let op = Written::area(&after, node.output.as_deref(), node.layer, &node.area)
-            .map_err(EditError::Refused)?
-            .instance(group, id)
-            .removal();
-        layout::ops::apply(&mut after, &op).map_err(refused)?;
-        ops.push(op);
+        let step = Written::area(
+            &after,
+            node.output.as_deref(),
+            node.layer,
+            &node.area,
+            crate::variant::editing().as_ref(),
+        )
+        .map_err(EditError::Refused)?
+        .instance(group, id)
+        .removal();
+        layout::ops::apply_all(&mut after, &step)?;
+        ops.extend(step);
     }
+    ops.extend(crate::modes::desktop::tidied(
+        &after, desktop, node.layer, &node.area, group,
+    )?);
     Ok(ops)
 }
 
@@ -397,22 +448,11 @@ fn placed(
         &desktop.resolved.output,
         desktop.resolved.workspace.as_ref(),
     );
-    resolved
-        .layer(node.layer)
-        .and_then(|layer| layer.areas.iter().find(|area| area.id == node.area))
-        .is_some_and(|area| {
-            area.groups
-                .iter()
-                .any(|group| group.children.iter().any(|child| child.id == *id))
-        })
-}
-
-fn known() -> BTreeMap<LayoutId, Layout> {
-    surfaces::layouts::read(|store| store.all().clone()).unwrap_or_default()
-}
-
-fn refused(why: layout::OpError) -> EditError {
-    EditError::Refused(why.to_string())
+    resolved.area(node.layer, &node.area).is_some_and(|area| {
+        area.groups
+            .iter()
+            .any(|group| group.children.iter().any(|child| child.id == *id))
+    })
 }
 
 /// `ops` as one edit, previewed and committed at once: one entry in the history.
@@ -425,6 +465,23 @@ pub(crate) fn commit(label: String, ops: Vec<LayoutOp>) -> Result<(), EditError>
     edit.commit()
 }
 
+/// Makes a new area on the edited layer of the screen being edited, as one undo entry called what `label` says of it, and selects it: `plan` gives the operations that make it, on the layout and screen as they are now, and its id.
+pub(crate) fn make(
+    plan: impl FnOnce(&Layout, &Desktop, LayerKind) -> Result<(Vec<LayoutOp>, AreaId), EditError>,
+    label: fn(&AreaId) -> String,
+) -> Result<(), EditError> {
+    let mode = mode::required()?;
+    let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
+    let (ops, id) = plan(&session::draft().peek(), &desktop, mode.layer)?;
+    commit(label(&id), ops)?;
+    session::select(session::Selection::Area(Node::area(
+        Some(&mode.output),
+        mode.layer,
+        &id,
+    )));
+    Ok(())
+}
+
 /// An area an instance can be moved to, drawn the other way there.
 #[derive(Clone, Debug, PartialEq)]
 struct Destination {
@@ -432,6 +489,8 @@ struct Destination {
     area: AreaId,
     group: GroupId,
     representation: Representation,
+    /// A grid, where it goes on cells of its own rather than into a group.
+    onto_grid: bool,
     /// What the row calls it.
     place: String,
 }
@@ -444,18 +503,10 @@ fn destinations(
     module: &ModuleDescriptor,
 ) -> Vec<Destination> {
     let is_chip = resolved.representation == Representation::Chip;
-    let draws = |representation: Representation| {
-        module
-            .input(surfaces::area::representation(representation))
-            .is_some()
-    };
-    let as_widget = [
-        Representation::WidgetM,
-        Representation::WidgetS,
-        Representation::WidgetL,
-    ]
-    .into_iter()
-    .find(|representation| draws(*representation));
+    let chip = module
+        .input(surfaces::area::representation(Representation::Chip))
+        .is_some();
+    let (layout, known) = (session::draft().peek(), known());
     let mut found: Vec<Destination> = Vec::new();
     for layer in LayerKind::SESSION {
         let Some(areas) = desktop.resolved.layer(layer) else {
@@ -466,14 +517,14 @@ fn destinations(
                 continue;
             }
             let (representation, place) = match &area.kind {
-                ResolvedAreaKind::Bar { .. } if !is_chip && draws(Representation::Chip) => {
+                ResolvedAreaKind::Bar { .. } if !is_chip && chip => {
                     (Representation::Chip, telar::t!("editor.menu.place.bar"))
                 }
-                ResolvedAreaKind::Dock { .. } if !is_chip && draws(Representation::Chip) => {
+                ResolvedAreaKind::Dock { .. } if !is_chip && chip => {
                     (Representation::Chip, telar::t!("editor.menu.place.dock"))
                 }
                 ResolvedAreaKind::Grid { .. } | ResolvedAreaKind::Free { .. } if is_chip => {
-                    match as_widget {
+                    match crate::modes::palette::offered(module, layer) {
                         Some(widget) => (widget, place_of(layer)),
                         None => continue,
                     }
@@ -481,7 +532,15 @@ fn destinations(
                 _ => continue,
             };
             let group = area.groups.iter().find(|group| !group.stacked).map_or_else(
-                || GroupId::new(resolved.id.as_str()),
+                || {
+                    layout::ops::free_group_id(
+                        &layout,
+                        &known,
+                        layer,
+                        &area.id,
+                        resolved.id.as_str(),
+                    )
+                },
                 |group| group.id.clone(),
             );
             found.push(Destination {
@@ -489,6 +548,7 @@ fn destinations(
                 area: area.id.clone(),
                 group,
                 representation,
+                onto_grid: matches!(area.kind, ResolvedAreaKind::Grid { .. }),
                 place,
             });
         }

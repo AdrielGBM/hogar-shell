@@ -2,11 +2,11 @@
   "nodes": {
     "nixpkgs": {
       "locked": {
-        "lastModified": 1790578696,
-        "narHash": "sha256-ZoxIApko70jCdbH3l20HWXOBaT2HZd87orzd2yJ9dVE=",
+        "lastModified": 1790689126,
+        "narHash": "sha256-ilerN1WLSvF+HMjziC/Wv99J5y02maDH+6hZPwsORKg=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "7a0f122f5090cf4c2ade2a13a0e229d4e19ba71f",
+        "rev": "b4fd65b198c599cbe814fcb9f42d25d021595ec9",
         "type": "github"
       },
       "original": {
@@ -25,11 +25,11 @@
     "telar": {
       "flake": false,
       "locked": {
-        "lastModified": 1790517958,
-        "narHash": "sha256-0UXbIb2k8+HAppKQ4OqIEnAMyY5gq/85F0Dc+g0k0Sw=",
+        "lastModified": 1790738465,
+        "narHash": "sha256-ALK0TGu0pM7trm/1P2V8GP5DiYFFJULGmMNgXveGCac=",
         "ref": "refs/heads/dev",
-        "rev": "05c6d5a8573467cb643b4cf7976e13eb0b44d559",
-        "revCount": 964,
+        "rev": "df580edff32239bbc72c256d14d21dcb6e44cfb3",
+        "revCount": 979,
         "type": "git",
         "url": "file:///home/adrielgbm/projects/code/telar"
       },

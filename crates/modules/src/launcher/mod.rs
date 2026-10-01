@@ -14,9 +14,11 @@ use platform_wayland::ManagedToplevel;
 use config::scheme;
 use config::theme::{FontRole, NordTheme};
 use config::{LauncherAction, LauncherConfig};
+use layout::ResolvedAreaKind;
 use services::apps::{self, App};
 use services::state;
 use services::wallpaper;
+use surfaces::reconcile;
 use surfaces::transient::{self, Motion, Place, Slot, Spec};
 use ui::chrome::{Chrome, content_radius, panel_fill};
 use ui::keynav::{self, Move};
@@ -371,20 +373,45 @@ fn choose(entry: &Entry) {
 }
 
 pub fn toggle() {
+    let output = transient::focused_output();
     transient::toggle(
         Spec::new(
             ID,
-            Place::Centred,
+            placement(output.as_deref()),
             Rc::new(|chrome: &Chrome| {
                 panel(chrome.config.resolve_theme(), &chrome.config.launcher)
             }),
         )
         .slot(Slot::Standing)
-        .output(transient::focused_output())
+        .output(output)
         .keyboard(KeyboardMode::OnDemand)
         .dismiss_on_outside()
         .motion(Motion::Fade),
     );
+}
+
+/// Where the launcher opens on `output`: pinned where the first stack there that says so is pinned (`launcher = true`), and in the middle of the screen where none does.
+pub fn placement(output: Option<&str>) -> Place {
+    let Some(desktop) = reconcile::desktop_now(output) else {
+        return Place::Centred;
+    };
+    desktop
+        .resolved
+        .areas()
+        .find_map(|(_, area)| match area.kind {
+            ResolvedAreaKind::Stack {
+                anchor,
+                offset,
+                launcher: true,
+                ..
+            } => Some(Place::Pinned {
+                within: area.within,
+                anchor,
+                offset,
+            }),
+            _ => None,
+        })
+        .unwrap_or(Place::Centred)
 }
 
 /// Where the arrow keys move the selection, given the current index and how many results there are.

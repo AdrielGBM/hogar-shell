@@ -37,6 +37,12 @@ pub enum Place {
     /// The whole window its anchor is drawn in, for content that works on the anchored thing itself as well as beside it: a popover and the handles it puts on the item it customizes.
     Over(Anchor),
     Centred,
+    /// Pinned to `anchor` of the box `within` names, moved by `offset` and kept inside it: the launcher where a stack says it opens.
+    Pinned {
+        within: layout::Within,
+        anchor: layout::Anchor,
+        offset: layout::Offset,
+    },
     Docked {
         edge: Edge,
         thickness: f32,
@@ -720,6 +726,31 @@ fn position(place: &Place, content: Box<dyn LayoutItem>, screen: ReadSignal<Scre
                         let (x, y) = beside(&anchor, (laid.width, laid.height), usable());
                         Some([1.0, 0.0, 0.0, 1.0, x - laid.x, y - laid.y])
                     }),
+            ))
+        }
+        Place::Pinned {
+            within,
+            anchor,
+            offset,
+        } => {
+            let bounds = move || {
+                let screen = screen.get();
+                screen.reserved.box_of(within, screen.size)
+            };
+            Ok(Box::new(
+                StyledContainer::new(
+                    LayoutStyle::new()
+                        .absolute()
+                        .inset_start(0.0)
+                        .inset_top(0.0),
+                    |_| RectStyle::default(),
+                    vec![content],
+                )?
+                .with_transform(move |laid| {
+                    let at =
+                        crate::pinned::pinned(bounds(), anchor, (laid.width, laid.height), offset);
+                    Some([1.0, 0.0, 0.0, 1.0, at.x - laid.x, at.y - laid.y])
+                }),
             ))
         }
         Place::Centred => Ok(Box::new(

@@ -224,12 +224,50 @@ impl Representations {
     };
 }
 
+/// What a module is about, which is what a palette groups the modules it offers by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Category {
+    Time,
+    System,
+    Network,
+    Media,
+    Windows,
+    Info,
+    Shell,
+}
+
+impl Category {
+    /// Every category, in the order a palette lists them.
+    pub const ALL: [Category; 7] = [
+        Category::Time,
+        Category::System,
+        Category::Network,
+        Category::Media,
+        Category::Windows,
+        Category::Info,
+        Category::Shell,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Category::Time => "time",
+            Category::System => "system",
+            Category::Network => "network",
+            Category::Media => "media",
+            Category::Windows => "windows",
+            Category::Info => "info",
+            Category::Shell => "shell",
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct ModuleDescriptor {
     pub id: &'static str,
     pub name: &'static str,
     /// The glyph a palette or a popover shows the module by.
     pub icon: &'static str,
+    pub category: Category,
     /// The sections it reads, its own first; empty for a module with nothing to configure. More than one when what it draws is also configured elsewhere — the desktop clock face by `[clock.face]`, a temperature by `[temperature] unit`.
     pub options: &'static [OptionsType],
     pub representations: Representations,
@@ -636,6 +674,7 @@ mod tests {
             id: "probe",
             name: "Probe",
             icon: "circle",
+            category: crate::descriptor::Category::Info,
             options: &[],
             representations,
             actions: &[],
@@ -685,6 +724,7 @@ mod tests {
             id: "panics",
             name: "Panics",
             icon: "circle",
+            category: crate::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 chip: Some(ChipDef::new(panics, Input::ReadOnly)),
@@ -710,6 +750,7 @@ mod tests {
             id: "fails",
             name: "Fails",
             icon: "circle",
+            category: crate::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 chip: Some(ChipDef::new(fails, Input::ReadOnly)),
@@ -735,6 +776,7 @@ mod tests {
             id: "works",
             name: "Works",
             icon: "circle",
+            category: crate::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 panel: Some(PanelDef::new(reading, Input::ReadOnly)),

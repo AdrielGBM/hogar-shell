@@ -6,7 +6,7 @@ use ::layout::LayerKind;
 use ::ui::chrome::panel_fill;
 use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
 
-/// The mode strip: which layer is being edited and on which screen, the other modes a press away, the keys the mode answers, and the one explicit way out (TA-4, F-7). Where lock mode cannot offer tools, why it cannot sits under it instead.
+/// The mode strip: which layer is being edited and on which screen — and, while edits apply to one workspace alone, which one — the other modes a press away, the keys the mode answers, and the one explicit way out (TA-4, F-7). Under it sits why the last thing asked of the mode was not done, and, where lock mode cannot offer tools, why it cannot.
 pub struct Props {
     pub layer: LayerKind = LayerKind::Desktop,
     #[props(into)]
@@ -32,6 +32,8 @@ let help = crate::keys::help();
 let icon = icon_of(layer);
 let said = telar::t!("editor.editing", layer = name_of(layer), output = output.clone());
 let rad = ::ui::scale::corner::md();
+let variant = memo(move || crate::variant::workspace().map(|workspace| telar::t!("editor.variant.editing", workspace = workspace.0)).unwrap_or_default());
+let refusal = memo(move || mode::refusal().get().unwrap_or_default());
 
 [view]
 col align:center gap:(::ui::scale::space::xs()) pad_x:(::ui::scale::space::lg()) pad_y:(::ui::scale::space::sm()) fill:panel_fill() radius:rad input_opaque label:said
@@ -44,6 +46,10 @@ col align:center gap:(::ui::scale::space::xs()) pad_x:(::ui::scale::space::lg())
         box pad_x:(::ui::scale::space::md()) pad_y:(::ui::scale::space::xs()) fill:$theme.accent radius:rad hover_style(fill:$theme.accent.darken(0.08)) on_press:(|| { mode::leave(); })
             text "{done_label()}" color:$theme.base font_size:$theme.font(FontRole::Body)
     switcher current:layer
+    if !$variant.is_empty()
+        text "{$variant}" color:$theme.accent font_size:$theme.font(FontRole::Caption)
+    if !$refusal.is_empty()
+        text "{$refusal}" color:$theme.warning font_size:$theme.font(FontRole::Caption)
     if $refused.is_some()
         text "{$refused.unwrap_or_default()}" color:$theme.warning font_size:$theme.font(FontRole::Caption)
     if $help

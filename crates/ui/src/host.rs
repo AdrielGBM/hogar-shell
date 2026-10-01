@@ -550,6 +550,7 @@ mod tests {
         id: "clock",
         name: "Clock",
         icon: "clock",
+        category: crate::descriptor::Category::Info,
         options: &[crate::descriptor::OptionsType::of::<config::ClockConfig>()],
         representations: crate::descriptor::Representations {
             chip: Some(crate::descriptor::ChipDef::new(

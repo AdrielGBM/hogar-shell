@@ -21,4 +21,5 @@ ui = { workspace = true }
 util = { workspace = true }
 
 [dev-dependencies]
+telar = { workspace = true, features = ["testing"] }
 toml = { workspace = true }

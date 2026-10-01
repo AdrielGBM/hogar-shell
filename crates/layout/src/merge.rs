@@ -154,23 +154,29 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
         (
             AreaKind::Stack {
                 anchor,
+                offset,
                 width,
                 output_policy,
                 routes,
+                launcher,
             },
             AreaKind::Stack {
                 anchor: over_anchor,
+                offset: over_offset,
                 width: over_width,
                 output_policy: over_policy,
                 routes: over_routes,
+                launcher: over_launcher,
             },
         ) => {
             replace_if_set(anchor, over_anchor);
+            replace_if_set(offset, over_offset);
             replace_if_set(width, over_width);
             replace_if_set(output_policy, over_policy);
             if !over_routes.is_empty() {
                 *routes = over_routes.clone();
             }
+            replace_if_set(launcher, over_launcher);
         }
         (
             AreaKind::WallpaperRegion {

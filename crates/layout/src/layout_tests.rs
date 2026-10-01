@@ -891,9 +891,11 @@ mod tests {
             },
             AreaKind::Stack {
                 anchor: Some(Anchor::BottomRight),
+                offset: Some(Offset { x: -12.0, y: 24.0 }),
                 width: Some(360.0),
                 output_policy: Some(StackOutputPolicy::Focused),
                 routes: vec![Route::default()],
+                launcher: Some(true),
             },
             AreaKind::WallpaperRegion {
                 rect: Some(Rect::default()),
@@ -1213,6 +1215,7 @@ mod tests {
         assert_eq!(
             instance_ids(&resolved),
             [
+                "clock-2",
                 "workspaces",
                 "clock",
                 "notes",
@@ -1546,6 +1549,35 @@ mod tests {
         let resolved = alone(&parsed, "DP-1");
         assert_eq!(resolved.reserved(config::Edge::Top), 2.0);
         assert_eq!(resolved.reserved(config::Edge::Bottom), 0.0);
+    }
+
+    /// Two bars side by side along one edge share its band, so the edge reserves the deeper of them rather than both stacked.
+    #[test]
+    fn bars_beside_each_other_on_one_edge_reserve_the_deepest_not_the_sum() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "left-half"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            length = { px = 900 }
+            reserve = true
+            [[outputs.layers.top.areas]]
+            id = "right-half"
+            kind = "bar"
+            edge = "top"
+            thickness = 40
+            length = { px = 900 }
+            offset = 1000
+            reserve = true
+            "#,
+        );
+        let resolved = alone(&parsed, "DP-1");
+        assert_eq!(resolved.reserved(config::Edge::Top), 40.0);
     }
 
     /// Whatever sequence of edits a gesture, a popover or a script makes, undoing them all comes back to exactly the layout it started from, and redoing them all goes forward to exactly where it stopped.
@@ -2258,6 +2290,14 @@ mod tests {
                     ..bare_area("games-grid")
                 }),
             },
+            LayoutOp::SetLayerRemove {
+                site: Site::everywhere(LayerKind::Desktop),
+                remove: vec![AreaId::new("inherited-grid")],
+            },
+            LayoutOp::SetLayerRemove {
+                site: games(LayerKind::Desktop),
+                remove: vec![AreaId::new("inherited-grid"), AreaId::new("other")],
+            },
         ];
         for edit in &edits {
             undoes_exactly(&start, edit);
@@ -2450,6 +2490,10 @@ mod tests {
                 },
             }),
         });
+        refused(LayoutOp::SetLayerRemove {
+            site: games(LayerKind::Top),
+            remove: vec![AreaId::new("bar-top")],
+        });
 
         let mut holding = start.clone();
         ops::apply(
@@ -2571,6 +2615,13 @@ mod tests {
                 visible: Some(Expr("$battery.percent > 50".into())),
             },
             ops::PromptEdit::Hide,
+        );
+        refused(
+            LayoutOp::SetLayerRemove {
+                site: lock(),
+                remove: vec![prompt.clone()],
+            },
+            ops::PromptEdit::Remove,
         );
 
         undoes_exactly(
@@ -2743,6 +2794,299 @@ mod tests {
                 reset::Target::Instance(&InstanceId::new("nothing"))
             )
             .is_none()
+        );
+    }
+
+    /// A new area is named after the one it came from, counting past every id of its layer the layout or one it extends has ever written there, and a count on the stem is not counted twice.
+    #[test]
+    fn a_free_area_id_counts_past_every_id_its_layer_has() {
+        let mut mine = built_in();
+        mine.id = LayoutId::new("mine");
+        mine.extends = Some(LayoutId::new(BUILT_IN));
+        mine.outputs[0]
+            .layers
+            .background
+            .remove
+            .push(AreaId::new("background-2"));
+        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let free = |stem: &str| ops::free_area_id(&mine, &known, LayerKind::Background, stem);
+        assert_eq!(free("background"), AreaId::new("background-3"));
+        assert_eq!(free("background-3"), AreaId::new("background-3"));
+        assert_eq!(free("left"), AreaId::new("left"));
+        assert_eq!(
+            ops::free_area_id(&mine, &known, LayerKind::Top, "background"),
+            AreaId::new("background"),
+            "ids are per layer"
+        );
+    }
+
+    /// A new instance is named after its module, counting past every instance the layout or one it extends places or takes away anywhere: ids are unique across the whole layout, not per layer.
+    #[test]
+    fn a_free_instance_id_counts_past_every_instance_of_the_chain() {
+        let mut mine = Layout {
+            id: LayoutId::new("mine"),
+            extends: Some(LayoutId::new(BUILT_IN)),
+            outputs: vec![OutputRule::default()],
+            ..Layout::default()
+        };
+        mine.outputs[0].layers.desktop.areas.push(Area {
+            groups: vec![Group {
+                id: GroupId::new("gone"),
+                remove: vec![InstanceId::new("clock-3")],
+                ..Group::default()
+            }],
+            ..bare_area("widgets")
+        });
+        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let free = |stem: &str| ops::free_instance_id(&mine, &known, stem);
+        assert_eq!(
+            free("clock"),
+            InstanceId::new("clock-4"),
+            "the bar's, the desktop's and one taken away are taken"
+        );
+        assert_eq!(free("battery"), InstanceId::new("battery"));
+        assert_eq!(free("workspaces-2"), InstanceId::new("workspaces-2"));
+    }
+
+    /// A new group is named after its zone, counting past every group its area has at any level — placed by the layout it extends, taken away, refined for a workspace — and only in that area.
+    #[test]
+    fn a_free_group_id_counts_past_every_group_its_area_has() {
+        let mut mine = Layout {
+            id: LayoutId::new("mine"),
+            extends: Some(LayoutId::new(BUILT_IN)),
+            outputs: vec![OutputRule::default()],
+            ..Layout::default()
+        };
+        mine.outputs[0].layers.top.areas.push(Area {
+            remove: vec![GroupId::new("end")],
+            ..bare_area("bar-top")
+        });
+        mine.outputs[0].workspaces.push(WorkspaceRule {
+            matches: WorkspaceMatch("2".into()),
+            layers: SessionLayers {
+                top: Layer {
+                    areas: vec![Area {
+                        groups: vec![Group {
+                            id: GroupId::new("end-2"),
+                            ..Group::default()
+                        }],
+                        ..bare_area("bar-top")
+                    }],
+                    ..Layer::default()
+                },
+                ..SessionLayers::default()
+            },
+        });
+        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let bar = AreaId::new("bar-top");
+        let free = |stem: &str| ops::free_group_id(&mine, &known, LayerKind::Top, &bar, stem);
+        assert_eq!(
+            free("end"),
+            GroupId::new("end-3"),
+            "the one taken away and the workspace's are taken"
+        );
+        assert_eq!(free("start"), GroupId::new("start-2"));
+        assert_eq!(free("middle"), GroupId::new("middle"));
+        assert_eq!(
+            ops::free_group_id(
+                &mine,
+                &known,
+                LayerKind::Desktop,
+                &AreaId::new("widgets"),
+                "end"
+            ),
+            GroupId::new("end"),
+            "ids are per area"
+        );
+    }
+
+    /// An area a broader level places is taken off one level by naming it in that level's `remove`, and the op that does so gives back exactly what the list said before.
+    #[test]
+    fn a_layer_takes_an_inherited_area_away_through_its_remove_list() {
+        let mut mine = Layout {
+            id: LayoutId::new("mine"),
+            extends: Some(LayoutId::new(BUILT_IN)),
+            outputs: vec![OutputRule::default()],
+            ..Layout::default()
+        };
+        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let hide = LayoutOp::SetLayerRemove {
+            site: Site::everywhere(LayerKind::Overlay),
+            remove: vec![AreaId::new("stack")],
+        };
+        let back = ops::apply(&mut mine, &hide).expect("an inherited area is taken away");
+        let (resolved, _) = resolve(&mine, &known, "DP-1", None);
+        assert!(area_ids(&resolved, LayerKind::Overlay).is_empty());
+        ops::apply(&mut mine, &back).expect("and put back");
+        let (resolved, _) = resolve(&mine, &known, "DP-1", None);
+        assert_eq!(area_ids(&resolved, LayerKind::Overlay), ["stack"]);
+    }
+
+    /// The built-in layout's desktop shows the clock face where the old default `[widgets.clock]` put it: centred on the whole output, held 48 px off its edges, at the medium size, one instance of the clock module like the bar's chip is another.
+    #[test]
+    fn the_built_in_desktop_shows_the_clock_where_the_old_default_put_it() {
+        let resolved = alone(&built_in(), "DP-1");
+        let desktop = resolved.layer(LayerKind::Desktop).expect("a desktop layer");
+        let [widgets] = desktop.areas.as_slice() else {
+            panic!(
+                "one area on the desktop: {:?}",
+                area_ids(&resolved, LayerKind::Desktop)
+            );
+        };
+        assert_eq!(
+            widgets.kind,
+            ResolvedAreaKind::Grid {
+                rect: Rect::default(),
+                cell: 80.0,
+                gap: 16.0,
+                anchor: Anchor::Center,
+            }
+        );
+        assert_eq!(widgets.within, Within::Output);
+        assert_eq!(widgets.style.padding, Some(48.0));
+        let [clock] = widgets.groups.as_slice() else {
+            panic!("one group");
+        };
+        assert!(matches!(clock.kind, GroupKind::Cell { col: 0, row: 0, .. }));
+        let [face] = clock.children.as_slice() else {
+            panic!("one instance");
+        };
+        assert_eq!(
+            (face.id.as_str(), face.module.as_str()),
+            ("clock-2", "clock")
+        );
+        assert_eq!(face.representation, Representation::WidgetM);
+        assert!(
+            face.options.is_empty(),
+            "drawn as the clock module draws it by default"
+        );
+    }
+
+    fn routed(
+        kind: CardKind,
+        app: Option<&'static str>,
+        urgency: Option<Urgency>,
+    ) -> RoutedCard<'static> {
+        RoutedCard { kind, app, urgency }
+    }
+
+    fn route(kind: Option<CardKind>, app: Option<&str>, urgency: Option<Urgency>) -> Route {
+        Route {
+            kind,
+            app: app.map(str::to_string),
+            urgency,
+        }
+    }
+
+    /// Every field a route sets has to match, the app without regard to case; a field it leaves out matches anything, and an app or an urgency is something only a notification has.
+    #[test]
+    fn a_route_takes_what_every_field_it_sets_matches() {
+        use CardKind::*;
+        let firefox = Some("Firefox");
+        let table: &[(Route, RoutedCard, bool)] = &[
+            (Route::default(), routed(Toast, None, None), true),
+            (
+                Route::default(),
+                routed(Notification, firefox, Some(Urgency::Low)),
+                true,
+            ),
+            (route(Some(Osd), None, None), routed(Osd, None, None), true),
+            (
+                route(Some(Osd), None, None),
+                routed(Toast, None, None),
+                false,
+            ),
+            (
+                route(None, Some("firefox"), None),
+                routed(Notification, firefox, Some(Urgency::Normal)),
+                true,
+            ),
+            (
+                route(None, Some("firefox"), None),
+                routed(Notification, Some("Slack"), Some(Urgency::Normal)),
+                false,
+            ),
+            (
+                route(None, Some("firefox"), None),
+                routed(Toast, None, None),
+                false,
+            ),
+            (
+                route(Some(Notification), None, Some(Urgency::Critical)),
+                routed(Notification, firefox, Some(Urgency::Critical)),
+                true,
+            ),
+            (
+                route(Some(Notification), None, Some(Urgency::Critical)),
+                routed(Notification, firefox, Some(Urgency::Normal)),
+                false,
+            ),
+            (
+                route(None, None, Some(Urgency::Low)),
+                routed(Osd, None, None),
+                false,
+            ),
+            (
+                route(Some(Notification), Some("Slack"), Some(Urgency::Critical)),
+                routed(Notification, Some("slack"), Some(Urgency::Critical)),
+                true,
+            ),
+            (
+                route(Some(Notification), Some("Slack"), Some(Urgency::Critical)),
+                routed(Notification, Some("slack"), Some(Urgency::Low)),
+                false,
+            ),
+        ];
+        for (route, card, takes) in table {
+            assert_eq!(route.takes(card), *takes, "{route:?} for {card:?}");
+        }
+    }
+
+    /// F-2.8: a card goes to the first stack with a route that takes it, and a stack with no routes takes the rest — the first of them, wherever it is in the order — while a stack whose routes take nothing of the card's never sees it.
+    #[test]
+    fn a_card_goes_to_the_first_route_that_takes_it_and_else_to_the_first_stack_with_none() {
+        let critical = route(Some(CardKind::Notification), None, Some(Urgency::Critical));
+        let osd = route(Some(CardKind::Osd), None, None);
+        let stacks: Vec<(&str, Vec<Route>)> = vec![
+            ("corner", Vec::new()),
+            ("centre", vec![critical.clone()]),
+            ("spare", Vec::new()),
+            ("bottom", vec![osd, critical]),
+        ];
+        let landing =
+            |card: RoutedCard| route_card(&stacks, |(_, routes)| routes, &card).map(|(id, _)| *id);
+        assert_eq!(
+            landing(routed(
+                CardKind::Notification,
+                Some("mail"),
+                Some(Urgency::Critical)
+            )),
+            Some("centre"),
+            "the first route that takes it, though a stack with none comes before it"
+        );
+        assert_eq!(landing(routed(CardKind::Osd, None, None)), Some("bottom"));
+        assert_eq!(
+            landing(routed(CardKind::Toast, None, None)),
+            Some("corner"),
+            "no route takes a toast, so the first stack with none does"
+        );
+        assert_eq!(
+            landing(routed(
+                CardKind::Notification,
+                Some("mail"),
+                Some(Urgency::Normal)
+            )),
+            Some("corner")
+        );
+        let routed_only = &stacks[1..2];
+        assert_eq!(
+            route_card(
+                routed_only,
+                |(_, routes)| routes,
+                &routed(CardKind::Toast, None, None)
+            ),
+            None,
+            "with no stack that routes nothing, what no route takes is shown nowhere"
         );
     }
 }

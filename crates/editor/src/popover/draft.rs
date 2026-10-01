@@ -1,6 +1,8 @@
 //! What a popover edits: its own copy of one area or instance as the layout writes it, and the controls bound to parts of that copy.
 //!
-//! Every control of a popover writes into the copy, and one effect previews the copy through the popover's [`Edit`]: the layout as it was when the popover opened, with the one operation that writes the copy back where it came from. So every change is live on the real item, Esc puts the layout back exactly, and however many controls moved, closing any other way records one entry in the history.
+//! Every control of a popover writes into the copy, and one effect previews the copy through the popover's [`Edit`]: the layout as it was when the popover opened, with the operations that write the copy back where it came from. So every change is live on the real item, Esc puts the layout back exactly, and however many controls moved, closing any other way records one entry in the history.
+//!
+//! Where the copy is written back can change while the popover is open: switching "this workspace only" on moves an area's copy into that workspace's rule ([`crate::variant`]). An instance's copy moves the same way, its changes replayed by name. The copy is then made again from what that rule writes, with every control that has moved written into it once more, so the change lands there alone and nothing the popover did not touch is pinned into the rule.
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -11,13 +13,17 @@ use std::sync::Arc;
 use telar::{OwnerId, ReadSignal, Rect, RwSignal, effect, signal};
 
 use config::Config;
-use layout::{Area, AreaKind, Instance, LayoutOp, ResolvedArea, ResolvedInstance};
-use surfaces::rects::{self, Node};
+use layout::{Area, AreaKind, Instance, Layout, LayoutOp, ResolvedArea, ResolvedInstance};
+use surfaces::reconcile::Desktop;
+use surfaces::rects::{self, Node, Part};
 
 use crate::session::Edit;
 use crate::written::{Written, WrittenInstance};
 
 use super::value::{self, Path};
+
+/// Writes one control's value into an area, if it moved from where it started.
+type Replay = Rc<dyn Fn(&mut Area)>;
 
 /// An area being customized.
 #[derive(Clone)]
@@ -30,7 +36,10 @@ pub struct AreaDraft {
     /// The size of that screen, in logical pixels.
     pub screen: (f32, f32),
     area: RwSignal<Area>,
+    written: Rc<RefCell<Written>>,
+    edit: Edit,
     values: Rc<RefCell<HashMap<&'static str, Box<dyn Any>>>>,
+    replays: Rc<RefCell<Vec<Replay>>>,
     /// What the shared values belong to: the popover, so they outlive a rebuild of its rows.
     owner: Option<OwnerId>,
 }
@@ -46,28 +55,84 @@ impl AreaDraft {
         written: Written,
     ) -> Self {
         let area = signal(written.area.clone());
+        let written = Rc::new(RefCell::new(written));
+        let target = Rc::clone(&written);
         previewing(edit, area, move |changed| {
-            (*changed != written.area).then(|| written.op(changed))
+            let written = target.borrow();
+            match *changed == written.area {
+                true => Vec::new(),
+                false => written.ops(changed),
+            }
         });
-        Self {
+        let draft = Self {
             node,
             resolved: Rc::new(resolved),
             config,
             screen,
             area,
+            written,
+            edit: edit.clone(),
             values: Rc::default(),
+            replays: Rc::default(),
             owner: telar::current_owner(),
+        };
+        draft.follow_the_variant();
+        draft
+    }
+
+    /// Writes the copy where the workspace variant being edited says, whenever that changes under the open popover.
+    fn follow_the_variant(&self) {
+        if !crate::variant::applies_to(&self.node) {
+            return;
+        }
+        let draft = self.clone();
+        let written_for = RefCell::new(crate::variant::editing());
+        effect(move || {
+            let workspace = crate::variant::workspace();
+            if *written_for.borrow() == workspace {
+                return;
+            }
+            *written_for.borrow_mut() = workspace.clone();
+            let Some(before) = draft.edit.transaction().before() else {
+                return;
+            };
+            match Written::area(
+                &before,
+                draft.node.output.as_deref(),
+                draft.node.layer,
+                &draft.node.area,
+                workspace.as_ref(),
+            ) {
+                Ok(written) => draft.retarget(written),
+                Err(why) => tracing::info!("the popover's change stays where it was: {why}"),
+            }
+        });
+    }
+
+    /// Writes the copy back where `written` says from now on: the copy made again from what that rule writes, with every control that has moved written into it once more.
+    fn retarget(&self, written: Written) {
+        let mut area = written.area.clone();
+        for replay in self.replays.borrow().iter() {
+            replay(&mut area);
+        }
+        let ops = match area == written.area {
+            true => Vec::new(),
+            false => written.ops(&area),
+        };
+        *self.written.borrow_mut() = written;
+        if self.area.peek_with(|now| *now != area) {
+            self.area.set(area);
+        }
+        if self.edit.is_open()
+            && let Err(why) = self.edit.preview(ops)
+        {
+            crate::mode::refuse(why);
         }
     }
 
     /// The area as the popover has it now, as the layout writes it.
     pub fn area(&self) -> ReadSignal<Area> {
         self.area.read_only()
-    }
-
-    /// Changes the area; a change that leaves it as it was is no change.
-    pub fn update(&self, change: impl FnOnce(&mut Area)) {
-        update(self.area, change);
     }
 
     /// Which kind of area this is, as the layout file spells it.
@@ -91,10 +156,24 @@ impl AreaDraft {
             return shared;
         }
         let area = self.area;
+        let write = Rc::new(write);
+        let writing = Rc::clone(&write);
+        let started = seed();
+        let from = started.clone();
         let value = telar::with_owner(self.owner, || {
-            bound(seed(), move |value| update(area, |held| write(held, value)))
+            bound(started, move |value| {
+                update(area, |held| writing(held, value))
+            })
         });
         self.values.borrow_mut().insert(name, Box::new(value));
+        self.replays
+            .borrow_mut()
+            .push(Rc::new(move |area: &mut Area| {
+                let now = value.peek();
+                if now != from {
+                    write(area, &now);
+                }
+            }));
         value
     }
 
@@ -107,6 +186,11 @@ impl AreaDraft {
             .copied()
     }
 
+    /// Whether a control of the popover edits the value called `name`, whatever its type.
+    pub fn edits(&self, name: &str) -> bool {
+        self.values.borrow().contains_key(name)
+    }
+
     /// The area's geometry as it writes it, made a partial entry of its own kind first when it names none: what a control changing one field of the geometry writes into.
     pub fn kind_mut<'a>(area: &'a mut Area, kind: &'static str) -> Option<&'a mut AreaKind> {
         if area.kind.is_none() {
@@ -115,6 +199,25 @@ impl AreaDraft {
         area.kind.as_mut()
     }
 }
+
+/// Sets the field `$field` of an area's `$variant` geometry to `Some($value)`, making the geometry a partial entry of `$kind` first where the area names none ([`AreaDraft::kind_mut`]).
+macro_rules! kind_field {
+    ($area:expr, $kind:expr, $variant:ident { $field:ident }, $value:expr) => {{
+        let value = $value;
+        if let Some(::layout::AreaKind::$variant { $field, .. }) =
+            $crate::popover::AreaDraft::kind_mut($area, $kind)
+        {
+            *$field = Some(value);
+        }
+    }};
+}
+pub(crate) use kind_field;
+
+/// Writes one change into an instance, again whenever the copy is made afresh.
+type Change = Rc<dyn Fn(&mut Instance)>;
+
+/// What a change to an instance in an area of some kind brings with it on its screen, given the layout with the change made: a widget grown on a grid moves what it now covers out of the way.
+pub type Settle = fn(&Node, &Desktop, &Layout) -> Vec<LayoutOp>;
 
 /// An instance being customized.
 #[derive(Clone)]
@@ -126,10 +229,14 @@ pub struct InstanceDraft {
     /// Its options as the screen has them: its module's sections, its presentation and what the layout sets on it, over one another.
     pub shown: Rc<toml::Table>,
     instance: RwSignal<Instance>,
+    written: Rc<RefCell<WrittenInstance>>,
+    edit: Edit,
+    /// Every change made so far, one per thing changed and in the order they were last made.
+    changes: Rc<RefCell<Vec<(String, Change)>>>,
 }
 
 impl InstanceDraft {
-    /// A draft of the instance `node` names, placed in an area of the kind `area_kind`, as `resolved` and `shown` show it and `written` writes it, previewing through `edit`.
+    /// A draft of the instance `node` names, placed in an area of the kind `area_kind`, as `resolved` and `shown` show it and `written` writes it, previewing through `edit` with whatever `settle` adds.
     pub fn new(
         edit: &Edit,
         node: Node,
@@ -137,26 +244,95 @@ impl InstanceDraft {
         area_kind: &'static str,
         shown: toml::Table,
         written: WrittenInstance,
+        settle: Option<(Settle, Desktop)>,
     ) -> Self {
         let instance = signal(written.instance.clone());
+        let written = Rc::new(RefCell::new(written));
+        let (target, settling, previewed) = (Rc::clone(&written), node.clone(), edit.clone());
         previewing(edit, instance, move |changed| {
-            (*changed != written.instance).then(|| written.op(changed))
+            let written = target.borrow();
+            if *changed == written.instance {
+                return Vec::new();
+            }
+            let mut ops = written.ops(changed);
+            if let Some((settle, desktop)) = &settle
+                && let Some(mut after) = previewed.transaction().before()
+                && layout::ops::apply_all(&mut after, &ops).is_ok()
+            {
+                ops.extend(settle(&settling, desktop, &after));
+            }
+            ops
         });
-        Self {
+        let draft = Self {
             node,
             resolved: Rc::new(resolved),
             area_kind,
             shown: Rc::new(shown),
             instance,
+            written,
+            edit: edit.clone(),
+            changes: Rc::default(),
+        };
+        draft.follow_the_variant();
+        draft
+    }
+
+    /// Writes the copy where the workspace variant being edited says, whenever that changes under the open popover — the same replay an area's draft does.
+    fn follow_the_variant(&self) {
+        let Part::Instance(group, id) = self.node.part.clone() else {
+            return;
+        };
+        if !crate::variant::applies_to(&self.node) {
+            return;
         }
+        let draft = self.clone();
+        let written_for = RefCell::new(crate::variant::editing());
+        effect(move || {
+            let workspace = crate::variant::workspace();
+            if *written_for.borrow() == workspace {
+                return;
+            }
+            *written_for.borrow_mut() = workspace.clone();
+            let Some(before) = draft.edit.transaction().before() else {
+                return;
+            };
+            match Written::area(
+                &before,
+                draft.node.output.as_deref(),
+                draft.node.layer,
+                &draft.node.area,
+                workspace.as_ref(),
+            ) {
+                Ok(written) => draft.retarget(written.instance(&group, &id)),
+                Err(why) => tracing::info!("the popover's change stays where it was: {why}"),
+            }
+        });
+    }
+
+    /// Writes the copy back where `written` says from now on: made again from what that rule writes, with every change made so far written into it once more.
+    fn retarget(&self, written: WrittenInstance) {
+        let mut instance = written.instance.clone();
+        for (_, change) in self.changes.borrow().iter() {
+            change(&mut instance);
+        }
+        *self.written.borrow_mut() = written;
+        self.instance.set(instance);
     }
 
     pub fn instance(&self) -> ReadSignal<Instance> {
         self.instance.read_only()
     }
 
-    pub fn update(&self, change: impl FnOnce(&mut Instance)) {
-        update(self.instance, change);
+    /// Makes the change called `name` — the instance's size, one option — replacing whatever change of that name was made before it.
+    pub fn update(&self, name: impl Into<String>, change: impl Fn(&mut Instance) + 'static) {
+        let change: Change = Rc::new(change);
+        {
+            let mut changes = self.changes.borrow_mut();
+            let name = name.into();
+            changes.retain(|(held, _)| *held != name);
+            changes.push((name, Rc::clone(&change)));
+        }
+        update(self.instance, |held| change(held));
     }
 
     /// What the option at `path` is on screen now.
@@ -174,17 +350,24 @@ impl InstanceDraft {
         seed: T,
         to_value: impl Fn(&T) -> toml::Value + 'static,
     ) -> RwSignal<T> {
-        let (instance, shown) = (self.instance, Rc::clone(&self.shown));
-        bound(seed, move |value| {
-            update(instance, |held| {
-                value::set(&mut held.options, &shown, &path, to_value(value));
-            })
-        })
+        let draft = self.clone();
+        bound(seed, move |value| draft.set_option(&path, to_value(value)))
+    }
+
+    /// Writes `whole` at `path` in the instance's own options — a list or a table of names being one value however many elements it has.
+    pub fn set_option(&self, path: &[value::Step], whole: toml::Value) {
+        let (shown, at) = (Rc::clone(&self.shown), path.to_vec());
+        self.update(option_change(path), move |held| {
+            value::set(&mut held.options, &shown, &at, whole.clone())
+        });
     }
 
     /// Takes the option at `path` off the instance, so it shows what it inherits there again.
     pub fn unset(&self, path: &[value::Step]) {
-        self.update(|held| value::unset(&mut held.options, path));
+        let at = path.to_vec();
+        self.update(option_change(path), move |held| {
+            value::unset(&mut held.options, &at)
+        });
     }
 
     /// Whether the instance sets the option at `path` itself.
@@ -192,6 +375,11 @@ impl InstanceDraft {
         self.instance
             .with(|held| value::get(&held.options, path).is_some())
     }
+}
+
+/// The name a change to the option at `path` goes by, which a later change to the same option replaces.
+fn option_change(path: &[value::Step]) -> String {
+    format!("options.{}", value::dotted(path))
 }
 
 fn update<T: Clone + PartialEq + 'static>(held: RwSignal<T>, change: impl FnOnce(&mut T)) {
@@ -215,11 +403,11 @@ fn bound<T: Clone + PartialEq + 'static>(seed: T, write: impl Fn(&T) + 'static) 
     value
 }
 
-/// Previews `copy` through `edit` whenever it changes: the operation `op` makes of it, or nothing when it is back as it was.
+/// Previews `copy` through `edit` whenever it changes: the operations `ops` make of it, none when it is back as it was.
 fn previewing<T: Clone + PartialEq + 'static>(
     edit: &Edit,
     copy: RwSignal<T>,
-    op: impl Fn(&T) -> Option<LayoutOp> + 'static,
+    ops: impl Fn(&T) -> Vec<LayoutOp> + 'static,
 ) {
     let edit = edit.clone();
     effect(move || {
@@ -227,8 +415,8 @@ fn previewing<T: Clone + PartialEq + 'static>(
         if !edit.is_open() {
             return;
         }
-        if let Err(why) = edit.preview(op(&changed).into_iter().collect()) {
-            tracing::info!("the popover's change was not previewed: {why}");
+        if let Err(why) = edit.preview(ops(&changed)) {
+            crate::mode::refuse(why);
         }
     });
 }
@@ -252,9 +440,11 @@ fn blank(kind: &str) -> Option<AreaKind> {
         },
         "stack" => AreaKind::Stack {
             anchor: None,
+            offset: None,
             width: None,
             output_policy: None,
             routes: Vec::new(),
+            launcher: None,
         },
         "wallpaper_region" => AreaKind::WallpaperRegion {
             rect: None,

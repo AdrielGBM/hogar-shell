@@ -6,13 +6,13 @@
 //!
 //! **What it shows.** An area's popover is its kind's tools and then what every area has; an instance's is generated from its module's options (F-3.2). Either is extended by adding tools ([`add_area_tool`], [`add_instance_tool`]), each giving rows for the card and handles for the item, which share values by name through the draft.
 
-mod area;
+pub(crate) mod area;
 mod draft;
 pub mod handles;
 mod instance;
-mod place;
+pub(crate) mod place;
 pub mod rows;
-mod value;
+pub(crate) mod value;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -25,7 +25,7 @@ use telar::{
 
 use config::Edge;
 use config::theme::{FontRole, NordTheme};
-use layout::{LayerKind, LayoutStore, ResolvedArea, Within};
+use layout::{LayerKind, LayoutStore, ResolvedArea};
 use platform_wayland::KeyboardMode;
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{self, Node, Part};
@@ -37,8 +37,11 @@ use crate::mode;
 use crate::session::{self, Edit, EditError, Selection};
 use crate::written::Written;
 
+use rows::label;
+
 pub use area::{help, parsed, spelled};
-pub use draft::{AreaDraft, InstanceDraft};
+pub(crate) use draft::kind_field;
+pub use draft::{AreaDraft, InstanceDraft, Settle};
 pub use instance::{option, shown};
 pub use value::{Path, Step, path_of};
 
@@ -65,6 +68,7 @@ pub type InstanceTool = fn(&InstanceDraft) -> Result<Inspector, LayoutError>;
 thread_local! {
     static AREA_TOOLS: RefCell<Vec<(&'static str, AreaTool)>> = const { RefCell::new(Vec::new()) };
     static INSTANCE_TOOLS: RefCell<Vec<InstanceTool>> = const { RefCell::new(Vec::new()) };
+    static SETTLES: RefCell<Vec<(&'static str, Settle)>> = const { RefCell::new(Vec::new()) };
     static OPEN: RefCell<Option<Open>> = const { RefCell::new(None) };
     static SERIAL: Cell<u64> = const { Cell::new(0) };
 }
@@ -77,6 +81,11 @@ pub fn add_area_tool(kind: &'static str, tool: AreaTool) {
 /// Adds `tool` to every instance's popover, after its generated rows and the tools added before it.
 pub fn add_instance_tool(tool: InstanceTool) {
     INSTANCE_TOOLS.with(|tools| tools.borrow_mut().push(tool));
+}
+
+/// Makes every change an instance's popover previews for an instance in an area of the kind `kind` bring `settle` with it: the operations it adds to the layout the change leaves, such as the widgets a grown one now covers moving out of its way.
+pub fn settle_instances_in(kind: &'static str, settle: Settle) {
+    SETTLES.with(|settles| settles.borrow_mut().push((kind, settle)));
 }
 
 pub(crate) fn install() {
@@ -120,7 +129,7 @@ enum Subject {
 /// Opens the popover for what `selection` names: an instance's for an instance, its area's for an area or a group.
 pub fn open_for(selection: &Selection) -> Result<(), EditError> {
     match selection {
-        Selection::None => Err(EditError::Refused(telar::t!("editor.popover.nothing"))),
+        Selection::None => Err(EditError::nothing()),
         Selection::Area(node) | Selection::Group(node) => {
             open_area(Node::area(node.output.as_deref(), node.layer, &node.area))
         }
@@ -139,7 +148,7 @@ pub fn open_area(node: Node) -> Result<(), EditError> {
 /// Opens the popover of the instance `node` names.
 pub fn open_instance(node: Node) -> Result<(), EditError> {
     if !matches!(node.part, Part::Instance(..)) {
-        return Err(EditError::Refused(telar::t!("editor.popover.nothing")));
+        return Err(EditError::nothing());
     }
     open(node, true)
 }
@@ -164,6 +173,16 @@ pub fn shared<T: 'static>(name: &str) -> Option<RwSignal<T>> {
     })
 }
 
+/// Whether the open area popover has a control for the value called `name` ([`AreaDraft::edits`]): what an operation the key table counts as reached through it is checked against ([`crate::keys::CUSTOMIZED`]).
+pub fn edits(name: &str) -> bool {
+    OPEN.with(
+        |open| match open.borrow().as_ref().map(|open| &open.subject) {
+            Some(Subject::Area(draft)) => draft.edits(name),
+            _ => false,
+        },
+    )
+}
+
 fn open(node: Node, of_instance: bool) -> Result<(), EditError> {
     close();
     if session::open().is_some() {
@@ -179,20 +198,25 @@ fn open(node: Node, of_instance: bool) -> Result<(), EditError> {
     {
         return Err(EditError::Refused(telar::t!("editor.popover.lock")));
     }
-    let desktop = reconcile::desktops()
-        .iter()
-        .find(|desktop| desktop.output == node.output)
-        .cloned()
-        .ok_or_else(|| gone(&node))?;
+    let desktop =
+        reconcile::desktop(node.output.as_deref()).ok_or_else(|| EditError::gone(&node.area))?;
     let area = desktop
         .resolved
-        .layer(node.layer)
-        .and_then(|layer| layer.areas.iter().find(|area| area.id == node.area))
+        .area(node.layer, &node.area)
         .cloned()
-        .ok_or_else(|| gone(&node))?;
+        .ok_or_else(|| EditError::gone(&node.area))?;
     let layout = session::draft().peek();
-    let written = Written::area(&layout, node.output.as_deref(), node.layer, &node.area)
-        .map_err(EditError::Refused)?;
+    let workspace = crate::variant::applies_to(&node)
+        .then(crate::variant::editing)
+        .flatten();
+    let written = Written::area(
+        &layout,
+        node.output.as_deref(),
+        node.layer,
+        &node.area,
+        workspace.as_ref(),
+    )
+    .map_err(EditError::Refused)?;
 
     let serial = SERIAL.with(|next| {
         next.set(next.get() + 1);
@@ -286,7 +310,7 @@ fn subject(
         return Ok((made, name));
     }
     let Part::Instance(group, id) = node.part.clone() else {
-        return Err(EditError::Refused(telar::t!("editor.popover.nothing")));
+        return Err(EditError::nothing());
     };
     let resolved = area
         .groups
@@ -294,11 +318,18 @@ fn subject(
         .find(|held| held.id == group)
         .and_then(|held| held.children.iter().find(|child| child.id == id))
         .cloned()
-        .ok_or_else(|| gone(&node))?;
+        .ok_or_else(|| EditError::gone(&node.area))?;
     let name = ui::descriptor::find(&resolved.module)
         .map_or_else(|| resolved.module.clone(), |module| module.name.to_string());
     let shown = instance::shown(&config, &resolved.module, &resolved.options);
     let kind = area.kind.name();
+    let settle = SETTLES.with(|settles| {
+        settles
+            .borrow()
+            .iter()
+            .find(|(of, _)| *of == kind)
+            .map(|(_, settle)| (*settle, desktop.clone()))
+    });
     let made: Made = Box::new(move |edit| {
         Subject::Instance(InstanceDraft::new(
             edit,
@@ -307,13 +338,10 @@ fn subject(
             kind,
             shown,
             written.instance(&group, &id),
+            settle,
         ))
     });
     Ok((made, name))
-}
-
-fn gone(node: &Node) -> EditError {
-    EditError::Refused(telar::t!("editor.popover.gone", id = node.area.to_string()))
 }
 
 /// Closes the popover `serial` opened, if it is still the one open: keeps what it previewed unless it was reverted already, and lets go of everything it held.
@@ -418,6 +446,7 @@ fn instance_inspector(draft: &InstanceDraft) -> Result<Inspector, LayoutError> {
         whole.rows.extend(rows);
         whole.handles.extend(handles);
     }
+    whole.rows.extend(area::variant_rows(&draft.node)?);
     Ok(whole)
 }
 
@@ -444,7 +473,7 @@ fn card(
     )?;
     let done = telar::button(
         telar::ButtonProps::props()
-            .label(telar::Reactive::of(|| telar::t!("editor.done")))
+            .label(label!("editor.done"))
             .on_press(Rc::new(move || open.set(false)))
             .build(),
         Children::default(),
@@ -459,8 +488,8 @@ fn card(
     )?;
     let output = node.output.clone();
     let inner = WIDTH - 2.0 * pad;
-    let tall =
-        (rows.len() as f32 * ROW + pad).min((usable(output.as_deref()).height * 0.7).max(ROW));
+    let tall = (rows.len() as f32 * ROW + pad)
+        .min((crate::host::usable(output.as_deref()).height * 0.7).max(ROW));
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
@@ -491,20 +520,11 @@ fn card(
             item,
             edge,
             (laid.width, laid.height),
-            usable(output.as_deref()),
+            crate::host::usable(output.as_deref()),
         );
         Some([1.0, 0.0, 0.0, 1.0, x - laid.x, y - laid.y])
     });
     Ok(Box::new(body))
-}
-
-/// What the reserving areas of the screen `output` leave, as its windows draw it now.
-fn usable(output: Option<&str>) -> telar::Rect {
-    reconcile::desktops()
-        .iter()
-        .find(|desktop| desktop.output.as_deref() == output)
-        .map(|desktop| desktop.reserved.box_of(Within::Usable, desktop.size))
-        .unwrap_or_default()
 }
 
 /// The tree of the popover `serial` opened, or nothing once it is closed.
@@ -529,4 +549,13 @@ fn tree_of(serial: u64) -> Built {
 pub(crate) fn tree() -> Option<Built> {
     let serial = OPEN.with(|held| held.borrow().as_ref().map(|open| open.serial))?;
     Some(tree_of(serial))
+}
+
+/// The open instance popover's draft.
+#[cfg(test)]
+pub(crate) fn instance_draft() -> Option<InstanceDraft> {
+    OPEN.with(|held| match &held.borrow().as_ref()?.subject {
+        Subject::Instance(draft) => Some(draft.clone()),
+        Subject::Area(_) => None,
+    })
 }

@@ -1,0 +1,1077 @@
+//! The desktop mode's tools (T-7.2): widgets added from the palette, dropped, stacked, detached and resized on grids without ever taking one off the screen, a chip turned into a widget and back as the same instance, edits for one workspace alone, and areas an extended level places taken away.
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::rc::Rc;
+
+    use telar::{
+        AvailableSpace, ComponentList, Container, DismissRegistration, Event, Key, LayoutItem,
+        LayoutStyle, ModifiersState, NamedKey, PointerButton, PointerSource, compute_layout,
+    };
+    use telar::{RectStyle, StyledContainer};
+
+    use layout::{
+        ActiveWorkspace, Area, AreaId, AreaKind, GroupId, GroupKind, InstanceId, LayerKind, Layout,
+        LayoutId, OutputMatch, OutputRule, Representation, ResolvedArea, ResolvedGroup,
+        WorkspaceMatch,
+    };
+    use surfaces::menu::{Asked, Pointed};
+    use surfaces::rects::Node;
+    use surfaces::transient;
+    use ui::descriptor::{
+        Built, Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef,
+    };
+    use ui::host::{Host, WidgetSize};
+
+    use crate::keys::{self, Press};
+    use crate::mode::{self, Compositor};
+    use crate::modes::desktop::{self, Landing};
+    use crate::modes::grid::{self, Cells, Room};
+    use crate::modes::palette::{self, Line, Offer, Pick};
+    use crate::modes::widgets;
+    use crate::rig::{Rig, SCREEN, rig_on, rig_with};
+    use crate::session::{self, Selection};
+    use crate::{context, host, popover, variant};
+
+    fn face(_: &Host) -> Built {
+        Ok(Box::new(StyledContainer::new(
+            LayoutStyle::new().width(40.0).height(20.0),
+            |_| RectStyle::default(),
+            Vec::new(),
+        )?))
+    }
+
+    const fn module(
+        id: &'static str,
+        name: &'static str,
+        category: Category,
+        chip: bool,
+        sizes: &'static [WidgetSize],
+        input: Input,
+    ) -> ModuleDescriptor {
+        ModuleDescriptor {
+            id,
+            name,
+            icon: "circle",
+            category,
+            options: &[],
+            representations: Representations {
+                chip: match chip {
+                    true => Some(ChipDef::new(face, Input::ReadOnly)),
+                    false => None,
+                },
+                widget: Some(WidgetDef {
+                    sizes,
+                    build: face,
+                    input,
+                }),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        }
+    }
+
+    static PROBES: &[ModuleDescriptor] = &[
+        module(
+            "clock",
+            "Clock",
+            Category::Time,
+            true,
+            &WidgetSize::ALL,
+            Input::ReadOnly,
+        ),
+        module(
+            "weather",
+            "Weather",
+            Category::Info,
+            false,
+            &[WidgetSize::S, WidgetSize::M],
+            Input::ReadOnly,
+        ),
+        module(
+            "mixer",
+            "Mixer",
+            Category::Media,
+            false,
+            &[WidgetSize::M],
+            Input::Interactive,
+        ),
+    ];
+
+    /// An owner for what a test builds, disposed when it ends.
+    struct Owner(telar::OwnerGuard);
+
+    impl Owner {
+        fn new() -> Self {
+            ui::descriptor::install(PROBES);
+            Self(telar::owner_scope())
+        }
+    }
+
+    impl Drop for Owner {
+        fn drop(&mut self) {
+            mode::leave();
+            transient::close_all();
+            telar::dispose_owner(self.0.id());
+        }
+    }
+
+    const NONE: ModifiersState = ModifiersState {
+        is_shift: false,
+        is_ctrl: false,
+        is_alt: false,
+        is_meta: false,
+    };
+
+    fn enter(layer: LayerKind) -> DismissRegistration {
+        mode::enter_as(
+            layer,
+            Some(SCREEN),
+            &Compositor {
+                restack: true,
+                locked: false,
+                lockable: Ok(()),
+            },
+        )
+        .expect("the mode opens");
+        let id = host::transient_id(SCREEN);
+        DismissRegistration::new(Rc::new(move || transient::close(&id)))
+    }
+
+    fn tap(key: Key, modifiers: ModifiersState) -> bool {
+        telar::observe_keyboard(&Event::KeyPressed {
+            key: key.clone(),
+            modifiers,
+        });
+        let taken = telar::dispatch_overlays(&Event::KeyPressed {
+            key: key.clone(),
+            modifiers,
+        }) || keys::press_as(&key, modifiers, Press::First);
+        telar::observe_keyboard(&Event::KeyReleased {
+            key: key.clone(),
+            modifiers,
+        });
+        keys::settle_released();
+        taken
+    }
+
+    fn stored(rig: &Rig) -> Layout {
+        rig.store.borrow().active().clone()
+    }
+
+    fn widgets_area() -> AreaId {
+        AreaId::new("widgets")
+    }
+
+    fn shown_area(layer: LayerKind, id: &AreaId) -> Option<ResolvedArea> {
+        surfaces::reconcile::desktops()[0]
+            .resolved
+            .layer(layer)?
+            .areas
+            .iter()
+            .find(|area| area.id == *id)
+            .cloned()
+    }
+
+    fn grid_now() -> ResolvedArea {
+        shown_area(LayerKind::Desktop, &widgets_area()).expect("the desktop grid")
+    }
+
+    /// The group the instance `id` is in on the desktop grid, as the screen shows it.
+    fn holding(id: &str) -> Option<ResolvedGroup> {
+        grid_now()
+            .groups
+            .into_iter()
+            .find(|group| group.children.iter().any(|child| child.id.as_str() == id))
+    }
+
+    fn cells_of(id: &str) -> Option<Cells> {
+        holding(id).as_ref().and_then(grid::cells_of)
+    }
+
+    fn node_of(id: &str) -> Node {
+        let group = holding(id).expect("the instance is on the grid");
+        Node::area(Some(SCREEN), LayerKind::Desktop, &widgets_area())
+            .instance(&group.id, &InstanceId::new(id))
+    }
+
+    fn commit(ops: Vec<layout::LayoutOp>) {
+        context::commit("test".to_string(), ops).expect("the edit commits");
+    }
+
+    fn at(col: u32, row: u32, cols: u32, rows: u32) -> Cells {
+        Cells {
+            col,
+            row,
+            cols,
+            rows,
+        }
+    }
+
+    /// A small, repeatable source of choices.
+    struct Choices(u64);
+
+    impl Choices {
+        fn below(&mut self, bound: u32) -> u32 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % u64::from(bound.max(1))) as u32
+        }
+    }
+
+    fn nearness(cells: &Cells, to: (u32, u32)) -> (u64, u32, u32) {
+        let dx = i64::from(cells.col) - i64::from(to.0);
+        let dy = i64::from(cells.row) - i64::from(to.1);
+        ((dx * dx + dy * dy) as u64, cells.row, cells.col)
+    }
+
+    /// Tolerant reflow, whatever is dropped wherever: nothing overlaps, nothing is lost or resized, nothing the drop does not cover moves, and each widget it displaces lands on the free cells nearest where it was — no free cells inside the grid are nearer, given what was settled before it.
+    #[test]
+    fn reflow_never_overlaps_never_loses_and_moves_the_displaced_to_the_nearest_free_cells() {
+        let mut choices = Choices(0x9E37_79B9_7F4A_7C15);
+        let sizes = [(1, 1), (2, 1), (2, 2), (4, 2), (4, 4)];
+        for _ in 0..2_000 {
+            let room = Room {
+                cols: 4 + choices.below(12),
+                rows: 3 + choices.below(8),
+            };
+            let mut groups: Vec<(GroupId, Cells)> = Vec::new();
+            for nth in 0..choices.below(10) {
+                let (cols, rows) = sizes[choices.below(sizes.len() as u32) as usize];
+                for _ in 0..20 {
+                    let cells = at(
+                        choices.below(room.cols),
+                        choices.below(room.rows),
+                        cols,
+                        rows,
+                    );
+                    if cells.fits(room) && !groups.iter().any(|(_, other)| other.overlaps(&cells)) {
+                        groups.push((GroupId::new(format!("g{nth}")), cells));
+                        break;
+                    }
+                }
+            }
+            let (moved, size) = match groups.is_empty() || choices.below(4) == 0 {
+                true => {
+                    let (cols, rows) = sizes[choices.below(sizes.len() as u32) as usize];
+                    (GroupId::new("new"), at(0, 0, cols, rows))
+                }
+                false => groups[choices.below(groups.len() as u32) as usize].clone(),
+            };
+            let to = size.at(choices.below(room.cols + 3), choices.below(room.rows + 3));
+            let placed = grid::reflow(&groups, &moved, to, room);
+            let cells = |id: &GroupId| {
+                placed
+                    .iter()
+                    .find(|(held, _)| held == id)
+                    .map(|(_, cells)| *cells)
+            };
+
+            let before: BTreeSet<&GroupId> =
+                groups.iter().map(|(id, _)| id).chain([&moved]).collect();
+            let after: BTreeSet<&GroupId> = placed.iter().map(|(id, _)| id).collect();
+            assert_eq!(before, after, "no group is lost or made up");
+            assert_eq!(placed.len(), after.len(), "each group once");
+            for (at, (one, a)) in placed.iter().enumerate() {
+                for (other, b) in &placed[at + 1..] {
+                    assert!(!a.overlaps(b), "{one} {a:?} overlaps {other} {b:?}");
+                }
+            }
+            let landed = to.within(room);
+            assert_eq!(cells(&moved), Some(landed));
+            let mut displaced: Vec<(GroupId, Cells)> = Vec::new();
+            for (id, was) in &groups {
+                let now = cells(id).expect("still placed");
+                assert_eq!(
+                    (now.cols, now.rows),
+                    (was.cols, was.rows),
+                    "{id} kept its size"
+                );
+                let moved_away = *id != moved && now != *was;
+                assert_eq!(
+                    moved_away,
+                    *id != moved && was.overlaps(&landed),
+                    "{id} is displaced exactly when the drop covers it"
+                );
+                if moved_away {
+                    displaced.push((id.clone(), *was));
+                }
+            }
+            displaced.sort_by_key(|(_, was)| (was.row, was.col));
+            let mut settled: Vec<Cells> = groups
+                .iter()
+                .filter(|(id, _)| *id != moved && !displaced.iter().any(|(held, _)| held == id))
+                .map(|(_, cells)| *cells)
+                .chain([landed])
+                .collect();
+            for (id, was) in &displaced {
+                let now = cells(id).expect("placed");
+                let free = |cells: &Cells| !settled.iter().any(|other| other.overlaps(cells));
+                let nearer = (0..room.rows)
+                    .flat_map(|row| (0..room.cols).map(move |col| was.at(col, row)))
+                    .filter(|cells| cells.fits(room) && free(cells))
+                    .find(|cells| match now.fits(room) {
+                        true => {
+                            nearness(cells, (was.col, was.row)) < nearness(&now, (was.col, was.row))
+                        }
+                        false => true,
+                    });
+                assert_eq!(nearer, None, "{id} from {was:?} landed at {now:?}");
+                settled.push(now);
+            }
+        }
+    }
+
+    /// The built-in layout's desktop shows its clock where the old default `[widgets.clock]` put it: in the middle of the screen, at the medium size.
+    #[test]
+    fn the_built_in_desktop_shows_the_clock_in_the_middle_of_the_screen() {
+        let _rig = rig_with("desktop-clock", |_| {});
+        let _owner = Owner::new();
+        let desktop = surfaces::reconcile::desktops()[0].clone();
+        let grid = grid_now();
+        let geometry = widgets::Geometry::of(&desktop, &grid).expect("a grid");
+        let clock = cells_of("clock-2").expect("the desktop clock is on it");
+        assert_eq!((clock.cols, clock.rows), (4, 2), "a medium widget");
+        let face = geometry.rect_of(clock);
+        let middle = (face.x + face.width / 2.0, face.y + face.height / 2.0);
+        assert_eq!(
+            middle,
+            (desktop.size.0 / 2.0, desktop.size.1 / 2.0),
+            "centred on the screen, as the old default drew it"
+        );
+    }
+
+    /// The acceptance: a widget put on cells another covers takes them, and the one it displaced moves to the free cells nearest — it is never taken off the screen. One undo takes the whole drop back.
+    #[test]
+    fn a_widget_dropped_on_an_occupied_cell_never_deletes_the_occupant() {
+        let rig = rig_with("desktop-drop-occupied", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        assert_eq!(cells_of("clock-2"), Some(at(0, 0, 4, 2)));
+
+        desktop::put(
+            &Pick::Module("weather".into()),
+            Some((widgets_area(), (0, 0))),
+            LayerKind::Desktop,
+        )
+        .expect("the palette puts it there");
+        assert_eq!(
+            cells_of("weather"),
+            Some(at(0, 0, 4, 2)),
+            "the new widget takes the cells"
+        );
+        assert_eq!(
+            cells_of("clock-2"),
+            Some(at(0, 2, 4, 2)),
+            "and the clock is still there, on the free cells nearest where it was"
+        );
+        assert_eq!(rig.undo_label().as_deref(), Some("Add Weather"));
+
+        let dropped = desktop::dropped(
+            &session::draft().peek(),
+            &surfaces::reconcile::desktops()[0],
+            &node_of("clock-2"),
+            &widgets_area(),
+            &Landing::Cell { col: 1, row: 0 },
+        )
+        .expect("the clock is dropped over the weather");
+        commit(dropped);
+        assert_eq!(cells_of("clock-2"), Some(at(1, 0, 4, 2)));
+        let weather = cells_of("weather").expect("the weather is not taken away");
+        assert!(!weather.overlaps(&at(1, 0, 4, 2)), "{weather:?}");
+
+        session::undo().expect("the drop is undone");
+        session::undo().expect("the add is undone");
+        assert_eq!(stored(&rig), before, "each was one entry");
+    }
+
+    /// Enter in the palette puts the entry on the free cells nearest the selection, under an id read off its module and never one already taken.
+    #[test]
+    fn a_widget_added_from_the_keyboard_lands_near_the_selection_with_a_readable_id() {
+        let rig = rig_with("desktop-add-near", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        assert!(session::select(Selection::Instance(node_of("clock-2"))));
+        let before = stored(&rig);
+        desktop::put(&Pick::Module("clock".into()), None, LayerKind::Desktop)
+            .expect("added near the selection");
+        let fresh = holding("clock-3").expect("the bar's clock and the desktop's keep theirs");
+        assert_eq!(grid::cells_of(&fresh), Some(at(0, 2, 4, 2)));
+        assert_eq!(
+            cells_of("clock-2"),
+            Some(at(0, 0, 4, 2)),
+            "nothing had to move"
+        );
+        session::undo().expect("the add is undone");
+        assert_eq!(stored(&rig), before);
+    }
+
+    /// The palette lists each category's widgets under its heading, narrowed by what is typed, the bars' chips after them; on the lock screen only readings, and no bars (TA-8).
+    #[test]
+    fn the_palette_groups_by_category_narrows_by_what_is_typed_and_offers_readings_on_the_lock() {
+        let _rig = rig_with("desktop-palette", |_| {});
+        let _owner = Owner::new();
+        let desktop = surfaces::reconcile::desktops()[0].clone();
+        let names = |lines: Vec<Line>| -> Vec<String> {
+            lines
+                .into_iter()
+                .map(|line| match line {
+                    Line::Heading(heading) => format!("# {heading}"),
+                    Line::Entry { name, .. } => name,
+                })
+                .collect()
+        };
+        assert_eq!(
+            names(palette::lines(
+                &desktop,
+                LayerKind::Desktop,
+                "",
+                Offer::Every
+            )),
+            [
+                "# Time",
+                "Clock",
+                "# Media",
+                "Mixer",
+                "# Information",
+                "Weather",
+                "# From bars…",
+                "Clock on bar-top"
+            ]
+        );
+        assert_eq!(
+            names(palette::lines(
+                &desktop,
+                LayerKind::Desktop,
+                "WEA",
+                Offer::Every
+            )),
+            ["# Information", "Weather"]
+        );
+        assert_eq!(
+            names(palette::lines(
+                &desktop,
+                LayerKind::Desktop,
+                "",
+                Offer::FromBars
+            )),
+            ["# From bars…", "Clock on bar-top"]
+        );
+        assert_eq!(
+            names(palette::lines(&desktop, LayerKind::Lock, "", Offer::Every)),
+            ["# Time", "Clock", "# Information", "Weather"],
+            "the mixer answers the pointer, so the lock screen is not offered it"
+        );
+        let mixer = ui::descriptor::find("mixer").expect("installed");
+        assert_eq!(palette::offered(mixer, LayerKind::Lock), None);
+        assert_eq!(
+            palette::offered(mixer, LayerKind::Desktop),
+            Some(Representation::WidgetM)
+        );
+        let refused = desktop::added(
+            &session::draft().peek(),
+            &desktop,
+            LayerKind::Lock,
+            &AreaId::new("lock-readings"),
+            &desktop::Adding {
+                module: "mixer",
+                representation: Representation::WidgetM,
+                at: None,
+                near: (0, 0),
+            },
+        );
+        assert!(
+            matches!(&refused, Err(session::EditError::Refused(why)) if why.contains("readings only")),
+            "{refused:?}"
+        );
+    }
+
+    /// Dropped onto the middle of another widget, a widget stacks with it at its cells; a third joins the stack; dragged out, each leaves it for cells of its own, and a stack of one is a widget again.
+    #[test]
+    fn dropping_onto_a_widget_stacks_them_and_dragging_out_detaches() {
+        let rig = rig_with("desktop-stack", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        let add = |id_of: &str, cell: (u32, u32)| {
+            let (ops, id) = desktop::added(
+                &session::draft().peek(),
+                &surfaces::reconcile::desktops()[0],
+                LayerKind::Desktop,
+                &widgets_area(),
+                &desktop::Adding {
+                    module: id_of,
+                    representation: Representation::WidgetM,
+                    at: Some(cell),
+                    near: (0, 0),
+                },
+            )
+            .expect("added");
+            commit(ops);
+            id
+        };
+        let drop = |id: &str, landing: Landing| {
+            let ops = desktop::dropped(
+                &session::draft().peek(),
+                &surfaces::reconcile::desktops()[0],
+                &node_of(id),
+                &widgets_area(),
+                &landing,
+            )
+            .expect("dropped");
+            commit(ops);
+        };
+        add("weather", (5, 0));
+        let target = holding("weather").expect("the weather").id;
+
+        drop("clock-2", Landing::Onto(target.clone()));
+        let stack = holding("clock-2").expect("the clock is still placed");
+        assert_eq!(stack.id, target, "in the weather's group");
+        assert!(stack.stacked, "one at a time");
+        assert_eq!(stack.children.len(), 2);
+        assert_eq!(
+            grid::cells_of(&stack).map(|cells| (cells.col, cells.row)),
+            Some((5, 0))
+        );
+        assert!(
+            grid_now()
+                .groups
+                .iter()
+                .all(|group| group.id.as_str() != "clock"),
+            "the clock's own group, empty, is gone"
+        );
+
+        let third = add("clock", (0, 4));
+        drop(third.as_str(), Landing::Onto(target.clone()));
+        assert_eq!(
+            holding(third.as_str()).map(|group| group.children.len()),
+            Some(3),
+            "the stack takes one more"
+        );
+
+        drop("clock-2", Landing::Cell { col: 10, row: 0 });
+        let alone = holding("clock-2").expect("detached, still placed");
+        assert_ne!(alone.id, target);
+        assert!(!alone.stacked);
+        assert_eq!(
+            grid::cells_of(&alone).map(|cells| (cells.col, cells.row)),
+            Some((10, 0))
+        );
+        assert!(holding("weather").is_some_and(|group| group.stacked));
+
+        drop(third.as_str(), Landing::Cell { col: 0, row: 4 });
+        let left = holding("weather").expect("the weather stays");
+        assert_eq!(left.children.len(), 1);
+        assert!(!left.stacked, "a stack of one is a widget again");
+
+        for _ in 0..6 {
+            session::undo().expect("one entry each");
+        }
+        assert_eq!(stored(&rig), before);
+    }
+
+    /// Ctrl+→ steps the selected widget one size up, and what it now covers moves to the free cells nearest where it was.
+    #[test]
+    fn a_size_step_moves_what_the_widget_grows_over() {
+        let rig = rig_with("desktop-size", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let (ops, _) = desktop::added(
+            &session::draft().peek(),
+            &surfaces::reconcile::desktops()[0],
+            LayerKind::Desktop,
+            &widgets_area(),
+            &desktop::Adding {
+                module: "weather",
+                representation: Representation::WidgetS,
+                at: Some((0, 2)),
+                near: (0, 0),
+            },
+        )
+        .expect("added under the clock");
+        commit(ops);
+        let before = stored(&rig);
+        assert!(session::select(Selection::Instance(node_of("clock-2"))));
+        assert!(tap(
+            Key::Named(NamedKey::ArrowRight),
+            ModifiersState {
+                is_ctrl: true,
+                ..NONE
+            }
+        ));
+        assert_eq!(cells_of("clock-2"), Some(at(0, 0, 4, 4)), "large now");
+        assert_eq!(
+            cells_of("weather"),
+            Some(at(0, 4, 2, 2)),
+            "moved to the free cells nearest where it was"
+        );
+        session::undo().expect("one entry");
+        assert_eq!(stored(&rig), before);
+    }
+
+    /// TA-3 through the palette: a chip from a bar becomes a widget on the grid and, from its menu, a chip on the bar again — the same instance, id and options, each one undo entry.
+    #[test]
+    fn a_chip_from_a_bar_becomes_a_widget_and_back_keeping_its_id_and_options() {
+        let rig = rig_with("desktop-from-bars", |layout| {
+            for group in &mut layout.outputs[0].layers.top.areas[0].groups {
+                for child in &mut group.children {
+                    if child.id.as_str() == "clock" {
+                        child.options.insert("format".into(), "%H:%M".into());
+                    }
+                }
+            }
+        });
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        let chip = Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
+            .instance(&GroupId::new("center"), &InstanceId::new("clock"));
+        desktop::put(&Pick::FromBar(chip), None, LayerKind::Desktop).expect("moved onto the grid");
+        let widget = holding("clock").expect("the bar's clock is on the grid");
+        let placed = &widget.children[0];
+        assert_eq!(placed.representation, Representation::WidgetM);
+        assert_eq!(
+            placed.options.get("format").and_then(|it| it.as_str()),
+            Some("%H:%M")
+        );
+        assert_eq!(
+            cells_of("clock-2"),
+            Some(at(0, 0, 4, 2)),
+            "the desktop clock kept its cells"
+        );
+        assert!(
+            !shown_area(LayerKind::Top, &AreaId::new("bar-top"))
+                .expect("the bar")
+                .groups
+                .iter()
+                .any(|group| group
+                    .children
+                    .iter()
+                    .any(|child| child.id.as_str() == "clock")),
+            "and it left the bar"
+        );
+
+        context::open(Asked {
+            node: node_of("clock"),
+            window: LayerKind::Overlay,
+            at: None,
+        })
+        .expect("its menu opens");
+        context::pick("Move to bar as chip");
+        let bar = shown_area(LayerKind::Top, &AreaId::new("bar-top")).expect("the bar");
+        let back = bar
+            .groups
+            .iter()
+            .flat_map(|group| group.children.iter())
+            .find(|child| child.id.as_str() == "clock")
+            .expect("the clock is a chip again");
+        assert_eq!(back.representation, Representation::Chip);
+        assert_eq!(
+            back.options.get("format").and_then(|it| it.as_str()),
+            Some("%H:%M")
+        );
+        assert!(holding("clock").is_none(), "and gone from the grid");
+
+        session::undo().expect("the move back is undone");
+        session::undo().expect("the move onto the grid is undone");
+        assert_eq!(stored(&rig), before);
+    }
+
+    fn resolved_on(layout: &Layout, workspace: Option<&str>) -> layout::Resolved {
+        let active = workspace.map(|name| ActiveWorkspace {
+            name: name.to_string(),
+            id: None,
+            special: None,
+        });
+        layout::resolve(layout, &BTreeMap::new(), SCREEN, active.as_ref()).0
+    }
+
+    fn instance_on<'a>(
+        resolved: &'a layout::Resolved,
+        id: &str,
+    ) -> Option<&'a layout::ResolvedInstance> {
+        resolved
+            .instances()
+            .find(|instance| instance.id.as_str() == id)
+    }
+
+    fn group_on(resolved: &layout::Resolved, id: &str) -> Option<ResolvedGroup> {
+        resolved
+            .layer(LayerKind::Desktop)?
+            .areas
+            .iter()
+            .flat_map(|area| area.groups.iter())
+            .find(|group| group.children.iter().any(|child| child.id.as_str() == id))
+            .cloned()
+    }
+
+    /// With "this workspace only" switched on under an open instance popover, what it changed moves into that workspace's rule, and a widget dropped on other cells lands there alone too.
+    #[test]
+    fn an_instance_edited_for_one_workspace_is_written_there_alone() {
+        let rig = rig_on("desktop-variant", Some("2"), |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        popover::open_instance(node_of("clock-2")).expect("its popover opens");
+        let _tree = popover::tree().expect("a popover").expect("it builds");
+        let draft = popover::instance_draft().expect("an instance's draft");
+        draft.set_option(
+            &popover::path_of("format"),
+            toml::Value::String("%H".into()),
+        );
+        variant::set(true).expect("the screen says which workspace is up");
+        popover::close();
+
+        let layout = stored(&rig);
+        let format = |workspace: Option<&str>| {
+            instance_on(&resolved_on(&layout, workspace), "clock-2")
+                .and_then(|clock| clock.options.get("format").cloned())
+        };
+        assert_eq!(format(Some("2")), Some(toml::Value::String("%H".into())));
+        assert_eq!(
+            format(Some("3")),
+            None,
+            "other workspaces keep what they had"
+        );
+        assert_eq!(format(None), None);
+        assert_eq!(
+            layout.outputs[0].workspaces.len(),
+            1,
+            "the rule for the workspace was made"
+        );
+
+        let dropped = desktop::dropped(
+            &session::draft().peek(),
+            &surfaces::reconcile::desktops()[0],
+            &node_of("clock-2"),
+            &widgets_area(),
+            &Landing::Cell { col: 6, row: 1 },
+        )
+        .expect("dropped");
+        commit(dropped);
+        let layout = stored(&rig);
+        let placed = |workspace: Option<&str>| {
+            group_on(&resolved_on(&layout, workspace), "clock-2")
+                .and_then(|group| grid::cells_of(&group))
+        };
+        assert_eq!(
+            placed(Some("2")).map(|cells| (cells.col, cells.row)),
+            Some((6, 1))
+        );
+        assert_eq!(
+            placed(Some("3")).map(|cells| (cells.col, cells.row)),
+            Some((0, 0))
+        );
+    }
+
+    /// An area only the extended layout places is taken off by naming it in the layer's `remove` — by Delete and by its menu's Remove — and one undo puts it back.
+    #[test]
+    fn deleting_an_area_a_broader_level_places_names_it_in_the_layers_remove() {
+        let rig = rig_with("desktop-delete-inherited", |layout| {
+            *layout = Layout {
+                id: LayoutId::new("mine"),
+                extends: Some(LayoutId::new(layout::BUILT_IN)),
+                outputs: vec![OutputRule {
+                    matches: OutputMatch("*".into()),
+                    ..OutputRule::default()
+                }],
+                ..Layout::default()
+            };
+            layout.outputs[0].layers.top.areas.push(Area {
+                id: AreaId::new("bar-top"),
+                reserve: Some(false),
+                ..Area::default()
+            });
+        });
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        let widgets = Node::area(Some(SCREEN), LayerKind::Desktop, &widgets_area());
+
+        assert!(session::select(Selection::Area(widgets.clone())));
+        assert!(tap(Key::Named(NamedKey::Delete), NONE));
+        assert!(
+            shown_area(LayerKind::Desktop, &widgets_area()).is_none(),
+            "Delete takes it off"
+        );
+        assert_eq!(
+            stored(&rig).outputs[0].layers.desktop.remove,
+            [widgets_area()],
+            "named in the layer's remove"
+        );
+        session::undo().expect("undone");
+        assert_eq!(stored(&rig), before);
+
+        context::open(Asked {
+            node: widgets,
+            window: LayerKind::Overlay,
+            at: None,
+        })
+        .expect("its menu opens");
+        context::pick("Remove");
+        assert!(
+            shown_area(LayerKind::Desktop, &widgets_area()).is_none(),
+            "and so does Remove"
+        );
+        session::undo().expect("undone");
+        assert_eq!(stored(&rig), before);
+    }
+
+    /// Joining two regions while editing one workspace alone hides the one taken away on that workspace, although every workspace's rule writes it.
+    #[test]
+    fn a_join_for_one_workspace_hides_the_region_every_workspace_places() {
+        let rig = rig_on("desktop-join-variant", Some("2"), |layout| {
+            let background = &mut layout.outputs[0].layers.background;
+            if let Some(AreaKind::WallpaperRegion { rect, .. }) = &mut background.areas[0].kind {
+                *rect = Some(layout::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.5,
+                    h: 1.0,
+                });
+            }
+            background.areas.push(Area {
+                id: AreaId::new("right"),
+                kind: Some(AreaKind::WallpaperRegion {
+                    rect: Some(layout::Rect {
+                        x: 0.5,
+                        y: 0.0,
+                        w: 0.5,
+                        h: 1.0,
+                    }),
+                    source: None,
+                    fit: None,
+                    transition: None,
+                }),
+                ..Area::default()
+            });
+        });
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Background);
+        variant::set(true).expect("the screen says which workspace is up");
+        assert!(session::select(Selection::Area(Node::area(
+            Some(SCREEN),
+            LayerKind::Background,
+            &AreaId::new("background")
+        ))));
+        assert!(tap(
+            Key::Named(NamedKey::ArrowRight),
+            ModifiersState {
+                is_alt: true,
+                ..NONE
+            }
+        ));
+        let layout = stored(&rig);
+        let rule = &layout.outputs[0].workspaces[0];
+        assert_eq!(rule.matches, WorkspaceMatch("2".into()));
+        assert_eq!(rule.layers.background.remove, [AreaId::new("right")]);
+        let regions = |workspace: Option<&str>| {
+            crate::modes::regions::tiles_of(&resolved_on(&layout, workspace), LayerKind::Background)
+                .into_iter()
+                .map(|tile| tile.id.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(regions(Some("2")), ["background"]);
+        assert_eq!(regions(Some("3")), ["background", "right"]);
+    }
+
+    /// A drag reads the pointer against the grid's cells: over the middle of a widget it stacks, nearer its edge it goes on the cells under the carried widget's corner, and over no grid it lands nowhere.
+    #[test]
+    fn the_pointer_stacks_over_a_widgets_middle_and_places_beside_it_elsewhere() {
+        let _rig = rig_with("desktop-landing", |layout| {
+            layout.outputs[0].layers.desktop.areas[0].kind = Some(AreaKind::Grid {
+                rect: Some(layout::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.5,
+                    h: 1.0,
+                }),
+                cell: None,
+                gap: None,
+                anchor: Some(layout::Anchor::TopLeft),
+            });
+        });
+        let _owner = Owner::new();
+        let grids = widgets::grids(SCREEN, LayerKind::Desktop);
+        let (geometry, _) = &grids[0];
+        let clock = geometry.rect_of(at(0, 0, 4, 2));
+        let centre = (clock.x + clock.width / 2.0, clock.y + clock.height / 2.0);
+        let one = at(0, 0, 1, 1);
+        let landed = |point| widgets::landing_at(&grids, point, (0.0, 0.0), one, None);
+        assert!(matches!(
+            landed(centre),
+            Some((_, Landing::Onto(group), widgets::Aim::Onto(_))) if group.as_str() == "clock"
+        ));
+        assert!(matches!(
+            landed((clock.x + 4.0, clock.y + 4.0)),
+            Some((_, Landing::Cell { col: 0, row: 0 }, widgets::Aim::Cells(_)))
+        ));
+        let own = (&widgets_area(), &GroupId::new("clock"));
+        assert!(
+            matches!(
+                widgets::landing_at(&grids, centre, (0.0, 0.0), one, Some(own)),
+                Some((_, Landing::Cell { .. }, _))
+            ),
+            "never onto its own group"
+        );
+        assert_eq!(landed((1900.0, 500.0)), None, "the right half has no grid");
+        let far = (
+            geometry.origin.0 + 5.0 * geometry.pitch + 3.0,
+            geometry.origin.1 + 3.0 * geometry.pitch,
+        );
+        assert!(matches!(
+            landed(far),
+            Some((_, Landing::Cell { col: 5, row: 3 }, _))
+        ));
+        assert!(matches!(
+            grid_now().groups[0].kind,
+            GroupKind::Cell { col: 0, row: 0, .. }
+        ));
+    }
+
+    /// The desktop mode's layer over the screen, the palette and a widget's popover build, the size row among its rows.
+    #[test]
+    fn the_desktop_tools_the_palette_and_a_widgets_popover_build() {
+        let _rig = rig_with("desktop-builds", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let mode = mode::current().expect("the mode is up");
+        widgets::tool(&mode).expect("the desktop tool builds");
+        palette::tree(SCREEN, LayerKind::Desktop, Offer::Every).expect("the palette builds");
+        palette::open(Offer::FromBars).expect("the palette opens");
+        assert!(transient::is_open(palette::ID));
+        transient::close(palette::ID);
+        popover::open_instance(node_of("clock-2")).expect("the widget's popover opens");
+        popover::tree().expect("a popover").expect("it builds");
+        popover::close();
+    }
+
+    /// B7: a size drag Esc called off leaves nothing behind for the next one, which reads the widget where it is then: moved two rows down in between, a small pull on its corner keeps its size.
+    #[test]
+    fn a_cancelled_size_drag_starts_the_next_one_where_the_widget_is() {
+        let rig = rig_with("desktop-size-cancel", |layout| {
+            layout.outputs[0].layers.desktop.areas[0].kind = Some(AreaKind::Grid {
+                rect: Some(layout::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.5,
+                    h: 1.0,
+                }),
+                cell: None,
+                gap: None,
+                anchor: Some(layout::Anchor::TopLeft),
+            });
+        });
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let geometry = widgets::grids(SCREEN, LayerKind::Desktop)[0].0.clone();
+        let clock = node_of("clock-2");
+        let drawn = telar::signal(geometry.rect_of(cells_of("clock-2").expect("on the grid")));
+        surfaces::rects::track_spanning(clock.clone(), vec![drawn]);
+        assert!(session::select(Selection::Instance(clock)));
+        let mode = mode::current().expect("the mode is up");
+        let page = LayoutStyle::new().width(1920.0).height(1080.0);
+        let root = Pointed::new(Box::new(
+            Container::new(
+                page,
+                vec![widgets::tool(&mode).expect("the desktop tool builds")],
+            )
+            .expect("a page"),
+        ));
+        let node = root.layout_node();
+        let mut tree = ComponentList::new(root);
+        let lay_out = || {
+            compute_layout(
+                node,
+                AvailableSpace::Definite(1920.0),
+                AvailableSpace::Definite(1080.0),
+            )
+            .expect("the tool lays out")
+        };
+        lay_out();
+        let mut route = |event: Event| {
+            telar::observe_keyboard(&event);
+            if !telar::dispatch_overlays(&event) {
+                tree.on_event(&event);
+            }
+        };
+        let corner = |rect: telar::Rect| (rect.x + rect.width, rect.y + rect.height);
+        let press = |(x, y): (f32, f32)| Event::PointerPressed {
+            x: x.into(),
+            y: y.into(),
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        };
+        let to = |(x, y): (f32, f32)| Event::PointerMoved {
+            x: x.into(),
+            y: y.into(),
+            source: PointerSource::Mouse,
+        };
+        let before = stored(&rig);
+
+        let start = corner(drawn.peek());
+        route(press(start));
+        route(to((start.0 + 6.0, start.1 + 2.0 * geometry.pitch)));
+        assert_eq!(
+            holding("clock-2").map(|group| group.children[0].representation),
+            Some(Representation::WidgetL),
+            "the pull previews the large size"
+        );
+        route(Event::KeyPressed {
+            key: Key::Named(NamedKey::Escape),
+            modifiers: NONE,
+        });
+        assert_eq!(stored(&rig), before, "Esc called it off");
+        route(Event::PointerReleased {
+            x: start.0.into(),
+            y: start.1.into(),
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        });
+
+        for _ in 0..2 {
+            assert!(tap(
+                Key::Named(NamedKey::ArrowDown),
+                ModifiersState {
+                    is_shift: true,
+                    ..NONE
+                }
+            ));
+        }
+        drawn.set(geometry.rect_of(cells_of("clock-2").expect("still on the grid")));
+        lay_out();
+        let moved = stored(&rig);
+        let start = corner(drawn.peek());
+        route(press(start));
+        route(to((start.0 + 6.0, start.1 + 6.0)));
+        assert_eq!(
+            holding("clock-2").map(|group| group.children[0].representation),
+            Some(Representation::WidgetM),
+            "measured from where the widget is now, the pull asks for the size it has"
+        );
+        route(Event::PointerReleased {
+            x: (start.0 + 6.0).into(),
+            y: (start.1 + 6.0).into(),
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        });
+        assert_eq!(stored(&rig), moved);
+    }
+
+    /// B8: what only a mode can do — the palette, a new grid, a new bar, a new stack — says so when asked outside one, rather than calling it a missing workspace or nothing to customize.
+    #[test]
+    fn what_only_a_mode_does_says_so_outside_one() {
+        let _rig = rig_with("desktop-no-mode", |_| {});
+        let _owner = Owner::new();
+        let needs = Err(crate::session::EditError::Refused(
+            "Only an edit mode can do this".to_string(),
+        ));
+        assert_eq!(palette::open(Offer::Every), needs);
+        assert_eq!(desktop::create_grid(), needs);
+        assert_eq!(crate::modes::top::create_on(config::Edge::Bottom), needs);
+        assert_eq!(crate::modes::overlay::add_stack(), needs);
+    }
+}

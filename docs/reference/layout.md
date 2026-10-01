@@ -124,9 +124,11 @@ A column that notification, toast and OSD cards are routed into.
 | Key | What it is |
 | --- | --- |
 | `anchor` | One of the nine places a stack or a free area can be pinned to. |
+| `offset` | How far the column is moved from where its anchor puts it, in logical pixels. It never goes past the edge of the box it is measured in, and always keeps a quarter of that box's height for its cards. |
 | `width` | How wide a card in this column is, in logical pixels. |
 | `output_policy` | Which outputs a stack appears on. |
-| `routes` | Which cards land here. A card goes to the first stack whose routes accept it; a stack with no routes accepts everything. |
+| `routes` | Which cards land here. A card goes to the first stack on its output with a route that takes it; a stack with no routes takes what no route on that output takes, the first such stack taking all of it. |
+| `launcher` | Whether the launcher opens here, at this column's anchor and offset, rather than in the middle of the screen. The first stack on an output that says so is the one used. |
 
 ## `AreaKind::WallpaperRegion`
 
@@ -135,7 +137,7 @@ A region of the output that draws a wallpaper of its own.
 | Key | What it is |
 | --- | --- |
 | `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
-| `source` | A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one. |
+| `source` | A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out or empty, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one. An empty one is how a rule says so over a region another level gave a picture. |
 | `fit` | How the picture is fitted to the region. |
 | `transition` | How a wallpaper changes to the next one. |
 
@@ -249,6 +251,15 @@ Stretch the middle and keep the corners, for a border or a frame image. The four
 | `bottom` |  |
 | `left` |  |
 
+## `Offset`
+
+How far something pinned to one of the nine anchors is moved from where the anchor puts it, in logical pixels: right and down are positive.
+
+| Key | What it is |
+| --- | --- |
+| `x` | How far right, or left where it is negative. |
+| `y` | How far down, or up where it is negative. |
+
 ## `Route`
 
 Which cards a stack accepts. An empty field matches anything.
@@ -256,7 +267,7 @@ Which cards a stack accepts. An empty field matches anything.
 | Key | What it is |
 | --- | --- |
 | `kind` | Which kind of card this route accepts. Absent accepts every kind. |
-| `app` | The application id a notification came from. |
+| `app` | The name of the application a notification came from, as the notification gives it, matched without regard to case. |
 | `urgency` | How insistent a notification has to be to land here. |
 
 ## `Group`

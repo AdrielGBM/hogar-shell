@@ -134,6 +134,75 @@ pub fn choice(
     explained(label, help, row)
 }
 
+/// One of `options` in a dropdown, each the value the file writes and what the list calls it: for choices that are not a model enum — a picture of the wallpaper library. A value none of them is shows as the first.
+pub fn listed(
+    label: Reactive<String>,
+    help: Option<String>,
+    value: RwSignal<String>,
+    options: Rc<[(String, String)]>,
+) -> Built {
+    let index_of = {
+        let options = Rc::clone(&options);
+        move |now: &str| {
+            options
+                .iter()
+                .position(|(held, _)| held == now)
+                .unwrap_or(0) as u32
+        }
+    };
+    let picked = telar::signal(value.peek_with(|now| index_of(now)));
+    telar::effect(move || {
+        let at = value.with(|now| index_of(now));
+        if picked.peek() != at {
+            picked.set(at);
+        }
+    });
+    let items = options
+        .iter()
+        .map(|(_, shown)| {
+            telar::item(
+                telar::ItemProps::props().label(shown.clone()).build(),
+                Children::default(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut slots = telar::Slots::new();
+    slots.extend_default(items);
+    let theme = use_theme::<NordTheme>();
+    let choosing = Rc::clone(&options);
+    let select = telar::select(
+        telar::SelectProps::props()
+            .selected(picked)
+            .color(Reactive::of(move || theme.accent))
+            .stretch(true)
+            .on_select(Rc::new(move |at: u32| {
+                if let Some((chosen, _)) = choosing.get(at as usize)
+                    && value.peek_with(|now| now != chosen)
+                {
+                    value.set(chosen.clone());
+                }
+            }))
+            .build(),
+        Children::from(slots),
+    )?;
+    explained(
+        label.clone(),
+        help,
+        ui::form::labelled::labelled(label, select)?,
+    )
+}
+
+/// A button across the card that does `act` when pressed.
+pub fn action(label: impl Fn() -> String + 'static, act: impl Fn() + 'static) -> Built {
+    telar::button(
+        telar::ButtonProps::props()
+            .label(Reactive::of(label))
+            .on_press(Rc::new(act))
+            .build(),
+        Children::default(),
+    )
+}
+
 /// One of the theme's colours, by name.
 pub fn colour(
     label: Reactive<String>,
@@ -180,5 +249,13 @@ pub fn heading(said: impl Fn() -> String + 'static) -> Built {
             .with_font_weight(700)
     })?))
 }
+
+/// A row's label: the catalogue's `$key`, in whatever locale is active as it is drawn.
+macro_rules! label {
+    ($key:literal) => {
+        ::telar::Reactive::of(|| ::telar::t!($key))
+    };
+}
+pub(crate) use label;
 
 pub(crate) type Rows = Result<Vec<Box<dyn LayoutItem>>, LayoutError>;

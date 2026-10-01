@@ -1,8 +1,8 @@
 //! What one keyboard step changes in the layout: the selection moved one slot, cell, edge or anchor over, made one size bigger or smaller, or taken away — planned against the draft as it stands, so each repeat of a held key goes one step further than the last.
 //!
-//! **Moves.** An instance on a bar or a dock moves along it one place at a time, from zone to zone at the end of one and on to the nearest bar of the same kind that way at the end of the last; across the bar it goes to that bar straight away. An instance or a group in a grid moves one cell. A bar or a dock moves to the edge the arrow points at, and a bar shorter than its edge slides along it instead. A stack steps its anchor, and an area placed by a rectangle moves by a hundredth of the screen.
+//! **Moves.** An instance on a bar or a dock moves along it one place at a time, from zone to zone at the end of one and on to the nearest bar of the same kind that way at the end of the last; across the bar it goes to that bar straight away. An instance or a group in a grid moves one cell, what it lands on moving out of its way, and an instance in a stack leaves it for cells of its own ([`crate::modes::desktop`]). A bar or a dock moves to the edge the arrow points at, a bar fitted beside the bars already there, and a bar shorter than its edge slides along it instead, never onto its neighbour. A stack steps its anchor, an area placed by a rectangle moves by a hundredth of the screen, and a wallpaper region moves its two edges across the arrow with its neighbours following, so the screen stays tiled ([`crate::modes::regions`]).
 //!
-//! **Sizes.** A widget steps S, M, L as far as its module draws it; a grid group spans one cell more or less; a bar is thicker away from its edge and longer along it; a stack is wider; a rectangle grows or shrinks from its right and bottom edges.
+//! **Sizes.** A widget steps S, M, L as far as its module draws it; a grid group spans one cell more or less, both reflowing what they grow over; a bar is thicker away from its edge and longer along it, up to the next bar; a stack is wider; a rectangle grows or shrinks from its right and bottom edges; a wallpaper region pushes its edge ahead of the arrow that way, or where that is the screen's edge pulls the one behind it, its neighbours following.
 //!
 //! **Where it is written.** A change lands where [`Written`] says the layout decides the thing. A move reorders instances within the groups the edited layout writes itself, since a layout laid over another can add to an inherited group but never reorder it.
 
@@ -14,6 +14,7 @@ use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{self, Node, Part};
 
 use crate::keys::{Direction, nearest};
+use crate::modes::desktop::SIZES;
 use crate::popover::AreaDraft;
 use crate::popover::handles::{SHORTEST, THICKNESS};
 use crate::session::{EditError, Selection};
@@ -29,13 +30,7 @@ const THICKNESS_STEP: f32 = 2.0;
 const LENGTH_STEP: f32 = 16.0;
 /// How much one step makes a stack wider, and the widths it stays between.
 const WIDTH_STEP: f32 = 16.0;
-const WIDTHS: (f32, f32) = (160.0, 960.0);
-
-const SIZES: [Representation; 3] = [
-    Representation::WidgetS,
-    Representation::WidgetM,
-    Representation::WidgetL,
-];
+pub(crate) const WIDTHS: (f32, f32) = (160.0, 960.0);
 
 /// What the selection is, on the screen as it shows now.
 struct Target {
@@ -46,21 +41,14 @@ struct Target {
 
 impl Target {
     fn of(selection: &Selection) -> Result<Self, EditError> {
-        let node = selection
-            .node()
-            .cloned()
-            .ok_or_else(|| refused(telar::t!("editor.popover.nothing")))?;
-        let desktop = reconcile::desktops()
-            .iter()
-            .find(|desktop| desktop.output == node.output)
-            .cloned()
-            .ok_or_else(|| gone(&node))?;
+        let node = selection.node().cloned().ok_or_else(EditError::nothing)?;
+        let desktop =
+            reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
         let area = desktop
             .resolved
-            .layer(node.layer)
-            .and_then(|layer| layer.areas.iter().find(|area| area.id == node.area))
+            .area(node.layer, &node.area)
             .cloned()
-            .ok_or_else(|| gone(&node))?;
+            .ok_or_else(|| EditError::gone(&node.area))?;
         Ok(Self {
             desktop,
             area,
@@ -78,6 +66,7 @@ impl Target {
             self.node.output.as_deref(),
             self.node.layer,
             &area.id,
+            crate::variant::editing().as_ref(),
         )
         .map_err(EditError::Refused)
     }
@@ -87,31 +76,19 @@ impl Target {
             .groups
             .iter()
             .find(|group| group.id == *id)
-            .ok_or_else(|| gone(&self.node))
+            .ok_or_else(|| EditError::gone(&self.node.area))
     }
 
-    /// How long the screen is along `vertical` or across it.
-    fn longest(&self, vertical: bool) -> f32 {
-        match vertical {
-            true => self.desktop.size.1,
-            false => self.desktop.size.0,
-        }
+    /// Where the selected bar lies along its edge, and the stretch of the edge it can use without running into another bar.
+    fn along(&self) -> Option<(surfaces::bar::Span, (f32, f32))> {
+        let span = crate::modes::top::span_of(&self.desktop, &self.area)?;
+        let room = crate::modes::top::room_around(&self.desktop, self.node.layer, &self.area.id)?;
+        Some((span, room))
     }
 
     fn cannot(&self) -> EditError {
-        refused(telar::t!(
-            "editor.keys.no_way",
-            name = self.node.area.to_string()
-        ))
+        EditError::no_way(&self.node.area)
     }
-}
-
-fn refused(why: String) -> EditError {
-    EditError::Refused(why)
-}
-
-fn gone(node: &Node) -> EditError {
-    refused(telar::t!("editor.popover.gone", id = node.area.to_string()))
 }
 
 /// What the history calls the selection: an instance by its module's name, a group or an area by its id.
@@ -120,7 +97,7 @@ pub(crate) fn name_of(selection: &Selection) -> String {
         return String::new();
     };
     match &node.part {
-        Part::Instance(_, id) => reconcile::desktops()
+        Part::Instance(_, id) => reconcile::desktops_now()
             .iter()
             .flat_map(|desktop| desktop.resolved.instances())
             .find(|instance| instance.id == *id)
@@ -144,7 +121,7 @@ pub(crate) fn moved(
     match &target.node.part {
         Part::Instance(_, id) => move_instance(&target, draft, id, direction),
         Part::Group(group) => move_group(&target, draft, group, direction),
-        Part::Area => move_area(&target, draft, direction).map(|op| vec![op]),
+        Part::Area => move_area(&target, draft, direction),
     }
 }
 
@@ -155,15 +132,14 @@ pub(crate) fn resized(
     direction: Direction,
 ) -> Result<Vec<LayoutOp>, EditError> {
     let target = Target::of(selection)?;
-    let op = match &target.node.part {
-        Part::Instance(_, id) => resize_instance(&target, draft, id, direction)?,
-        Part::Group(group) => resize_group(&target, draft, group, direction)?,
-        Part::Area => resize_area(&target, draft, direction)?,
-    };
-    Ok(vec![op])
+    match &target.node.part {
+        Part::Instance(_, id) => resize_instance(&target, draft, id, direction),
+        Part::Group(group) => resize_group(&target, draft, group, direction),
+        Part::Area => resize_area(&target, draft, direction),
+    }
 }
 
-/// What takes a group or an area off the screen: out of the rule that writes it, or a group named in its area's `remove` over the inherited one. An area only a layout this one extends writes cannot be, since nothing names an area to leave out of a layer.
+/// What takes a group or an area off the screen: out of the rule that writes it, or named in the `remove` of its area or its layer over the inherited one ([`crate::written::area_removal`]).
 pub(crate) fn removal(selection: &Selection, draft: &Layout) -> Result<Vec<LayoutOp>, EditError> {
     let target = Target::of(selection)?;
     let written = target.written(draft)?;
@@ -180,17 +156,21 @@ pub(crate) fn removal(selection: &Selection, draft: &Layout) -> Result<Vec<Layou
             }
             let mut area = written.area.clone();
             area.remove.push(id.clone());
-            Ok(vec![written.op(&area)])
+            Ok(written.ops(&area))
         }
-        Part::Area if written.is_present() => Ok(vec![LayoutOp::DeleteArea {
-            site: written.site.clone(),
-            id: target.area.id.clone(),
-        }]),
-        Part::Area => Err(refused(telar::t!(
-            "editor.keys.inherited_area",
-            id = target.area.id.to_string()
-        ))),
-        Part::Instance(..) => Err(refused(telar::t!("editor.popover.nothing"))),
+        Part::Area => {
+            let known = crate::written::known();
+            crate::written::area_removal(
+                draft,
+                &known,
+                &target.desktop.resolving(draft, &known).resolved,
+                target.node.layer,
+                &target.area.id,
+                crate::variant::editing().as_ref(),
+            )
+            .map_err(EditError::Refused)
+        }
+        Part::Instance(..) => Err(EditError::nothing()),
     }
 }
 
@@ -208,7 +188,7 @@ fn zone_rank(group: &ResolvedGroup) -> u8 {
 }
 
 /// An area's groups in the order they are drawn along it: a bar's and a dock's zone by zone, anything else as written.
-fn along(area: &ResolvedArea) -> Vec<&ResolvedGroup> {
+pub(crate) fn along(area: &ResolvedArea) -> Vec<&ResolvedGroup> {
     let mut groups: Vec<&ResolvedGroup> = area.groups.iter().collect();
     if area.kind.edge().is_some() {
         groups.sort_by_key(|group| zone_rank(group));
@@ -227,10 +207,27 @@ fn move_instance(
         .groups
         .iter()
         .find(|group| group.children.iter().any(|child| child.id == *id))
-        .ok_or_else(|| gone(&target.node))?;
+        .ok_or_else(|| EditError::gone(&target.node.area))?;
     let horizontal = match &target.area.kind {
-        ResolvedAreaKind::Grid { .. } => {
+        ResolvedAreaKind::Grid { .. } if holding.children.len() == 1 => {
             return move_group(target, draft, &holding.id, direction);
+        }
+        ResolvedAreaKind::Grid { .. } => {
+            let GroupKind::Cell { col, row, .. } = holding.kind else {
+                return Err(target.cannot());
+            };
+            let (dx, dy) = delta(direction);
+            let landing = crate::modes::desktop::Landing::Cell {
+                col: stepped(col, dx).ok_or_else(|| target.cannot())?,
+                row: stepped(row, dy).ok_or_else(|| target.cannot())?,
+            };
+            return crate::modes::desktop::dropped(
+                draft,
+                &target.desktop,
+                &target.node,
+                &target.area.id,
+                &landing,
+            );
         }
         ResolvedAreaKind::Bar { edge, .. } | ResolvedAreaKind::Dock { edge, .. } => {
             !edge.is_vertical()
@@ -242,12 +239,12 @@ fn move_instance(
     let at = groups
         .iter()
         .position(|group| group.id == holding.id)
-        .ok_or_else(|| gone(&target.node))?;
+        .ok_or_else(|| EditError::gone(&target.node.area))?;
     let place = holding
         .children
         .iter()
         .position(|child| child.id == *id)
-        .ok_or_else(|| gone(&target.node))?;
+        .ok_or_else(|| EditError::gone(&target.node.area))?;
     let forward = direction.is_forward();
     if direction.is_horizontal() == horizontal {
         let within = match forward {
@@ -355,7 +352,7 @@ fn instance_move(
 }
 
 /// Refuses a group whose instances `written` does not write exactly as the screen shows them.
-fn writes_as_shown(written: &Written, group: &ResolvedGroup) -> Result<(), EditError> {
+pub(crate) fn writes_as_shown(written: &Written, group: &ResolvedGroup) -> Result<(), EditError> {
     let shown: Vec<&InstanceId> = group.children.iter().map(|child| &child.id).collect();
     let writes = written.is_present()
         && written.area.groups.iter().any(|held| {
@@ -368,7 +365,7 @@ fn writes_as_shown(written: &Written, group: &ResolvedGroup) -> Result<(), EditE
         });
     match writes {
         true => Ok(()),
-        false => Err(refused(telar::t!(
+        false => Err(EditError::refused(telar::t!(
             "editor.keys.inherited",
             id = group.id.to_string()
         ))),
@@ -376,7 +373,7 @@ fn writes_as_shown(written: &Written, group: &ResolvedGroup) -> Result<(), EditE
 }
 
 /// The operation that writes a change to the group `id` where the area is written: in place where the rule writes the group, as a partial entry naming only what changed where it inherits it.
-fn group_op(written: &Written, id: &GroupId, change: impl FnOnce(&mut Group)) -> LayoutOp {
+fn group_op(written: &Written, id: &GroupId, change: impl FnOnce(&mut Group)) -> Vec<LayoutOp> {
     let mut area = written.area.clone();
     match area.groups.iter_mut().find(|group| group.id == *id) {
         Some(group) => change(group),
@@ -389,7 +386,7 @@ fn group_op(written: &Written, id: &GroupId, change: impl FnOnce(&mut Group)) ->
             area.groups.push(group);
         }
     }
-    written.op(&area)
+    written.ops(&area)
 }
 
 fn stepped(value: u32, by: i32) -> Option<u32> {
@@ -405,20 +402,18 @@ fn move_group(
     let group = target.group(id)?;
     let (dx, dy) = delta(direction);
     let kind = match (&target.area.kind, group.kind) {
-        (
-            ResolvedAreaKind::Grid { .. },
-            GroupKind::Cell {
-                col,
-                row,
-                col_span,
-                row_span,
-            },
-        ) => GroupKind::Cell {
-            col: stepped(col, dx).ok_or_else(|| target.cannot())?,
-            row: stepped(row, dy).ok_or_else(|| target.cannot())?,
-            col_span,
-            row_span,
-        },
+        (ResolvedAreaKind::Grid { .. }, GroupKind::Cell { col, row, .. }) => {
+            let to = (
+                stepped(col, dx).ok_or_else(|| target.cannot())?,
+                stepped(row, dy).ok_or_else(|| target.cannot())?,
+            );
+            let area = Node::area(
+                target.node.output.as_deref(),
+                target.node.layer,
+                &target.area.id,
+            );
+            return crate::modes::desktop::group_moved(draft, &target.desktop, &area, id, to);
+        }
         (
             ResolvedAreaKind::Bar { edge, .. } | ResolvedAreaKind::Dock { edge, .. },
             GroupKind::Zone { zone },
@@ -436,9 +431,7 @@ fn move_group(
         _ => return Err(target.cannot()),
     };
     let written = target.written(draft)?;
-    Ok(vec![group_op(&written, id, |group| {
-        group.kind = Some(kind)
-    })])
+    Ok(group_op(&written, id, |group| group.kind = Some(kind)))
 }
 
 fn delta(direction: Direction) -> (i32, i32) {
@@ -455,12 +448,12 @@ fn with_kind(
     written: &Written,
     kind: &'static str,
     change: impl FnOnce(&mut AreaKind),
-) -> LayoutOp {
+) -> Vec<LayoutOp> {
     let mut area = written.area.clone();
     if let Some(geometry) = AreaDraft::kind_mut(&mut area, kind) {
         change(geometry);
     }
-    written.op(&area)
+    written.ops(&area)
 }
 
 /// The rectangle `rect` moved one step, kept on the screen.
@@ -473,12 +466,12 @@ fn nudged(rect: layout::Rect, direction: Direction) -> layout::Rect {
     }
 }
 
-/// The rectangle `rect` grown or shrunk one step from its right or bottom edge, kept on the screen.
-fn stretched(rect: layout::Rect, direction: Direction) -> layout::Rect {
+/// The rectangle `rect` grown or shrunk one step from its right or bottom edge, kept on the screen and at least `smallest` on each side.
+fn stretched(rect: layout::Rect, direction: Direction, smallest: f32) -> layout::Rect {
     let (dx, dy) = delta(direction);
     layout::Rect {
-        w: (rect.w + dx as f32 * RECT_STEP).clamp(RECT_STEP, (1.0 - rect.x).max(RECT_STEP)),
-        h: (rect.h + dy as f32 * RECT_STEP).clamp(RECT_STEP, (1.0 - rect.y).max(RECT_STEP)),
+        w: (rect.w + dx as f32 * RECT_STEP).clamp(smallest, (1.0 - rect.x).max(smallest)),
+        h: (rect.h + dy as f32 * RECT_STEP).clamp(smallest, (1.0 - rect.y).max(smallest)),
         ..rect
     }
 }
@@ -505,16 +498,14 @@ fn rect_of(kind: &ResolvedAreaKind) -> Option<layout::Rect> {
     }
 }
 
-/// How long a bar is along its edge, in pixels.
-fn length_px(length: Extent, longest: f32) -> f32 {
-    match length {
-        Extent::Fill => longest,
-        Extent::Px(px) => px,
-        Extent::Fraction(fraction) => fraction * longest,
+fn move_area(
+    target: &Target,
+    draft: &Layout,
+    direction: Direction,
+) -> Result<Vec<LayoutOp>, EditError> {
+    if matches!(target.area.kind, ResolvedAreaKind::WallpaperRegion { .. }) {
+        return crate::modes::background::stepped(&target.node, draft, direction, false);
     }
-}
-
-fn move_area(target: &Target, draft: &Layout, direction: Direction) -> Result<LayoutOp, EditError> {
     let written = target.written(draft)?;
     let kind = target.area.kind.name();
     let unchanged = |same: bool| match same {
@@ -528,10 +519,11 @@ fn move_area(target: &Target, draft: &Layout, direction: Direction) -> Result<La
             offset,
             ..
         } if runs_along(edge, direction) && length != Extent::Fill => {
-            let longest = target.longest(edge.is_vertical());
-            let room = (longest - length_px(length, longest)).max(0.0);
+            let (span, (low, high)) = target.along().ok_or_else(|| target.cannot())?;
             let sign = if direction.is_forward() { 1.0 } else { -1.0 };
-            let to = (offset + sign * OFFSET_STEP).clamp(0.0, room);
+            let from = low - span.run_start;
+            let to = (offset + sign * OFFSET_STEP)
+                .clamp(from, (high - span.run_start - span.along).max(from));
             unchanged(to == offset)?;
             Ok(with_kind(&written, kind, |geometry| {
                 if let AreaKind::Bar { offset, .. } = geometry {
@@ -539,12 +531,21 @@ fn move_area(target: &Target, draft: &Layout, direction: Direction) -> Result<La
                 }
             }))
         }
-        ResolvedAreaKind::Bar { edge, .. } | ResolvedAreaKind::Dock { edge, .. } => {
+        ResolvedAreaKind::Bar { .. } => crate::modes::top::moved_to_edge(
+            draft,
+            &target.desktop,
+            target.node.layer,
+            &target.area.id,
+            direction.edge(),
+            None,
+        ),
+        ResolvedAreaKind::Dock { edge, .. } => {
             let to = direction.edge();
             unchanged(to == edge)?;
-            Ok(with_kind(&written, kind, |geometry| match geometry {
-                AreaKind::Bar { edge, .. } | AreaKind::Dock { edge, .. } => *edge = Some(to),
-                _ => {}
+            Ok(with_kind(&written, kind, |geometry| {
+                if let AreaKind::Dock { edge, .. } = geometry {
+                    *edge = Some(to);
+                }
             }))
         }
         ResolvedAreaKind::Stack { anchor, .. } => {
@@ -578,7 +579,10 @@ fn resize_area(
     target: &Target,
     draft: &Layout,
     direction: Direction,
-) -> Result<LayoutOp, EditError> {
+) -> Result<Vec<LayoutOp>, EditError> {
+    if matches!(target.area.kind, ResolvedAreaKind::WallpaperRegion { .. }) {
+        return crate::modes::background::stepped(&target.node, draft, direction, true);
+    }
     let written = target.written(draft)?;
     let kind = target.area.kind.name();
     let unchanged = |same: bool| match same {
@@ -586,11 +590,11 @@ fn resize_area(
         false => Ok(()),
     };
     match target.area.kind.clone() {
-        ResolvedAreaKind::Bar { edge, length, .. } if runs_along(edge, direction) => {
-            let longest = target.longest(edge.is_vertical());
-            let now = length_px(length, longest);
+        ResolvedAreaKind::Bar { edge, .. } if runs_along(edge, direction) => {
+            let (span, (_, high)) = target.along().ok_or_else(|| target.cannot())?;
+            let now = span.along;
             let sign = if direction.is_forward() { 1.0 } else { -1.0 };
-            let to = (now + sign * LENGTH_STEP).clamp(SHORTEST, longest);
+            let to = (now + sign * LENGTH_STEP).clamp(SHORTEST, (high - span.at).max(SHORTEST));
             unchanged(to == now)?;
             Ok(with_kind(&written, kind, |geometry| {
                 if let AreaKind::Bar { length, .. } = geometry {
@@ -627,7 +631,11 @@ fn resize_area(
         }
         other => {
             let rect = rect_of(&other).ok_or_else(|| target.cannot())?;
-            let to = stretched(rect, direction);
+            let smallest = match other {
+                ResolvedAreaKind::Prompt { .. } => layout::SMALLEST_PROMPT,
+                _ => RECT_STEP,
+            };
+            let to = stretched(rect, direction, smallest);
             unchanged(to == rect)?;
             Ok(with_kind(&written, kind, |geometry| set_rect(geometry, to)))
         }
@@ -639,7 +647,7 @@ fn resize_group(
     draft: &Layout,
     id: &GroupId,
     direction: Direction,
-) -> Result<LayoutOp, EditError> {
+) -> Result<Vec<LayoutOp>, EditError> {
     let group = target.group(id)?;
     let GroupKind::Cell {
         col,
@@ -658,8 +666,12 @@ fn resize_group(
         col_span: spanned(col_span, dx).ok_or_else(|| target.cannot())?,
         row_span: spanned(row_span, dy).ok_or_else(|| target.cannot())?,
     };
-    let written = target.written(draft)?;
-    Ok(group_op(&written, id, |group| group.kind = Some(kind)))
+    let area = Node::area(
+        target.node.output.as_deref(),
+        target.node.layer,
+        &target.area.id,
+    );
+    crate::modes::desktop::group_spanned(draft, &target.desktop, &area, id, kind)
 }
 
 /// A widget one size bigger (right, up) or smaller (left, down), skipping sizes its module does not draw.
@@ -668,7 +680,7 @@ fn resize_instance(
     draft: &Layout,
     id: &InstanceId,
     direction: Direction,
-) -> Result<LayoutOp, EditError> {
+) -> Result<Vec<LayoutOp>, EditError> {
     let (group, instance) = target
         .area
         .groups
@@ -680,9 +692,9 @@ fn resize_instance(
                 .find(|child| child.id == *id)
                 .map(|child| (group, child))
         })
-        .ok_or_else(|| gone(&target.node))?;
+        .ok_or_else(|| EditError::gone(&target.node.area))?;
     let no_size = || {
-        refused(telar::t!(
+        EditError::refused(telar::t!(
             "editor.keys.no_size",
             name = instance.module.clone()
         ))
@@ -692,17 +704,18 @@ fn resize_instance(
         .position(|size| *size == instance.representation)
         .ok_or_else(no_size)?;
     let bigger = matches!(direction, Direction::Right | Direction::Up);
-    let drawn = |size: Representation| {
-        ui::descriptor::find(&instance.module)
-            .is_some_and(|module| module.input(surfaces::area::representation(size)).is_some())
-    };
+    let sizes = crate::modes::desktop::sizes_of(&instance.module, target.node.layer);
+    let drawn = |size: Representation| sizes.contains(&size);
     let next = match bigger {
         true => SIZES[at + 1..].iter().copied().find(|size| drawn(*size)),
         false => SIZES[..at].iter().rev().copied().find(|size| drawn(*size)),
     }
     .ok_or_else(no_size)?;
+    if matches!(target.area.kind, ResolvedAreaKind::Grid { .. }) {
+        return crate::modes::desktop::resized_to(draft, &target.desktop, &target.node, next);
+    }
     let written = target.written(draft)?.instance(&group.id, id);
     let mut changed = written.instance.clone();
     changed.representation = Some(next);
-    Ok(written.op(&changed))
+    Ok(written.ops(&changed))
 }

@@ -7,20 +7,20 @@
 //! What a bar, a grid or a stack looks like is not here. [`Areas`] is the seam, and it is one call per area per build returning one node — a builder is never asked where it put the area, because where an area ends up is a question layout answers and the window reads off the node afterwards. The host knows which areas live on which layer, whether that layer is on screen, and what it asks of the compositor; it knows nothing about what any of it draws.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use telar::{
     App, Color, Component, Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, Rect,
-    RwSignal, ScopedTheme, SizeDimension, WindowConfig, WindowRoot, box_item, effect,
+    RwSignal, ScopedTheme, SizeDimension, WindowConfig, WindowRoot, box_item, effect, on_cleanup,
     provide_theme, reset_layout_runtime, set_context, signal, track_layout,
 };
 
 use config::theme::NordTheme;
 use config::{Config, Edge, LiveConfig};
 use layout::{
-    Backdrop, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedLayer, Within,
+    AreaId, Backdrop, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedLayer, Within,
 };
 use platform_wayland::{
     KeyboardInteractivity, KeyboardMode, Layer, LayerWindowHandle, background_effect_supported,
@@ -51,7 +51,7 @@ pub struct LayerPlan<'a> {
 
 /// The four edges an output's reserving areas have taken, in logical pixels.
 ///
-/// It is summed across *every* layer, because reservation is an output-level fact: a bar in the top window and a reserving dock on the desktop both take space from the same screen, and neither can see the other. That is exactly why an area cannot work this out for itself and the host hands it down.
+/// It is gathered across *every* layer, because reservation is an output-level fact: a bar in the top window and a reserving dock on the desktop both take space from the same screen, and neither can see the other. That is exactly why an area cannot work this out for itself and the host hands it down.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Reserved {
     pub top: f32,
@@ -119,12 +119,12 @@ impl Reserved {
 }
 
 /// What a reconcile does to the windows that stay.
-///
-/// A layout or config edit changes what they draw, so every window that survives it builds again. A monitor being plugged in does not: rebuilding the other screens' windows for it would throw away their state to redraw exactly what was already there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Content {
+    /// The config changed, which every area is built against: every window that survives builds all of its areas again.
     Rebuild,
-    Keep,
+    /// Only the arrangement may have changed — a layout edit, a monitor plugged in: each window builds again the areas whose own arrangement, box or screen changed and keeps every other node as it is, so an edit repaints what it touched and a region's picture is not cut off mid-fade by an edit elsewhere.
+    Changed,
 }
 
 /// What a reconcile did, for the log — and for a test that cares that a layout change reached the windows already up instead of reopening them.
@@ -132,6 +132,7 @@ pub enum Content {
 pub struct Reconciled {
     pub opened: usize,
     pub closed: usize,
+    /// How many windows built every one of their areas again.
     pub rebuilt: usize,
     /// How many windows are on screen once the reconcile is done, which is the count lazy mapping is about.
     pub mapped: usize,
@@ -373,9 +374,12 @@ impl Window {
             reserved: plan.reserved,
         });
         self.shown.set(self.screen.get());
-        if content == Content::Rebuild {
-            self.generation.bump();
-            done.rebuilt += 1;
+        match content {
+            Content::Rebuild => {
+                self.generation.bump();
+                done.rebuilt += 1;
+            }
+            Content::Changed => self.generation.look_again(),
         }
         self.presence.set_draws(window_draws(&self.layer.get()));
     }
@@ -601,22 +605,37 @@ impl ScreenFeed {
     }
 }
 
-/// Which build of its areas a window is on, and whether that build draws them at all. Bumping it rebuilds the areas and nothing else, so a layout edit leaves the transients above them — and whatever the user is doing in one — exactly as they were.
+/// Which build of its areas a window is on, and whether that build draws them at all. Bumping it rebuilds every area and nothing else, so a config edit leaves the transients above them — and whatever the user is doing in one — exactly as they were; looking again rebuilds only the areas whose arrangement changed, which is what a layout edit does.
 #[derive(Clone, Default)]
 struct Generation {
-    signal: Rc<Cell<Option<RwSignal<u64>>>>,
+    signal: Rc<Cell<Option<RwSignal<Builds>>>>,
     /// How many [`Concealment`]s set this window's areas aside.
     concealed: Rc<Cell<usize>>,
 }
 
+/// What a window's areas were last asked to do: `build` moves when every one of them builds again, `look` when the arrangement they are drawn from may have changed under them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Builds {
+    build: u64,
+    look: u64,
+}
+
 impl Generation {
     fn bump(&self) {
+        self.touch(|builds| builds.build = builds.build.wrapping_add(1));
+    }
+
+    fn look_again(&self) {
+        self.touch(|builds| builds.look = builds.look.wrapping_add(1));
+    }
+
+    fn touch(&self, change: impl FnOnce(&mut Builds)) {
         if let Some(signal) = self.signal.get().filter(RwSignal::is_alive) {
-            signal.update(|n| *n = n.wrapping_add(1));
+            signal.update(change);
         }
     }
 
-    fn attach(&self, signal: RwSignal<u64>) {
+    fn attach(&self, signal: RwSignal<Builds>) {
         self.signal.set(Some(signal));
     }
 
@@ -899,18 +918,28 @@ impl WindowAreas {
 ///
 /// The node places itself: every window on an output is the whole output and shares one coordinate space (TA-1), so an area is positioned absolutely within it rather than flowed, and the order areas are built in is their z-order within the layer.
 ///
-/// A builder is not asked where it put the area. Where it ended up is a question layout answers, and the window reads it off the node afterwards for the one thing that needs it — see [`blurs`]. A builder that had to report its own rectangle would be restating something it often cannot know: a bar running [`Extent::Fill`](layout::Extent::Fill) is as long as its neighbours leave it.
+/// A builder is not asked where it put the area. Where it ended up is a question layout answers, and the window reads it off the node afterwards for the one thing that needs it — see [`blur_of`]. A builder that had to report its own rectangle would be restating something it often cannot know: a bar running [`Extent::Fill`](layout::Extent::Fill) is as long as its neighbours leave it.
 pub trait Areas {
     fn build(&self, area: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError>;
 }
 
-/// Whether an area asks the compositor to blur what is behind it, and is therefore one of the few whose rectangle the window measures.
+/// Who blurs what is behind an area styled `backdrop = "blur"`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blur {
+    /// What is behind it is drawn by the same surface — the pictures of the background layer, the lock screen's own background — so the shell blurs it itself, and it works on every compositor.
+    InSurface,
+    /// What is behind it is other surfaces — application windows, the layers below — which only the compositor can blur, through `ext-background-effect-v1`. Without the protocol the area draws translucent and unblurred, and `layout check` and its popover say so (F-10.49).
+    Compositor,
+}
+
+/// Who blurs behind `area`, written on the layer `home`, or `None` where it asks for no blur.
 ///
-/// The host tracks the laid-out rect of these areas and no others. Measuring every area would be bookkeeping for a question nobody asks: the blur region is the only thing a window needs an area's geometry *for*, since everything else about where an area sits is settled by the node placing itself.
-///
-/// Rectangle, not rounded rectangle: `ext-background-effect-v1` takes a `wl_region`, which is rectangles added and subtracted, so an area's corner radius reaches its paint and not the blur behind it. At the corners of a rounded translucent area the blur runs past the paint.
-fn blurs(area: &ResolvedArea) -> bool {
-    area.style.backdrop == Some(Backdrop::Blur)
+/// A window tracks the laid-out rect of the areas the compositor blurs behind and no others: the blur region is the only thing it needs an area's geometry *for*, since everything else about where an area sits is settled by the node placing itself. Rectangle, not rounded rectangle: `ext-background-effect-v1` takes a `wl_region`, so at the corners of a rounded translucent area the blur runs past the paint. Nothing is under the background layer's window, and the lock surfaces get no effect object at all (F-2.12), so an area on either blurs what its own surface drew beneath it instead.
+pub fn blur_of(home: LayerKind, area: &ResolvedArea) -> Option<Blur> {
+    (area.style.backdrop == Some(Backdrop::Blur)).then_some(match home {
+        LayerKind::Background | LayerKind::Lock => Blur::InSurface,
+        LayerKind::Desktop | LayerKind::Top | LayerKind::Overlay => Blur::Compositor,
+    })
 }
 
 /// Everything one area's builder is handed.
@@ -982,72 +1011,149 @@ pub(crate) struct Screen {
 }
 
 impl LayerApp {
-    fn build_areas(
+    /// Builds one area of the window, registering its box with the window's blur region while it lives if it asks the compositor to blur behind it.
+    fn build_area(
         &self,
-        theme: ScopedTheme,
-    ) -> impl Fn(&WindowAreas) -> Result<Box<dyn LayoutItem>, LayoutError> + 'static {
+        blurring: RwSignal<Vec<(u64, RwSignal<Rect>)>>,
+    ) -> impl Fn(Drawn) -> Result<Box<dyn LayoutItem>, LayoutError> + 'static {
         let (kind, output) = (self.kind, self.output.clone());
         let config = self.config.clone();
-        let (screen, demands) = (Rc::clone(&self.screen), Rc::clone(&self.demands));
+        let demands = Rc::clone(&self.demands);
         let areas = Rc::clone(&self.areas);
-        let generation = self.generation.clone();
+        let tokens = Rc::new(Cell::new(0u64));
         move |drawn| {
             let config = config.get();
-            let resolved = config.resolve_theme();
-            theme.set(resolved);
-            services::locale::attach(config.language());
-            if generation.is_concealed() {
-                watch_blur(Rc::clone(&demands), Vec::new());
-                return Container::new(whole_window(), Vec::new()).map(box_item);
+            let building = Building {
+                window: kind,
+                output: output.as_deref(),
+                config: &config,
+                theme: drawn.theme,
+                size: drawn.screen.size,
+                reserved: drawn.screen.reserved,
+                demands: &demands,
+            };
+            let Some(BuiltArea { node, blurred }) =
+                build_area(areas.as_ref(), drawn.home, &drawn.area, &building)
+            else {
+                return Container::new(LayoutStyle::new(), Vec::new()).map(box_item);
+            };
+            if let Some(rect) = blurred {
+                let token = tokens.get().wrapping_add(1);
+                tokens.set(token);
+                blurring.update(|held| held.push((token, rect)));
+                on_cleanup(move || {
+                    if blurring.is_alive() {
+                        blurring.update(|held| held.retain(|(own, _)| *own != token));
+                    }
+                });
             }
-            let screen = screen.get();
-            let (nodes, blurring) = build_window_areas(
-                areas.as_ref(),
-                drawn,
-                &Building {
-                    window: kind,
-                    output: output.as_deref(),
-                    config: &config,
-                    theme: resolved,
-                    size: screen.size,
-                    reserved: screen.reserved,
-                    demands: &demands,
-                },
-            );
-            watch_blur(Rc::clone(&demands), blurring);
-            Container::new(whole_window(), nodes).map(box_item)
+            Ok(node)
         }
     }
 
-    /// What the window draws now — its reconciled areas, or a preview's in their place — with the build they belong to: a reconcile's generation, and a count that moves only when what is drawn changes, so a preview rebuilds just the windows whose areas it touched.
-    fn drawing(&self, generation: RwSignal<u64>) -> impl Fn() -> Vec<Drawing> + 'static {
+    /// What the window draws now — its reconciled areas, or a preview's in their place — one entry per area, keyed by the build it belongs to and a version that moves only when that area, or the screen it is placed on, changes: an edit or a preview rebuilds the areas it touched and keeps every other node, and a config edit, which every area is built against, rebuilds them all.
+    fn drawing(
+        &self,
+        generation: RwSignal<Builds>,
+        theme: ScopedTheme,
+    ) -> impl Fn() -> Vec<Drawn> + 'static {
         let layer = self.layer.clone();
+        let config = self.config.clone();
+        let screen = Rc::clone(&self.screen);
+        let concealment = self.generation.clone();
         let key = WindowKey {
             output: self.output.clone(),
             layer: self.kind,
         };
-        let last = RefCell::new((0u64, layer.get()));
+        let seen = RefCell::new(Seen::default());
         move || {
-            let build = generation.get();
+            let build = generation.get().build;
             let drawn = previewed(&key).unwrap_or_else(|| layer.get());
-            let mut last = last.borrow_mut();
-            if *last.1 != *drawn {
-                *last = (last.0.wrapping_add(1), Rc::clone(&drawn));
+            let mut seen = seen.borrow_mut();
+            if seen.build != Some(build) {
+                let config = config.get();
+                let resolved = config.resolve_theme();
+                theme.set(resolved);
+                services::locale::attach(config.language());
+                *seen = Seen {
+                    build: Some(build),
+                    theme: Some(resolved),
+                    ..Seen::default()
+                };
             }
-            vec![Drawing {
-                build,
-                version: last.0,
-                areas: drawn,
-            }]
+            if concealment.is_concealed() {
+                return Vec::new();
+            }
+            let screen = screen.get();
+            let theme = seen.theme.unwrap_or_else(|| config.get().resolve_theme());
+            let mut areas = HashMap::with_capacity(drawn.areas.len());
+            let list = drawn
+                .areas
+                .iter()
+                .map(|(home, area)| {
+                    let at = (*home, area.id.clone());
+                    let version = match seen.areas.get(&at) {
+                        Some((version, was, placed)) if was == area && *placed == screen => {
+                            *version
+                        }
+                        Some((version, was, placed))
+                            if *placed == screen
+                                && crate::area::moves_only(was, area)
+                                && crate::area::move_cells(
+                                    key.output.as_deref(),
+                                    key.layer,
+                                    *home,
+                                    area,
+                                ) =>
+                        {
+                            *version
+                        }
+                        _ => {
+                            seen.next = seen.next.wrapping_add(1);
+                            seen.next
+                        }
+                    };
+                    areas.insert(at, (version, area.clone(), screen));
+                    Drawn {
+                        build,
+                        version,
+                        home: *home,
+                        area: area.clone(),
+                        screen,
+                        theme,
+                    }
+                })
+                .collect();
+            seen.areas = areas;
+            list
         }
     }
 }
 
-/// One build of a window's areas: see [`LayerApp::drawing`].
-struct Drawing {
+/// What [`LayerApp::drawing`] remembers of the areas it last handed out: the build they belong to, the theme that build resolved, and each area's version with what it was drawn from.
+#[derive(Default)]
+struct Seen {
+    build: Option<u64>,
+    theme: Option<NordTheme>,
+    next: u64,
+    areas: HashMap<(LayerKind, AreaId), (u64, ResolvedArea, Screen)>,
+}
+
+/// One area of one build of a window: see [`LayerApp::drawing`].
+#[derive(Clone)]
+struct Drawn {
     build: u64,
     version: u64,
-    areas: Rc<WindowAreas>,
+    home: LayerKind,
+    area: ResolvedArea,
+    screen: Screen,
+    theme: NordTheme,
+}
+
+impl Drawn {
+    fn key(&self) -> (u64, LayerKind, AreaId, u64) {
+        (self.build, self.home, self.area.id.clone(), self.version)
+    }
 }
 
 /// What a preview draws in the window `key`, while one is showing.
@@ -1070,69 +1176,83 @@ pub struct Building<'a> {
     pub demands: &'a Rc<Demands>,
 }
 
-/// One node per area of `drawn`, in z-order, and the tracked rect of each that asks to blur what is behind it. An area that fails to build is logged and left out, so the rest still draw.
+/// One node per area of `drawn`, in z-order. An area that fails to build is logged and left out, so the rest still draw.
 ///
-/// What a layer window builds its own areas with, and what an edit mode builds a layer it cannot raise with, into the overlay window instead (TA-4, R-6): one renderer, whichever window the areas land in.
+/// What an edit mode builds a layer it cannot raise with, into the overlay window instead (TA-4, R-6): the builder a layer window builds each of its own areas with, so one renderer, whichever window the areas land in. Nothing is asked of the compositor's blur: the region belongs to the window drawing these.
 pub fn build_window_areas(
     areas: &dyn Areas,
     drawn: &WindowAreas,
     building: &Building<'_>,
-) -> (Vec<Box<dyn LayoutItem>>, Vec<RwSignal<Rect>>) {
-    let blur_available = background_effect_supported();
-    let mut nodes = Vec::with_capacity(drawn.areas.len());
-    let mut blurring = Vec::new();
-    for (home, area) in &drawn.areas {
-        // Its own owner, so the chrome an area provides — the global one here, a bar's own shape inside it — reaches only that area.
-        let _area = telar::owner_scope();
-        ui::chrome::Chrome::global(
-            Arc::clone(building.config),
-            building.output.map(str::to_string),
-        )
-        .provide();
-        let built = areas.build(&AreaContext {
-            area,
-            layer: building.window,
-            home: *home,
-            output: building.output,
-            config: building.config,
-            theme: building.theme,
-            bounds: building.reserved.box_of(area.within, building.size),
-            reserved: building.reserved,
-            blur_available,
-            demands: building.demands,
-            output_size: building.size,
-        });
-        let node = match built {
-            Ok(node) => node,
-            Err(error) => {
-                tracing::error!(
-                    area = %area.id,
-                    layer = %building.window,
-                    "the area failed to build: {error}"
-                );
-                continue;
-            }
-        };
-        if blurs(area)
-            && let Some(rect) = track_layout(node.layout_node())
-        {
-            blurring.push(rect);
-        }
-        nodes.push(node);
-    }
-    (nodes, blurring)
+) -> Vec<Box<dyn LayoutItem>> {
+    drawn
+        .areas
+        .iter()
+        .filter_map(|(home, area)| build_area(areas, *home, area, building))
+        .map(|built| built.node)
+        .collect()
 }
 
-/// Keeps the window's blur region in step with where layout actually put the areas that asked to blur.
+/// The node `area`, written on `home`, draws in the window being built, and the tracked box of it when it asks the compositor to blur what is behind it; `None`, logged, where it fails to build.
+fn build_area(
+    areas: &dyn Areas,
+    home: LayerKind,
+    area: &ResolvedArea,
+    building: &Building<'_>,
+) -> Option<BuiltArea> {
+    // Its own owner, so the chrome an area provides — the global one here, a bar's own shape inside it — reaches only that area.
+    let _area = telar::owner_scope();
+    ui::chrome::Chrome::global(
+        Arc::clone(building.config),
+        building.output.map(str::to_string),
+    )
+    .provide();
+    let built = areas.build(&AreaContext {
+        area,
+        layer: building.window,
+        home,
+        output: building.output,
+        config: building.config,
+        theme: building.theme,
+        bounds: building.reserved.box_of(area.within, building.size),
+        reserved: building.reserved,
+        blur_available: background_effect_supported(),
+        demands: building.demands,
+        output_size: building.size,
+    });
+    let node = match built {
+        Ok(node) => node,
+        Err(error) => {
+            tracing::error!(
+                area = %area.id,
+                layer = %building.window,
+                "the area failed to build: {error}"
+            );
+            return None;
+        }
+    };
+    let blurred = (blur_of(home, area) == Some(Blur::Compositor))
+        .then(|| track_layout(node.layout_node()))
+        .flatten();
+    Some(BuiltArea { node, blurred })
+}
+
+/// One area built into a window: its node, and the tracked box of it where it asks the compositor to blur what is behind it.
+struct BuiltArea {
+    node: Box<dyn LayoutItem>,
+    blurred: Option<RwSignal<Rect>>,
+}
+
+/// Keeps the window's blur region in step with where layout actually put the areas that ask the compositor to blur.
 ///
-/// An effect rather than a value read during the build, because at build time nothing has been laid out yet and every rectangle is still zero. It belongs to the owner of the build that registered it, so a rebuild disposes it and the next one takes over with whatever areas blur now. The region therefore lands one frame behind the layout that moved it — the same frame the input region already costs, and for the same reason.
+/// An effect rather than a value read during a build, because at build time nothing has been laid out yet and every rectangle is still zero. Each area adds its box as it builds and takes it back as it goes, so the region follows an edit that rebuilt one area and kept the rest. The region lands one frame behind the layout that moved it — the same frame the input region already costs, and for the same reason.
 ///
 /// A zero-area rectangle is dropped rather than sent: it adds nothing to a `wl_region`, and before the first layout it is what every area reports.
-fn watch_blur(demands: Rc<Demands>, areas: Vec<RwSignal<Rect>>) {
+fn watch_blur(demands: Rc<Demands>, blurring: RwSignal<Vec<(u64, RwSignal<Rect>)>>) {
     effect(move || {
-        let rects = areas
+        let rects = blurring
+            .get()
             .iter()
-            .map(|area| area.get())
+            .map(|(_, area)| area.get())
             .filter(|rect| rect.width > 0.0 && rect.height > 0.0)
             .collect();
         demands.set_area_blur(rects);
@@ -1151,10 +1271,12 @@ impl App for LayerApp {
             demands: Rc::clone(&self.demands),
         });
 
-        let generation = signal(0u64);
+        let generation = signal(Builds::default());
         self.generation.attach(generation);
-        let build = self.build_areas(theme);
-        let drawing = self.drawing(generation);
+        let blurring = signal(Vec::new());
+        watch_blur(Rc::clone(&self.demands), blurring);
+        let build = self.build_area(blurring);
+        let drawing = self.drawing(generation, theme);
         let screen = signal(self.screen.get());
         self.shown.attach(screen);
         let key = WindowKey {
@@ -1166,12 +1288,8 @@ impl App for LayerApp {
             demands: Rc::clone(&self.demands),
         };
         let content = provide_theme(theme, move || {
-            let areas = ReactiveList::with_style(
-                whole_window(),
-                drawing,
-                |drawing: &Drawing| (drawing.build, drawing.version),
-                move |drawing: Drawing| build(&drawing.areas),
-            )?;
+            let areas =
+                ReactiveList::with_style(whole_window(), drawing, Drawn::key, build)?.as_row();
             let transients =
                 ui::chrome::or_empty("transient layer", crate::transient::layer(key, frame));
             Container::new(whole_window(), vec![Box::new(areas), transients]).map(box_item)
@@ -1504,7 +1622,7 @@ mod tests {
                     size: (2560.0, 1440.0),
                 },
             ],
-            Content::Keep,
+            Content::Changed,
         );
 
         assert_eq!(done.opened, 4);
@@ -1520,7 +1638,7 @@ mod tests {
         let mut windows = host();
         windows.reconcile(&[plan(&config, &resolved)], Content::Rebuild);
 
-        let done = windows.reconcile(&[], Content::Keep);
+        let done = windows.reconcile(&[], Content::Changed);
         assert_eq!(done.closed, 4);
         assert!(windows.is_empty());
         assert!(
@@ -1753,9 +1871,9 @@ mod tests {
         );
     }
 
-    /// Reservation is summed across every layer, which is exactly what one window cannot see for itself: a reserving dock on the desktop shortens a bar in the top window.
+    /// Reservation is gathered across every layer, which is exactly what one window cannot see for itself: a reserving dock on the desktop shortens a bar in the top window.
     #[test]
-    fn what_is_reserved_is_summed_across_the_layers_a_window_cannot_see() {
+    fn what_is_reserved_is_gathered_across_the_layers_a_window_cannot_see() {
         let mut dock = bar("dock", &["visualiser"]);
         dock.kind = ResolvedAreaKind::Dock {
             edge: Edge::Left,
@@ -1774,19 +1892,26 @@ mod tests {
         );
     }
 
-    /// Only an area that asked to blur is measured, so nobody has to wonder why the window does not track every area's rect.
+    /// Only an area that asked to blur is blurred, so nobody has to wonder why the window does not track every area's rect; the compositor blurs behind the layers application windows sit among, and an area of the background or the lock screen blurs the pictures its own surface drew under it, which is all there is behind it.
     #[test]
-    fn only_an_area_styled_to_blur_its_backdrop_is_measured() {
-        assert!(!blurs(&bar("bar-top", &["clock"])));
+    fn only_an_area_styled_to_blur_its_backdrop_is_blurred_and_by_whoever_draws_what_is_behind_it()
+    {
+        assert_eq!(blur_of(LayerKind::Top, &bar("bar-top", &["clock"])), None);
 
         let mut blurring = bar("bar-top", &["clock"]);
         blurring.style.backdrop = Some(Backdrop::Blur);
-        assert!(blurs(&blurring));
+        for layer in [LayerKind::Desktop, LayerKind::Top, LayerKind::Overlay] {
+            assert_eq!(blur_of(layer, &blurring), Some(Blur::Compositor), "{layer}");
+        }
+        for layer in [LayerKind::Background, LayerKind::Lock] {
+            assert_eq!(blur_of(layer, &blurring), Some(Blur::InSurface), "{layer}");
+        }
 
         let mut plain = bar("bar-top", &["clock"]);
         plain.style.backdrop = Some(Backdrop::None);
-        assert!(
-            !blurs(&plain),
+        assert_eq!(
+            blur_of(LayerKind::Top, &plain),
+            None,
             "saying `backdrop = \"none\"` out loud is still not asking for blur"
         );
     }
@@ -1823,7 +1948,7 @@ mod tests {
         }
     }
 
-    /// The standing rule that hot reload is non-destructive: a layout edit builds the window's areas again and leaves a transient open in it — and whatever the user was doing there — as it was.
+    /// The standing rule that hot reload is non-destructive: an edit builds the window's areas again and leaves a transient open in it — and whatever the user was doing there — as it was.
     #[test]
     fn a_layout_edit_rebuilds_the_areas_and_leaves_an_open_transient_alone() {
         telar::reset_layout_runtime();
@@ -1870,6 +1995,192 @@ mod tests {
             "the transient kept the tree it had: a rebuild would put the caret back at the start of whatever was being typed"
         );
         crate::transient::close_all();
+    }
+
+    struct Naming(Rc<RefCell<Vec<String>>>);
+
+    impl Areas for Naming {
+        fn build(&self, context: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+            self.0.borrow_mut().push(context.area.id.to_string());
+            Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?))
+        }
+    }
+
+    /// A layout edit builds again the areas it changed and keeps every other node — a region's picture mid-fade, a card being read — while a config edit, which every area is built against, builds them all, and a screen that changed size moves them all.
+    #[test]
+    fn an_arrangement_change_rebuilds_only_the_areas_it_touched() {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        let built = Rc::new(RefCell::new(Vec::new()));
+        let app = LayerApp {
+            kind: LayerKind::Top,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(drawn(vec![
+                bar("bar-top", &["clock"]),
+                bar("bar-second", &["notes"]),
+            ])),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::new(Layer::Top)),
+            screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(Naming(Rc::clone(&built))),
+        };
+        let _root = app.root();
+        let taken = || std::mem::take(&mut *built.borrow_mut());
+        assert_eq!(taken(), ["bar-top", "bar-second"]);
+
+        let mut thicker = bar("bar-second", &["notes"]);
+        if let ResolvedAreaKind::Bar { thickness, .. } = &mut thicker.kind {
+            *thickness = 50.0;
+        }
+        app.layer
+            .set(drawn(vec![bar("bar-top", &["clock"]), thicker.clone()]));
+        app.generation.look_again();
+        assert_eq!(taken(), ["bar-second"], "only what the edit changed");
+
+        app.generation.look_again();
+        assert!(taken().is_empty(), "nothing changed, nothing is built");
+
+        app.generation.bump();
+        assert_eq!(
+            taken(),
+            ["bar-top", "bar-second"],
+            "a config edit builds all"
+        );
+
+        app.screen.set(Screen {
+            size: (SIDE as f32 * 2.0, SIDE as f32),
+            reserved: Reserved::default(),
+        });
+        app.generation.look_again();
+        assert_eq!(
+            taken(),
+            ["bar-top", "bar-second"],
+            "a screen of another size places every area again"
+        );
+    }
+
+    fn picture(dir: &std::path::Path, name: &str, pixel: [u8; 4]) -> String {
+        std::fs::create_dir_all(dir).expect("a scratch directory");
+        let path = dir.join(name);
+        image::RgbaImage::from_pixel(2, 2, image::Rgba(pixel))
+            .save(&path)
+            .expect("a picture on disk");
+        path.display().to_string()
+    }
+
+    fn half(id: &str, x: f32, source: &str) -> ResolvedArea {
+        ResolvedArea {
+            id: AreaId::new(id),
+            kind: ResolvedAreaKind::WallpaperRegion {
+                rect: layout::Rect {
+                    x,
+                    y: 0.0,
+                    w: 0.5,
+                    h: 1.0,
+                },
+                source: source.to_string(),
+                fit: layout::Fit::Cover,
+                transition: layout::Transition::Fade,
+            },
+            reserve: false,
+            above_fullscreen: false,
+            within: Within::Output,
+            style: AreaStyle::default(),
+            visible: None,
+            groups: Vec::new(),
+            actions: BTreeMap::new(),
+        }
+    }
+
+    fn images(commands: &[telar::DrawCommand]) -> HashSet<u64> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                telar::DrawCommand::Image { data, .. } if data.width > 1 => Some(data.id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// T-7.1's acceptance, through the window's own build: `wallpaper set --region left` is a layout edit that changes the left region alone, so the window builds that region again — fading from the picture it showed to the new one — and keeps the right region's node, its picture and whatever fade it is in; the frame after the edit repaints nothing outside the left region's box (F-5.1, F-5.2).
+    #[test]
+    fn a_new_picture_for_one_region_repaints_that_region_and_nothing_beside_it() {
+        const WIDE: u32 = 400;
+        const HIGH: u32 = 200;
+        telar::reset_layout_runtime();
+        let config = Arc::new(Config::starter());
+        set_theme(config.resolve_theme());
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("layer-window-regions");
+        let (red, blue, green) = (
+            picture(&dir, "red.png", [255, 0, 0, 255]),
+            picture(&dir, "blue.png", [0, 0, 255, 255]),
+            picture(&dir, "green.png", [0, 255, 0, 255]),
+        );
+        let window = |left: &str| {
+            WindowAreas::home(
+                LayerKind::Background,
+                layer(vec![half("left", 0.0, left), half("right", 0.5, &blue)]),
+            )
+        };
+        let app = LayerApp {
+            kind: LayerKind::Background,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(window(&red)),
+            config: LiveConfig::new(Arc::clone(&config)),
+            demands: Rc::new(Demands::new(Layer::Background)),
+            screen: Rc::new(Cell::new(Screen {
+                size: (WIDE as f32, HIGH as f32),
+                reserved: Reserved::default(),
+            })),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(crate::area::ShellAreas),
+        };
+        let tree = telar::testing::mount(app.root(), WIDE, HIGH);
+        let frame = || {
+            telar::relayout_if_dirty();
+            tree.commands().to_vec()
+        };
+        let before = frame();
+        assert_eq!(images(&before).len(), 2, "one picture each");
+
+        app.layer.set(window(&green));
+        app.generation.look_again();
+        let after = frame();
+        assert_eq!(
+            images(&after).len(),
+            3,
+            "the left region holds the picture it fades from beside the one it fades to, and the right one still its own"
+        );
+        let damaged = telar::testing::damage(&after, &before).expect("a change a region bounds");
+        let left = Rect::new(0.0, 0.0, WIDE as f32 / 2.0, HIGH as f32);
+        let inside = |rect: &Rect| {
+            rect.x >= left.x
+                && rect.y >= left.y
+                && rect.x + rect.width <= left.x + left.width
+                && rect.y + rect.height <= left.y + left.height
+        };
+        assert!(
+            damaged
+                .iter()
+                .any(|rect| rect.width > 0.0 && rect.height > 0.0),
+            "the left region is repainted: {damaged:?}"
+        );
+        assert!(
+            damaged.iter().all(inside),
+            "and nothing of the right one is: {damaged:?}"
+        );
+
+        app.generation.look_again();
+        assert_eq!(
+            telar::testing::damage(&frame(), &after),
+            Some(Vec::new()),
+            "an arrangement that did not change repaints nothing"
+        );
     }
 
     fn counting_app(kind: LayerKind, resolved: &Resolved, built: &Rc<Cell<u32>>) -> LayerApp {
@@ -1998,6 +2309,7 @@ mod tests {
         id: "reader",
         name: "Reader",
         icon: "circle",
+        category: ui::descriptor::Category::Info,
         options: &[ui::descriptor::OptionsType::of::<config::ClockConfig>()],
         representations: ui::descriptor::Representations {
             chip: Some(ui::descriptor::ChipDef::new(
@@ -2417,6 +2729,7 @@ mod tests {
             id,
             name: id,
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: ui::descriptor::Representations {
                 chip: Some(ui::descriptor::ChipDef::new(
@@ -2617,5 +2930,192 @@ mod tests {
                 telar::dispose_owner(owner);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use config::Config;
+    use layout::{
+        Anchor, AreaId, AreaStyle, GroupId, GroupKind, InstanceId, LayerKind, Representation,
+        ResolvedArea, ResolvedAreaKind, ResolvedGroup, ResolvedInstance, ResolvedLayer, Within,
+    };
+    use platform_wayland::Layer;
+    use telar::{Component, LayoutError, LayoutItem, set_theme};
+
+    use super::*;
+
+    const SCREEN: &str = "DP-1";
+
+    fn dot(_: &ui::host::Host) -> ui::descriptor::Built {
+        Ok(Box::new(telar::Container::new(
+            telar::LayoutStyle::new().width(20.0).height(20.0),
+            Vec::new(),
+        )?))
+    }
+
+    const fn dot_module(id: &'static str) -> ui::descriptor::ModuleDescriptor {
+        ui::descriptor::ModuleDescriptor {
+            id,
+            name: id,
+            icon: "circle",
+            category: ui::descriptor::Category::Info,
+            options: &[],
+            representations: ui::descriptor::Representations {
+                widget: Some(ui::descriptor::WidgetDef {
+                    sizes: &ui::host::WidgetSize::ALL,
+                    build: dot,
+                    input: ui::descriptor::Input::ReadOnly,
+                }),
+                ..ui::descriptor::Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        }
+    }
+
+    const DOTS: &[ui::descriptor::ModuleDescriptor] = &[dot_module("dot-a"), dot_module("dot-b")];
+
+    fn widget(id: &str, col: u32, row: u32, representation: Representation) -> ResolvedGroup {
+        ResolvedGroup {
+            id: GroupId::new(id),
+            kind: GroupKind::Cell {
+                col,
+                row,
+                col_span: 1,
+                row_span: 1,
+            },
+            stacked: false,
+            children: vec![ResolvedInstance {
+                id: InstanceId::new(id),
+                module: id.to_string(),
+                representation,
+                options: toml::Table::new(),
+                bindings: BTreeMap::new(),
+                actions: BTreeMap::new(),
+            }],
+        }
+    }
+
+    fn grid(groups: Vec<ResolvedGroup>) -> ResolvedArea {
+        ResolvedArea {
+            id: AreaId::new("widgets"),
+            kind: ResolvedAreaKind::Grid {
+                rect: layout::Rect::default(),
+                cell: 80.0,
+                gap: 16.0,
+                anchor: Anchor::TopLeft,
+            },
+            reserve: false,
+            above_fullscreen: false,
+            within: Within::Output,
+            style: AreaStyle::default(),
+            visible: None,
+            groups,
+            actions: BTreeMap::new(),
+        }
+    }
+
+    struct Counted(Rc<Cell<usize>>);
+
+    impl Areas for Counted {
+        fn build(&self, context: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+            self.0.set(self.0.get() + 1);
+            crate::area::ShellAreas.build(context)
+        }
+    }
+
+    fn drawn(groups: Vec<ResolvedGroup>) -> WindowAreas {
+        WindowAreas::home(
+            LayerKind::Desktop,
+            ResolvedLayer {
+                areas: vec![grid(groups)],
+            },
+        )
+    }
+
+    /// F-5.8: a layout change that only moves a grid's widgets to other cells keeps the grid's nodes and moves them, which is what lets `animate_layout` slide them there; a change to what a group holds builds the grid again.
+    #[test]
+    fn a_widget_moved_to_another_cell_keeps_its_node_and_moves() {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        ui::descriptor::install(DOTS);
+        let scope = telar::owner_scope();
+        let owner = scope.id();
+        let builds = Rc::new(Cell::new(0));
+        let app = LayerApp {
+            kind: LayerKind::Desktop,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(drawn(vec![
+                widget("dot-a", 0, 0, Representation::WidgetS),
+                widget("dot-b", 2, 0, Representation::WidgetS),
+            ])),
+            config: LiveConfig::new(Arc::new(Config::default())),
+            demands: Rc::new(Demands::new(Layer::Bottom)),
+            screen: Rc::new(Cell::new(Screen {
+                size: (1200.0, 800.0),
+                reserved: Reserved::default(),
+            })),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            areas: Rc::new(Counted(Rc::clone(&builds))),
+        };
+        let mut root = app.root();
+        let lay_out = |root: &mut Box<dyn Component>| {
+            root.on_event(&telar::Event::WindowResized {
+                width: 1200,
+                height: 800,
+            })
+        };
+        lay_out(&mut root);
+        let at =
+            crate::rects::Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("widgets"));
+        let b = at.group(&GroupId::new("dot-b"));
+        let before = crate::rects::rect(&b).expect("dot-b is placed");
+        assert_eq!((before.x, before.y), (192.0, 0.0), "two cells of 96 px in");
+        assert_eq!(builds.get(), 1);
+
+        app.layer.set(drawn(vec![
+            widget("dot-a", 0, 0, Representation::WidgetS),
+            widget("dot-b", 4, 2, Representation::WidgetS),
+        ]));
+        app.generation.look_again();
+        lay_out(&mut root);
+        assert_eq!(builds.get(), 1, "the grid kept its nodes");
+        let after = crate::rects::rect(&b).expect("still placed");
+        assert_eq!(
+            (after.x, after.y),
+            (384.0, 192.0),
+            "and dot-b is on its new cells"
+        );
+
+        app.layer.set(drawn(vec![
+            widget("dot-a", 0, 0, Representation::WidgetM),
+            widget("dot-b", 4, 2, Representation::WidgetS),
+        ]));
+        app.generation.look_again();
+        lay_out(&mut root);
+        assert_eq!(builds.get(), 2, "a widget of another size is built again");
+        drop((root, scope));
+        telar::dispose_owner(owner);
+    }
+
+    #[test]
+    fn only_a_change_of_cells_counts_as_a_move() {
+        let was = grid(vec![widget("dot-a", 0, 0, Representation::WidgetS)]);
+        let moved = grid(vec![widget("dot-a", 3, 1, Representation::WidgetS)]);
+        let resized = grid(vec![widget("dot-a", 0, 0, Representation::WidgetL)]);
+        let renamed = grid(vec![widget("dot-b", 0, 0, Representation::WidgetS)]);
+        assert!(crate::area::moves_only(&was, &moved));
+        assert!(!crate::area::moves_only(&was, &resized));
+        assert!(!crate::area::moves_only(&was, &renamed));
+        let mut padded = moved.clone();
+        padded.style.padding = Some(8.0);
+        assert!(!crate::area::moves_only(&was, &padded));
     }
 }

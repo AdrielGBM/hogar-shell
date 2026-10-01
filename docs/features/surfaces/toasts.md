@@ -55,7 +55,14 @@ one thing they cannot rely on is the stack being up to time them out.
 `[toasts]` — `enabled`, plus `[toasts.events]`. Where a toast appears is not a toast setting: a toast, a
 notification popup and an OSD are one column — the layout's `Stack` area, by default in the overlay layer,
 pinned to the top right — and its place, size and which outputs it appears on are that area's own `anchor`,
-`width` and `output_policy`.
+`offset`, `width` and `output_policy`.
+
+A screen can have several stacks, and each card goes to one of them by its `routes`: the first stack of the
+screen with a route that takes the card — a card kind (`notification`, `toast`, `osd`), the app a notification
+came from, its urgency — and otherwise the first stack with no routes at all, wherever it is in the layer. So a
+stack in the middle routed `critical` notifications takes those, while toasts and every other notification stay
+in the corner stack that routes nothing. The overlay edit mode makes stacks (Shift+N), pins them by their first
+card or to one of nine anchors, and edits their routes in the popover.
 
 How many cards show at once and how long each stays is still `[stack]` — `max_visible`, `timeout_ms`,
 `clear_threshold`. The space between two cards is the shell's `spacing` token, the same one that separates two

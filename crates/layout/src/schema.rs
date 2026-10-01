@@ -36,6 +36,7 @@ const ORDER: &[&str] = &[
     "Gradient",
     "GradientStop",
     "Tile::NineSlice",
+    "Offset",
     "Route",
     "Group",
     "GroupKind::Zone",
@@ -87,6 +88,7 @@ pub fn reference() -> Layout {
             "cards",
             AreaKind::Stack {
                 anchor: Some(Anchor::TopRight),
+                offset: Some(Offset { x: 0.0, y: 48.0 }),
                 width: Some(380.0),
                 output_policy: Some(StackOutputPolicy::Focused),
                 routes: vec![Route {
@@ -94,6 +96,7 @@ pub fn reference() -> Layout {
                     app: None,
                     urgency: None,
                 }],
+                launcher: Some(false),
             },
         ),
         area(
@@ -350,8 +353,8 @@ mod tests {
             resolved
                 .layer(LayerKind::Desktop)
                 .map(|layer| layer.areas.len()),
-            Some(4),
-            "one area of every kind the built-in layout does not already show"
+            Some(5),
+            "the built-in desktop's grid, and one area of every kind the built-in layout does not already show"
         );
     }
 

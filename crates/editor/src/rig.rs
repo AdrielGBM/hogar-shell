@@ -1,14 +1,12 @@
-//! The running shell an editor test edits: a store holding the shipped layout under a name of its own, drawn on one screen through a real reconcile and installed as the running shell's, with the editor started over it.
-//!
-//! Nothing reserves an edge, because a headless reconcile that opens a reservation strip aborts at thread exit (F-9).
+//! The running shell an editor test edits: a store holding the shipped layout under a name of its own, drawn on one screen (or several) through a real reconcile — reservation strips included — and installed as the running shell's, with the editor started over it.
 #![cfg(test)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use config::Config;
-use layout::{LayerKind, Layout, LayoutId, LayoutStore};
+use layout::{ActiveWorkspace, Layout, LayoutId, LayoutStore};
 use platform_wayland::OutputDescriptor;
 use surfaces::layer_window::Content;
 use surfaces::reconcile::{Shell, plan};
@@ -17,21 +15,10 @@ use surfaces::transient;
 /// The one screen a rig draws on.
 pub(crate) const SCREEN: &str = "DP-1";
 
-/// The shipped layout with nothing reserving an edge.
-pub(crate) fn unreserved() -> Layout {
-    let mut layout = layout::built_in();
-    for rule in &mut layout.outputs {
-        for layer in LayerKind::ALL {
-            for area in &mut rule.layers.get_mut(layer).areas {
-                area.reserve = Some(false);
-            }
-        }
-    }
-    layout
-}
-
 pub(crate) struct Rig {
     pub(crate) store: Rc<RefCell<LayoutStore>>,
+    /// How many times the screen has been brought in line with the store, which is the only thing that renegotiates what an edge reserves.
+    pub(crate) reconciles: Rc<Cell<usize>>,
     _shell: Rc<RefCell<Shell>>,
 }
 
@@ -48,6 +35,30 @@ pub(crate) fn rig(test: &str) -> Rig {
 
 /// [`rig`], with `mine` changed by `edit` before it is stored.
 pub(crate) fn rig_with(test: &str, edit: impl FnOnce(&mut Layout)) -> Rig {
+    rig_on(test, None, edit)
+}
+
+/// [`rig_with`], its screen showing the workspace called `workspace`.
+pub(crate) fn rig_on(test: &str, workspace: Option<&str>, edit: impl FnOnce(&mut Layout)) -> Rig {
+    rig_across(test, &[SCREEN], workspace, edit)
+}
+
+/// [`rig_with`], drawn on every screen `screens` names, side by side and each 1920 by 1080.
+pub(crate) fn rig_screens(test: &str, screens: &[&str], edit: impl FnOnce(&mut Layout)) -> Rig {
+    rig_across(test, screens, None, edit)
+}
+
+fn rig_across(
+    test: &str,
+    screens: &[&str],
+    workspace: Option<&str>,
+    edit: impl FnOnce(&mut Layout),
+) -> Rig {
+    let workspace = workspace.map(|name| ActiveWorkspace {
+        name: name.to_string(),
+        id: None,
+        special: None,
+    });
     telar::reset_layout_runtime();
     telar::set_locale("en");
     telar::set_theme(Config::default().resolve_theme());
@@ -56,7 +67,7 @@ pub(crate) fn rig_with(test: &str, edit: impl FnOnce(&mut Layout)) -> Rig {
         .join(format!("editor-{test}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a layouts directory");
-    let mut mine = unreserved();
+    let mut mine = layout::built_in();
     mine.id = LayoutId::new("mine");
     edit(&mut mine);
     std::fs::write(
@@ -69,7 +80,19 @@ pub(crate) fn rig_with(test: &str, edit: impl FnOnce(&mut Layout)) -> Rig {
     store.use_layout(&LayoutId::new("mine")).expect("mine");
     let store = Rc::new(RefCell::new(store));
     let shell = Rc::new(RefCell::new(Shell::new()));
+    let outputs: Vec<OutputDescriptor> = screens
+        .iter()
+        .enumerate()
+        .map(|(at, name)| OutputDescriptor {
+            name: Some(name.to_string()),
+            logical_size: Some((1920, 1080)),
+            position: (1920 * at as i32, 0),
+            scale: 1,
+        })
+        .collect();
+    let reconciles = Rc::new(Cell::new(0));
     let redraw: Rc<dyn Fn()> = {
+        let reconciles = Rc::clone(&reconciles);
         let (store, shell) = (Rc::clone(&store), Rc::clone(&shell));
         Rc::new(move || {
             let desktops = {
@@ -79,17 +102,13 @@ pub(crate) fn rig_with(test: &str, edit: impl FnOnce(&mut Layout)) -> Rig {
                     &Arc::new(Config::default()),
                     store.active(),
                     store.all(),
-                    &[OutputDescriptor {
-                        name: Some(SCREEN.to_string()),
-                        logical_size: Some((1920, 1080)),
-                        position: (0, 0),
-                        scale: 1,
-                    }],
-                    &|_| None,
+                    &outputs,
+                    &|_| workspace.clone(),
                 )
                 .0
             };
-            shell.borrow_mut().reconcile(&desktops, Content::Rebuild);
+            shell.borrow_mut().reconcile(&desktops, Content::Changed);
+            reconciles.set(reconciles.get() + 1);
         })
     };
     redraw();
@@ -98,6 +117,7 @@ pub(crate) fn rig_with(test: &str, edit: impl FnOnce(&mut Layout)) -> Rig {
     crate::install();
     Rig {
         store,
+        reconciles,
         _shell: shell,
     }
 }

@@ -4,26 +4,28 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use platform_wayland::{timeout, watch};
 use telar::{
-    Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, ReadSignal, Transition, signal,
-    use_theme,
+    Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, ReadSignal, RwSignal,
+    Transition, detached, memo, signal, use_theme,
 };
 
 use config::policy::Urgency;
 use config::theme::NordTheme;
 use config::{Config, StackConfig};
 use layout::{
-    Anchor, AreaId, CardKind, LayerKind, ResolvedArea, ResolvedAreaKind, Route, StackOutputPolicy,
+    AreaId, CardKind, LayerKind, ResolvedArea, ResolvedAreaKind, RoutedCard, StackOutputPolicy,
 };
 use services::hyprland::{self, ActiveWindow, Client};
 use services::notifications::{Notification, SharedSnapshot, Snapshot};
 use services::toaster::{self, Toast};
 use surfaces::area::Surround;
 use surfaces::layer_window::Hold;
-use surfaces::reconcile::{StackSite, stacks};
+use surfaces::pinned::{self, Side};
+use surfaces::reconcile::{self, StackSite, stacks};
 use surfaces::transient;
 use ui::chrome::{card_gap, content_radius};
 use ui::descriptor::Built;
@@ -87,15 +89,28 @@ impl Card {
             Card::Osd(_) => CardKind::Osd,
         }
     }
+
+    /// What a stack's routes are matched against.
+    fn routed(&self) -> RoutedCard<'_> {
+        match self {
+            Card::Notification(n) => RoutedCard {
+                kind: CardKind::Notification,
+                app: Some(&n.app_name),
+                urgency: Some(urgency_of(n.urgency)),
+            },
+            _ => RoutedCard {
+                kind: self.kind(),
+                app: None,
+                urgency: None,
+            },
+        }
+    }
 }
 
 /// The single-slot OSD, as a source the column can subscribe to like the other two.
 ///
 /// A store rather than a signal because the windows it feeds come and go as the column fills and empties, and a signal made inside a window goes with it.
 static OSD: Store<Option<OsdKind>> = Store::new(|| None);
-
-/// A store for the same reason [`OSD`] is one.
-static FOCUSED: Store<Option<String>> = Store::new(|| None);
 
 thread_local! {
     /// Bumped on every OSD trigger, so the expiry scheduled by the one that was replaced fires against a generation that no longer matches and does nothing.
@@ -106,6 +121,8 @@ thread_local! {
     static HELD: RefCell<Vec<(Option<String>, LayerKind, Hold)>> = const { RefCell::new(Vec::new()) };
     static FOCUS: RefCell<Option<String>> = const { RefCell::new(None) };
     static COVER: RefCell<(Vec<Client>, String)> = const { RefCell::new((Vec::new(), String::new())) };
+    /// The output a stack that follows focus is drawn on, which every such stack reads: owned by no window, since the windows reading it come and go as the column moves.
+    static SHOWN_ON: RwSignal<Option<String>> = detached(|| signal(None));
 }
 
 /// Takes the OSD off the column, for the swipe that dismisses it. The slot is this module's, so clearing it is too — the OSD card itself only knows that it was dragged aside.
@@ -266,8 +283,9 @@ pub fn reconcile_config() {
 fn reconcile() {
     let sites = stacks();
     let shown_on = shown_on(&sites, FOCUS.with(|focus| focus.borrow().clone()));
-    if FOCUSED.get() != shown_on {
-        FOCUSED.update(|focused| *focused = shown_on.clone());
+    let drawn_on = SHOWN_ON.with(|drawn| *drawn);
+    if drawn_on.peek() != shown_on {
+        drawn_on.set(shown_on.clone());
     }
     let config = config::config_for(shown_on.as_deref());
     let cards = LIVE.with(|live| cards_now(&live.borrow(), covering(&config), &config));
@@ -276,7 +294,7 @@ fn reconcile() {
         for site in &sites {
             let lands = cards
                 .iter()
-                .any(|card| first_accepting(card, &sites, &site.output) == Some(&site.area));
+                .any(|card| landing(card, &sites, &site.output) == Some(&site.area));
             let showing =
                 lands && (site.policy != StackOutputPolicy::Focused || site.output == shown_on);
             let at = (site.output.clone(), site.layer);
@@ -328,6 +346,7 @@ fn shown_on(sites: &[StackSite], focused: Option<String>) -> Option<String> {
     }
 }
 
+/// Follows the output focus is on through Hyprland's event socket, for as long as the socket is there.
 fn follow_focus() {
     let dir = services::hyprland::socket_dir();
     watch(
@@ -338,54 +357,33 @@ fn follow_focus() {
             let Ok(events) = UnixStream::connect(dir.join(".socket2.sock")) else {
                 return;
             };
-            for line in BufReader::new(events).lines().map_while(Result::ok) {
-                if let Some(monitor) = services::hyprland::monitor_from_focus_event(&line)
-                    && !tx.send(monitor)
-                {
-                    break;
-                }
-            }
+            focus_events(
+                BufReader::new(events).lines().map_while(Result::ok),
+                |monitor| tx.send(monitor),
+            );
         },
-        |monitor: String| {
-            FOCUS.with(|focus| *focus.borrow_mut() = Some(monitor));
-            reconcile();
-        },
+        focus_moved,
     );
 }
 
-fn first_accepting<'a>(
-    card: &Card,
-    sites: &'a [StackSite],
-    output: &Option<String>,
-) -> Option<&'a AreaId> {
-    sites
-        .iter()
-        .filter(|site| site.output == *output)
-        .find(|site| accepts(&site.routes, card))
-        .map(|site| &site.area)
+/// Hands `moved` every output focus moves to, in the order the event socket's `lines` say so, until it answers that nobody is listening.
+fn focus_events(lines: impl Iterator<Item = String>, mut moved: impl FnMut(String) -> bool) {
+    for line in lines {
+        if let Some(monitor) = services::hyprland::monitor_from_focus_event(&line)
+            && !moved(monitor)
+        {
+            break;
+        }
+    }
 }
 
-fn accepts(routes: &[Route], card: &Card) -> bool {
-    routes.is_empty() || routes.iter().any(|route| route_takes(route, card))
+fn focus_moved(monitor: String) {
+    FOCUS.with(|focus| *focus.borrow_mut() = Some(monitor));
+    reconcile();
 }
 
-fn route_takes(route: &Route, card: &Card) -> bool {
-    if route.kind.is_some_and(|kind| kind != card.kind()) {
-        return false;
-    }
-    let Card::Notification(notification) = card else {
-        return route.app.is_none() && route.urgency.is_none();
-    };
-    if route
-        .app
-        .as_deref()
-        .is_some_and(|app| !app.eq_ignore_ascii_case(&notification.app_name))
-    {
-        return false;
-    }
-    route
-        .urgency
-        .is_none_or(|urgency| urgency == urgency_of(notification.urgency))
+fn landing<'a>(card: &Card, sites: &'a [StackSite], output: &Option<String>) -> Option<&'a AreaId> {
+    reconcile::stack_for(sites, output, &card.routed()).map(|site| &site.area)
 }
 
 fn urgency_of(urgency: Urgency) -> layout::Urgency {
@@ -396,10 +394,11 @@ fn urgency_of(urgency: Urgency) -> layout::Urgency {
     }
 }
 
-/// A stack that follows focus draws only on the output the host shows it on, so moving it is the old column emptying card by card while the new one fills.
+/// A stack that follows focus is drawn only on the output the host shows it on, and moving it there is a move rather than a departure and an arrival: the column on the output focus left goes at once, its cards playing no exit, and the one on the output focus reached is built already holding them, so none plays an entrance.
 pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
     let ResolvedAreaKind::Stack {
         anchor,
+        offset,
         width,
         output_policy,
         ..
@@ -430,18 +429,15 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
         |tx| OSD.subscribe(tx),
         move |live: Option<OsdKind>| osd.set(live),
     );
-    let focused = signal(FOCUSED.get());
-    watch(
-        |tx| FOCUSED.subscribe(tx),
-        move |live: Option<String>| focused.set(live),
-    );
     let covering = crate::notifications::covering_focus(&config.notifications);
+    let here = {
+        let output = output.clone();
+        let shown_on = SHOWN_ON.with(|shown| *shown);
+        memo(move || !follows || shown_on.with(|shown| *shown == output))
+    };
 
     let built_with = Arc::clone(&config);
-    let source = move || {
-        if follows && focused.get() != output {
-            return Vec::new();
-        }
+    let cards = Rc::new(move || {
         let live = Live {
             snapshot: snapshot.get(),
             toasts: toasts.get(),
@@ -454,7 +450,7 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
             &built_with,
         )
         .into_iter()
-        .filter(|card| first_accepting(card, &sites, &output) == Some(&id))
+        .filter(|card| landing(card, &sites, &output) == Some(&id))
         .collect();
         // This is the moment a notification is on screen, and so the moment its expiry may start. The daemon spends the arming on the first call, so a card that stays up is not handed a fresh clock on every repaint.
         for card in &cards {
@@ -463,29 +459,39 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
             }
         }
         cards
-    };
+    });
 
     let theme = use_theme::<NordTheme>();
     let radius = content_radius();
     let gap = card_gap();
-    let (from_end, slide_from) = packing(*anchor);
-    let tween = config.animation.tween_ms(200, 2_000);
-    let row_config = Arc::clone(&config);
-    let list = ReactiveList::keyed(source, Card::slot, move |card: ReadSignal<Card>| {
-        row(card, &row_config, theme, radius, gap, from_end)
-    })?
-    .with_transition(Transition::slide(slide_from, TRAVEL, tween))
-    .animate_layout(tween);
-
-    let bounds = surround.bounds;
-    let inset = transient::DEFAULT_GAP;
-    let height = (bounds.height - 2.0 * inset).max(0.0);
-    let x = match column_side(*anchor) {
-        Side::Start => bounds.x + inset,
-        Side::Middle => bounds.x + (bounds.width - width) / 2.0,
-        Side::End => bounds.x + bounds.width - width - inset,
+    let (across, down) = pinned::sides(*anchor);
+    let from_end = down == Side::End;
+    let slide_from = match across {
+        Side::Start => telar::Edge::Left,
+        Side::Middle | Side::End => telar::Edge::Right,
     };
-    let justify = match vertical_side(*anchor) {
+    let tween = config.animation.tween_ms(200, 2_000);
+    // The transition is set once the list has built, so what it holds then appears settled, and only a card arriving after that slides in.
+    let drawn = ReactiveList::with_style(
+        LayoutStyle::new().flex_column(),
+        move || here.get().then_some(()).into_iter().collect(),
+        |_: &()| (),
+        move |()| -> Built {
+            let cards = Rc::clone(&cards);
+            let row_config = Arc::clone(&config);
+            let list = ReactiveList::keyed(
+                move || cards(),
+                Card::slot,
+                move |card: ReadSignal<Card>| row(card, &row_config, theme, radius, gap, from_end),
+            )?
+            .with_transition(Transition::slide(slide_from, TRAVEL, tween))
+            .animate_layout(tween);
+            Ok(Box::new(list))
+        },
+    )?;
+
+    let placed = pinned::column(surround.bounds, *anchor, width, *offset);
+    let justify = match down {
         Side::Start => telar::JustifyContent::START,
         Side::Middle => telar::JustifyContent::CENTER,
         Side::End => telar::JustifyContent::END,
@@ -496,15 +502,10 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
         surfaces::area::dressed(
             &area.style,
             &surround.theme,
-            LayoutStyle::new()
-                .absolute()
-                .inset_start(x)
-                .inset_top(bounds.y + inset)
-                .width(width)
-                .height(height)
+            surfaces::area::at(placed)
                 .flex_column()
                 .justify_content(justify),
-            vec![Box::new(list)],
+            vec![Box::new(drawn)],
         )?,
         surfaces::area::is_filled(&area.style, &surround.theme),
     )))
@@ -537,38 +538,6 @@ fn row(
     Ok(Box::new(Container::new(style, vec![Box::new(content)])?))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Side {
-    Start,
-    Middle,
-    End,
-}
-
-fn column_side(anchor: Anchor) -> Side {
-    match anchor {
-        Anchor::TopLeft | Anchor::Left | Anchor::BottomLeft => Side::Start,
-        Anchor::Top | Anchor::Center | Anchor::Bottom => Side::Middle,
-        Anchor::TopRight | Anchor::Right | Anchor::BottomRight => Side::End,
-    }
-}
-
-fn vertical_side(anchor: Anchor) -> Side {
-    match anchor {
-        Anchor::TopLeft | Anchor::Top | Anchor::TopRight => Side::Start,
-        Anchor::Left | Anchor::Center | Anchor::Right => Side::Middle,
-        Anchor::BottomLeft | Anchor::Bottom | Anchor::BottomRight => Side::End,
-    }
-}
-
-fn packing(anchor: Anchor) -> (bool, telar::Edge) {
-    let from_end = vertical_side(anchor) == Side::End;
-    let edge = match column_side(anchor) {
-        Side::Start => telar::Edge::Left,
-        _ => telar::Edge::Right,
-    };
-    (from_end, edge)
-}
-
 fn build(
     card: Card,
     config: &Config,
@@ -591,6 +560,7 @@ fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use layout::Route;
 
     /// How many providers there are, and so the most cards the column can be made to hold whatever `[stack] max_visible` says. Tied to [`Card`]'s variants by hand; `a_column_grows_past_its_cap_rather_than_silence_a_provider` is what notices when a fourth arrives and this was not updated.
     const PROVIDERS: usize = 3;
@@ -744,20 +714,20 @@ mod tests {
             n.urgency = Urgency::Critical;
         }
         assert_eq!(
-            first_accepting(&urgent, &sites, &output),
+            landing(&urgent, &sites, &output),
             Some(&AreaId::new("stack-DP-1"))
         );
         assert_eq!(
-            first_accepting(&note(2), &sites, &output),
+            landing(&note(2), &sites, &output),
             Some(&AreaId::new("corner"))
         );
         assert_eq!(
-            first_accepting(&toast(toaster::Event::Vpn, "VPN on"), &sites, &output),
+            landing(&toast(toaster::Event::Vpn, "VPN on"), &sites, &output),
             Some(&AreaId::new("corner")),
             "a route naming a kind turns every other kind away"
         );
         assert_eq!(
-            first_accepting(&note(3), &sites, &Some("HDMI-A-1".to_string())),
+            landing(&note(3), &sites, &Some("HDMI-A-1".to_string())),
             None,
             "a screen with no stack shows no card"
         );
@@ -782,5 +752,148 @@ mod tests {
             ..Live::default()
         };
         assert_eq!(column(&live, false, &config).len(), 2);
+    }
+
+    const SCREENS: [&str; 2] = ["DP-1", "HDMI-A-1"];
+
+    /// The shipped layout planned on two screens side by side and published, so its stacks are where cards are offered.
+    fn published() -> Vec<surfaces::reconcile::Desktop> {
+        let outputs: Vec<platform_wayland::OutputDescriptor> = SCREENS
+            .iter()
+            .enumerate()
+            .map(|(at, name)| platform_wayland::OutputDescriptor {
+                name: Some(name.to_string()),
+                logical_size: Some((1920, 1080)),
+                position: (1920 * at as i32, 0),
+                scale: 1,
+            })
+            .collect();
+        let (desktops, _) = surfaces::reconcile::plan(
+            std::path::Path::new("/nonexistent/config.toml"),
+            &Arc::new(Config::default()),
+            &layout::built_in(),
+            &std::collections::BTreeMap::new(),
+            &outputs,
+            &|_| None,
+        );
+        surfaces::reconcile::publish(&desktops);
+        desktops
+    }
+
+    /// One screen's stack column, drawn as its overlay window draws it.
+    struct Drawn {
+        tree: telar::ComponentList,
+        root: telar::NodeId,
+    }
+
+    impl Drawn {
+        fn of(desktop: &surfaces::reconcile::Desktop) -> Self {
+            let stack = desktop
+                .resolved
+                .areas()
+                .find(|(_, area)| matches!(area.kind, ResolvedAreaKind::Stack { .. }))
+                .map(|(_, area)| area.clone())
+                .expect("the shipped stack");
+            let surround = Surround {
+                config: &desktop.config,
+                theme: desktop.config.resolve_theme(),
+                output: desktop.output.as_deref(),
+                layer: LayerKind::Overlay,
+                bounds: telar::Rect::new(0.0, 0.0, 1920.0, 1080.0),
+                reserved: desktop.reserved,
+                audience: ui::host::Audience::Owner,
+            };
+            let item = area(&stack, surround).expect("the column builds");
+            let page = Container::new(LayoutStyle::new().width(1920.0).height(1080.0), vec![item])
+                .expect("a screen");
+            let root = page.layout_node();
+            Self {
+                tree: telar::ComponentList::new(page),
+                root,
+            }
+        }
+
+        /// What the column draws, laid out as it is now.
+        fn drawn(&self) -> Vec<telar::DrawCommand> {
+            telar::compute_layout(
+                self.root,
+                telar::AvailableSpace::Definite(1920.0),
+                telar::AvailableSpace::Definite(1080.0),
+            )
+            .expect("the column lays out");
+            self.tree.commands().clone()
+        }
+    }
+
+    /// Whether two frames look the same, drawn by two trees: every command alike but the ids that say which tree drew it — a card sliding in or fading out draws under a transform or an opacity the settled one does not.
+    fn alike(new: &[telar::DrawCommand], old: &[telar::DrawCommand]) -> bool {
+        let look = |commands: &[telar::DrawCommand]| -> Vec<String> {
+            commands
+                .iter()
+                .filter(|command| {
+                    !matches!(
+                        command,
+                        telar::DrawCommand::PushElement { .. } | telar::DrawCommand::PopElement
+                    )
+                })
+                .map(|command| format!("{command:?}"))
+                .collect()
+        };
+        look(new) == look(old)
+    }
+
+    fn focus_on(script: &str) -> usize {
+        let mut moves = 0;
+        focus_events(script.lines().map(str::to_string), |monitor| {
+            moves += 1;
+            focus_moved(monitor);
+            true
+        });
+        moves
+    }
+
+    /// TA-1, T-7.4: focus moving to another screen, as Hyprland's event socket says it, moves the column there. The screen focus left is at once what it is with no column — no card plays its exit there — and the screen focus reached draws the column exactly as a settled one is drawn — no card plays its entrance; a line that is not a focus move moves nothing.
+    #[test]
+    fn following_focus_moves_the_column_without_an_exit_or_an_entrance() {
+        telar::reset_layout_runtime();
+        telar::set_locale("en");
+        telar::set_theme(Config::default().resolve_theme());
+        let scope = telar::owner_scope();
+        let desktops = published();
+        show_osd(OsdKind::Volume);
+        focus_on("focusedmon>>DP-1,1");
+        let [left, right] = [&desktops[0], &desktops[1]].map(Drawn::of);
+        let (column, none) = (left.drawn(), right.drawn());
+        assert!(
+            !alike(&column, &none),
+            "the column is on the focused screen, and nowhere else"
+        );
+
+        let moves =
+            focus_on("workspace>>2\nfocusedmon>>HDMI-A-1,2\nactivewindow>>firefox,Mozilla Firefox");
+        assert_eq!(moves, 1, "only the focus line is a move");
+        assert_eq!(
+            SHOWN_ON.with(|shown| shown.peek()),
+            Some("HDMI-A-1".to_string())
+        );
+        assert_eq!(telar::exits_in_flight().get(), 0, "no card is leaving");
+        assert!(
+            alike(&left.drawn(), &none),
+            "the screen focus left shows no column, at once"
+        );
+        assert!(
+            alike(&right.drawn(), &column),
+            "the screen focus reached shows the column as it was, with nothing sliding in"
+        );
+
+        focus_on("focusedmon>>DP-1,1");
+        assert_eq!(telar::exits_in_flight().get(), 0);
+        assert!(
+            alike(&left.drawn(), &column) && alike(&right.drawn(), &none),
+            "and back"
+        );
+        clear_osd();
+        drop((left, right));
+        telar::dispose_owner(scope.id());
     }
 }

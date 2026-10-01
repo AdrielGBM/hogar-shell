@@ -45,6 +45,35 @@ thread_local! {
     static ACTIVE: RwSignal<Option<Mode>> = detached(|| signal(None));
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
     static WATCHING: Cell<bool> = const { Cell::new(false) };
+    static REFUSAL: RwSignal<Option<String>> = detached(|| signal(None));
+}
+
+/// Why the last thing asked of the mode was not done — a key, a press, a drop — as the strip says it: until the mode changes or something else is asked.
+pub fn refusal() -> ReadSignal<Option<String>> {
+    REFUSAL.with(|refusal| refusal.read_only())
+}
+
+/// Says in the strip why what was just asked was not done, so a refusal is never only a line in the log.
+pub fn refuse(why: impl std::fmt::Display) {
+    let why = why.to_string();
+    tracing::info!("{why}");
+    REFUSAL.with(|refusal| refusal.set(Some(why)));
+}
+
+/// What came of something asked of the mode — a button, a menu row, a drop — which has nowhere else to say it once it has run: a refusal goes to the strip.
+pub(crate) fn said(done: Result<(), crate::session::EditError>) {
+    if let Err(why) = done {
+        refuse(why);
+    }
+}
+
+/// Takes the last refusal out of the strip, as something new is asked.
+pub(crate) fn clear_refusal() {
+    REFUSAL.with(|refusal| {
+        if refusal.peek().is_some() {
+            refusal.set(None);
+        }
+    });
 }
 
 /// The mode being edited, as a signal: read inside an effect or a build, it runs again when a mode is entered, switched or left. This is how a tool learns which mode it is in.
@@ -57,6 +86,18 @@ pub fn current() -> Option<Mode> {
     ACTIVE.with(|active| active.peek())
 }
 
+/// [`current`], for what only a mode can do — open the palette, make a bar on the edited screen — refused outside one.
+pub(crate) fn required() -> Result<Mode, crate::session::EditError> {
+    current().ok_or_else(|| crate::session::EditError::Refused(telar::t!("editor.refused.no_mode")))
+}
+
+/// Whether `node`'s layer is the one being edited on its screen. A context menu offers an item's own actions in and out of edit mode (TA-4) and adds the entries that act on the mode — a new stack, a new grid — only where this holds.
+pub fn editing(node: &surfaces::rects::Node) -> bool {
+    current().is_some_and(|mode| {
+        mode.layer == node.layer && node.output.as_deref() == Some(mode.output.as_str())
+    })
+}
+
 /// Ends the mode on its own when the screen it edits goes away. The windows on that screen are already gone by then and the host's transient went with them without closing, so this is the one place the session's holds on the compositor are given back. Installed once, on the driver thread.
 pub fn install() {
     if WATCHING.with(|watching| watching.replace(true)) {
@@ -64,12 +105,10 @@ pub fn install() {
     }
     detached(|| {
         effect(|| {
-            let desktops = reconcile::desktops();
-            let Some(mode) = current() else {
+            let Some(mode) = active().get() else {
                 return;
             };
-            let edited = |output: &Option<String>| output.as_deref() == Some(mode.output.as_str());
-            if !desktops.iter().any(|desktop| edited(&desktop.output)) {
+            if reconcile::desktop(Some(&mode.output)).is_none() {
                 tracing::info!(
                     layer = %mode.layer,
                     output = mode.output,
@@ -117,6 +156,7 @@ pub(crate) fn enter_as(
     leave();
     let session = host::open(&mode, compositor.restack);
     SESSION.with(|held| *held.borrow_mut() = Some(session));
+    clear_refusal();
     ACTIVE.with(|active| active.set(Some(mode.clone())));
     Ok(mode)
 }
@@ -142,6 +182,7 @@ pub fn leave() -> Option<Mode> {
         left
     });
     drop(session);
+    clear_refusal();
     left
 }
 

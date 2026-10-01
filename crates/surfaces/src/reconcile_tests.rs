@@ -68,9 +68,11 @@ mod tests {
             id: AreaId::new("stack"),
             kind: Some(AreaKind::Stack {
                 anchor: Some(layout::Anchor::TopRight),
+                offset: None,
                 width: Some(380.0),
                 output_policy: None,
                 routes: Vec::new(),
+                launcher: None,
             }),
             ..Area::default()
         }
@@ -151,12 +153,34 @@ mod tests {
     fn an_area_that_asks_for_blur_the_compositor_cannot_give_is_reported() {
         let mut blurred = bar("bar-top", Edge::Top, 34.0, &["clock"]);
         blurred.style.backdrop = Some(layout::Backdrop::Blur);
-        let (_, report) = on(&layout_of(vec![blurred], Vec::new()), &outputs(), None);
+        let mut layout = layout_of(vec![blurred], Vec::new());
+        layout.outputs[0].layers.background.areas.push(Area {
+            id: AreaId::new("frosted"),
+            kind: Some(AreaKind::WallpaperRegion {
+                rect: None,
+                source: None,
+                fit: None,
+                transition: None,
+            }),
+            style: layout::AreaStyle {
+                backdrop: Some(layout::Backdrop::Blur),
+                ..layout::AreaStyle::default()
+            },
+            ..Area::default()
+        });
+        let (_, report) = on(&layout, &outputs(), None);
         assert!(
             report
                 .findings()
                 .any(|finding| finding.key == "top.bar-top" && finding.message.contains("blur")),
             "{}",
+            report.render()
+        );
+        assert!(
+            !report
+                .findings()
+                .any(|finding| finding.key == "background.frosted"),
+            "the shell blurs what the background's own surface drew, on any compositor: {}",
             report.render()
         );
     }
@@ -475,7 +499,7 @@ mod tests {
                 seen.borrow_mut().push(outputs);
             }
         });
-        shell.reconcile(&on(&layout, &outputs(), None).0, Content::Keep);
+        shell.reconcile(&on(&layout, &outputs(), None).0, Content::Changed);
 
         assert_eq!(
             seen.borrow().last().cloned(),
@@ -486,6 +510,65 @@ mod tests {
         assert!(
             !shell.windows().is_open(Some("HDMI-A-1"), LayerKind::Top),
             "by the time it is told, the windows on the screen that left are gone"
+        );
+    }
+
+    fn site(output: &str, area: &str, routes: Vec<layout::Route>) -> reconcile::StackSite {
+        reconcile::StackSite {
+            output: Some(output.to_string()),
+            layer: LayerKind::Overlay,
+            area: AreaId::new(area),
+            policy: layout::StackOutputPolicy::Here,
+            routes,
+        }
+    }
+
+    /// F-2.8, per output: a card is offered only the stacks of the output it is shown on — the first route there that takes it, else the first stack there that routes nothing — and never one on another screen.
+    #[test]
+    fn a_card_lands_in_a_stack_of_its_own_output() {
+        let critical = layout::Route {
+            kind: Some(layout::CardKind::Notification),
+            app: None,
+            urgency: Some(layout::Urgency::Critical),
+        };
+        let sites = vec![
+            site("DP-1", "corner", Vec::new()),
+            site("HDMI-A-1", "critical", vec![critical.clone()]),
+            site("DP-1", "critical", vec![critical]),
+            site("HDMI-A-1", "corner", Vec::new()),
+        ];
+        let urgent = layout::RoutedCard {
+            kind: layout::CardKind::Notification,
+            app: Some("mail"),
+            urgency: Some(layout::Urgency::Critical),
+        };
+        let toast = layout::RoutedCard {
+            kind: layout::CardKind::Toast,
+            app: None,
+            urgency: None,
+        };
+        let landing = |output: &str, card: &layout::RoutedCard| {
+            reconcile::stack_for(&sites, &Some(output.to_string()), card).map(|site| {
+                (
+                    site.output.clone().unwrap_or_default(),
+                    site.area.to_string(),
+                )
+            })
+        };
+        for output in ["DP-1", "HDMI-A-1"] {
+            assert_eq!(
+                landing(output, &urgent),
+                Some((output.to_string(), "critical".to_string()))
+            );
+            assert_eq!(
+                landing(output, &toast),
+                Some((output.to_string(), "corner".to_string()))
+            );
+        }
+        assert_eq!(
+            landing("eDP-1", &toast),
+            None,
+            "a screen with no stack shows no card"
         );
     }
 }

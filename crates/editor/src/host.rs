@@ -7,7 +7,6 @@
 //! Everything the host takes is a token held by its [`Session`], and dropping the session gives every one of them back.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -17,8 +16,7 @@ use telar::{
 };
 
 use config::theme::NordTheme;
-use layout::{LayerKind, Layout, Within};
-use modules::lock::LockLayout;
+use layout::{LayerKind, Within};
 use platform_wayland::{KeyboardMode, Layer};
 use surfaces::layer_window::{Concealment, Demand, Hold};
 use surfaces::reconcile::{self, Desktop};
@@ -29,7 +27,6 @@ use ui::descriptor::Built;
 
 use crate::indicator::{IndicatorProps, indicator};
 use crate::mode::{self, Mode};
-use crate::session;
 
 /// The layer the background and desktop windows are raised to for their mode.
 ///
@@ -42,8 +39,18 @@ const BORDER: f32 = 2.0;
 /// What builds one layer's tools inside the host, given the mode they are built for.
 pub type Tool = fn(&Mode) -> Built;
 
+/// A button of a mode's toolbar: what it says, and what a press does.
+pub(crate) type ToolbarButton = (fn() -> String, fn());
+
+/// How far above the foot of what the reserving areas leave the toolbar sits.
+const TOOLBAR_RISE: f32 = 64.0;
+
+/// How big a split or join button is across.
+pub(crate) const HOTSPOT: f32 = 28.0;
+
 thread_local! {
     static TOOLS: RefCell<Vec<(LayerKind, Tool)>> = const { RefCell::new(Vec::new()) };
+    static TOOLBAR: RefCell<Vec<(LayerKind, ToolbarButton)>> = const { RefCell::new(Vec::new()) };
     static SERIAL: Cell<u64> = const { Cell::new(0) };
     static STAND_IN_SAID: Cell<bool> = const { Cell::new(false) };
 }
@@ -51,6 +58,23 @@ thread_local! {
 /// Mounts `tool` in the host of every `layer` mode, above the edited layer and the reference outlines and below the strip. Tools mount in the order they were added, each over the ones before it, in a box the size of the output that takes no pointer itself.
 pub fn add_tool(layer: LayerKind, tool: Tool) {
     TOOLS.with(|tools| tools.borrow_mut().push((layer, tool)));
+}
+
+/// Adds `button` to the toolbar of every `layer` mode, after the buttons added before it. A mode with no buttons has no toolbar.
+pub(crate) fn add_toolbar_button(layer: LayerKind, button: ToolbarButton) {
+    TOOLBAR.with(|buttons| buttons.borrow_mut().push((layer, button)));
+}
+
+/// The buttons of the `layer` mode's toolbar, in order.
+pub(crate) fn toolbar_of(layer: LayerKind) -> Vec<ToolbarButton> {
+    TOOLBAR.with(|buttons| {
+        buttons
+            .borrow()
+            .iter()
+            .filter(|(of, _)| *of == layer)
+            .map(|(_, button)| *button)
+            .collect()
+    })
 }
 
 /// Everything one mode holds on the compositor, given back when it is dropped.
@@ -76,7 +100,7 @@ impl Drop for Session {
 
 /// What the host draws under its chrome.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Under {
+pub(crate) enum Under {
     /// The edited layer is on screen in its own window.
     Nothing,
     /// The edited layer's areas, built here because its window could not be raised.
@@ -133,6 +157,15 @@ pub(crate) fn open(mode: &Mode, restack: bool) -> Session {
     }
 }
 
+/// Closes whichever of the transients an edit mode opens over its host is open — a popover, a menu, the palette and what it picked, the privacy card — keeping what each changed, so the one opening next is the only one.
+pub(crate) fn close_transients() {
+    crate::popover::close();
+    transient::close(crate::context::ID);
+    transient::close(crate::modes::palette::ID);
+    crate::modes::palette::unpick();
+    transient::close(crate::modes::lock::PRIVACY);
+}
+
 /// The transient the host of a mode on `output` is.
 pub(crate) fn transient_id(output: &str) -> String {
     format!("edit:{output}")
@@ -150,7 +183,7 @@ fn say_standing_in(layer: LayerKind) {
 }
 
 /// The host's whole tree, bottom to top: what stands in for the edited layer, the other layers' outlines, the tools, the border and the strip.
-fn tree(mode: &Mode, under: Under) -> Built {
+pub(crate) fn tree(mode: &Mode, under: Under) -> Built {
     crate::keys::reclaim();
     let theme = use_theme::<NordTheme>();
     let mut layers: Vec<Box<dyn LayoutItem>> = Vec::new();
@@ -161,7 +194,7 @@ fn tree(mode: &Mode, under: Under) -> Built {
                 surfaces::area::stand_in(desktop, layer)
             })?);
         }
-        Under::LockPreview => layers.push(lock_preview(&mode.output)?),
+        Under::LockPreview => layers.push(crate::modes::lock::preview(&mode.output)?),
         Under::Nothing => {}
     }
     if mode.layer != LayerKind::Lock {
@@ -169,6 +202,7 @@ fn tree(mode: &Mode, under: Under) -> Built {
     }
     if mode.refused.is_none() {
         layers.push(tools(mode)?);
+        layers.push(toolbar(mode)?);
     }
     layers.push(border(theme)?);
     layers.push(strip(mode)?);
@@ -177,12 +211,11 @@ fn tree(mode: &Mode, under: Under) -> Built {
     ))
 }
 
-/// The edited screen's arrangement as its windows show it, an undecided edit's preview included.
-fn edited(output: &str) -> Option<Desktop> {
-    reconcile::desktops()
-        .iter()
-        .find(|desktop| desktop.output.as_deref() == Some(output))
-        .cloned()
+/// What the reserving areas of the screen `output` leave, as its windows draw it now. Reactive.
+pub(crate) fn usable(output: Option<&str>) -> telar::Rect {
+    reconcile::desktop(output)
+        .map(|desktop| desktop.reserved.box_of(Within::Usable, desktop.size))
+        .unwrap_or_default()
 }
 
 /// What `build` makes of the edited screen's arrangement, built again whenever that arrangement changes and only then — a monitor plugged in elsewhere changes nothing here.
@@ -190,13 +223,13 @@ fn following(output: &str, build: impl Fn(&Desktop) -> Built + 'static) -> Built
     let output = output.to_string();
     Ok(Box::new(ReactiveList::with_style(
         whole(),
-        move || edited(&output).into_iter().collect(),
+        move || reconcile::desktop(Some(&output)).into_iter().collect(),
         arrangement,
         move |desktop: Desktop| build(&desktop),
     )?))
 }
 
-fn arrangement(desktop: &Desktop) -> String {
+pub(crate) fn arrangement(desktop: &Desktop) -> String {
     format!(
         "{:?}{:?}{:?}{:p}",
         desktop.resolved,
@@ -204,40 +237,6 @@ fn arrangement(desktop: &Desktop) -> String {
         desktop.reserved,
         Arc::as_ptr(&desktop.config)
     )
-}
-
-/// The lock layer of the layout being drawn, previewed over the whole screen (TA-8): the draft's, so an undecided edit shows here as it would on the lock screen, built again whenever the draft or the screen changes.
-fn lock_preview(output: &str) -> Built {
-    let output = output.to_string();
-    let draft = session::draft();
-    let seen: RefCell<(u64, Option<Layout>)> = RefCell::new((0, None));
-    Ok(Box::new(ReactiveList::with_style(
-        whole(),
-        move || {
-            let mut seen = seen.borrow_mut();
-            let changed = draft.with(|layout| seen.1.as_ref() != Some(layout));
-            if changed {
-                *seen = (seen.0.wrapping_add(1), Some(draft.peek()));
-            }
-            let version = seen.0;
-            edited(&output)
-                .map(|desktop| (version, desktop))
-                .into_iter()
-                .collect()
-        },
-        |(version, desktop): &(u64, Desktop)| (*version, arrangement(desktop)),
-        move |(_, desktop): (u64, Desktop)| {
-            let layout = draft.peek();
-            let lock = surfaces::layouts::read(|store| LockLayout::of(&layout, store.all()))
-                .unwrap_or_else(|| LockLayout::of(&layout, &BTreeMap::new()));
-            modules::lock::preview(
-                &desktop.config,
-                &lock,
-                desktop.output.as_deref(),
-                desktop.size,
-            )
-        },
-    )?))
 }
 
 /// Every area of the layers not being edited, as a dimmed outline where it is on screen: there for reference, and never in the way of the pointer (F-7).
@@ -282,7 +281,7 @@ fn outline(node: rects::Node, theme: NordTheme) -> Built {
     ))
 }
 
-fn tools(mode: &Mode) -> Built {
+pub(crate) fn tools(mode: &Mode) -> Built {
     let tools: Vec<Tool> = TOOLS.with(|tools| {
         tools
             .borrow()
@@ -296,6 +295,50 @@ fn tools(mode: &Mode) -> Built {
         .map(|tool| ui::chrome::or_empty("edit tool", tool(mode)))
         .collect();
     Ok(Box::new(passthrough(whole(), built)?))
+}
+
+/// The mode's toolbar, at the foot of what the reserving areas leave: the buttons added for its layer ([`add_toolbar_button`]).
+fn toolbar(mode: &Mode) -> Built {
+    let added = toolbar_of(mode.layer);
+    if added.is_empty() {
+        return Ok(Box::new(passthrough(LayoutStyle::new(), Vec::new())?));
+    }
+    let buttons = added
+        .into_iter()
+        .map(|(label, act)| {
+            telar::button(
+                telar::ButtonProps::props()
+                    .label(telar::Reactive::of(label))
+                    .on_press(Rc::new(act))
+                    .build(),
+                Children::default(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let theme = use_theme::<NordTheme>();
+    let bar = StyledContainer::new(
+        LayoutStyle::new()
+            .flex_row()
+            .gap(ui::scale::space::sm())
+            .padding_all(ui::scale::space::sm()),
+        move |_| RectStyle::filled(theme.surface, ui::scale::corner::md()),
+        buttons,
+    )?
+    .input_opaque();
+    let output = mode.output.clone();
+    Ok(Box::new(
+        passthrough(LayoutStyle::new(), vec![Box::new(bar)])?.styled_by(move || {
+            let usable = usable(Some(&output));
+            LayoutStyle::new()
+                .absolute()
+                .inset_start(usable.x)
+                .inset_top(usable.y + usable.height - TOOLBAR_RISE)
+                .width(usable.width)
+                .flex_row()
+                .justify_content(JustifyContent::CENTER)
+                .align_items(AlignItems::START)
+        }),
+    ))
 }
 
 /// The 2 px accent border around the edited screen, the half of the indicator nobody has to read (F-7).
@@ -326,9 +369,7 @@ fn strip(mode: &Mode) -> Built {
     let output = mode.output.clone();
     Ok(Box::new(
         passthrough(LayoutStyle::new(), vec![shown])?.styled_by(move || {
-            let usable = edited(&output)
-                .map(|desktop| desktop.reserved.box_of(Within::Usable, desktop.size))
-                .unwrap_or_default();
+            let usable = usable(Some(&output));
             LayoutStyle::new()
                 .absolute()
                 .inset_start(usable.x)
@@ -341,12 +382,86 @@ fn strip(mode: &Mode) -> Built {
     ))
 }
 
+/// `target`, `side` across, drawn with its middle wherever `at` answers as it is painted, and off the screen while it answers `None`.
+pub(crate) fn centred(
+    target: StyledContainer,
+    side: f32,
+    at: impl Fn() -> Option<(f32, f32)> + 'static,
+) -> StyledContainer {
+    target.with_transform(move |laid| {
+        let (x, y) = at().unwrap_or((-2.0 * side, -2.0 * side));
+        Some([
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            x - side / 2.0 - laid.x,
+            y - side / 2.0 - laid.y,
+        ])
+    })
+}
+
+/// A split or join button on the screen itself (F-7): a disc with `mark` drawn in it, its middle wherever `at` answers.
+pub(crate) fn hotspot(
+    mark: Box<dyn LayoutItem>,
+    at: impl Fn() -> Option<(f32, f32)> + 'static,
+) -> Result<StyledContainer, telar::LayoutError> {
+    let theme = use_theme::<NordTheme>();
+    let face = StyledContainer::new(
+        LayoutStyle::new()
+            .absolute()
+            .inset_start(0.0)
+            .inset_top(0.0)
+            .width(HOTSPOT)
+            .height(HOTSPOT)
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER),
+        move |_| {
+            RectStyle::filled(theme.surface, HOTSPOT / 2.0)
+                .with_border(Border::uniform(theme.accent, 2.0))
+        },
+        vec![mark],
+    )?;
+    Ok(centred(face, HOTSPOT, at).control(telar::Role::Button))
+}
+
+/// The mark of a hotspot that cuts: a line across it, upright where the cut is.
+pub(crate) fn cut_mark(upright: bool) -> Built {
+    let (width, height) = match upright {
+        true => (2.0, HOTSPOT / 2.0),
+        false => (HOTSPOT / 2.0, 2.0),
+    };
+    mark(width, height, 1.0)
+}
+
+/// The mark of a hotspot that joins: a dot.
+pub(crate) fn join_mark() -> Built {
+    mark(HOTSPOT / 3.0, HOTSPOT / 3.0, HOTSPOT / 6.0)
+}
+
+fn mark(width: f32, height: f32, radius: f32) -> Built {
+    let theme = use_theme::<NordTheme>();
+    Ok(Box::new(StyledContainer::new(
+        LayoutStyle::new().width(width).height(height),
+        move |_| RectStyle::filled(theme.accent, radius),
+        Vec::new(),
+    )?))
+}
+
 /// A box that paints nothing and takes nothing from the pointer, so the windows and layers under the host still answer wherever nothing in it does (F-10.41).
 pub(crate) fn passthrough(
     style: LayoutStyle,
     children: Vec<Box<dyn LayoutItem>>,
 ) -> Result<StyledContainer, telar::LayoutError> {
     Ok(StyledContainer::new(style, |_| RectStyle::default(), children)?.input_transparent())
+}
+
+/// `item` laid over the whole screen, taking the pointer only where something in it does. A box answers for every point it covers, so a full-screen list laid bare over another tool's controls would take every press meant for them.
+pub(crate) fn see_through(
+    item: impl LayoutItem + 'static,
+) -> Result<Box<dyn LayoutItem>, telar::LayoutError> {
+    Ok(Box::new(passthrough(whole(), vec![Box::new(item)])?))
 }
 
 pub(crate) fn whole() -> LayoutStyle {
@@ -356,104 +471,4 @@ pub(crate) fn whole() -> LayoutStyle {
         .inset_top(0.0)
         .width(SizeDimension::Percent(1.0))
         .height(SizeDimension::Percent(1.0))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use telar::{
-        AvailableSpace, ComponentList, Container, DrawCommand, Text, box_item, compute_layout,
-        new_container,
-    };
-
-    use config::Config;
-    use config::theme::FontRole;
-
-    use super::*;
-
-    const SCREEN: (f32, f32) = (1920.0, 1080.0);
-
-    fn marker(said: &'static str) -> Built {
-        let theme = use_theme::<NordTheme>();
-        Ok(box_item(Text::new(
-            move || said.to_string(),
-            LayoutStyle::new(),
-            move || theme.text_style(FontRole::Body, theme.text),
-        )?))
-    }
-
-    fn desktop_tool(_: &Mode) -> Built {
-        marker("a desktop tool")
-    }
-
-    fn top_tool(_: &Mode) -> Built {
-        marker("a top tool")
-    }
-
-    fn lock_tool(_: &Mode) -> Built {
-        marker("a lock tool")
-    }
-
-    /// Everything the host's tree says, laid out over a whole screen.
-    fn said(mode: &Mode, under: Under) -> Vec<String> {
-        telar::reset_layout_runtime();
-        telar::set_locale("en");
-        telar::set_theme(Arc::new(Config::default()).resolve_theme());
-        let item = tree(mode, under).expect("the host builds");
-        let page = || LayoutStyle::new().width(SCREEN.0).height(SCREEN.1);
-        let root = new_container(page(), &[item.layout_node()]).expect("a root");
-        let tree = ComponentList::new(Container::new(page(), vec![item]).expect("a page"));
-        compute_layout(
-            root,
-            AvailableSpace::Definite(SCREEN.0),
-            AvailableSpace::Definite(SCREEN.1),
-        )
-        .expect("the host lays out");
-        tree.commands()
-            .iter()
-            .filter_map(|command| match command {
-                DrawCommand::Text { text, .. } => Some(text.to_string()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// A mode's tools mount in its host and only there: the strip names the mode, the screen and the way out, and a tool added for another layer is nowhere to be seen.
-    #[test]
-    fn a_mode_mounts_its_own_tools_under_its_strip() {
-        add_tool(LayerKind::Desktop, desktop_tool);
-        add_tool(LayerKind::Top, top_tool);
-        let mode = Mode {
-            layer: LayerKind::Desktop,
-            output: "DP-1".to_string(),
-            refused: None,
-        };
-        let said = said(&mode, Under::Nothing);
-        for expected in ["Desktop", "DP-1", "Done", "a desktop tool"] {
-            assert!(
-                said.iter().any(|text| text == expected),
-                "{expected}: {said:?}"
-            );
-        }
-        assert!(!said.iter().any(|text| text == "a top tool"), "{said:?}");
-    }
-
-    /// TA-8: lock mode on a machine that cannot lock opens, and says why where its tools would be, instead of offering tools for a lock screen it could never show.
-    #[test]
-    fn a_refused_lock_mode_says_why_instead_of_mounting_tools() {
-        add_tool(LayerKind::Lock, lock_tool);
-        let mode = Mode {
-            layer: LayerKind::Lock,
-            output: "DP-1".to_string(),
-            refused: Some("Preview only: this machine cannot lock (no PAM)".to_string()),
-        };
-        let said = said(&mode, Under::Nothing);
-        assert!(said.iter().any(|text| text.contains("no PAM")), "{said:?}");
-        assert!(!said.iter().any(|text| text == "a lock tool"), "{said:?}");
-        assert!(
-            said.iter().any(|text| text == "Done"),
-            "the way out is still there"
-        );
-    }
 }

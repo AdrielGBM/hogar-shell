@@ -22,3 +22,4 @@ util = { workspace = true }
 [dev-dependencies]
 image.workspace = true
 platform-headless = { workspace = true }
+telar = { workspace = true, features = ["testing"] }

@@ -39,6 +39,7 @@ mod tests {
         id: "clock",
         name: "Clock",
         icon: "clock",
+        category: ui::descriptor::Category::Info,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(face, Input::ReadOnly)),
@@ -417,38 +418,45 @@ mod tests {
         });
     }
 
+    /// Three regions across the screen: the shipped one down to its left quarter, one in the middle half and one on the right quarter.
     fn background_layout(layout: &mut Layout) {
         let background = &mut layout.outputs[0].layers.background;
-        let half = |x: f32| layout::Rect {
+        let column = |x: f32, w: f32| layout::Rect {
             x,
             y: 0.0,
-            w: 0.5,
+            w,
             h: 1.0,
         };
         if let Some(AreaKind::WallpaperRegion { rect, .. }) = &mut background.areas[0].kind {
-            *rect = Some(half(0.0));
+            *rect = Some(column(0.0, 0.25));
         }
-        background.areas.push(Area {
-            id: AreaId::new("right"),
-            kind: Some(AreaKind::WallpaperRegion {
-                rect: Some(half(0.5)),
-                source: None,
-                fit: None,
-                transition: None,
-            }),
-            ..Area::default()
-        });
+        for (id, x, w) in [("middle", 0.25, 0.5), ("right", 0.75, 0.25)] {
+            background.areas.push(Area {
+                id: AreaId::new(id),
+                kind: Some(AreaKind::WallpaperRegion {
+                    rect: Some(column(x, w)),
+                    source: None,
+                    fit: None,
+                    transition: None,
+                }),
+                ..Area::default()
+            });
+        }
     }
 
     fn background_placed() -> Vec<(Node, Rect)> {
         vec![
             (
                 area(LayerKind::Background, "background"),
-                Rect::new(0.0, 0.0, 960.0, 1080.0),
+                Rect::new(0.0, 0.0, 480.0, 1080.0),
+            ),
+            (
+                area(LayerKind::Background, "middle"),
+                Rect::new(480.0, 0.0, 960.0, 1080.0),
             ),
             (
                 area(LayerKind::Background, "right"),
-                Rect::new(960.0, 0.0, 960.0, 1080.0),
+                Rect::new(1440.0, 0.0, 480.0, 1080.0),
             ),
         ]
     }
@@ -460,8 +468,8 @@ mod tests {
         }
     }
 
-    fn left_region_x() -> String {
-        region("background").map_or_else(String::new, |rect| rect.x.to_string())
+    fn middle_region_x() -> String {
+        region("middle").map_or_else(String::new, |rect| rect.x.to_string())
     }
 
     fn right_region_w() -> String {
@@ -479,15 +487,19 @@ mod tests {
             walk: (
                 area(background, "background"),
                 Direction::Right,
-                area(background, "right"),
+                area(background, "middle"),
             ),
-            tabbed: vec![area(background, "background"), area(background, "right")],
+            tabbed: vec![
+                area(background, "background"),
+                area(background, "middle"),
+                area(background, "right"),
+            ],
             customized: area(background, "right"),
             removed: area(background, "right"),
             moved: Stepped {
-                node: area(background, "background"),
+                node: area(background, "middle"),
                 direction: Direction::Right,
-                seen: left_region_x,
+                seen: middle_region_x,
             },
             resized: Stepped {
                 node: area(background, "right"),
@@ -539,14 +551,16 @@ mod tests {
         }
     }
 
+    /// Two grids side by side in place of the shipped desktop, two clocks on the first.
     fn desktop_layout(layout: &mut Layout) {
-        let desktop = &mut layout.outputs[0].layers.desktop;
-        desktop.areas.push(grid(
-            "widgets",
-            0.0,
-            vec![cell("a", 0, "desk-clock"), cell("b", 3, "desk-clock-2")],
-        ));
-        desktop.areas.push(grid("more", 0.5, Vec::new()));
+        layout.outputs[0].layers.desktop.areas = vec![
+            grid(
+                "widgets",
+                0.0,
+                vec![cell("a", 0, "desk-clock"), cell("b", 3, "desk-clock-2")],
+            ),
+            grid("more", 0.5, Vec::new()),
+        ];
     }
 
     fn desktop_placed() -> Vec<(Node, Rect)> {
@@ -661,9 +675,11 @@ mod tests {
             id: AreaId::new("critical"),
             kind: Some(AreaKind::Stack {
                 anchor: Some(Anchor::Center),
+                offset: None,
                 width: Some(480.0),
                 output_policy: None,
                 routes: Vec::new(),
+                launcher: None,
             }),
             ..Area::default()
         });
@@ -888,12 +904,13 @@ mod tests {
                     "region-source",
                     "region-fit",
                     "region-transition",
-                    "region-workspace-variant",
+                    "workspace-variant",
                     "texture-tile",
                     "texture-nine-slice",
                     "texture-blend",
                     "texture-opacity",
                     "texture-gradient",
+                    "texture-add",
                 ],
             ),
             (
@@ -905,7 +922,7 @@ mod tests {
                     "widget-stack",
                     "widget-from-bar",
                     "widget-visibility",
-                    "desktop-workspace-variant",
+                    "workspace-variant",
                 ],
             ),
             (
@@ -939,6 +956,7 @@ mod tests {
                     "stack-add",
                     "osd-placement",
                     "launcher-placement",
+                    "workspace-variant",
                 ],
             ),
             (
@@ -953,34 +971,9 @@ mod tests {
                 ],
             ),
         ];
-        const PENDING: &[(&str, &str)] = &[
-            ("region-split", "T-7.1"),
-            ("region-join", "T-7.1"),
-            ("region-workspace-variant", "T-7.1"),
-            ("texture-nine-slice", "T-7.1"),
-            ("texture-gradient", "T-7.1"),
-            ("widget-add", "T-7.2"),
-            ("widget-stack", "T-7.2"),
-            ("desktop-workspace-variant", "T-7.2"),
-            ("widget-visibility", "T-8.3"),
-            ("bar-create", "T-7.3"),
-            ("bar-split", "T-7.3"),
-            ("bar-join", "T-7.3"),
-            ("chip-detach", "T-7.3"),
-            ("bar-output", "T-7.3"),
-            ("stack-offset", "T-7.4"),
-            ("stack-routes", "T-7.4"),
-            ("stack-add", "T-7.4"),
-            ("osd-placement", "T-7.4"),
-            ("launcher-placement", "T-7.4"),
-            ("lock-regions", "T-7.5"),
-            ("lock-grid", "T-7.5"),
-            ("lock-palette", "T-7.5"),
-            ("prompt-move", "T-7.5"),
-            ("prompt-style", "T-7.5"),
-            ("lock-privacy", "T-7.5"),
-        ];
-        telar::set_locale("en");
+        const PENDING: &[(&str, &str)] = &[("widget-visibility", "T-8.3")];
+        let _owner = Owner::new();
+        let _rig = rig_with("keys-coverage", |_| {});
         for (layer, operations) in TA5 {
             let table = keys::table(*layer);
             for operation in TA4.iter().chain(operations.iter()) {
@@ -1005,5 +998,110 @@ mod tests {
                 "`{operation}` waits on {task} but is no TA-5 operation"
             );
         }
+    }
+
+    /// What the key table says Enter reaches through a popover is a row of that popover: for every operation it counts that way, the popover of an area of that kind on that layer has a control for the value the operation edits.
+    #[test]
+    fn every_operation_enter_reaches_is_a_row_of_the_popover_it_opens() {
+        let _owner = Owner::new();
+        let _rig = rig_with("keys-popover-coverage", |layout| {
+            layout.outputs[0].layers.background.areas.push(Area {
+                id: AreaId::new("wash"),
+                kind: Some(AreaKind::Texture {
+                    rect: None,
+                    image: None,
+                    gradient: Some(crate::modes::texture::first_gradient()),
+                    tile: None,
+                    blend: None,
+                    opacity: None,
+                }),
+                ..Area::default()
+            });
+        });
+        for reached in keys::CUSTOMIZED {
+            let _host = enter(reached.layer);
+            let area = reconcile::desktops()[0]
+                .resolved
+                .layer(reached.layer)
+                .and_then(|layer| {
+                    layer
+                        .areas
+                        .iter()
+                        .find(|area| area.kind.name() == reached.kind)
+                        .map(|area| area.id.clone())
+                })
+                .unwrap_or_else(|| panic!("a {} on the {} layer", reached.kind, reached.layer));
+            popover::open_area(Node::area(Some(SCREEN), reached.layer, &area))
+                .expect("its popover opens");
+            let _tree = popover::tree()
+                .expect("a popover is open")
+                .expect("and it builds");
+            assert!(
+                popover::edits(reached.value),
+                "{}: Enter is said to reach `{}`, but the {} popover has no `{}` row",
+                reached.layer,
+                reached.operation,
+                reached.kind,
+                reached.value
+            );
+            popover::close();
+            mode::leave();
+        }
+    }
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
+        Rect::new(x, y, width, height)
+    }
+
+    /// Along a bar the next chip is the one beside it, not a bigger one further off; and nothing lies past the last one.
+    #[test]
+    fn the_nearest_thing_that_way_is_the_one_ahead_and_in_line() {
+        let chips = [
+            ("start", rect(0.0, 0.0, 60.0, 30.0)),
+            ("clock", rect(900.0, 0.0, 80.0, 30.0)),
+            ("end", rect(1800.0, 0.0, 60.0, 30.0)),
+            ("widget", rect(920.0, 400.0, 200.0, 200.0)),
+        ];
+        let from = chips[1].1;
+        let nearest_to = |direction| keys::nearest(from, direction, chips.iter().copied());
+        assert_eq!(nearest_to(Direction::Right), Some("end"));
+        assert_eq!(nearest_to(Direction::Left), Some("start"));
+        assert_eq!(nearest_to(Direction::Down), Some("widget"));
+        assert_eq!(nearest_to(Direction::Up), None);
+    }
+
+    /// A letter is one key in either case, and Shift is what tells them apart; a symbol carries its Shift in itself.
+    #[test]
+    fn a_chord_matches_the_key_however_the_layout_reports_its_case() {
+        let shift = ModifiersState {
+            is_shift: true,
+            ..ModifiersState::default()
+        };
+        let plain = ModifiersState::default();
+        assert!(Chord::char('l').shift().matches(&Key::Char('L'), shift));
+        assert!(!Chord::char('l').matches(&Key::Char('L'), shift));
+        assert!(Chord::char('G').matches(&Key::Char('G'), shift));
+        assert!(Chord::char('?').matches(&Key::Char('?'), shift));
+        assert!(
+            Chord::named(NamedKey::Tab)
+                .shift()
+                .matches(&Key::Named(NamedKey::Tab), shift)
+        );
+        assert!(!Chord::named(NamedKey::Tab).matches(&Key::Named(NamedKey::Tab), shift));
+        assert!(Chord::named(NamedKey::Tab).matches(&Key::Named(NamedKey::Tab), plain));
+    }
+
+    #[test]
+    fn chords_sharing_modifiers_are_spelled_once() {
+        telar::set_locale("en");
+        let shift = ModifiersState {
+            is_shift: true,
+            ..ModifiersState::default()
+        };
+        assert_eq!(keys::spell(&keys::arrows(false, shift)), "Shift+←/→/↑/↓");
+        assert_eq!(
+            keys::spell(&[Chord::char('z').ctrl().shift(), Chord::char('y').ctrl()]),
+            "Ctrl+Shift+Z, Ctrl+Y"
+        );
     }
 }

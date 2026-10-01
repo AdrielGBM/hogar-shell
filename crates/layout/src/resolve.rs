@@ -55,6 +55,11 @@ impl Resolved {
         self.layers.get(&kind)
     }
 
+    /// The area `id` on `layer`.
+    pub fn area(&self, layer: LayerKind, id: &AreaId) -> Option<&ResolvedArea> {
+        self.layer(layer)?.areas.iter().find(|area| area.id == *id)
+    }
+
     /// Every area of every layer, bottom layer first.
     pub fn areas(&self) -> impl Iterator<Item = (LayerKind, &ResolvedArea)> {
         self.layers
@@ -114,9 +119,11 @@ pub enum ResolvedAreaKind {
     },
     Stack {
         anchor: Anchor,
+        offset: Offset,
         width: f32,
         output_policy: StackOutputPolicy,
         routes: Vec<Route>,
+        launcher: bool,
     },
     WallpaperRegion {
         rect: Rect,
@@ -302,7 +309,7 @@ fn answer_layers(
         .collect()
 }
 
-/// What each edge of the output is taken by, in `Edge::ALL` order.
+/// What each edge of the output is taken by, in `Edge::ALL` order: its deepest reserving area, since every area on one edge hugs that edge and the ones beside each other along it share one band rather than stacking.
 fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
     Edge::ALL.map(|edge| {
         layers
@@ -310,7 +317,7 @@ fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
             .flat_map(|layer| layer.areas.iter())
             .filter(|area| area.reserve)
             .filter_map(|area| area.kind.reserving_thickness(edge))
-            .sum()
+            .fold(0.0, f32::max)
     })
 }
 
@@ -523,14 +530,18 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
         }),
         AreaKind::Stack {
             anchor,
+            offset,
             width,
             output_policy,
             routes,
+            launcher,
         } => need(width.is_some(), "width").then(|| ResolvedAreaKind::Stack {
             anchor: anchor.unwrap_or_default(),
+            offset: offset.unwrap_or_default(),
             width: width.expect("checked"),
             output_policy: output_policy.clone().unwrap_or_default(),
             routes: routes.clone(),
+            launcher: launcher.unwrap_or(false),
         }),
         AreaKind::WallpaperRegion {
             rect,

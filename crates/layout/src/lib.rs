@@ -6,7 +6,7 @@
 
 telar::rsx_modules!();
 
-pub use crate::built_in::layout as built_in;
+pub use crate::built_in::{bar as default_bar, layout as built_in};
 pub use crate::model::*;
 pub use crate::ops::{LayoutOp, OpError, PromptEdit, Site, Spot};
 pub use crate::placed::Placed;
@@ -14,6 +14,7 @@ pub use crate::resolve::{
     ActiveWorkspace, Paint, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedGroup,
     ResolvedInstance, ResolvedLayer, resolve,
 };
+pub use crate::routing::{RoutedCard, route_card};
 pub use crate::store::{
     BUILT_IN, LayoutStore, SETTLE, StoreError, Transaction, running, set_running,
 };

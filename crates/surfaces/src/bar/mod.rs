@@ -124,6 +124,64 @@ pub fn strip_of_area(area: &ResolvedArea, surround: Surround) -> telar::Rect {
     strip_of(edge, thickness, length, offset, run, gap, surround.bounds)
 }
 
+/// Where a bar lies along its edge, in the window's own coordinates: the run the edge leaves it, and the stretch of that run it takes. Its `offset` is measured from the run's start.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Span {
+    pub run_start: f32,
+    pub run_length: f32,
+    pub at: f32,
+    pub along: f32,
+}
+
+impl Span {
+    pub fn end(&self) -> f32 {
+        self.at + self.along
+    }
+
+    pub fn run_end(&self) -> f32 {
+        self.run_start + self.run_length
+    }
+}
+
+/// The stretch of `edge` a bar floating `gap` off it places itself along, on the output whose box is `bounds` and whose reserving areas take `reserved`: where it starts, and how long it is.
+pub fn run_along(edge: Edge, bounds: telar::Rect, reserved: Reserved, gap: f32) -> (f32, f32) {
+    let run = run_of(edge, bounds, reserved, gap);
+    (run.start, run.length)
+}
+
+/// Where the bar `area` lies along its edge of the output whose box is `bounds` and whose reserving areas take `reserved`. `None` for an area that is not a bar.
+pub fn span_of(
+    area: &ResolvedArea,
+    config: &Config,
+    bounds: telar::Rect,
+    reserved: Reserved,
+) -> Option<Span> {
+    let ResolvedAreaKind::Bar {
+        edge,
+        thickness,
+        length,
+        offset,
+        shape,
+        ..
+    } = area.kind
+    else {
+        return None;
+    };
+    let gap = config.gap_of(&bar_shape(config, shape)) as f32;
+    let run = run_of(edge, bounds, reserved, gap);
+    let strip = strip_of(edge, thickness, length, offset, run, gap, bounds);
+    let (at, along) = match edge.is_vertical() {
+        true => (strip.y, strip.height),
+        false => (strip.x, strip.width),
+    };
+    Some(Span {
+        run_start: run.start,
+        run_length: run.length,
+        at,
+        along,
+    })
+}
+
 /// The stretch of its edge a bar has to place itself along: where it starts and how long it is, in the window's own coordinates.
 ///
 /// A horizontal bar owns its corners, so it runs the whole edge less its own gap at each end; a vertical one stops where the bar above or below it has already reserved, and falls back to its own gap where neither has. That is the corner rule the shell has always drawn by ([`config::Config::corner_owner`]), said once here instead of once per caller.
@@ -336,48 +394,144 @@ fn inner_fill(config: &Config, dress: Dress, token: Color) -> Color {
     token.with_alpha(dress.alpha)
 }
 
-/// Takes an autohiding bar off its edge, and brings it back when the pointer reaches the strip it left behind.
+/// How an autohiding bar is away: how far it is moved off its edge, and how far on screen it is (0 away, 1 shown).
 ///
 /// **The bar moves by transform, not by layout.** A translate is a `PushMatrix` change, which telar's diff scopes to the subtree that moved (F-5.2), where moving it by layout would re-measure three zones on every frame of the slide. The input region follows the transform — `interactive_rects` lifts every claim through its node's placements — so the only part of the bar the compositor is handed while it is away is the `peek` that is still on screen. That is the whole of the hot rect: there is no second strip to keep in step with the bar, which is what the surface-moving version had to do.
 ///
-/// `on_hover = false` asks for a bar only a drag brings back. The drag is not built yet, so such a bar stays hidden; see F-10.30.
-fn hiding(chrome: &BarFrame, bar: StyledContainer) -> StyledContainer {
-    let Some(hide) = chrome.autohide else {
-        return bar;
-    };
-    let away = (chrome.thickness - hide.peek).max(0.0);
-    let (dx, dy) = match chrome.edge {
-        Edge::Top => (0.0, -away),
-        Edge::Bottom => (0.0, away),
-        Edge::Left => (-away, 0.0),
-        Edge::Right => (away, 0.0),
-    };
-    // 0 is away, 1 is on screen. Built at 0 and retargeted rather than at its destination, which would leave it inert — the same rule the wallpaper's cross-fade follows.
-    let shown = Animated::new(0.0f32, chrome.config.animation.tween_ms(160, 1_000));
-    let reading = shown;
-    let bar = bar.with_transform(move |rect| {
-        let out = 1.0 - reading.get();
-        box_transform(rect, 0.0, 1.0, 1.0, dx * out, dy * out)
-    });
-    if !hide.on_hover {
-        return bar;
-    }
-    bar.on_hover(move |inside| shown.retarget(if inside { 1.0 } else { 0.0 }))
+/// **What brings it back.** With `on_hover` the pointer reaching the peek does, and leaving the bar sends it away. Without it only a deliberate gesture does: a pull from the peek, inward across the edge, at least [`PULL`] px — travel along the edge brings nothing back, so a pointer sliding down the side of the screen cannot. The pull is taken by a band laid over the peek alone, since a bar's own chrome claims the pointer and would keep a drag from anything around it; the band gives the pointer back to the bar's chips once the bar is on its way in. The bar then stays until the pointer leaves it, at once if the pull was let go past it.
+#[derive(Clone, Copy)]
+struct Hiding {
+    edge: Edge,
+    peek: f32,
+    on_hover: bool,
+    /// How far the bar is moved while it is away.
+    away: (f32, f32),
+    shown: Animated<f32>,
+    pulling: RwSignal<bool>,
 }
 
-/// Cuts the bar off at its own strip.
+impl Hiding {
+    fn of(chrome: &BarFrame) -> Option<Self> {
+        let hide = chrome.autohide?;
+        let away = (chrome.thickness - hide.peek).max(0.0);
+        let away = match chrome.edge {
+            Edge::Top => (0.0, -away),
+            Edge::Bottom => (0.0, away),
+            Edge::Left => (-away, 0.0),
+            Edge::Right => (away, 0.0),
+        };
+        Some(Self {
+            edge: chrome.edge,
+            peek: hide.peek,
+            on_hover: hide.on_hover,
+            away,
+            // Built at 0 and retargeted rather than at its destination, which would leave it inert — the same rule the wallpaper's cross-fade follows.
+            shown: Animated::new(0.0f32, chrome.config.animation.tween_ms(160, 1_000)),
+            pulling: telar::signal(false),
+        })
+    }
+
+    /// `placed` moved off its edge for as long as the bar is away, and brought back by hovering where that is what it asks for.
+    fn wrap(self, placed: StyledContainer) -> StyledContainer {
+        let Hiding { away, shown, .. } = self;
+        let placed = placed.with_transform(move |rect| {
+            let out = 1.0 - shown.get();
+            box_transform(rect, 0.0, 1.0, 1.0, away.0 * out, away.1 * out)
+        });
+        if self.on_hover {
+            return placed.on_hover(move |inside| shown.retarget(if inside { 1.0 } else { 0.0 }));
+        }
+        let pulling = self.pulling;
+        placed.on_hover(move |inside| {
+            if !inside && !pulling.peek() {
+                shown.retarget(0.0);
+            }
+        })
+    }
+
+    /// Where the band that takes a pull lies in the bar's own box `size` big: over the part of it that is still on screen while it is away.
+    fn band(self, size: telar::Rect) -> telar::Rect {
+        let peek = self.peek;
+        match self.edge {
+            Edge::Top => telar::Rect::new(0.0, size.height - peek, size.width, peek),
+            Edge::Bottom => telar::Rect::new(0.0, 0.0, size.width, peek),
+            Edge::Left => telar::Rect::new(size.width - peek, 0.0, peek, size.height),
+            Edge::Right => telar::Rect::new(0.0, 0.0, peek, size.height),
+        }
+    }
+
+    /// The band over the peek that a pull inward starts on, for a bar that hovering does not bring back.
+    fn puller(self, size: telar::Rect) -> Built {
+        let Hiding {
+            edge,
+            away,
+            shown,
+            pulling,
+            ..
+        } = self;
+        let band = self.band(size);
+        let pulled_in = move |(x, y): (f32, f32)| match edge {
+            Edge::Top => y - band.height,
+            Edge::Bottom => -y,
+            Edge::Left => x - band.width,
+            Edge::Right => -x,
+        };
+        Ok(Box::new(
+            StyledContainer::new(crate::area::at(band), |_| RectStyle::default(), Vec::new())?
+                .inert(move || !pulling.get() && shown.get() > 0.0)
+                .drag_axis(match edge.is_vertical() {
+                    true => telar::DragAxis::Horizontal,
+                    false => telar::DragAxis::Vertical,
+                })
+                .drag_threshold(4.0)
+                .on_drag(move |x, y| {
+                    if pulling.peek() || pulled_in((x, y)) < PULL {
+                        return;
+                    }
+                    pulling.set(true);
+                    shown.retarget(1.0);
+                })
+                .on_drag_end(move |x, y| {
+                    if !pulling.peek() {
+                        return;
+                    }
+                    pulling.set(false);
+                    // Measured in the frame the pull was pressed in, where the bar was still away.
+                    let (x, y) = (band.x + x + away.0, band.y + y + away.1);
+                    let over = (0.0..=size.width).contains(&x) && (0.0..=size.height).contains(&y);
+                    if !over {
+                        shown.retarget(0.0);
+                    }
+                }),
+        ))
+    }
+}
+
+/// How far a pull from a hidden bar's peek has to travel inward before it brings back a bar that hovering does not.
+pub const PULL: f32 = 12.0;
+
+/// Cuts the bar off at its own strip, and takes it off its edge while it hides itself ([`Hiding`]).
 ///
 /// A chip is routinely a shade wider than the strip its zone was given — a padded box is narrower than the bar and a square chip is sized from the bar itself — and while a bar had a surface of its own, the surface cut that overhang off for nothing. With one window per layer there is no surface to cut it: the overhang lands on the desktop, drawn but claimed by nothing, so a press on it reaches the application underneath. The clip is at the bar's root rather than at a zone for exactly that reason: what a zone cuts is one run running into another, and what this cuts is the bar running off its own edge.
 ///
 /// The cut is inside what hides the bar, so it travels with it: a chip overhanging a vertical bar's inner edge stays cut while the bar is away, instead of the overhang sliding into a cut that stayed where the bar was shown and claiming more of the screen than its peek (F-10.30).
 fn strip_clipped(chrome: &BarFrame, bar: StyledContainer) -> Built {
-    let clipped = ClippedItem::new(Box::new(bar), Clip::both());
+    let hiding = Hiding::of(chrome);
+    let size = telar::Rect::new(0.0, 0.0, chrome.strip.width, chrome.strip.height);
+    let mut children: Vec<Box<dyn LayoutItem>> =
+        vec![Box::new(ClippedItem::new(Box::new(bar), Clip::both()))];
+    if let Some(hiding) = hiding.filter(|hiding| !hiding.on_hover) {
+        children.push(hiding.puller(size)?);
+    }
     let placed = StyledContainer::new(
         crate::area::at(chrome.strip),
         |_| RectStyle::default(),
-        vec![Box::new(clipped)],
+        children,
     )?;
-    Ok(Box::new(hiding(chrome, placed)))
+    Ok(Box::new(match hiding {
+        Some(hiding) => hiding.wrap(placed),
+        None => placed,
+    }))
 }
 
 /// How far each corner of a bar's own background is rounded: the bar's own corners where it names them, else the one radius its shape resolved to. A ring made of rounded pills is four floating bars rather than a frame, so under `[shape] frame` the strip is square. Its rounded *inner* corners went with the surface that drew them: a concave corner at the junction of two strips lies inside neither, so no area can paint it (F-10.23).
@@ -1231,6 +1385,7 @@ mod tests {
             id,
             name: id,
             icon: "circle",
+            category: ui::descriptor::Category::Info,
             options: &[],
             representations: Representations {
                 chip: Some(chip),
@@ -2306,7 +2461,10 @@ mod tests {
         const SIZE: f32 = 32.0;
         const SCREEN: (f32, f32) = (600.0, 600.0);
 
-        for edge in Edge::ALL {
+        for (edge, on_hover) in Edge::ALL
+            .into_iter()
+            .flat_map(|edge| [(edge, true), (edge, false)])
+        {
             telar::reset_layout_runtime();
             set_theme(NordTheme::new());
             let _scope = telar::owner_scope();
@@ -2318,7 +2476,7 @@ mod tests {
                 BarShape::default(),
                 Some(layout::AutoHide {
                     peek: PEEK,
-                    on_hover: true,
+                    on_hover,
                 }),
             );
 
@@ -2372,6 +2530,168 @@ mod tests {
                     "{edge:?}: {claim:?} reaches past the {PEEK}px peek, which is all of the bar left on screen (F-10.30)"
                 );
             }
+        }
+    }
+
+    /// **A bar that hovering does not bring back comes back for a pull** (F-10.30): pressed on its peek strip and pulled inward across its edge it slides on screen and stays while the pointer is over it; resting on the strip, or sliding along it, brings nothing back. On all four edges, read through `interactive_rects` as the hidden bar's own test reads it.
+    #[test]
+    fn a_bar_shown_only_by_a_pull_comes_back_for_a_pull_inward_and_for_nothing_else() {
+        const PEEK: f32 = 2.0;
+        const SIZE: f32 = 32.0;
+        const SCREEN: (f32, f32) = (600.0, 600.0);
+        let mouse = || telar::PointerSource::Mouse;
+        let at = |edge: Edge, inward: f32, along: f32| -> (f64, f64) {
+            let (x, y) = match edge {
+                Edge::Top => (along, inward),
+                Edge::Bottom => (along, SCREEN.1 - inward),
+                Edge::Left => (inward, along),
+                Edge::Right => (SCREEN.0 - inward, along),
+            };
+            (f64::from(x), f64::from(y))
+        };
+
+        for edge in Edge::ALL {
+            telar::reset_layout_runtime();
+            set_theme(NordTheme::new());
+            let _scope = telar::owner_scope();
+            let area = shaped_bar_area(
+                edge,
+                SIZE,
+                [&[], &["dummy"], &[]],
+                BarShape::default(),
+                Some(layout::AutoHide {
+                    peek: PEEK,
+                    on_hover: false,
+                }),
+            );
+            let bar =
+                built(&Config::default(), &area, &registry(), SCREEN).expect("the bar builds");
+            let page = Container::new(
+                LayoutStyle::new().width(SCREEN.0).height(SCREEN.1),
+                vec![bar],
+            )
+            .expect("a screen to stand the bar on");
+            let root = page.layout_node();
+            let mut tree = telar::ComponentList::new(page);
+            let settle = || {
+                // An animation's first tick only starts its clock.
+                let now = std::time::Instant::now();
+                telar::motion::tick(now);
+                telar::motion::tick(now + std::time::Duration::from_secs(5));
+                telar::compute_layout(
+                    root,
+                    telar::AvailableSpace::Definite(SCREEN.0),
+                    telar::AvailableSpace::Definite(SCREEN.1),
+                )
+                .expect("the bar lays out");
+            };
+            let deepest = || {
+                let on_screen = telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1);
+                telar::interactive_rects()
+                    .into_iter()
+                    .filter_map(|rect| rect.intersect(on_screen))
+                    .map(|rect| match edge.is_horizontal() {
+                        true => rect.height,
+                        false => rect.width,
+                    })
+                    .fold(0.0, f32::max)
+            };
+            settle();
+            let stroke = |tree: &mut telar::ComponentList, path: &[(f64, f64)]| {
+                let (first, rest) = path.split_first().expect("a stroke has a start");
+                tree.on_event(&telar::Event::PointerMoved {
+                    x: first.0,
+                    y: first.1,
+                    source: mouse(),
+                });
+                tree.on_event(&telar::Event::PointerPressed {
+                    x: first.0,
+                    y: first.1,
+                    button: telar::PointerButton::Primary,
+                    source: mouse(),
+                });
+                for point in rest {
+                    tree.on_event(&telar::Event::PointerMoved {
+                        x: point.0,
+                        y: point.1,
+                        source: mouse(),
+                    });
+                }
+                let last = path.last().expect("a stroke has an end");
+                tree.on_event(&telar::Event::PointerReleased {
+                    x: last.0,
+                    y: last.1,
+                    button: telar::PointerButton::Primary,
+                    source: mouse(),
+                });
+            };
+
+            tree.on_event(&telar::Event::PointerMoved {
+                x: at(edge, 1.0, 300.0).0,
+                y: at(edge, 1.0, 300.0).1,
+                source: mouse(),
+            });
+            settle();
+            assert!(
+                deepest() <= PEEK + 0.5,
+                "{edge:?}: resting on the peek shows nothing"
+            );
+
+            stroke(
+                &mut tree,
+                &[
+                    at(edge, 1.0, 100.0),
+                    at(edge, 1.0, 200.0),
+                    at(edge, 1.0, 300.0),
+                ],
+            );
+            settle();
+            assert!(
+                deepest() <= PEEK + 0.5,
+                "{edge:?}: a slide along the edge shows nothing"
+            );
+
+            stroke(
+                &mut tree,
+                &[
+                    at(edge, 1.0, 300.0),
+                    at(edge, 8.0, 300.0),
+                    at(edge, 1.0 + PULL + 4.0, 300.0),
+                ],
+            );
+            settle();
+            assert_eq!(
+                deepest(),
+                SIZE,
+                "{edge:?}: a pull inward brings the whole bar back"
+            );
+
+            for inward in [20.0, 200.0] {
+                tree.on_event(&telar::Event::PointerMoved {
+                    x: at(edge, inward, 300.0).0,
+                    y: at(edge, inward, 300.0).1,
+                    source: mouse(),
+                });
+                settle();
+            }
+            assert!(
+                deepest() <= PEEK + 0.5,
+                "{edge:?}: leaving the bar sends it away again"
+            );
+
+            stroke(
+                &mut tree,
+                &[
+                    at(edge, 1.0, 300.0),
+                    at(edge, 8.0, 300.0),
+                    at(edge, 120.0, 300.0),
+                ],
+            );
+            settle();
+            assert!(
+                deepest() <= PEEK + 0.5,
+                "{edge:?}: a pull let go past the bar leaves it where the pointer is not"
+            );
         }
     }
 

@@ -43,7 +43,7 @@ fn build(desktop: &Desktop, window: LayerKind) {
     let scope = telar::owner_scope();
     let owner = scope.id();
     let demands = Rc::new(Demands::new(Layer::Top));
-    let (nodes, _) = build_window_areas(
+    let nodes = build_window_areas(
         &ShellAreas,
         &WindowAreas::of(&desktop.resolved, window),
         &Building {

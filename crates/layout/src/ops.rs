@@ -157,6 +157,11 @@ pub enum LayoutOp {
         id: InstanceId,
         instance: Box<Instance>,
     },
+    /// Replaces the ids of the areas a layer takes away from what earlier levels place: an area a broader rule or an extended layout writes, deleted on one monitor or one workspace alone.
+    SetLayerRemove {
+        site: Site,
+        remove: Vec<AreaId>,
+    },
     /// Adds an output rule, so the first edit made for one monitor has a level of its own to land in.
     InsertOutputRule {
         index: usize,
@@ -491,6 +496,28 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
                 instance: Box::new(was),
             })
         }
+        LayoutOp::SetLayerRemove { site, remove } => {
+            let was = &layer(layout, site)?.remove;
+            let added: Vec<&AreaId> = remove.iter().filter(|id| !was.contains(id)).collect();
+            if let Some(reserving) = reserving_at(layout, site)
+                && let Some(id) = added.iter().find(|id| reserving.contains(**id))
+            {
+                return Err(OpError::Reservation((*id).clone()));
+            }
+            if site.layer == LayerKind::Lock
+                && let Some(id) = added.iter().find(|id| is_prompt(layout, id))
+            {
+                return Err(OpError::Prompt {
+                    id: (*id).clone(),
+                    refused: PromptEdit::Remove,
+                });
+            }
+            let was = std::mem::replace(&mut layer_mut(layout, site)?.remove, remove.clone());
+            Ok(LayoutOp::SetLayerRemove {
+                site: site.clone(),
+                remove: was,
+            })
+        }
         LayoutOp::InsertOutputRule { index, rule } => {
             if layout.outputs.iter().any(|it| it.matches == rule.matches) {
                 return Err(OpError::RuleExists(format!("outputs.{}", rule.matches.0)));
@@ -648,6 +675,92 @@ pub fn sites(layout: &Layout) -> impl Iterator<Item = (Site, &Layer)> {
     own.chain(workspaces)
 }
 
+/// An id no area of the layer `layer` has anywhere in `layout` or a layout it extends, readable and derived from `stem` (F-10.3): `left`, then `left-2`, `left-3`, a trailing count on `stem` taken off first so a split of `left-2` is `left-3` rather than `left-2-2`.
+pub fn free_area_id(
+    layout: &Layout,
+    known: &BTreeMap<LayoutId, Layout>,
+    layer: LayerKind,
+    stem: &str,
+) -> AreaId {
+    let taken: BTreeSet<&str> = crate::resolve::chain_of(layout, known, &mut Default::default())
+        .into_iter()
+        .flat_map(|level| {
+            sites(level)
+                .filter(move |(site, _)| site.layer == layer)
+                .flat_map(|(_, written)| {
+                    written
+                        .areas
+                        .iter()
+                        .map(|area| area.id.as_str())
+                        .chain(written.remove.iter().map(AreaId::as_str))
+                })
+        })
+        .collect();
+    AreaId::new(free_id(&taken, stem))
+}
+
+/// An id no instance has anywhere in `layout` or a layout it extends, placed or named in a group's `remove`, derived from `stem` the way [`free_area_id`] derives one: `clock`, then `clock-2`. Instance ids are unique across the whole layout, so a new one never lands on an inherited instance and merges into it.
+pub fn free_instance_id(
+    layout: &Layout,
+    known: &BTreeMap<LayoutId, Layout>,
+    stem: &str,
+) -> InstanceId {
+    let taken: BTreeSet<&str> = crate::resolve::chain_of(layout, known, &mut Default::default())
+        .into_iter()
+        .flat_map(|level| sites(level).flat_map(|(_, written)| written.areas.iter()))
+        .flat_map(|area| area.groups.iter())
+        .flat_map(|group| {
+            group
+                .children
+                .iter()
+                .map(|child| child.id.as_str())
+                .chain(group.remove.iter().map(InstanceId::as_str))
+        })
+        .collect();
+    InstanceId::new(free_id(&taken, stem))
+}
+
+/// An id no group of the area `area` on `layer` has anywhere in `layout` or a layout it extends, placed or named in that area's `remove` at any level, derived from `stem` the way [`free_area_id`] derives one: `end`, then `end-2`. Group ids are scoped to their area, so a new group never merges into one a broader level places there, nor revives one a level took away.
+pub fn free_group_id(
+    layout: &Layout,
+    known: &BTreeMap<LayoutId, Layout>,
+    layer: LayerKind,
+    area: &AreaId,
+    stem: &str,
+) -> GroupId {
+    let taken: BTreeSet<&str> = crate::resolve::chain_of(layout, known, &mut Default::default())
+        .into_iter()
+        .flat_map(|level| {
+            sites(level)
+                .filter(move |(site, _)| site.layer == layer)
+                .flat_map(|(_, written)| written.areas.iter())
+        })
+        .filter(|written| written.id == *area)
+        .flat_map(|written| {
+            written
+                .groups
+                .iter()
+                .map(|group| group.id.as_str())
+                .chain(written.remove.iter().map(GroupId::as_str))
+        })
+        .collect();
+    GroupId::new(free_id(&taken, stem))
+}
+
+fn free_id(taken: &BTreeSet<&str>, stem: &str) -> String {
+    let stem = match stem.rsplit_once('-') {
+        Some((base, count)) if !base.is_empty() && count.parse::<u32>().is_ok() => base,
+        _ => stem,
+    };
+    if !taken.contains(stem) {
+        return stem.to_string();
+    }
+    (2..)
+        .map(|nth| format!("{stem}-{nth}"))
+        .find(|id| !taken.contains(id.as_str()))
+        .expect("the counting runs out long after the ids do")
+}
+
 /// Where an instance is written: the group it is in, and its position in that group.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Placement {
@@ -711,6 +824,14 @@ fn keeps_prompt(
         id: before.id.clone(),
         refused,
     })
+}
+
+/// Whether the layout writes `id` as a lock prompt anywhere, which no level may take away.
+fn is_prompt(layout: &Layout, id: &AreaId) -> bool {
+    sites(layout)
+        .filter(|(site, _)| site.layer == LayerKind::Lock)
+        .flat_map(|(_, layer)| layer.areas.iter())
+        .any(|area| area.id == *id && matches!(area.kind, Some(AreaKind::Prompt { .. })))
 }
 
 /// Refuses an area for a workspace rule that says anything about reservation.

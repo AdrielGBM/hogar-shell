@@ -31,6 +31,21 @@ deliberately not the centre of the glass.
 `hogar-shell layout show` prints the areas the running layout has; `hogar-shell layout check` says what is
 wrong with one.
 
+The built-in layout places one: a medium clock face in the middle of the screen, 48 px off its edges.
+
+## Arranging them
+
+`hogar-shell layout edit desktop` edits the desktop layer on the screen it is run on. Drag a widget to other
+cells, or onto the middle of another to stack the two into one Smart Stack; drag it out of a stack to make it a
+widget again. A widget dropped where another one is never removes it: the one in the way moves to the free
+cells nearest where it was, and nothing else moves. The corner handle on the selected widget steps it through
+its sizes (S 2×2, M 4×2, L 4×4 cells, which are 80 px and 16 px apart unless the grid says otherwise).
+
+`a` opens the palette of every module that draws as a widget, and "From bars…" in it moves a chip off a bar
+onto the grid as the same instance. Every drag has a key: Shift+arrows move a widget one cell, Ctrl+arrows step
+its size, Ctrl+Shift+arrows stack it onto the widget that way, Shift+N makes a grid, and `w` edits the
+workspace that is up alone. `?` lists them all.
+
 ## Clock
 
 `[clock.face]` is how a placed face is drawn: `scale`, `format`, `date_format`, `show_date`, `invert`,

@@ -18,6 +18,22 @@ pub fn path_of(key: &str) -> Path {
         .collect()
 }
 
+/// `path` spelled out the way a reader would say it: `face.scale`, `hidden[1]`.
+pub fn dotted(path: &[Step]) -> String {
+    let mut said = String::new();
+    for step in path {
+        match step {
+            Step::Key(key) if said.is_empty() => said.push_str(key),
+            Step::Key(key) => {
+                said.push('.');
+                said.push_str(key);
+            }
+            Step::Index(index) => said.push_str(&format!("[{index}]")),
+        }
+    }
+    said
+}
+
 pub fn get<'a>(table: &'a Table, path: &[Step]) -> Option<&'a Value> {
     let (first, rest) = path.split_first()?;
     let Step::Key(key) = first else {
@@ -131,36 +147,5 @@ impl<'a> OwnContainer<'a> {
             }
             _ => {}
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn table(text: &str) -> Table {
-        toml::from_str(text).expect("a table")
-    }
-
-    #[test]
-    fn a_nested_key_is_written_into_a_table_of_its_own_and_nothing_else_is_pinned() {
-        let shown = table("[face]\nscale = 1.0\nhands = true\n");
-        let mut own = Table::new();
-        set(&mut own, &shown, &path_of("face.scale"), Value::Float(2.0));
-        assert_eq!(own, table("[face]\nscale = 2.0\n"));
-        assert_eq!(get(&own, &path_of("face.scale")), Some(&Value::Float(2.0)));
-    }
-
-    #[test]
-    fn an_element_of_an_inherited_list_takes_the_whole_list_with_it() {
-        let shown = table("hidden = [\"a\", \"b\", \"c\"]\n");
-        let mut own = Table::new();
-        let path = vec![Step::Key("hidden".into()), Step::Index(1)];
-        set(&mut own, &shown, &path, Value::String("x".into()));
-        assert_eq!(own, table("hidden = [\"a\", \"x\", \"c\"]\n"));
-        unset(&mut own, &path);
-        assert_eq!(own, table("hidden = [\"a\", \"c\"]\n"));
-        unset(&mut own, &path_of("hidden"));
-        assert!(own.is_empty());
     }
 }

@@ -11,10 +11,12 @@ pub fn install() {
     }
     mode::install();
     session::install();
+    variant::install();
     popover::install();
     context::install();
     keys::install();
     for layer in layout::LayerKind::SESSION {
         host::add_tool(layer, select::tool);
     }
+    modes::install();
 }

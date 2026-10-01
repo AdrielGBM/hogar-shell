@@ -4,7 +4,7 @@
 //!
 //! **A reload reuses, it does not replace.** A window's identity is its `(output, layer)` and a strip's is its `(output, edge)`, and both survive an edit — so a layout change reaches the window that is already up and is a rebuild of its tree rather than a new surface. Which is what makes editing a layout with the settings window open bearable, and what keeps a chip's state across the edit that moved the chip beside it.
 //!
-//! **Reservation is an output-level fact, never a workspace one.** A strip's thickness is summed across every layer of the output's own rules, so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7).
+//! **Reservation is an output-level fact, never a workspace one.** A strip's thickness is the deepest reserving area on its edge across every layer of the output's own rules, so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
@@ -47,7 +47,7 @@ impl Desktop {
     }
 
     /// This screen with `layout` resolved in place of what it was resolved from: the same config, size, reservation and workspace.
-    fn resolving(&self, layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Self {
+    pub fn resolving(&self, layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Self {
         let output = self.output.as_deref().unwrap_or(NOMINAL_OUTPUT);
         let (resolved, _) = resolve(layout, known, output, self.resolved.workspace.as_ref());
         Self {
@@ -220,7 +220,10 @@ pub fn plan(
             unblurred.extend(
                 resolved
                     .areas()
-                    .filter(|(_, area)| area.style.backdrop == Some(layout::Backdrop::Blur))
+                    .filter(|(layer, area)| {
+                        crate::layer_window::blur_of(*layer, area)
+                            == Some(crate::layer_window::Blur::Compositor)
+                    })
                     .map(|(layer, area)| format!("{layer}.{}", area.id)),
             );
             let reserved = Reserved::of(&resolved, &config);
@@ -302,6 +305,30 @@ thread_local! {
 /// Reactive: read inside an effect or a build, it runs again once the next reconcile has brought the windows in line, and whenever a preview starts, moves or ends, so what it reads is always what the windows already show.
 pub fn desktops() -> Rc<[Desktop]> {
     previewing().unwrap_or_else(planned)
+}
+
+/// [`desktops`] as the windows show it at this moment, without following it: for a caller that must not run again whenever it changes — an edit planned inside the effect that previews it, whose preview changes it.
+pub fn desktops_now() -> Rc<[Desktop]> {
+    PREVIEW
+        .with(|preview| preview.peek())
+        .unwrap_or_else(|| PUBLISHED.with(|published| Rc::clone(&published.borrow())))
+}
+
+/// The arrangement of the screen `output` as the windows show it, from [`desktops`]. Reactive.
+pub fn desktop(output: Option<&str>) -> Option<Desktop> {
+    on(output, &desktops())
+}
+
+/// [`desktop`] without following it, from [`desktops_now`].
+pub fn desktop_now(output: Option<&str>) -> Option<Desktop> {
+    on(output, &desktops_now())
+}
+
+fn on(output: Option<&str>, desktops: &[Desktop]) -> Option<Desktop> {
+    desktops
+        .iter()
+        .find(|desktop| desktop.output.as_deref() == output)
+        .cloned()
 }
 
 /// Every output's arrangement as the last reconcile left it, whatever a preview shows over it: what the store holds, on screen. Reactive, like [`desktops`].
@@ -396,6 +423,16 @@ pub fn stacks() -> Vec<StackSite> {
             })
             .collect()
     })
+}
+
+/// The stack of `sites` on `output` that `card` lands in ([`layout::route_card`]).
+pub fn stack_for<'a>(
+    sites: &'a [StackSite],
+    output: &Option<String>,
+    card: &layout::RoutedCard,
+) -> Option<&'a StackSite> {
+    let on: Vec<&StackSite> = sites.iter().filter(|site| site.output == *output).collect();
+    layout::route_card(&on, |site| &site.routes, card).copied()
 }
 
 /// Makes `desktops` what [`desktops`] and [`stacks`] answer. Ahead of the windows' own reconcile, because the areas they rebuild ask [`stacks`] where a card goes.

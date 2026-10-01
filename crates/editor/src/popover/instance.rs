@@ -18,7 +18,7 @@ use ui::host::WidgetSize;
 
 use super::area::{parsed, spelled};
 use super::draft::InstanceDraft;
-use super::rows::{self, Range, Rows};
+use super::rows::{self, Range, Rows, label};
 use super::value::{self, Path, Step};
 
 /// Every row of `draft`'s inspector: what it is drawn as where there is a choice, then each of its options in the order its module declares them.
@@ -52,9 +52,9 @@ pub fn shown(config: &Config, module: &str, own: &toml::Table) -> toml::Table {
     shown
 }
 
-/// Chip, widget of a size, or card, where the area it is in draws more than one of them and its module has more than one.
+/// Chip, widget of a size, or card, in a free area, where its module has more than one of them. A widget on a grid steps its size in a row of its own.
 fn representation(draft: &InstanceDraft) -> Rows {
-    if !matches!(draft.area_kind, "grid" | "free") {
+    if draft.area_kind != "free" {
         return Ok(Vec::new());
     }
     let Some(descriptor) = ui::descriptor::find(&draft.resolved.module) else {
@@ -92,11 +92,13 @@ fn representation(draft: &InstanceDraft) -> Rows {
     telar::effect(move || {
         let text = picked.get();
         if seeded.replace(true) {
-            instance.update(|held| held.representation = parsed(&text));
+            instance.update("representation", move |held| {
+                held.representation = parsed(&text)
+            });
         }
     });
     Ok(vec![rows::choice(
-        Reactive::of(|| telar::t!("editor.popover.drawn_as")),
+        label!("editor.popover.drawn_as"),
         None,
         picked,
         options,
@@ -247,7 +249,7 @@ fn resettable(draft: &InstanceDraft, path: Path, build: impl Fn() -> Built + 'st
             let (draft, path) = (resetting.clone(), path.clone());
             telar::button(
                 telar::ButtonProps::props()
-                    .label(Reactive::of(|| telar::t!("editor.popover.reset")))
+                    .label(label!("editor.popover.reset"))
                     .ghost(true)
                     .on_press(Rc::new(move || {
                         draft.unset(&path);
@@ -310,7 +312,7 @@ fn list(
             let blank = blank(&element);
             list.push(telar::button(
                 telar::ButtonProps::props()
-                    .label(Reactive::of(|| telar::t!("editor.popover.add")))
+                    .label(label!("editor.popover.add"))
                     .ghost(true)
                     .on_press(Rc::new(move || {
                         let mut items = match adding.shown_at(&added) {
@@ -318,7 +320,7 @@ fn list(
                             _ => Vec::new(),
                         };
                         items.push(blank.clone());
-                        replace(&adding, &added, Value::Array(items));
+                        adding.set_option(&added, Value::Array(items));
                     }))
                     .build(),
                 Children::default(),
@@ -373,17 +375,13 @@ fn map(
                 list.push(removable(&draft, &path, Step::Key(name), row)?);
             }
             let named = signal(String::new());
-            list.push(rows::text(
-                Reactive::of(|| telar::t!("editor.popover.new_name")),
-                None,
-                named,
-            )?);
+            list.push(rows::text(label!("editor.popover.new_name"), None, named)?);
             let adding = draft.clone();
             let added = path.clone();
             let blank = blank(&element);
             list.push(telar::button(
                 telar::ButtonProps::props()
-                    .label(Reactive::of(|| telar::t!("editor.popover.add")))
+                    .label(label!("editor.popover.add"))
                     .ghost(true)
                     .on_press(Rc::new(move || {
                         let name = named.peek().trim().to_string();
@@ -395,7 +393,7 @@ fn map(
                             return;
                         }
                         entries.insert(name, blank.clone());
-                        replace(&adding, &added, Value::Table(entries));
+                        adding.set_option(&added, Value::Table(entries));
                     }))
                     .build(),
                 Children::default(),
@@ -427,7 +425,7 @@ fn removable(draft: &InstanceDraft, path: &Path, step: Step, row: Box<dyn Layout
     let path = path.clone();
     let remove = telar::button(
         telar::ButtonProps::props()
-            .label(Reactive::of(|| telar::t!("editor.popover.remove")))
+            .label(label!("editor.popover.remove"))
             .ghost(true)
             .on_press(Rc::new(move || {
                 let Some(held) = draft.shown_at(&path) else {
@@ -444,7 +442,7 @@ fn removable(draft: &InstanceDraft, path: &Path, step: Step, row: Box<dyn Layout
                     }
                     _ => return,
                 };
-                replace(&draft, &path, without);
+                draft.set_option(&path, without);
             }))
             .build(),
         Children::default(),
@@ -462,12 +460,6 @@ fn removable(draft: &InstanceDraft, path: &Path, step: Step, row: Box<dyn Layout
             remove,
         ],
     )?))
-}
-
-/// Sets the whole value at `path` on the instance, a list or a table of names being one value however many elements it has.
-fn replace(draft: &InstanceDraft, path: &Path, whole: Value) {
-    let shown = Rc::clone(&draft.shown);
-    draft.update(|held| value::set(&mut held.options, &shown, path, whole));
 }
 
 /// What a new element of `control` holds until it is edited.

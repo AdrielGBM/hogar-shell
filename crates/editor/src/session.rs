@@ -13,7 +13,7 @@ use telar::{
     effect, signal,
 };
 
-use layout::{Layout, LayoutOp, ResolvedLayer, StoreError};
+use layout::{AreaId, Layout, LayoutOp, ResolvedLayer, StoreError};
 use surfaces::rects::{Node, Part};
 use surfaces::{layouts, reconcile};
 
@@ -78,12 +78,7 @@ pub fn selected() -> Selection {
 
 /// Selects `selection`, answering whether it did: only what is on the layer and screen being edited can be, and nothing can while no mode is up.
 pub fn select(selection: Selection) -> bool {
-    let in_scope = match selection.node() {
-        None => true,
-        Some(node) => mode::current().is_some_and(|mode| {
-            node.layer == mode.layer && node.output.as_deref() == Some(mode.output.as_str())
-        }),
-    };
+    let in_scope = selection.node().is_none_or(mode::editing);
     if in_scope {
         SELECTION.with(|current| {
             if current.peek() != selection {
@@ -132,19 +127,16 @@ fn depth(node: &Node) -> u8 {
 
 /// Keeps the selection on what it names as the edited screen changes under it: an instance moved to another group is still the one selected, and one that is gone is not. While a preview is showing, something the preview takes away stays selected, since the edit may yet be reverted.
 fn follow_the_layout() {
-    let desktops = reconcile::desktops();
-    let Some(mode) = mode::current() else {
+    let Some(mode) = mode::active().get() else {
         return;
     };
+    let layer = reconcile::desktop(Some(&mode.output))
+        .and_then(|desktop| desktop.resolved.layer(mode.layer).cloned())
+        .unwrap_or_default();
     let current = selected();
     let Some(node) = current.node() else {
         return;
     };
-    let layer = desktops
-        .iter()
-        .find(|desktop| desktop.output.as_deref() == Some(mode.output.as_str()))
-        .and_then(|desktop| desktop.resolved.layer(mode.layer).cloned())
-        .unwrap_or_default();
     let followed = match found(node, &layer) {
         Some(node) => Selection::of(node),
         None if reconcile::previewing().is_some() => current,
@@ -236,6 +228,32 @@ pub enum EditError {
     Refused(String),
 }
 
+impl EditError {
+    pub fn refused(why: impl Into<String>) -> Self {
+        Self::Refused(why.into())
+    }
+
+    /// Nothing is selected that the step acts on.
+    pub fn nothing() -> Self {
+        Self::refused(telar::t!("editor.refused.nothing"))
+    }
+
+    /// The area `id` is no longer on its screen.
+    pub fn gone(id: &AreaId) -> Self {
+        Self::refused(telar::t!("editor.refused.gone", id = id.to_string()))
+    }
+
+    /// The screen the edit is for is no longer drawn on.
+    pub fn no_output() -> Self {
+        Self::refused(telar::t!("editor.refused.no_output"))
+    }
+
+    /// What `name` names cannot go any further the way it was asked to.
+    pub fn no_way(name: impl fmt::Display) -> Self {
+        Self::refused(telar::t!("editor.refused.no_way", name = name.to_string()))
+    }
+}
+
 impl fmt::Display for EditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -248,6 +266,12 @@ impl fmt::Display for EditError {
 }
 
 impl std::error::Error for EditError {}
+
+impl From<layout::OpError> for EditError {
+    fn from(error: layout::OpError) -> Self {
+        Self::Refused(error.to_string())
+    }
+}
 
 impl From<TransactionError> for EditError {
     fn from(error: TransactionError) -> Self {
@@ -320,12 +344,14 @@ impl Edit {
         Ok(())
     }
 
-    /// Shows the layout as it was when the edit began with `ops` applied, in place of whatever the last preview showed: a drag previews where it is now, not a step from where it was a frame ago. Operations the layout refuses leave the last preview on screen.
+    /// Shows the layout as it was when the edit began with `ops` applied, in place of whatever the last preview showed: a drag previews where it is now, not a step from where it was a frame ago. Operations the layout refuses leave the last preview on screen, and so do operations that would make a locked screen fall back to the minimal lock ([`crate::modes::lock::kept`]).
     pub fn preview(&self, ops: Vec<LayoutOp>) -> Result<(), EditError> {
         refuse_under_safe_layout()?;
-        let mut next = self.0.transaction.before().ok_or(EditError::NotOpen)?;
+        let before = self.0.transaction.before().ok_or(EditError::NotOpen)?;
+        let mut next = before.clone();
         layout::ops::apply_all(&mut next, &ops)
             .map_err(|why| EditError::Refused(why.to_string()))?;
+        crate::modes::lock::kept(&before, &next).map_err(EditError::Refused)?;
         self.0.transaction.preview(move |draft| *draft = next)?;
         *self.0.ops.borrow_mut() = ops;
         Ok(())

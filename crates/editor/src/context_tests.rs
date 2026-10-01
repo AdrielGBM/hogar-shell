@@ -50,6 +50,7 @@ mod tests {
         id: "clock",
         name: "Clock",
         icon: "clock",
+        category: ui::descriptor::Category::Info,
         options: &[],
         representations: Representations {
             chip: Some(ChipDef::new(face, Input::ReadOnly)),
@@ -505,7 +506,7 @@ mod tests {
         }
     }
 
-    /// The instance menu offers the module's own actions, customizing it, moving it where it is drawn the other way, removing it and editing its layer.
+    /// The instance menu offers the module's own actions, customizing it, moving it where it is drawn the other way, removing it and editing its layer; the bar's offers what acts on the bar itself, outside its mode too.
     #[test]
     fn an_instances_menu_offers_its_actions_and_the_layout_rows() {
         let _rig = rig_with("menu-rows", with_desktop_grid);
@@ -524,13 +525,16 @@ mod tests {
             ]
         );
         opened(bar(), (400.0, 17.0));
-        assert_eq!(context::rows(), ["Customize bar…", "Edit Top…"]);
+        assert_eq!(
+            context::rows(),
+            ["Customize bar…", "Split in half", "Remove", "Edit Top…"]
+        );
     }
 
-    /// A grid on the desktop with a group to take widgets.
+    /// A grid on the desktop in place of the shipped one, its first cells taken by an empty group.
     fn with_desktop_grid(layout: &mut Layout) {
         let rule = &mut layout.outputs[0];
-        rule.layers.desktop.areas.push(layout::Area {
+        rule.layers.desktop.areas = vec![layout::Area {
             id: AreaId::new("widgets"),
             kind: Some(AreaKind::Grid {
                 rect: Some(layout::Rect {
@@ -554,7 +558,7 @@ mod tests {
                 ..Group::default()
             }],
             ..layout::Area::default()
-        });
+        }];
         for group in &mut rule.layers.top.areas[0].groups {
             for child in &mut group.children {
                 if child.id.as_str() == "clock" {
@@ -562,6 +566,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The group `group` of the desktop area `area` as the screen shows it.
+    fn shown_group(area: &AreaId, group: &GroupId) -> Option<layout::ResolvedGroup> {
+        reconcile::desktops()[0]
+            .resolved
+            .layer(LayerKind::Desktop)?
+            .areas
+            .iter()
+            .find(|held| held.id == *area)?
+            .groups
+            .iter()
+            .find(|held| held.id == *group)
+            .cloned()
     }
 
     /// Where the instance `id` is written, and as what, in the active layout.
@@ -592,7 +610,17 @@ mod tests {
         opened(clock(), (900.0, 17.0));
         context::pick("Move to desktop as widget");
         let (area, group, widget) = written(&rig, "clock").expect("the clock is still placed");
-        assert_eq!((area.as_str(), group.as_str()), ("widgets", "board"));
+        assert_eq!(
+            (area.as_str(), group.as_str()),
+            ("widgets", "clock"),
+            "a widget of its own on the grid, on the free cells nearest its first"
+        );
+        let placed = shown_group(&area, &group).expect("its group is on the grid");
+        assert!(
+            matches!(placed.kind, GroupKind::Cell { col: 0, row: 2, .. }),
+            "{:?}",
+            placed.kind
+        );
         assert_eq!(widget.representation, Some(Representation::WidgetM));
         assert_eq!(widget.options, before.options, "it keeps its options");
         assert_eq!(rig.undo_label().as_deref(), Some("Move Clock to desktop"));
@@ -678,7 +706,7 @@ mod tests {
         .expect("a store");
         let mut preview = screen(modules::lock::preview(
             &desktop.config,
-            &lock,
+            Ok(&lock),
             Some(SCREEN),
             SIZE,
         ));
@@ -756,5 +784,72 @@ mod tests {
         );
         popover::close();
         mode::leave();
+    }
+
+    /// B10, TA-4: an area's menu offers what acts on the area itself in and out of edit mode, and what acts on the mode — a new bar, stack or grid, the palette — only in that area's own mode on its screen.
+    #[test]
+    fn a_menu_offers_the_modes_own_rows_only_in_that_mode() {
+        let _rig = rig_with("menu-modes", with_desktop_grid);
+        let _scope = Scope::new();
+        let area = |layer, id: &str| Node::area(Some(SCREEN), layer, &AreaId::new(id));
+        let cases: [(LayerKind, &str, &[&str], &[&str]); 4] = [
+            (
+                LayerKind::Background,
+                "background",
+                &["Split side by side", "Add a texture over it"],
+                &[],
+            ),
+            (
+                LayerKind::Desktop,
+                "widgets",
+                &[],
+                &["Add widget…", "New grid"],
+            ),
+            (
+                LayerKind::Top,
+                "bar-top",
+                &["Split in half"],
+                &["New bar at the bottom"],
+            ),
+            (
+                LayerKind::Overlay,
+                "stack",
+                &["Open the launcher here"],
+                &["New stack"],
+            ),
+        ];
+        for (layer, id, always, in_mode) in cases {
+            for editing in [false, true] {
+                if editing {
+                    mode::enter_as(
+                        layer,
+                        Some(SCREEN),
+                        &Compositor {
+                            restack: true,
+                            locked: false,
+                            lockable: Ok(()),
+                        },
+                    )
+                    .expect("the mode opens");
+                }
+                opened(area(layer, id), (10.0, 10.0));
+                let rows = context::rows();
+                for row in always {
+                    assert!(
+                        rows.contains(&row.to_string()),
+                        "{layer} {editing}: {rows:?}"
+                    );
+                }
+                for row in in_mode {
+                    assert_eq!(
+                        rows.contains(&row.to_string()),
+                        editing,
+                        "{layer} {editing}: {row} in {rows:?}"
+                    );
+                }
+                transient::close(context::ID);
+                mode::leave();
+            }
+        }
     }
 }

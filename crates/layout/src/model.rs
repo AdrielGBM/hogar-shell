@@ -439,20 +439,26 @@ pub enum AreaKind {
     Stack {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<Anchor>,
+        /// How far the column is moved from where its anchor puts it, in logical pixels. It never goes past the edge of the box it is measured in, and always keeps a quarter of that box's height for its cards.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        offset: Option<Offset>,
         /// How wide a card in this column is, in logical pixels.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<f32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output_policy: Option<StackOutputPolicy>,
-        /// Which cards land here. A card goes to the first stack whose routes accept it; a stack with no routes accepts everything.
+        /// Which cards land here. A card goes to the first stack on its output with a route that takes it; a stack with no routes takes what no route on that output takes, the first such stack taking all of it.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         routes: Vec<Route>,
+        /// Whether the launcher opens here, at this column's anchor and offset, rather than in the middle of the screen. The first stack on an output that says so is the one used.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        launcher: Option<bool>,
     },
     /// A region of the output that draws a wallpaper of its own.
     WallpaperRegion {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
-        /// A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one.
+        /// A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out or empty, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one. An empty one is how a rule says so over a region another level gave a picture.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
         /// How the picture is fitted to the region.
@@ -578,6 +584,18 @@ impl Rect {
             && self.x + self.w <= 1.0 + f32::EPSILON
             && self.y + self.h <= 1.0 + f32::EPSILON
     }
+
+    /// The rectangle kept wholly on its output and at least `smallest` on each side, moved back in rather than cut where it ran off an edge.
+    pub fn kept_on_output(self, smallest: f32) -> Self {
+        let w = self.w.clamp(smallest, 1.0);
+        let h = self.h.clamp(smallest, 1.0);
+        Self {
+            x: self.x.clamp(0.0, 1.0 - w),
+            y: self.y.clamp(0.0, 1.0 - h),
+            w,
+            h,
+        }
+    }
 }
 
 /// The output a layout is resolved against when no compositor named one — a session with one nameless screen, and every check that runs without a compositor. A `*` rule matches it and a rule naming a connector does not, which is the honest answer when there is no connector to name.
@@ -614,6 +632,20 @@ impl Anchor {
     ];
 }
 
+/// How far something pinned to one of the nine anchors is moved from where the anchor puts it, in logical pixels: right and down are positive.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Offset {
+    /// How far right, or left where it is negative.
+    pub x: f32,
+    /// How far down, or up where it is negative.
+    pub y: f32,
+}
+
+impl Offset {
+    pub const ZERO: Offset = Offset { x: 0.0, y: 0.0 };
+}
+
 /// Which outputs a stack appears on.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -633,7 +665,7 @@ pub enum StackOutputPolicy {
 pub struct Route {
     /// Which kind of card this route accepts. Absent accepts every kind.
     pub kind: Option<CardKind>,
-    /// The application id a notification came from.
+    /// The name of the application a notification came from, as the notification gives it, matched without regard to case.
     pub app: Option<String>,
     /// How insistent a notification has to be to land here.
     pub urgency: Option<Urgency>,
@@ -936,8 +968,23 @@ pub fn prompt_card(style: &AreaStyle, theme: &NordTheme) -> Color {
     fill.with_alpha(style.opacity.unwrap_or(1.0).clamp(FAINTEST_PROMPT, 1.0))
 }
 
+/// What the prompt's text is read against: its card over the lock's own opaque background, which is the colour a translucent card actually shows.
+pub fn prompt_backdrop(style: &AreaStyle, theme: &NordTheme) -> Color {
+    let card = prompt_card(style, theme);
+    let under = theme.base;
+    let mix = |over: f32, back: f32| over * card.a + back * (1.0 - card.a);
+    Color::rgb(
+        mix(card.r, under.r),
+        mix(card.g, under.g),
+        mix(card.b, under.b),
+    )
+}
+
 /// The faintest a prompt may be drawn. Below this the field a user has to type into disappears into the wallpaper behind it.
 pub const FAINTEST_PROMPT: f32 = 0.9;
+
+/// The smallest a prompt may be, as a fraction of each side of its output. Anything smaller is a lockout on a large monitor as surely as a hidden one.
+pub const SMALLEST_PROMPT: f32 = 0.05;
 
 /// A run of instances inside an area, and how the area places it.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

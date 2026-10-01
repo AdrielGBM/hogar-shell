@@ -253,11 +253,11 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
 
     let apply = Rc::new(apply);
 
-    // What the `layout` verbs and the lock session opener act on, and the pass an edit is redrawn with. Installed once that pass exists: an edit nothing redraws is one the user has no way to judge.
+    // What the `layout` verbs and the lock session opener act on, and the pass an edit is redrawn with. Installed once that pass exists: an edit nothing redraws is one the user has no way to judge. An edit changes the arrangement and not the config, so only the areas it touched are built again.
     surfaces::layouts::install(Rc::clone(&store), {
         let apply = Rc::clone(&apply);
         let reloader = Rc::clone(&reloader);
-        Rc::new(move || apply(&reloader.borrow().live(), Content::Rebuild))
+        Rc::new(move || apply(&reloader.borrow().live(), Content::Changed))
     });
 
     // The config having changed, whoever noticed: the file watcher, `hogar-shell shell reload`, a keybind. The toast belongs here rather than in the surface pass, which also runs at startup — a toast saying the config was reloaded is only true of a reload, and only of one that applied something.
@@ -296,7 +296,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
     // A monitor arriving or leaving changes which windows exist and nothing about what they draw, so the screens that were already there keep the trees they have.
     platform_wayland::on_outputs_changed(move || {
         let config = reloader.borrow().live();
-        apply(&config, Content::Keep);
+        apply(&config, Content::Changed);
     });
 }
 
@@ -573,32 +573,17 @@ fn install_hooks() {
 /// Three things have to hold before a lock screen is drawn from a layout, and any one of them failing is the minimal lock rather than a half-drawn one: the store has to be there, the layout has to validate — every instance a reading, no action bound, a prompt that cannot be hidden or covered — and it has to resolve for every screen with a prompt on it. Checked here, once, because after `take()` the compositor is already showing whatever this returns and a message is no use to whoever is standing at it: the reason is held and said as a toast once the session is unlocked (`services::lock::fell_back`).
 fn lock_layer() -> Option<modules::lock::LockLayout> {
     let Some(built) = surfaces::layouts::read(|store| {
-        let mut report =
-            layout::validate_lock(store.active(), &crate::core::commands::layout::catalogue());
-        let theme = crate::core::commands::layout::lock_theme();
         let outputs = platform_wayland::outputs();
-        let names: Vec<Option<&str>> = match outputs.is_empty() {
-            true => vec![None],
-            false => outputs.iter().map(|out| out.name.as_deref()).collect(),
-        };
-        for output in names {
-            let (resolved, resolving) = layout::resolve(
-                store.active(),
-                store.all(),
-                output.unwrap_or(layout::NOMINAL_OUTPUT),
-                None,
-            );
-            report.merge(resolving);
-            report.merge(layout::validate_resolved(
-                &resolved,
-                &store.path_of(store.active_id()).display().to_string(),
-                &theme,
-            ));
-        }
-        match report.errors.is_empty() {
-            true => Ok(modules::lock::LockLayout::of(store.active(), store.all())),
-            false => Err(report.summary()),
-        }
+        let names: Vec<Option<&str>> = outputs.iter().map(|out| out.name.as_deref()).collect();
+        modules::lock::LockLayout::checked(
+            store.active(),
+            store.all(),
+            &crate::core::commands::layout::catalogue(),
+            &crate::core::commands::layout::lock_theme(),
+            &names,
+            &store.path_of(store.active_id()).display().to_string(),
+        )
+        .map_err(|report| report.summary())
     }) else {
         services::lock::fell_back("there is no layout store to draw the lock screen from");
         return None;

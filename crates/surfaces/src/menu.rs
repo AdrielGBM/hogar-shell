@@ -64,6 +64,11 @@ pub fn on(node: Node, audience: Audience) -> Option<Rc<dyn Fn()>> {
     }))
 }
 
+/// Where the pointer last was, in the coordinates of the window it was over — which, every window of an output being the whole output, are that output's. What a drag across a window reads the pointer from, since a handler is told where the pointer is only relative to its own box, and that box may move under it.
+pub fn pointer() -> Option<(f32, f32)> {
+    POINTER.with(Cell::get)
+}
+
 /// Whether `key` asks for the focused thing's menu: the menu key, or Shift+F10 on a keyboard without one.
 pub fn is_menu_key(key: &Key, modifiers: ModifiersState) -> bool {
     match key {

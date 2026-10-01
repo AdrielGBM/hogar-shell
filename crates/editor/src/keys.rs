@@ -76,7 +76,8 @@ impl Direction {
         }
     }
 
-    fn arrow(self) -> NamedKey {
+    /// The arrow key that points this way.
+    pub fn arrow(self) -> NamedKey {
         match self {
             Direction::Left => NamedKey::ArrowLeft,
             Direction::Right => NamedKey::ArrowRight,
@@ -227,7 +228,9 @@ pub fn spell(chords: &[Chord]) -> String {
 pub enum Run {
     /// One step of a layout edit: the operations that take the layout, as the draft has it now, one step further. Every press is one entry in the history, previewed until the key is let go and reverted by Esc before that; each repeat of a held key plans one more step from where the last one left the draft.
     Step(fn(&Selection, &Layout) -> Result<Vec<LayoutOp>, EditError>),
-    /// Anything that is not a step of a layout edit — a palette, a popover, a split — run once a press; the repeats of a held key do nothing.
+    /// A [`Run::Step`] that goes the way its arrow points — a join with the region that way — answering the arrows it is registered on and, under `[keynav] vim`, the vim keys that point the same way.
+    Toward(fn(&Selection, &Layout, Direction) -> Result<Vec<LayoutOp>, EditError>),
+    /// Anything that is not a step of a layout edit — a palette, a popover, a mode's own switch — run once a press; the repeats of a held key do nothing.
     Act(fn(&Selection) -> Result<(), EditError>),
 }
 
@@ -431,11 +434,12 @@ pub(crate) fn press_as(key: &Key, modifiers: ModifiersState, press: Press) -> bo
     if press == Press::Repeat && !repeats(row.does) {
         return true;
     }
+    mode::clear_refusal();
     let done = run(&mode, &row, &chord);
     match done {
         Ok(taken) => taken,
         Err(why) => {
-            tracing::info!(key = ?key, "{why}");
+            mode::refuse(why);
             true
         }
     }
@@ -464,7 +468,7 @@ fn repeats(does: Does) -> bool {
             | Does::Move
             | Does::Resize
             | Does::History
-            | Does::Tool(Run::Step(_))
+            | Does::Tool(Run::Step(_) | Run::Toward(_))
     )
 }
 
@@ -491,20 +495,15 @@ fn matched(mode: &Mode, key: &Key, modifiers: ModifiersState) -> Option<Row> {
 fn selected_kind() -> Option<&'static str> {
     let selected = session::selected();
     let node = selected.node()?;
-    reconcile::desktops()
-        .iter()
-        .find(|desktop| desktop.output == node.output)?
+    reconcile::desktop(node.output.as_deref())?
         .resolved
-        .layer(node.layer)?
-        .areas
-        .iter()
-        .find(|area| area.id == node.area)
+        .area(node.layer, &node.area)
         .map(|area| area.kind.name())
 }
 
 fn run(mode: &Mode, row: &Row, chord: &Chord) -> Result<bool, EditError> {
     let navigation = navigation();
-    let direction = || direction_of(&navigation, &chord.key).ok_or_else(nothing);
+    let direction = || direction_of(&navigation, &chord.key).ok_or_else(EditError::nothing);
     match row.does {
         Does::Select => select_toward(mode, direction()?),
         Does::Ends => select_end(mode, navigation.interpret(&chord.key) == Some(Move::Last)),
@@ -541,7 +540,8 @@ fn run(mode: &Mode, row: &Row, chord: &Chord) -> Result<bool, EditError> {
             })?;
         }
         Does::History => {
-            let way = session::history_key(&chord.key, chord.modifiers).ok_or_else(nothing)?;
+            let way =
+                session::history_key(&chord.key, chord.modifiers).ok_or_else(EditError::nothing)?;
             let walked = match way {
                 session::History::Undo => session::undo(),
                 session::History::Redo => session::redo(),
@@ -560,12 +560,19 @@ fn run(mode: &Mode, row: &Row, chord: &Chord) -> Result<bool, EditError> {
             );
             step(label, chord, plan)?;
         }
+        Does::Tool(Run::Toward(plan)) => {
+            let direction = direction()?;
+            let label = telar::t!(
+                "editor.keys.did",
+                what = (row.label)(),
+                name = steps::name_of(&session::selected())
+            );
+            step(label, chord, |selection, draft| {
+                plan(selection, draft, direction)
+            })?;
+        }
     }
     Ok(true)
-}
-
-fn nothing() -> EditError {
-    EditError::Refused(telar::t!("editor.popover.nothing"))
 }
 
 /// What a key means on the open pie: an arrow picks the mode that lies that way, the switcher key folds it again.
@@ -591,11 +598,7 @@ fn step(
     chord: &Chord,
     plan: impl FnOnce(&Selection, &Layout) -> Result<Vec<LayoutOp>, EditError>,
 ) -> Result<(), EditError> {
-    let selection = session::selected();
-    if selection == Selection::None {
-        return Err(nothing());
-    }
-    let ops = plan(&selection, &session::draft().peek())?;
+    let ops = plan(&session::selected(), &session::draft().peek())?;
     if let Some(edit) = HELD.with(|held| held.borrow().as_ref().map(|held| held.edit.clone())) {
         let mut all = edit.ops();
         all.extend(ops);
@@ -652,7 +655,7 @@ pub(crate) fn settle() {
         return;
     };
     if let Err(why) = held.edit.commit() {
-        tracing::info!(edit = held.edit.label(), "{why}");
+        mode::refuse(why);
     }
 }
 
@@ -674,7 +677,7 @@ fn take_held() -> Option<Held> {
 fn remove(selection: &Selection) -> Result<(), EditError> {
     let name = steps::name_of(selection);
     match selection {
-        Selection::None => Err(nothing()),
+        Selection::None => Err(EditError::nothing()),
         Selection::Instance(node) => context::remove(node, &name),
         Selection::Group(_) | Selection::Area(_) => {
             let ops = steps::removal(selection, &session::draft().peek())?;
@@ -694,10 +697,7 @@ fn navigation() -> KeyNav {
 
 fn edited_config() -> Option<Arc<Config>> {
     let mode = mode::current()?;
-    reconcile::desktops()
-        .iter()
-        .find(|desktop| desktop.output.as_deref() == Some(mode.output.as_str()))
-        .map(|desktop| Arc::clone(&desktop.config))
+    reconcile::desktop(Some(&mode.output)).map(|desktop| desktop.config)
 }
 
 /// Which way `key` points, whatever the modifiers held with it: Shift+`L` points right as `l` does.
@@ -709,8 +709,16 @@ fn direction_of(navigation: &KeyNav, key: &Key) -> Option<Direction> {
     navigation.interpret(&key).and_then(Direction::of)
 }
 
+/// The four arrows, each held as `held` says: `arrows_with(|chord| chord.alt())` for Alt+arrows.
+pub fn arrows_with(held: fn(Chord) -> Chord) -> Vec<Chord> {
+    Direction::ALL
+        .into_iter()
+        .map(|direction| held(Chord::named(direction.arrow())))
+        .collect()
+}
+
 /// The arrows with `modifiers`, and the vim keys too when `vim`.
-fn arrows(vim: bool, modifiers: ModifiersState) -> Vec<Chord> {
+pub(crate) fn arrows(vim: bool, modifiers: ModifiersState) -> Vec<Chord> {
     let mut chords: Vec<Chord> = Direction::ALL
         .into_iter()
         .map(|direction| Chord {
@@ -725,6 +733,17 @@ fn arrows(vim: bool, modifiers: ModifiersState) -> Vec<Chord> {
         }));
     }
     chords
+}
+
+/// The vim key that points the way `chord`'s arrow does, held with the same modifiers.
+fn vim_of(chord: &Chord) -> Option<Chord> {
+    let direction = Direction::ALL
+        .into_iter()
+        .find(|direction| chord.key == Key::Named(direction.arrow()))?;
+    Some(Chord {
+        key: Key::Char(direction.vim()),
+        modifiers: chord.modifiers,
+    })
 }
 
 fn switcher_key() -> Chord {
@@ -851,7 +870,7 @@ pub fn table(layer: LayerKind) -> Vec<Row> {
         .into_iter()
         .map(|(name, keys, label, does)| {
             let mut covers = vec![name];
-            covers.extend_from_slice(covered(name, layer));
+            covers.extend(covered(name, layer));
             Row {
                 name,
                 covers,
@@ -864,8 +883,19 @@ pub fn table(layer: LayerKind) -> Vec<Row> {
         .collect();
     let tool = |op: &KeyOp, scope: Scope| Row {
         name: op.name,
-        covers: vec![op.name],
-        keys: op.keys.clone(),
+        covers: [op.name]
+            .into_iter()
+            .chain(covered(op.name, layer))
+            .collect(),
+        keys: match (op.run, vim) {
+            (Run::Toward(_), true) => op
+                .keys
+                .iter()
+                .cloned()
+                .chain(op.keys.iter().filter_map(vim_of))
+                .collect(),
+            _ => op.keys.clone(),
+        },
         label: op.label,
         scope,
         does: Does::Tool(op.run),
@@ -888,26 +918,97 @@ pub fn table(layer: LayerKind) -> Vec<Row> {
     rows
 }
 
-/// The TA-4 names a generic row stands for besides its own, and the TA-5 operations of `layer` it performs there: the popover's rows are reached with Enter, the menu's moves with the menu key, and the generic moves and resizes work on every kind of area.
-fn covered(name: &str, layer: LayerKind) -> &'static [&'static str] {
-    match (name, layer) {
+/// A TA-5 operation Enter reaches through an area's popover: on which layer, the kind of area whose popover performs it, and the value its row edits there ([`crate::popover::AreaDraft::value`]) — what the coverage test opens that popover to find.
+pub struct Customized {
+    pub layer: LayerKind,
+    pub operation: &'static str,
+    pub kind: &'static str,
+    pub value: &'static str,
+}
+
+const fn customized(
+    layer: LayerKind,
+    operation: &'static str,
+    kind: &'static str,
+    value: &'static str,
+) -> Customized {
+    Customized {
+        layer,
+        operation,
+        kind,
+        value,
+    }
+}
+
+/// Every operation a popover performs that the key table counts as reached by Enter.
+pub const CUSTOMIZED: &[Customized] = &[
+    customized(
+        LayerKind::Background,
+        "region-source",
+        "wallpaper_region",
+        "source",
+    ),
+    customized(
+        LayerKind::Background,
+        "region-fit",
+        "wallpaper_region",
+        "fit",
+    ),
+    customized(
+        LayerKind::Background,
+        "region-transition",
+        "wallpaper_region",
+        "transition",
+    ),
+    customized(
+        LayerKind::Background,
+        "texture-tile",
+        "texture",
+        "texture.tile",
+    ),
+    customized(
+        LayerKind::Background,
+        "texture-blend",
+        "texture",
+        "texture.blend",
+    ),
+    customized(
+        LayerKind::Background,
+        "texture-opacity",
+        "texture",
+        "texture.opacity",
+    ),
+    customized(LayerKind::Top, "bar-offset", "bar", "offset"),
+    customized(LayerKind::Top, "bar-shape", "bar", "mode"),
+    customized(LayerKind::Top, "bar-reserve", "bar", "reserve"),
+    customized(LayerKind::Top, "bar-autohide", "bar", "autohide"),
+    customized(
+        LayerKind::Top,
+        "bar-above-fullscreen",
+        "bar",
+        "above_fullscreen",
+    ),
+    customized(
+        LayerKind::Overlay,
+        "stack-output-policy",
+        "stack",
+        "output_policy",
+    ),
+    customized(LayerKind::Overlay, "stack-routes", "stack", "routes"),
+    customized(LayerKind::Lock, "prompt-style", "prompt", "style.fill"),
+];
+
+/// The TA-4 names a row stands for besides its own, and the TA-5 operations of `layer` it performs there: the popover's rows are reached with Enter ([`CUSTOMIZED`]), the menu's moves with the menu key, the generic moves and resizes work on every kind of area, and a tool's row is the operation of a layer that borrows the tool — a region split on the lock layer.
+fn covered(name: &str, layer: LayerKind) -> Vec<&'static str> {
+    if name == "customize" {
+        return CUSTOMIZED
+            .iter()
+            .filter(|reached| reached.layer == layer)
+            .map(|reached| reached.operation)
+            .collect();
+    }
+    let operations: &[&'static str] = match (name, layer) {
         ("escape", _) => &["deselect", "revert", "exit"],
-        ("customize", LayerKind::Background) => &[
-            "region-source",
-            "region-fit",
-            "region-transition",
-            "texture-tile",
-            "texture-blend",
-            "texture-opacity",
-        ],
-        ("customize", LayerKind::Top) => &[
-            "bar-offset",
-            "bar-shape",
-            "bar-reserve",
-            "bar-autohide",
-            "bar-above-fullscreen",
-        ],
-        ("customize", LayerKind::Overlay) => &["stack-output-policy"],
         ("context-menu", LayerKind::Desktop) => &["widget-from-bar"],
         ("move", LayerKind::Background) => &["region-move"],
         ("move", LayerKind::Desktop) => &["widget-cell"],
@@ -917,8 +1018,13 @@ fn covered(name: &str, layer: LayerKind) -> &'static [&'static str] {
         ("resize", LayerKind::Desktop) => &["widget-size"],
         ("resize", LayerKind::Top) => &["bar-thickness", "bar-length"],
         ("resize", LayerKind::Overlay) => &["stack-width"],
+        ("move", LayerKind::Lock) => &["prompt-move"],
+        ("region-split", LayerKind::Lock) => &["lock-regions"],
+        ("widget-add", LayerKind::Lock) => &["lock-palette"],
+        ("grid-create", LayerKind::Lock) => &["lock-grid"],
         _ => &[],
-    }
+    };
+    operations.to_vec()
 }
 
 /// One line of the key list: the chords, and what they do.
@@ -931,12 +1037,10 @@ pub struct KeyLine {
 /// The key list the strip shows for the mode of `layer`: each row's chords and what they do, for the rows that can answer on this screen — a tool's row only where an area of its kind is on the edited layer.
 pub fn help_rows(layer: LayerKind) -> Vec<KeyLine> {
     let kinds: Vec<&'static str> = mode::current()
-        .and_then(|mode| {
-            reconcile::desktops()
-                .iter()
-                .find(|desktop| desktop.output.as_deref() == Some(mode.output.as_str()))
-                .and_then(|desktop| desktop.resolved.layer(layer))
-                .map(|layer| layer.areas.iter().map(|area| area.kind.name()).collect())
+        .and_then(|mode| reconcile::desktop(Some(&mode.output)))
+        .and_then(|desktop| {
+            let layer = desktop.resolved.layer(layer)?;
+            Some(layer.areas.iter().map(|area| area.kind.name()).collect())
         })
         .unwrap_or_default();
     table(layer)
@@ -1124,65 +1228,4 @@ pub(crate) fn nearest<T>(
         })
         .min_by(|(_, (a_off, a)), (_, (b_off, b))| a_off.cmp(b_off).then(a.total_cmp(b)))
         .map(|(item, _)| item)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
-        Rect::new(x, y, width, height)
-    }
-
-    /// Along a bar the next chip is the one beside it, not a bigger one further off; and nothing lies past the last one.
-    #[test]
-    fn the_nearest_thing_that_way_is_the_one_ahead_and_in_line() {
-        let chips = [
-            ("start", rect(0.0, 0.0, 60.0, 30.0)),
-            ("clock", rect(900.0, 0.0, 80.0, 30.0)),
-            ("end", rect(1800.0, 0.0, 60.0, 30.0)),
-            ("widget", rect(920.0, 400.0, 200.0, 200.0)),
-        ];
-        let from = chips[1].1;
-        let nearest_to = |direction| nearest(from, direction, chips.iter().copied());
-        assert_eq!(nearest_to(Direction::Right), Some("end"));
-        assert_eq!(nearest_to(Direction::Left), Some("start"));
-        assert_eq!(nearest_to(Direction::Down), Some("widget"));
-        assert_eq!(nearest_to(Direction::Up), None);
-    }
-
-    /// A letter is one key in either case, and Shift is what tells them apart; a symbol carries its Shift in itself.
-    #[test]
-    fn a_chord_matches_the_key_however_the_layout_reports_its_case() {
-        let shift = ModifiersState {
-            is_shift: true,
-            ..ModifiersState::default()
-        };
-        let plain = ModifiersState::default();
-        assert!(Chord::char('l').shift().matches(&Key::Char('L'), shift));
-        assert!(!Chord::char('l').matches(&Key::Char('L'), shift));
-        assert!(Chord::char('G').matches(&Key::Char('G'), shift));
-        assert!(Chord::char('?').matches(&Key::Char('?'), shift));
-        assert!(
-            Chord::named(NamedKey::Tab)
-                .shift()
-                .matches(&Key::Named(NamedKey::Tab), shift)
-        );
-        assert!(!Chord::named(NamedKey::Tab).matches(&Key::Named(NamedKey::Tab), shift));
-        assert!(Chord::named(NamedKey::Tab).matches(&Key::Named(NamedKey::Tab), plain));
-    }
-
-    #[test]
-    fn chords_sharing_modifiers_are_spelled_once() {
-        telar::set_locale("en");
-        let shift = ModifiersState {
-            is_shift: true,
-            ..ModifiersState::default()
-        };
-        assert_eq!(spell(&arrows(false, shift)), "Shift+←/→/↑/↓");
-        assert_eq!(
-            spell(&[Chord::char('z').ctrl().shift(), Chord::char('y').ctrl()]),
-            "Ctrl+Shift+Z, Ctrl+Y"
-        );
-    }
 }
