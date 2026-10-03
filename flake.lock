@@ -25,11 +25,11 @@
     "telar": {
       "flake": false,
       "locked": {
-        "lastModified": 1790824649,
-        "narHash": "sha256-VghH4aBoybHkECCIQOT709rU2/SMKYcWYvokxpznVz0=",
+        "lastModified": 1791055426,
+        "narHash": "sha256-zv0KEcbtJUOqntltSVYBGIP7SRGnhh/2ZnRMAVubdOI=",
         "ref": "refs/heads/dev",
-        "rev": "74996e4d49066013d35e6c9da767685fd1d363cb",
-        "revCount": 982,
+        "rev": "5d0947d37406480fe2a719d54cb0d9a1ecd7f0d4",
+        "revCount": 990,
         "type": "git",
         "url": "file:///home/adrielgbm/projects/code/telar"
       },
