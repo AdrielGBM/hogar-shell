@@ -344,7 +344,7 @@ pub struct ThemeConfig {
 
 /// Where the resolved palette is written for the rest of the desktop to read (`[theme.export]`).
 ///
-/// A wallpaper-driven scheme is only worth having if the applications around the shell follow it, and none of them reads `config.toml`. Each switch writes one flat file of the same tokens into `dir`: `scheme.json`, `scheme.css` (GTK `@define-color`), `scheme.conf` (an ini for Qt/Kvantum themes) and `scheme.sh` plus `sequences` (shell variables and the OSC escapes that recolour a running terminal). `hooks` are commands run once the files are on disk, which is where a `gsettings`/`makoctl reload` belongs.
+/// A wallpaper-driven scheme is only worth having if the applications around the shell follow it, and none of them reads `config.toml`. Each switch writes one flat file of the same tokens into `dir`: `scheme.json`, `scheme.css` (GTK `@define-color`), `scheme.conf` (an ini for Qt/Kvantum themes) and `scheme.sh` plus `sequences` (shell variables and the OSC escapes that recolour a running terminal). Once the files are on disk the shell raises `colors_changed`, which is where a `[[rules]]` entry running `gsettings` or `makoctl reload` belongs.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct SchemeExportConfig {
@@ -355,7 +355,6 @@ pub struct SchemeExportConfig {
     pub gtk: bool,
     pub qt: bool,
     pub terminal: bool,
-    pub hooks: Vec<String>,
 }
 
 impl Default for SchemeExportConfig {
@@ -367,7 +366,6 @@ impl Default for SchemeExportConfig {
             gtk: true,
             qt: false,
             terminal: false,
-            hooks: Vec::new(),
         }
     }
 }
@@ -438,7 +436,7 @@ impl ThemeConfig {
                 report.warn(Finding::new(
                     file,
                     key,
-                    telar::t!("report.unknown_theme", name = name),
+                    util::message!("finding.unknown_theme", name = name),
                 ));
             }
         }
@@ -446,7 +444,7 @@ impl ThemeConfig {
             report.warn(Finding::new(
                 file,
                 "theme.accent",
-                telar::t!("report.unknown_accent", name = self.accent),
+                util::message!("finding.unknown_accent", name = &self.accent),
             ));
         }
         let mut tokens: Vec<&String> = self
@@ -459,7 +457,7 @@ impl ThemeConfig {
             report.error(Finding::new(
                 file,
                 format!("theme.colors.{name}"),
-                telar::t!("report.unknown_token", name = name),
+                util::message!("finding.unknown_token", name = name),
             ));
         }
         report

@@ -21,7 +21,46 @@ One named arrangement of everything the shell draws.
 | `id` | The name everything addresses this layout by — `layout use`, `extends`, the last-good copy. It comes from the file name, so writing something else here changes nothing. |
 | `name` | What the user sees in the layout list. Falls back to `id` when empty. |
 | `extends` | A layout this one starts from. The chain is applied root first, so this layout's own rules win. |
+| `sources` | Readings this layout declares itself, by the name an expression reads each as (`$name`): a command run on an interval, a command that prints a line per update, or an address fetched on an interval. Merged by name along `extends`, so a layout can change one key of a source it inherits. A name a module's own source already has is an error. |
 | `outputs` | Output rules in file order. Every one whose glob matches is applied, most-specific glob last, so a `*` rule is the base and a named monitor refines it. |
+
+## `Source::Poll`
+
+A command run on an interval, like eww's `defpoll`: each run's output is one reading.
+
+| Key | What it is |
+| --- | --- |
+| `cmd` | The command line, run through `sh -c`. |
+| `every` | How often it runs, counted from the start of one run to the start of the next: `500ms`, `5s`, `2m` or `1h`. Never more often than `[automation] min_interval_seconds`. |
+| `initial` | The reading before the first run answers, and the type of every reading after it: a number makes the source a number, `true` or `false` a bool, a list a list of texts. A text, or nothing at all, makes it text. |
+| `parse` | How the output becomes a reading: `text` (the default: all of it, trimmed), `lines` (a list, one per line), `json:<path>` (the value at a path such as `.current.temp` or `.items[0].name`) or `regex:<pattern>` (the first match, or its first group when it has one). |
+| `while` | `visible` (the default) runs only while something showing the reading is on screen; `always` runs while anything reads it at all, hidden or not. |
+| `lock_safe` | Whether the lock screen may show it. Off unless set: what a command prints is unaudited text, and the lock screen is read by whoever is in the room. A level that changes `cmd` says it again, or the source is not lock-safe: what a level under it vouched for was the command it replaced. |
+
+## `Source::Listen`
+
+A command that keeps running and prints one reading per line, like eww's `deflisten`. It is started again, after a wait, if it exits.
+
+| Key | What it is |
+| --- | --- |
+| `cmd` | The command line, run through `sh -c`. |
+| `initial` | The reading before the first line arrives, and the type of every reading after it, as for a `poll` source. |
+| `parse` | How each line becomes a reading, as for a `poll` source; `lines` is not one, since every line is a reading of its own. |
+| `while` | `visible` (the default) keeps the command running only while something showing the reading is on screen; `always` while anything reads it at all. |
+| `lock_safe` | Whether the lock screen may show it, as for a `poll` source. |
+
+## `Source::Http`
+
+An address fetched on an interval: each response body is one reading.
+
+| Key | What it is |
+| --- | --- |
+| `url` | What is fetched, with a `GET`: an `http://` or `https://` address. |
+| `every` | How often it is fetched, as for a `poll` source. |
+| `initial` | The reading before the first response, and the type of every reading after it, as for a `poll` source. |
+| `parse` | How the body becomes a reading, as for a `poll` source. |
+| `while` | Whether it is fetched only while shown, as for a `poll` source. |
+| `lock_safe` | Whether the lock screen may show it, as for a `poll` source: a level that changes `url` says it again. |
 
 ## `OutputRule`
 
@@ -88,10 +127,11 @@ Its geometry is written *in this table*, beside the keys below: `kind` says whic
 | `above_fullscreen` | Whether this area stays visible over a fullscreen window, which costs direct scanout on that output for as long as it is mapped. |
 | `within` | Which box this area's geometry is measured in: the whole output, or what is left of it once the reserving areas have taken their edges. |
 | `style` | Per-area appearance. Every field is optional because the theme answers whatever an area does not. |
-| `visible` | An expression that decides whether the area draws. An invisible area contributes nothing to the input region. |
+| `visible` | An expression giving true or false that decides whether the area draws: while it is false the area paints nothing and takes no input, and nothing else on its layer is rebuilt when it flips. Shown until it first answers, and through an evaluation error after that it keeps its last answer. Not allowed on the lock prompt. |
 | `groups` | A run of instances inside an area, and how the area places it. |
 | `remove` | Ids of groups an earlier level placed that this one takes away. |
 | `actions` | What each gesture on the area's own background runs — a press or a scroll that lands between its instances rather than on one. Refused on the lock layer, which holds readings, never controls. |
+| `unset` | Expressions a level under this one gave the area that this level takes back, as though nothing under it had written them: `unset = ["visible"]` shows on one monitor an area a broader rule hides behind an expression. An area takes back `visible`. They are taken back before this level's own keys apply, so a level that takes a key back and writes it too is an error, and one that takes back what nothing under it writes is reported. |
 
 ## `AreaKind::Bar`
 
@@ -279,8 +319,10 @@ A run of instances inside an area, and how the area places it.
 | `id` | What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`. |
 | `kind` | Where in its area the group sits. `place` says which way, and the keys that way needs follow it. |
 | `stacked` | Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set. |
+| `repeat` | An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a stacked group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn. |
 | `children` | One placed module. |
 | `remove` | Ids of instances an earlier level placed that this one takes away. |
+| `unset` | Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them. A group takes back `repeat`, the way an area takes back `visible`. |
 
 ## `GroupKind::Zone`
 
@@ -311,6 +353,7 @@ One placed module.
 | `module` | The module descriptor this instance shows. Required the first time the instance is named. |
 | `representation` | How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`. |
 | `options` | Option overrides for this instance alone, over its module's defaults: any key of the module's own section (`[clock]` for a clock), and any of `[modules.<id>]` — `accent`, `variant`, `open` and the sizes of what it opens. A key the module does not have is an error. |
-| `bindings` | Properties driven by an expression instead of a fixed value, keyed by the property's path. |
+| `bindings` | Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), or `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`). Each value is laid over `options` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value. |
 | `actions` | What each gesture on this instance runs. |
+| `unset` | Bindings a level under this one gave the instance that this level takes back, each as `bindings.<path>`: `unset = ["bindings.accent"]` puts back the accent its options give it where a broader rule drives it by an expression. A path has to be one `bindings` could hold, the way an area takes back `visible`. |
 

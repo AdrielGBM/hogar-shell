@@ -83,7 +83,9 @@ pub fn open(asked: Asked) -> Result<(), EditError> {
         .cloned()
         .ok_or_else(|| EditError::gone(&node.area))?;
     let entries = match &node.part {
-        Part::Instance(group, id) => instance_entries(&desktop, &area, &node, group, id)?,
+        Part::Instance(group, id) => {
+            instance_entries(&desktop, &area, &node, group, &id.template())?
+        }
         Part::Area | Part::Group(_) => area_entries(
             &area,
             &Node::area(node.output.as_deref(), node.layer, &node.area),
@@ -403,6 +405,7 @@ pub(crate) fn removal(
         return Err(EditError::nothing());
     };
     let known = known();
+    let id = &id.template();
     let mut after = layout.clone();
     let mut ops = Vec::new();
     for round in 0.. {

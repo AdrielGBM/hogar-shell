@@ -6,6 +6,8 @@
 //!
 //! The lock layer is the one place that is not minimal, and for the same reason: the clock, the user and what is playing are what this shell's lock screen has shown since before it had a layout, and a fresh install that lost them would be a regression dressed as a default.
 
+use std::collections::BTreeMap;
+
 use config::{Edge, Shape};
 
 use crate::model::*;
@@ -15,6 +17,7 @@ pub fn layout() -> Layout {
         id: LayoutId::new(crate::store::BUILT_IN),
         name: "Default".into(),
         extends: None,
+        sources: BTreeMap::new(),
         outputs: vec![OutputRule {
             matches: OutputMatch("*".into()),
             layers: Layers {

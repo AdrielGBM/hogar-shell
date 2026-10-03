@@ -1,10 +1,10 @@
 //! Unit conversion for the launcher's calculator: `3 km in mi`, `100 c in f`, `1 gib in mb`.
 //!
-//! A static table rather than a dependency, for the same reason the evaluator next door is one: this runs on every keystroke, and the whole feature is a few hundred rows of arithmetic. Every unit converts through one base per dimension, and a conversion between two dimensions is refused rather than guessed — a query that is really an application name must fall through to the app search.
+//! A static table rather than a dependency, because this runs on every keystroke, and the whole feature is a few hundred rows of arithmetic. Every unit converts through one base per dimension, and a conversion between two dimensions is refused rather than guessed — a query that is really an application name must fall through to the app search.
 //!
 //! Temperature is why the conversion is affine rather than a ratio: 0 °C is not 0 K, and scaling alone would put freezing water at absolute zero.
 
-use super::evaluate;
+use telar_expression::calculate;
 
 /// What kind of quantity a unit measures. Two units only convert into each other within one of these.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -432,7 +432,7 @@ fn split_quantity(text: &str) -> Option<(f64, &'static Unit)> {
         let Some(unit) = resolve(right.trim()) else {
             continue;
         };
-        if let Some(value) = evaluate(left.trim()) {
+        if let Ok(value) = calculate(left.trim()) {
             return Some((value, unit));
         }
     }
@@ -460,11 +460,11 @@ fn resolve(name: &str) -> Option<&'static Unit> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::format;
     use super::*;
+    use telar_expression::format_number;
 
     fn convert_to_string(input: &str) -> Option<String> {
-        convert(input).map(|q| format!("{} {}", format(q.value), q.unit))
+        convert(input).map(|q| format!("{} {}", format_number(q.value), q.unit))
     }
 
     #[test]

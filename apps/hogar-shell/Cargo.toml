@@ -20,6 +20,7 @@ telar = { workspace = true, features = [
     "preview-headless",
 ] }
 platform-wayland = { workspace = true }
+telar-expression = { workspace = true }
 config = { workspace = true }
 layout = { workspace = true }
 services = { workspace = true }
@@ -34,3 +35,5 @@ tracing-appender = "0.2.5"
 toml.workspace = true
 libc.workspace = true
 editor = { version = "0.1.0", path = "../../crates/editor", package = "hogar-shell-editor" }
+automation.workspace = true
+serde_json.workspace = true

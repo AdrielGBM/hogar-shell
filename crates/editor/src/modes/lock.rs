@@ -141,10 +141,10 @@ impl Judged {
 /// What a refused lock layer is refused for, as the preview says it: the first thing wrong, in the lock's own words.
 fn reason(report: &Report) -> String {
     report
-        .errors
-        .first()
-        .map(|found| found.message.clone())
-        .unwrap_or_else(|| report.summary())
+        .findings()
+        .next()
+        .map(|found| found.message.render())
+        .unwrap_or_default()
 }
 
 /// Refuses `after` where it would make a locked screen fall back to the minimal lock and `before` did not — an area stacked over the prompt, a prompt too faint, too small or unreadable, a control — saying why in the lock's own words. Only an edit that changes the lock layer is judged, and a lock layer already refused is never made harder to fix.
@@ -162,7 +162,7 @@ pub(crate) fn kept(before: &Layout, after: &Layout) -> Result<(), String> {
     {
         Some(found) => Err(telar::t!(
             "editor.lock.would_fall_back",
-            why = found.message
+            why = found.message.render()
         )),
         None => Ok(()),
     }

@@ -691,6 +691,7 @@ fn group(
         id: layout::GroupId::new("swept"),
         kind,
         stacked: false,
+        repeat: None,
         children,
     }
 }

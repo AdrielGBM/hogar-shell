@@ -6,18 +6,19 @@
 //!
 //! **What a verb refuses is as much the point as what it does.** A module nothing answers to, a representation it cannot be drawn as, an area that holds no instances, a control placed on the lock layer: each is a message naming what there is instead of an edit that draws a placeholder the user then has to find.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use layout::ops::{areas_at, placement_of, site_of_area, sites};
 use layout::reset::Target as Aim;
 use layout::{
-    Action, Area, AreaId, AreaKind, BUILT_IN, Catalogue, Group, GroupId, Instance, InstanceId,
-    LayerKind, Layout, LayoutId, LayoutOp, LayoutStore, NOMINAL_OUTPUT, Representation, Site, Spot,
-    Trigger,
+    Action, Area, AreaId, AreaKind, BUILT_IN, Catalogue, Expr, Group, GroupId, GroupKind, Instance,
+    InstanceId, LayerKind, Layout, LayoutId, LayoutOp, LayoutStore, NOMINAL_OUTPUT, Representation,
+    Site, Spot, Trigger,
 };
 
-use super::args::arg;
+use super::args::{Args, arg};
 use super::{Command, Target};
+use editor::written::Written;
 use surfaces::catalogue::Descriptors;
 use surfaces::layouts;
 
@@ -64,7 +65,7 @@ pub(crate) const LAYOUT: Target = Target {
             name: "add",
             args: "<module> <area> [group]",
             help: "place a module in an area of the layout being drawn",
-            run: add,
+            run: |args| add(args),
         },
         Command {
             name: "remove",
@@ -76,12 +77,12 @@ pub(crate) const LAYOUT: Target = Target {
             name: "move",
             args: "<id> <group> [index]",
             help: "put a placed module in another group, or elsewhere in its own",
-            run: move_instance,
+            run: |args| move_instance(args),
         },
         Command {
             name: "set",
-            args: "<instance> <key> <value>",
-            help: "change one property of a placed module",
+            args: "<instance|area|area.group> <key> <value...>",
+            help: "change one property of a placed module, or an area's visible or a group's repeat",
             run: set,
         },
         Command {
@@ -94,7 +95,7 @@ pub(crate) const LAYOUT: Target = Target {
             name: "edit",
             args: "<background|desktop|top|overlay|lock|off> [output]",
             help: "edit one layer on one screen (the focused one unless named), or stop",
-            run: edit,
+            run: |args| edit(args),
         },
     ],
 };
@@ -186,17 +187,28 @@ fn check(name: Option<&str>) -> Result<String, String> {
         .ok_or_else(|| format!("there is no layout called '{id}'"))?;
 
     let path = store.path_of(&id);
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        report.merge(layout::check_unknown_keys(&text, &id));
+    let text = std::fs::read_to_string(&path).ok();
+    if let Some(text) = &text {
+        report.merge(layout::check_unknown_keys(text, &id));
     }
-    report.merge(layout::validate(found, &catalogue()));
+    let config = current_config();
+    let (sources, sourcing) =
+        automation::sources::of_layout(found, store.all(), &config.automation);
+    let mut checked = layout::validate(found, &catalogue().with_sources(sources));
+    checked.merge(layout::validate_unsets(found, store.all()));
+    if let Some(text) = &text {
+        layout::locate_expressions(text, &mut checked);
+        layout::locate_unsets(text, &mut checked);
+    }
+    report.merge(checked);
+    report.merge(sourcing);
 
     let (resolved, resolving) = layout::resolve(found, store.all(), NOMINAL_OUTPUT, None);
     report.merge(resolving);
     report.merge(layout::validate_resolved(
         &resolved,
         &path.display().to_string(),
-        &lock_theme(),
+        &config.resolve_theme(),
     ));
     report.merge(scanout(&resolved, &path.display().to_string()));
 
@@ -212,8 +224,8 @@ fn check(name: Option<&str>) -> Result<String, String> {
 pub(crate) fn scanout(resolved: &layout::Resolved, file: &str) -> util::report::Report {
     let mut report = util::report::Report::default();
     let output = match resolved.output.as_str() {
-        NOMINAL_OUTPUT => telar::t!("layout.every_output"),
-        named => named.to_string(),
+        NOMINAL_OUTPUT => util::message!("finding.every_output"),
+        named => util::report::Message::verbatim(named),
     };
     for (layer, area) in resolved.areas().filter(|(_, area)| area.above_fullscreen) {
         report.warn(util::report::Finding::new(
@@ -225,29 +237,36 @@ pub(crate) fn scanout(resolved: &layout::Resolved, file: &str) -> util::report::
                     area.id
                 ),
             },
-            telar::t!("layout.scanout", area = area.id, output = output),
+            util::message!("finding.scanout", area = &area.id, output = &output),
         ));
     }
     report
 }
 
-/// The theme the lock screen would be drawn with, which is what decides whether its prompt can be read. The running config where there is one, and the file on disk where this answers in the CLI.
+/// The theme the lock screen would be drawn with, which is what decides whether its prompt can be read.
 pub(crate) fn lock_theme() -> config::theme::NordTheme {
-    config::config()
-        .unwrap_or_else(|| {
-            std::sync::Arc::new(config::Config::load_or_default(
-                &config::Config::default_path(),
-            ))
-        })
-        .resolve_theme()
+    current_config().resolve_theme()
+}
+
+/// The running config where there is one, and the file on disk where this answers in the CLI.
+fn current_config() -> std::sync::Arc<config::Config> {
+    config::config().unwrap_or_else(|| {
+        std::sync::Arc::new(config::Config::load_or_default(
+            &config::Config::default_path(),
+        ))
+    })
 }
 
 fn undo() -> Result<String, String> {
-    layouts::undo().map(|label| format!("took back `{label}`"))
+    layouts::undo()
+        .map(|label| format!("took back `{label}`"))
+        .map_err(|why| why.english())
 }
 
 fn redo() -> Result<String, String> {
-    layouts::redo().map(|label| format!("made `{label}` again"))
+    layouts::redo()
+        .map(|label| format!("made `{label}` again"))
+        .map_err(|why| why.english())
 }
 
 /// Places a module in an area, at the end of one of its groups.
@@ -443,22 +462,42 @@ fn region_for(layout: &Layout, id: &AreaId, output: &str) -> Result<Site, String
         })
 }
 
-/// Changes one property of a placed module: which module it shows, how big it is drawn, one of its options, one bound expression, or what a gesture on it runs.
-fn set(args: &[&str]) -> Result<String, String> {
-    let instance = InstanceId::new(arg(args, 0, "instance")?);
+/// Changes one property of something the layout places. Of a placed module: which module it shows, how big it is drawn, one of its options, one bound expression, what a gesture on it runs, or a binding it takes back from a broader level (`unset bindings.<key>`, DEC-26). Of an area, whether it is shown (`<area> visible <expr>`, `<area> unset visible`); of a group, what it repeats over (`<area>.<group> repeat <expr>`, `<area>.<group> unset repeat`). The value is the rest of the line as written.
+///
+/// The key says what the first argument names, so an id an area, a group and a module share is never ambiguous: `visible` and `repeat` are not properties of a module.
+fn set(args: &Args<'_>) -> Result<String, String> {
+    let target = arg(args, 0, "instance")?;
     let key = arg(args, 1, "key")?.to_string();
-    let value = args
-        .get(2..)
-        .map(|rest| rest.join(" "))
-        .filter(|value| !value.trim().is_empty())
-        .ok_or("missing argument <value>")?;
+    let value = match args.rest(2) {
+        "" => return Err("missing argument <value>".to_string()),
+        value => value.to_string(),
+    };
+    if let Some(expression) = Expression::named(&key, &value) {
+        return set_expression(target, expression);
+    }
+    if key == "unset" {
+        return match layout::Unset::from(value.as_str()) {
+            layout::Unset::Binding(path) => unset_binding(target, path),
+            _ => Err(format!(
+                "'{value}' is not a binding of a placed module to take back (bindings.<key>)"
+            )),
+        };
+    }
 
+    let instance = InstanceId::new(target);
     let label = format!("Set `{key}` on `{instance}`");
     layouts::edit(&label, move |layout, _| {
         let at = placement_of(layout, &instance)
             .ok_or_else(|| nothing_called(layout, instance.as_str()))?;
         let mut changed = spot_of(layout, &at.spot)?.children[at.index].clone();
-        apply_key(&mut changed, &key, &value, at.spot.site.layer)?;
+        let locals = layout::child_locals(
+            layout,
+            &catalogue(),
+            &at.spot.site,
+            &at.spot.area,
+            &at.spot.group,
+        );
+        apply_key(&mut changed, &key, &value, (at.spot.site.layer, &locals))?;
         Ok((
             vec![LayoutOp::SetInstance {
                 spot: at.spot.clone(),
@@ -470,12 +509,237 @@ fn set(args: &[&str]) -> Result<String, String> {
     })
 }
 
-/// The keys `set` takes, and what each one does to the instance.
+/// Takes the binding at `path` of `target`, an instance this layout or one it extends places, back where that is laid over whatever writes it ([`taking_back`]), as an area's `visible` and a group's `repeat` are taken back (DEC-26).
+fn unset_binding(target: &str, path: String) -> Result<String, String> {
+    let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
+    let instance = InstanceId::new(target);
+    let label = format!("Unset `bindings.{path}` on `{instance}`");
+    layouts::edit(&label, move |layout, _| {
+        let base = layout::reset::base_of(layout, &known);
+        let (placed, at) = [layout, &base]
+            .into_iter()
+            .find_map(|placed| Some((placed, placement_of(placed, &instance)?)))
+            .ok_or_else(|| nothing_called(layout, instance.as_str()))?;
+        let module = spot_of(placed, &at.spot)?.children[at.index].module.clone();
+        if let Some(module) = module
+            && let Err(why) = catalogue().binding_type(&module, &path)
+        {
+            return Err(why.english());
+        }
+        let taken = layout::Taken {
+            layer: at.spot.site.layer,
+            area: &at.spot.area,
+            held: layout::Held::Binding {
+                group: &at.spot.group,
+                instance: &instance,
+                path: &path,
+            },
+        };
+        Ok((
+            taking_back(layout, &known, taken)?,
+            format!("unset `bindings.{path}` on `{instance}`"),
+        ))
+    })
+}
+
+/// An expression an area or a group holds, and what `set` does to it: gives it, or takes back what a broader level gives it.
+struct Expression {
+    held: layout::Unset,
+    written: Option<String>,
+}
+
+impl Expression {
+    fn named(key: &str, value: &str) -> Option<Self> {
+        use layout::Unset;
+        let (held, written) = match key {
+            "visible" => (Unset::Visible, Some(value.to_string())),
+            "repeat" => (Unset::Repeat, Some(value.to_string())),
+            "unset" => match Unset::from(value) {
+                held @ (Unset::Visible | Unset::Repeat) => (held, None),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some(Self { held, written })
+    }
+
+    fn is_area(&self) -> bool {
+        self.held == layout::Unset::Visible
+    }
+}
+
+/// Gives an area its `visible` or a group its `repeat` in the rule that writes the area (a partial entry for one only a layout it extends writes), checked as the editor checks it; or takes it back where that is laid over whatever writes it ([`taking_back`]).
+fn set_expression(target: &str, expression: Expression) -> Result<String, String> {
+    let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
+    let verb = if expression.written.is_some() {
+        "Set"
+    } else {
+        "Unset"
+    };
+    let label = format!("{verb} `{}` on `{target}`", expression.held);
+    let target = target.to_string();
+    layouts::edit(&label, move |layout, _| {
+        let base = layout::reset::base_of(layout, &known);
+        let (area, group) = match expression.is_area() {
+            true => (AreaId::new(&target), None),
+            false => {
+                let (area, group) = inherited_group_named(&[layout, &base], &target)?;
+                (area, Some(group))
+            }
+        };
+        let site = site_of_area(layout, &area)
+            .or_else(|| site_of_area(&base, &area))
+            .ok_or_else(|| {
+                format!(
+                    "there is no area called `{area}`{}",
+                    listing("areas", area_ids(layout))
+                )
+            })?;
+        if let Some(group) = &group
+            && matches!(
+                group_kind(&[layout, &base], &area, group),
+                Some(GroupKind::Cell { .. })
+            )
+        {
+            return Err(format!(
+                "`{area}.{group}` is a grid cell, whose footprint is fixed, so it cannot repeat"
+            ));
+        }
+        let said = format!(
+            "{} `{}` on `{target}`",
+            verb.to_lowercase(),
+            expression.held
+        );
+        let Some(text) = &expression.written else {
+            let taken = layout::Taken {
+                layer: site.layer,
+                area: &area,
+                held: match &group {
+                    None => layout::Held::Visible,
+                    Some(group) => layout::Held::Repeat(group),
+                },
+            };
+            return Ok((taking_back(layout, &known, taken)?, said));
+        };
+        let expr = Expr(text.clone());
+        let on_lock = site.layer == LayerKind::Lock;
+        let errors = match group {
+            None => layout::visible_errors(&catalogue(), &expr, on_lock),
+            Some(_) => layout::repeat_errors(&catalogue(), &expr, on_lock),
+        };
+        refuse_errors(&errors, &expr.0)?;
+        let written = Written::area(
+            layout,
+            Some(&site.output.0),
+            site.layer,
+            &area,
+            site.workspace.as_ref(),
+        )?;
+        let mut changed = written.area.clone();
+        match &group {
+            None => {
+                changed.visible = Some(expr);
+                take_back(&mut changed.unset, &expression.held, false);
+            }
+            Some(group) => {
+                let held = group_entry(&mut changed, group);
+                held.repeat = Some(expr);
+                take_back(&mut held.unset, &expression.held, false);
+            }
+        }
+        Ok((written.ops(&changed), said))
+    })
+}
+
+/// The operations that take `taken` back on every screen the shell draws — every output, where it draws none — in the narrowest rule of `layout` for all of them, which has to be laid over whatever writes it on each ([`layout::taking_back`]): what that rule writes itself is deleted, and the expression is named in its `unset` while a level under it still gives one.
+fn taking_back(
+    layout: &Layout,
+    known: &BTreeMap<LayoutId, Layout>,
+    taken: layout::Taken<'_>,
+) -> Result<Vec<LayoutOp>, String> {
+    let screens: Vec<String> = surfaces::reconcile::desktops_now()
+        .iter()
+        .map(|desktop| desktop.output.clone().unwrap_or_default())
+        .collect();
+    let screens = match screens.is_empty() {
+        true => vec!["*".to_string()],
+        false => screens,
+    };
+    let at = layout::taking_back(layout, known, &screens, taken).map_err(|why| why.english())?;
+    let written = Written::at(layout, at.site, taken.area);
+    let mut changed = written.area.clone();
+    match taken.held {
+        layout::Held::Visible => {
+            if at.own {
+                changed.visible = None;
+            }
+            take_back(&mut changed.unset, &layout::Unset::Visible, at.unset);
+        }
+        layout::Held::Repeat(group) => {
+            let held = group_entry(&mut changed, group);
+            if at.own {
+                held.repeat = None;
+            }
+            take_back(&mut held.unset, &layout::Unset::Repeat, at.unset);
+        }
+        layout::Held::Binding {
+            group,
+            instance,
+            path,
+        } => {
+            let written = written.instance(group, instance);
+            let mut changed = written.instance.clone();
+            if at.own {
+                changed.bindings.remove(path);
+            }
+            take_back(&mut changed.unset, &layout::Unset::binding(path), at.unset);
+            return Ok(written.ops(&changed));
+        }
+    }
+    Ok(written.ops(&changed))
+}
+
+/// The group `id` of `area` as the area's entry writes it, made as an entry naming only its id where it writes none.
+fn group_entry<'a>(area: &'a mut Area, id: &GroupId) -> &'a mut Group {
+    let at = match area.groups.iter().position(|held| &held.id == id) {
+        Some(at) => at,
+        None => {
+            area.groups.push(Group {
+                id: id.clone(),
+                ..Group::default()
+            });
+            area.groups.len() - 1
+        }
+    };
+    &mut area.groups[at]
+}
+
+/// Writes into `unset` whether the level takes `held` back: an expression it gives itself and an `unset` of the same key would leave which of the two it means to chance.
+fn take_back(unset: &mut Vec<layout::Unset>, held: &layout::Unset, taking: bool) {
+    unset.retain(|it| it != held);
+    if taking {
+        unset.push(held.clone());
+    }
+}
+
+/// What an expression is refused for, in English, each mistake under the text with a caret at where it is.
+fn refuse_errors(errors: &[layout::Mistake], text: &str) -> Result<(), String> {
+    match errors.is_empty() {
+        true => Ok(()),
+        false => Err(errors
+            .iter()
+            .map(|error| error.render(text))
+            .collect::<Vec<_>>()
+            .join("\n")),
+    }
+}
+
+/// The keys `set` takes, and what each one does to the instance: on `layer`, a child that reads `locals` as well as the shell's names when its group repeats.
 fn apply_key(
     instance: &mut Instance,
     key: &str,
     value: &str,
-    layer: LayerKind,
+    (layer, locals): (LayerKind, &layout::Locals),
 ) -> Result<(), String> {
     let module = instance.module.clone().unwrap_or_default();
     match key.split_once('.') {
@@ -502,13 +766,24 @@ fn apply_key(
             let problems = catalogue().option_problems(&module, &instance.options);
             let written = |key: &str| path == key || path.starts_with(&format!("{key}."));
             if let Some((key, why)) = problems.into_iter().find(|(key, _)| written(key)) {
-                return Err(format!("`{module}`: `{key}` {why}"));
+                return Err(format!("`{module}`: `{key}` {}", why.english()));
             }
         }
         Some(("bindings", path)) => {
+            let expr = layout::Expr(value.to_string());
+            let errors = layout::binding_errors_with(
+                &catalogue(),
+                instance.module.as_deref(),
+                path,
+                &expr,
+                layer == LayerKind::Lock,
+                locals,
+            );
+            refuse_errors(&errors, value)?;
+            instance.bindings.insert(path.to_string(), expr);
             instance
-                .bindings
-                .insert(path.to_string(), layout::Expr(value.to_string()));
+                .unset
+                .retain(|taken| *taken != layout::Unset::binding(path));
         }
         Some(("actions", trigger)) => {
             let trigger = Trigger::from_name(trigger).ok_or_else(|| {
@@ -537,7 +812,7 @@ fn apply_key(
         }
         _ => {
             return Err(format!(
-                "'{key}' is not a property of a placed module (module, representation, options.<key>, bindings.<key>, actions.<gesture>)"
+                "'{key}' is not a property of a placed module (module, representation, options.<key>, bindings.<key>, actions.<gesture>, unset)"
             ));
         }
     }
@@ -676,6 +951,50 @@ fn group_named(layout: &Layout, name: &str) -> Result<Spot, String> {
                 .join(", ")
         )),
     }
+}
+
+/// The group a command named, as [`group_named`] reads it, in the layout or in what it extends: an area and a group, found in either.
+fn inherited_group_named(layouts: &[&Layout], name: &str) -> Result<(AreaId, GroupId), String> {
+    let (area, group) = match name.split_once('.') {
+        Some((area, group)) => (Some(AreaId::new(area)), GroupId::new(group)),
+        None => (None, GroupId::new(name)),
+    };
+    let mut found: BTreeSet<(AreaId, GroupId)> = BTreeSet::new();
+    for layout in layouts {
+        for (_, layer) in sites(layout) {
+            for holder in &layer.areas {
+                let wanted = area.as_ref().is_none_or(|wanted| &holder.id == wanted);
+                if wanted && group_of(holder, &group).is_some() {
+                    found.insert((holder.id.clone(), group.clone()));
+                }
+            }
+        }
+    }
+    match found.len() {
+        1 => Ok(found.into_iter().next().expect("one group was found")),
+        0 => Err(format!(
+            "there is no group called `{name}`{}",
+            listing("groups", group_ids(layouts[0]))
+        )),
+        _ => Err(format!(
+            "`{name}` is a group of several areas; say which as <area>.<group>: {}",
+            found
+                .iter()
+                .map(|(area, group)| format!("{area}.{group}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// How the group `group` of `area` is laid out, as the first of `layouts` that says.
+fn group_kind(layouts: &[&Layout], area: &AreaId, group: &GroupId) -> Option<GroupKind> {
+    layouts.iter().find_map(|layout| {
+        sites(layout)
+            .flat_map(|(_, layer)| layer.areas.iter())
+            .filter(|held| &held.id == area)
+            .find_map(|held| group_of(held, group)?.kind)
+    })
 }
 
 /// The group an `add` with no group named lands in: the area's first, which for a bar is the run its own file writes first.
@@ -844,6 +1163,120 @@ pub(crate) fn catalogue() -> Descriptors {
 mod tests {
     use super::*;
 
+    /// `layout set <instance> bindings.<path> <expr>` checks the expression as validation would before anything is written.
+    #[test]
+    fn a_binding_set_over_ipc_is_checked_before_it_is_written() {
+        let top = (LayerKind::Top, &layout::Locals::default());
+        let mut clock = Instance {
+            id: InstanceId::new("clock"),
+            module: Some("clock".into()),
+            ..Instance::default()
+        };
+        let written = layout::Expr("$battery.level > 20".into());
+        apply_key(&mut clock, "bindings.show_date", &written.0, top)
+            .expect("a bool from a reading");
+        assert_eq!(clock.bindings.get("show_date"), Some(&written));
+
+        let refused = apply_key(&mut clock, "bindings.show_date", "$battery.level", top)
+            .expect_err("a number is not a bool");
+        assert!(
+            refused.contains("expected bool") && refused.contains('^'),
+            "{refused}"
+        );
+        let refused = apply_key(&mut clock, "bindings.show_date", "$battery.nope > 1", top)
+            .expect_err("no such field");
+        assert!(refused.contains("nope"), "{refused}");
+        assert_eq!(
+            clock.bindings.get("show_date"),
+            Some(&written),
+            "a refused expression writes nothing"
+        );
+
+        let refused = apply_key(&mut clock, "bindings.show_date", "$index > 0", top)
+            .expect_err("no repeat around it");
+        assert!(refused.contains("`repeat`"), "{refused}");
+        let copy = layout::Locals::of_copy(telar_expression::Type::Text);
+        apply_key(
+            &mut clock,
+            "bindings.date_format",
+            "$item",
+            (LayerKind::Top, &copy),
+        )
+        .expect("a child of a repeated group reads its item");
+    }
+
+    /// The shipped layout with the bar's clock bound to an accent, as `id`.
+    fn clock_bound(id: &str) -> Layout {
+        let mut bound = layout::built_in();
+        bound.id = LayoutId::new(id);
+        bound.outputs[0]
+            .layers
+            .top
+            .areas
+            .iter_mut()
+            .flat_map(|area| area.groups.iter_mut())
+            .flat_map(|group| group.children.iter_mut())
+            .find(|instance| instance.id.as_str() == "clock")
+            .expect("the shipped bar's clock")
+            .bindings
+            .insert("accent".to_string(), Expr("#ff0000".into()));
+        bound
+    }
+
+    /// The clock as `group` of the bar writes it in the edited layout.
+    fn written_clock(store: &LayoutStore) -> Instance {
+        written_group(store, "bar-top", "center")
+            .children
+            .into_iter()
+            .find(|instance| instance.id.as_str() == "clock")
+            .expect("the group writes the clock")
+    }
+
+    /// `layout set <instance> unset bindings.<path>` takes a binding back where that is laid over whatever writes it (DEC-26), as `visible` and `repeat` are: a binding the rule writes itself is deleted there and nothing is named in `unset` while nothing under it gives one, and binding the path again drops the `unset`.
+    #[test]
+    fn a_binding_the_layout_writes_itself_is_taken_back_where_it_is_written() {
+        let store = shell_holding("binding-own", "mine", &clock_bound("mine"), &[]);
+
+        set(&Args::of("clock unset bindings.accent")).expect("accent can be bound");
+        let clock = written_clock(&store.borrow());
+        assert!(clock.bindings.is_empty(), "its own expression is deleted");
+        assert!(clock.unset.is_empty(), "nothing under the rule gives one");
+
+        set(&Args::of("clock bindings.accent #00ff00")).expect("bound again");
+        assert_eq!(
+            written_clock(&store.borrow()).bindings.get("accent"),
+            Some(&Expr("#00ff00".into()))
+        );
+
+        for refused in ["clock unset accent", "clock unset bindings.nope"] {
+            let why = set(&Args::of(refused)).expect_err("no binding of a clock");
+            assert!(why.is_ascii(), "the command line answers in English: {why}");
+        }
+    }
+
+    /// A binding only the layout it extends gives is taken back with a partial entry naming just the instance and its `unset`, laid over the inherited one rather than copying it.
+    #[test]
+    fn an_inherited_binding_is_taken_back_with_a_partial_entry() {
+        let parent = clock_bound("parent");
+        let mine = extending(vec![layout::OutputRule::default()]);
+        let store = shell_holding("binding-inherited", "mine", &mine, &[&parent]);
+
+        set(&Args::of("clock unset bindings.accent")).expect("an inherited binding");
+        let clock = written_clock(&store.borrow());
+        assert_eq!(clock.unset, [layout::Unset::binding("accent")]);
+        assert!(
+            clock.module.is_none() && clock.bindings.is_empty(),
+            "and nothing else"
+        );
+        let resolved =
+            layout::resolve(store.borrow().active(), store.borrow().all(), "DP-1", None).0;
+        let drawn = resolved
+            .instances()
+            .find(|instance| instance.id.as_str() == "clock")
+            .expect("the clock is still drawn");
+        assert!(drawn.bindings.is_empty(), "and draws without the binding");
+    }
+
     #[test]
     fn the_built_in_layout_is_listed_and_marked_read_only() {
         let listed = list();
@@ -872,7 +1305,6 @@ mod tests {
     /// **Deliberately without installing the module table**, which is the process this verb actually runs in: `ui::descriptor::install` happens in `setup_shell`, and a check answers in the CLI. Installing it here is what hid the bug — every module in a real user's layout came back "there is no module called `clock`", because the catalogue looked in an empty table while the binary's own table sat one argument away.
     #[test]
     fn the_built_in_layout_checks_clean_without_the_module_table_installed() {
-        telar::set_locale("en");
         assert!(
             ui::descriptor::installed().is_empty(),
             "this test is only worth anything while nothing installed the table on this thread"
@@ -895,13 +1327,18 @@ mod tests {
         bar.above_fullscreen = Some(true);
         let at = |output: &str| layout::resolve(&mine, &Default::default(), output, None).0;
 
-        telar::set_locale("en");
         let checked = scanout(&at(NOMINAL_OUTPUT), "layouts/mine.toml");
         assert!(checked.errors.is_empty());
+        let english: Vec<String> = checked
+            .warnings
+            .iter()
+            .map(|finding| finding.message.english())
+            .collect();
         let said: Vec<(&str, &str)> = checked
             .warnings
             .iter()
-            .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+            .zip(&english)
+            .map(|(finding, english)| (finding.key.as_str(), english.as_str()))
             .collect();
         assert_eq!(
             said,
@@ -912,16 +1349,17 @@ mod tests {
         );
         let live = scanout(&at("DP-1"), "layouts/mine.toml");
         assert_eq!(
-            live.warnings[0].message,
+            live.warnings[0].message.english(),
             "`bar-top` is drawn above fullscreen windows, which keeps DP-1 off direct scanout"
         );
-
-        telar::set_locale("es");
         assert_eq!(
-            scanout(&at("DP-1"), "layouts/mine.toml").warnings[0].message,
+            live.warnings[0].message.render_in("es"),
             "`bar-top` se dibuja sobre las ventanas a pantalla completa, lo que deja a DP-1 sin escaneo directo"
         );
-        telar::set_locale("en");
+        assert_eq!(
+            checked.warnings[0].message.render_in("es"),
+            "`bar-top` se dibuja sobre las ventanas a pantalla completa, lo que deja a todas las salidas sin escaneo directo"
+        );
 
         let unflagged = layout::resolve(&layout::built_in(), &Default::default(), "DP-1", None).0;
         assert!(scanout(&unflagged, "layouts/default.toml").is_clean());
@@ -930,7 +1368,6 @@ mod tests {
     /// `check` answers from the files rather than from the shell, so it must refuse a name that is not there instead of reporting a clean layout it never read.
     #[test]
     fn checking_a_layout_that_is_not_there_is_an_error_not_a_clean_report() {
-        telar::set_locale("en");
         ui::descriptor::install(crate::core::modules::MODULES);
         let refused = check(Some("no-such-layout")).expect_err("it refuses");
         assert!(refused.contains("no-such-layout"), "{refused}");
@@ -940,13 +1377,14 @@ mod tests {
     ///
     /// Its own directory rather than the user's, so these run beside the verbs that read the real one without either seeing the other's files.
     fn shell_with(test: &str, active: &str) -> std::rc::Rc<std::cell::RefCell<LayoutStore>> {
-        shell_holding(test, active, &layout::built_in())
+        shell_holding(test, active, &layout::built_in(), &[])
     }
 
     fn shell_holding(
         test: &str,
         active: &str,
         mine: &Layout,
+        parents: &[&Layout],
     ) -> std::rc::Rc<std::cell::RefCell<LayoutStore>> {
         ui::descriptor::install(crate::core::modules::MODULES);
         let dir = util::paths::isolated_root()
@@ -959,6 +1397,13 @@ mod tests {
             toml::to_string_pretty(mine).expect("the layout serializes"),
         )
         .expect("a layout to edit");
+        for parent in parents {
+            std::fs::write(
+                dir.join(format!("{}.toml", parent.id)),
+                toml::to_string_pretty(parent).expect("the layout serializes"),
+            )
+            .expect("a layout it extends");
+        }
 
         let (mut store, report) = LayoutStore::load(&dir);
         assert!(report.is_clean(), "{}", report.render());
@@ -1045,16 +1490,16 @@ mod tests {
         assert!(said.contains("battery"), "{said}");
         assert_eq!(run_of(&store.borrow(), "end"), ["notes", "battery"]);
 
-        let refused = set(&["battery", "options.show_percent", "true"])
+        let refused = set(&Args::of("battery options.show_percent true"))
             .expect_err("a key the module does not declare is refused");
         assert_eq!(
             refused,
             "`battery`: `show_percent` is not one of its options"
         );
-        let refused = set(&["battery", "options.critical_level", "low"])
+        let refused = set(&Args::of("battery options.critical_level low"))
             .expect_err("and so is a value its type cannot hold");
         assert_eq!(refused, "`battery`: `critical_level` takes a whole number");
-        set(&["battery", "options.critical_level", "15"]).expect("it sets an option");
+        set(&Args::of("battery options.critical_level 15")).expect("it sets an option");
         assert_eq!(
             store
                 .borrow()
@@ -1092,6 +1537,239 @@ mod tests {
 
         redo().expect("forward again");
         assert_eq!(run_of(&store.borrow(), "end"), ["notes", "battery"]);
+    }
+
+    fn written_area(store: &LayoutStore, id: &str) -> Area {
+        store
+            .active()
+            .outputs
+            .iter()
+            .flat_map(|rule| rule.layers.each())
+            .flat_map(|(_, layer)| layer.areas.iter())
+            .find(|area| area.id.as_str() == id)
+            .cloned()
+            .expect("the layout writes the area")
+    }
+
+    fn written_group(store: &LayoutStore, area: &str, group: &str) -> Group {
+        written_area(store, area)
+            .groups
+            .into_iter()
+            .find(|held| held.id.as_str() == group)
+            .expect("the area writes the group")
+    }
+
+    /// `layout set <area> visible <expr>` and `unset visible` write an area's expression where the area is written, as one undo entry each, and a group's `repeat` is addressed as `<area>.<group>`; a key and its `unset` are never both written. Taking back an expression the rule writes itself deletes it there, and nothing is named in `unset` while nothing under the rule gives one.
+    #[test]
+    fn an_areas_visibility_and_a_groups_repeat_are_set_and_taken_back_over_ipc() {
+        let store = shell_with("expressions", "mine");
+
+        set(&Args::of("widgets visible $battery.level < 20")).expect("a bool");
+        let widgets = written_area(&store.borrow(), "widgets");
+        assert_eq!(widgets.visible, Some(Expr("$battery.level < 20".into())));
+        assert!(widgets.unset.is_empty());
+
+        set(&Args::of("widgets unset visible")).expect("taken back");
+        let widgets = written_area(&store.borrow(), "widgets");
+        assert_eq!(widgets.visible, None);
+        assert!(widgets.unset.is_empty(), "nothing under the rule gives one");
+
+        set(&Args::of("widgets visible true")).expect("given again");
+        let widgets = written_area(&store.borrow(), "widgets");
+        assert_eq!(widgets.visible, Some(Expr("true".into())));
+        assert!(
+            widgets.unset.is_empty(),
+            "an expression of its own makes the unset moot"
+        );
+
+        set(&Args::of("bar-top.end repeat {1, 2}")).expect("a list");
+        let end = written_group(&store.borrow(), "bar-top", "end");
+        assert_eq!(end.repeat, Some(Expr("{1, 2}".into())));
+        set(&Args::of("end unset repeat")).expect("a bare group name that only one area has");
+        let end = written_group(&store.borrow(), "bar-top", "end");
+        assert_eq!((end.repeat, end.unset), (None, Vec::new()));
+        assert_eq!(
+            end.children.len(),
+            1,
+            "the group keeps its children: only the expression changed"
+        );
+
+        for expected in [
+            "Unset `repeat`",
+            "Set `repeat`",
+            "Set `visible`",
+            "Unset `visible`",
+            "Set `visible`",
+        ] {
+            let undone = undo().expect("every edit comes back out");
+            assert!(undone.contains(expected), "{undone} undoes `{expected}`");
+        }
+        let widgets = written_area(&store.borrow(), "widgets");
+        assert_eq!(widgets.visible, None);
+        assert!(widgets.unset.is_empty());
+        assert!(undo().is_err(), "five edits, five entries");
+    }
+
+    /// A refused line writes nothing and leaves no undo entry: an expression that does not check, a repeat that is no list, a grid cell, an area or group nothing is called, and `unset` of a key that is not one.
+    #[test]
+    fn a_refused_expression_edit_changes_nothing() {
+        let store = shell_with("expressions-refused", "mine");
+        let before = toml::to_string(store.borrow().active()).expect("serializes");
+
+        let refused =
+            set(&Args::of("widgets visible $battery.nope > 1")).expect_err("no such field");
+        assert!(
+            refused.contains("nope") && refused.contains('^'),
+            "{refused}"
+        );
+        let refused =
+            set(&Args::of("widgets visible 1 + 1")).expect_err("a number is not a condition");
+        assert!(refused.contains("expected bool"), "{refused}");
+        let refused = set(&Args::of("bar-top.end repeat 1")).expect_err("a number is no list");
+        assert!(refused.contains("expected a list"), "{refused}");
+        let cell = written_area(&store.borrow(), "widgets")
+            .groups
+            .into_iter()
+            .find(|group| matches!(group.kind, Some(layout::GroupKind::Cell { .. })))
+            .expect("the grid has cells");
+        let refused = set(&Args::of(&format!("widgets.{} repeat {{1, 2}}", cell.id)))
+            .expect_err("a cell's footprint is fixed");
+        assert!(refused.contains("grid cell"), "{refused}");
+        assert!(set(&Args::of("nowhere visible true")).is_err());
+        assert!(set(&Args::of("bar-top.nowhere repeat {1}")).is_err());
+        assert!(set(&Args::of("widgets unset repeat")).is_err());
+        assert!(set(&Args::of("widgets unset nothing")).is_err());
+
+        assert_eq!(
+            toml::to_string(store.borrow().active()).expect("serializes"),
+            before
+        );
+        assert!(store.borrow().undo_label().is_none());
+    }
+
+    /// The shipped layout under another name, with `widgets` shown while `visible` says and the bar's end repeated over `repeat`, for a layout to extend.
+    fn parent_with(visible: &str, repeat: &str) -> Layout {
+        let mut parent = layout::built_in();
+        parent.id = LayoutId::new("parent");
+        let rule = &mut parent.outputs[0];
+        let widgets = rule
+            .layers
+            .desktop
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "widgets")
+            .expect("the shipped grid");
+        widgets.visible = Some(Expr(visible.into()));
+        let end = rule
+            .layers
+            .top
+            .areas
+            .iter_mut()
+            .flat_map(|area| area.groups.iter_mut())
+            .find(|group| group.id.as_str() == "end")
+            .expect("the shipped bar's end");
+        end.repeat = Some(Expr(repeat.into()));
+        parent
+    }
+
+    /// `mine`, extending `parent` with `rules` of its own.
+    fn extending(rules: Vec<layout::OutputRule>) -> Layout {
+        Layout {
+            id: LayoutId::new("mine"),
+            extends: Some(LayoutId::new("parent")),
+            outputs: rules,
+            ..Layout::default()
+        }
+    }
+
+    /// An area only the layout it extends writes gets a partial entry naming just the expression, so `unset` reaches what is inherited without copying the area.
+    #[test]
+    fn an_inherited_area_and_group_get_a_partial_entry() {
+        let parent = parent_with("true", "{1}");
+        let mine = extending(vec![layout::OutputRule::default()]);
+        let store = shell_holding("expressions-partial", "mine", &mine, &[&parent]);
+
+        set(&Args::of("widgets unset visible")).expect("an inherited area");
+        let widgets = written_area(&store.borrow(), "widgets");
+        assert_eq!(widgets.unset, [layout::Unset::Visible]);
+        assert!(
+            widgets.kind.is_none() && widgets.groups.is_empty(),
+            "and nothing else"
+        );
+
+        set(&Args::of("bar-top.end unset repeat")).expect("an inherited group");
+        let end = written_group(&store.borrow(), "bar-top", "end");
+        assert_eq!((end.repeat, end.unset), (None, vec![layout::Unset::Repeat]));
+        assert!(
+            end.kind.is_none() && end.children.is_empty(),
+            "and nothing else"
+        );
+
+        set(&Args::of("bar-top.end repeat {1, 2}")).expect("given again");
+        let end = written_group(&store.borrow(), "bar-top", "end");
+        assert_eq!(
+            (end.repeat, end.unset),
+            (Some(Expr("{1, 2}".into())), Vec::new())
+        );
+    }
+
+    /// `unset` is written where it takes back what is drawn on every screen: in the narrowest rule for all of them, its own expression deleted and the one under it named — a rule for one monitor keeps its own — and refused, naming that level and writing nothing, where a level the edit could write in is not laid over still gives it.
+    #[test]
+    fn an_unset_is_written_where_it_overrides_what_writes_the_expression() {
+        let parent = parent_with("true", "{1}");
+        let rule = |matches: &str, visible: &str| {
+            let mut rule = layout::OutputRule {
+                matches: layout::OutputMatch(matches.into()),
+                ..layout::OutputRule::default()
+            };
+            rule.layers.desktop.areas.push(Area {
+                id: AreaId::new("widgets"),
+                visible: Some(Expr(visible.into())),
+                ..Area::default()
+            });
+            rule
+        };
+        let mine = extending(vec![rule("DP-1", "$battery.level > 1"), rule("*", "false")]);
+        let store = shell_holding("expressions-unset-where", "mine", &mine, &[&parent]);
+
+        set(&Args::of("widgets unset visible")).expect("taken back");
+        let rules = store.borrow().active().outputs.clone();
+        let widgets = |rule: &layout::OutputRule| rule.layers.desktop.areas[0].clone();
+        assert_eq!(
+            (widgets(&rules[1]).visible, widgets(&rules[1]).unset),
+            (None, vec![layout::Unset::Visible]),
+            "its own expression deleted, and the inherited one under it taken back"
+        );
+        assert_eq!(
+            widgets(&rules[0]).visible,
+            Some(Expr("$battery.level > 1".into())),
+            "a monitor's own rule is laid over the rule for every output"
+        );
+
+        let mut ruled = extending(vec![layout::OutputRule::default()]);
+        ruled.outputs[0].workspaces.push(layout::WorkspaceRule {
+            matches: layout::WorkspaceMatch("2".into()),
+            ..layout::WorkspaceRule::default()
+        });
+        ruled.outputs[0].workspaces[0]
+            .layers
+            .desktop
+            .areas
+            .push(Area {
+                id: AreaId::new("widgets"),
+                visible: Some(Expr("false".into())),
+                ..Area::default()
+            });
+        let store = shell_holding("expressions-unset-refused", "mine", &ruled, &[&parent]);
+        let before = toml::to_string(store.borrow().active()).expect("serializes");
+        let refused = set(&Args::of("widgets unset visible"))
+            .expect_err("a workspace rule comes after every output rule");
+        assert!(refused.contains("`outputs.*.workspaces.2`"), "{refused}");
+        assert_eq!(
+            toml::to_string(store.borrow().active()).expect("serializes"),
+            before
+        );
+        assert!(store.borrow().undo_label().is_none());
     }
 
     /// An area that has been emptied out is put back as the shipped layout has it, and one the shipped layout has nothing to say about is taken away instead.
@@ -1153,8 +1831,8 @@ mod tests {
         assert!(add(&["clock", "no-such-area"]).is_err());
         assert!(add(&["nosuchmodule", "bar-top"]).is_err());
         assert!(move_instance(&["clock", "no-such-group"]).is_err());
-        assert!(set(&["clock", "nosuchkey", "1"]).is_err());
-        assert!(set(&["clock", "representation", "enormous"]).is_err());
+        assert!(set(&Args::of("clock nosuchkey 1")).is_err());
+        assert!(set(&Args::of("clock representation enormous")).is_err());
         assert!(remove("nothing-called-this").is_err());
         assert!(reset("nothing-called-this").is_err());
 
@@ -1219,7 +1897,7 @@ mod tests {
             add(&["clock", "bar-top"]),
             remove("clock"),
             move_instance(&["clock", "end"]),
-            set(&["clock", "representation", "chip"]),
+            set(&Args::of("clock representation chip")),
             reset("all"),
         ] {
             let why = refused.expect_err("there is no store in a test process");
@@ -1439,7 +2117,7 @@ mod tests {
             )
             .expect("a workspace rule"),
         );
-        let store = shell_holding("workspace", "mine", &mine);
+        let store = shell_holding("workspace", "mine", &mine, &[]);
         let in_games = |store: &LayoutStore| -> Vec<String> {
             store.active().outputs[0].workspaces[0].layers.top.areas[0].groups[0]
                 .children
@@ -1449,7 +2127,7 @@ mod tests {
         };
         assert_eq!(in_games(&store.borrow()), ["games-battery"]);
 
-        set(&["games-battery", "representation", "chip"]).expect("it is set where it is");
+        set(&Args::of("games-battery representation chip")).expect("it is set where it is");
         let said = remove("games-battery").expect("and removed from there");
         assert!(said.contains("module"), "{said}");
         assert!(in_games(&store.borrow()).is_empty());

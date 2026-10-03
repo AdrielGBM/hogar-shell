@@ -7,9 +7,9 @@ use ::services::clock;
 
 // `strftime` patterns come from config, so a user can have seconds, a weekday or a 12-hour clock without the shell enumerating presets.
 fn render(now: &chrono::DateTime<chrono::Local>, config: &ClockConfig) -> String {
-    let time = now.format(config.time_format()).to_string();
+    let time = clock::draw(now, config.time_format());
     if config.show_date {
-        format!("{} · {}", now.format(&config.date_format), time)
+        format!("{} · {}", clock::draw(now, &config.date_format), time)
     } else {
         time
     }

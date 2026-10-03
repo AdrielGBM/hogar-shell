@@ -112,26 +112,30 @@ pub struct Resources {
     pub disk_write: f64,
     pub memory: Memory,
     pub memory_history: History,
-    /// The hottest sensor the machine exposes, in °C; `None` when there is no hwmon to read.
-    pub temperature: Option<f32>,
-    /// Every plausible hwmon reading, so a surface can name the sensor it wants instead of taking the maximum.
+    /// Every plausible hwmon reading, so a surface can name the sensor it wants ([`Resources::sensor_of`]); empty when there is no hwmon to read.
     pub sensors: Vec<Sensor>,
     /// The root filesystem, plus `/home` when it is a separate mount.
     pub disks: Vec<Disk>,
 }
 
 impl Resources {
-    /// The reading `[temperature] sensor` names: the first sensor whose chip or label matches, case-insensitively. An empty name — or one that matches nothing, because the user moved the config to another machine — falls back to the hottest sensor rather than blanking the chip.
-    pub fn temperature_of(&self, name: &str) -> Option<f32> {
+    /// The sensor `[temperature] sensor` names: the first whose chip or label matches, case-insensitively. An empty name — or one that matches nothing, because the user moved the config to another machine — is the hottest sensor rather than none, which keeps a chip working across AMD, Intel and laptops without a per-machine config. `None` only when the machine exposes no sensor at all.
+    pub fn sensor_of(&self, name: &str) -> Option<&Sensor> {
         let name = name.trim();
-        if name.is_empty() {
-            return self.temperature;
-        }
-        self.sensors
-            .iter()
-            .find(|s| s.chip.eq_ignore_ascii_case(name) || s.label.eq_ignore_ascii_case(name))
-            .map(|s| s.celsius)
-            .or(self.temperature)
+        let named = self.sensors.iter().find(|s| {
+            !name.is_empty()
+                && (s.chip.eq_ignore_ascii_case(name) || s.label.eq_ignore_ascii_case(name))
+        });
+        named.or_else(|| {
+            self.sensors
+                .iter()
+                .max_by(|a, b| a.celsius.total_cmp(&b.celsius))
+        })
+    }
+
+    /// The reading of the sensor [`Resources::sensor_of`] picks for `name`, in °C.
+    pub fn temperature_of(&self, name: &str) -> Option<f32> {
+        self.sensor_of(name).map(|sensor| sensor.celsius)
     }
 }
 
@@ -308,16 +312,6 @@ fn read_sensors(hwmon: &Path) -> Vec<Sensor> {
     sensors
 }
 
-/// The hottest plausible reading, which is what a chip shows when no sensor is named — it keeps working across AMD, Intel and laptops without a per-machine config.
-fn hottest(sensors: &[Sensor]) -> Option<f32> {
-    sensors
-        .iter()
-        .map(|s| s.celsius)
-        .fold(None, |acc: Option<f32>, c| {
-            Some(acc.map_or(c, |a| a.max(c)))
-        })
-}
-
 /// A mount's capacity, straight from the `statvfs` syscall. "Used" is total minus what an unprivileged user can claim, which is what `df` reports: it excludes the root-reserved blocks, so a full disk reads as full.
 fn read_disk(mount: &Path) -> Option<Disk> {
     let stats = rustix::fs::statvfs(mount).ok()?;
@@ -412,7 +406,6 @@ fn run(out: &Arc<Broadcast<Resources>>) {
             disk_write,
             memory_history: memory_history.clone(),
             memory,
-            temperature: hottest(&sensors),
             sensors,
             disks: disks.clone(),
         });
@@ -594,7 +587,11 @@ SwapFree:        3000000 kB
     #[test]
     fn temperature_takes_the_hottest_plausible_sensor() {
         let dir = hwmon_fixture("hottest");
-        assert_eq!(hottest(&read_sensors(&dir)), Some(61.5));
+        let resources = Resources {
+            sensors: read_sensors(&dir),
+            ..Resources::default()
+        };
+        assert_eq!(resources.temperature_of(""), Some(61.5));
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -611,7 +608,6 @@ SwapFree:        3000000 kB
         );
 
         let resources = Resources {
-            temperature: hottest(&sensors),
             sensors,
             ..Resources::default()
         };
@@ -632,6 +628,21 @@ SwapFree:        3000000 kB
             "a name from another machine falls back to the hottest rather than blanking the chip"
         );
         assert_eq!(resources.temperature_of(""), Some(61.5));
+        for name in ["", "k10temp", "temp2"] {
+            assert_eq!(
+                resources
+                    .sensor_of(name)
+                    .map(|sensor| sensor.label.as_str()),
+                Some("temp2"),
+                "what `{name}` names is the sensor whose reading it gives"
+            );
+        }
+        assert_eq!(
+            resources
+                .sensor_of("coretemp")
+                .map(|sensor| sensor.label.as_str()),
+            Some("Package id 0")
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -639,7 +650,7 @@ SwapFree:        3000000 kB
     fn no_hwmon_at_all_reports_no_temperature() {
         let sensors = read_sensors(Path::new("/nonexistent-hwmon"));
         assert!(sensors.is_empty());
-        assert_eq!(hottest(&sensors), None);
+        assert_eq!(Resources::default().sensor_of(""), None);
         assert_eq!(Resources::default().temperature_of("anything"), None);
     }
 

@@ -5,8 +5,9 @@ title: Scripting
 summary: Driving the shell from a script, and reading its answers.
 status: stable
 compositor: any
-commands: [shell, apps, audio, notifs, wallpaper, scheme, layout]
-deps: []
+commands: [shell, apps, audio, notifs, wallpaper, scheme, layout, var, rule]
+config: [rules]
+deps: [power-profiles-daemon]
 see_also: [ipc, keybinds]
 ---
 
@@ -61,7 +62,7 @@ hogar-shell layout use <name>                  # draw this layout from now on
 hogar-shell layout add <module> <area> [group] # place a module in an area of the layout being drawn
 hogar-shell layout remove <id>                 # take a placed module, or a whole area, out
 hogar-shell layout move <id> <group> [index]   # put a placed module in another group, or elsewhere in its own
-hogar-shell layout set <instance> <key> <value> # change one property of a placed module
+hogar-shell layout set <instance|area|area.group> <key> <value> # change one property of a placed module, an area's visible or a group's repeat
 hogar-shell layout reset <id|layer|all>        # put a part of the layout back to the built-in one
 hogar-shell layout undo                        # take back the last edit, whatever made it
 hogar-shell layout redo                        # make the edit that was last taken back again
@@ -80,6 +81,83 @@ unlocked session and is refused while the session is locked. Under `--safe-layou
 every edit.
 
 See the [Layout reference](../reference/layout.md) for what a layout file holds.
+
+## Variables
+
+A variable is a typed value that layouts and rules read as `$name`. It is kept across restarts, and setting one
+changes every binding that reads it at once, with no reload.
+
+```sh
+hogar-shell var set accent_override '#ff8800' --type colour  # the first set fixes the type
+hogar-shell var set accent_override '#88c0d0'                # later sets are read as that type
+hogar-shell var get accent_override
+hogar-shell var list                                         # name, type and value, tab-separated
+hogar-shell var remove accent_override
+```
+
+A type is `text`, `number`, `bool`, `colour`, `image`, `font` or `list:<type>`, a list being its items separated by
+commas. A new variable is text unless `--type` says otherwise, and a value that does not fit the type it already
+has is refused: `var remove` it first to change its type. The value is the rest of the line as written, so a text keeps
+its spacing.
+
+## Rules
+
+A rule is a few lines of `config.toml`: when something happens, check a condition, run commands, and keep a value.
+
+```toml
+[[rules]]
+id = "low-battery"
+trigger = { edge = "$battery.level < 15 && !$battery.charging" }
+run = ["toast show Battery low: plug in soon", "var set battery_low true --type bool"]
+
+[[rules]]
+id = "evening"
+trigger = { schedule = "19:00 mon-fri" }
+when = "$power.profile != 'power-saver'"
+run = ["shell run powerprofilesctl set power-saver"]
+store = { var = "evening_from", value = "$clock.time" }
+```
+
+A trigger is exactly one of four:
+
+| Trigger | Fires |
+| --- | --- |
+| `event = "<name>"` | on each [event](#events) of that name |
+| `edge = "<expression>"` | each time the expression turns from false to true — once per crossing, however often its readings change; one already true when the rule loads waits for the next crossing |
+| `schedule = "<times> [days]"` | at each `HH:MM`, local time, on the days named: `mon` … `sun`, a range such as `mon-fri`, `weekdays` or `weekends`; every day when none is named. A time the machine slept through is skipped, not run late |
+| `every = "<interval>"` | every `30s`, `5m`, `1h`, counted from when the rule loaded; never more often than `[automation] min_interval_seconds` |
+
+`when` is checked as the rule fires, and the rule runs only if it gives true. `run` is a list of the same command
+lines as everywhere else, in order, stopping at the first one the shell refuses. `store` evaluates its `value` as the
+rule fires and keeps it in a [variable](#variables) of the value's type. `enabled = false` keeps a rule written down
+without loading it.
+
+Expressions read module readings (`$battery.level`), variables (`$name`) and events (`$event.session_locked`) —
+not a layout's own `[sources]`, so a rule means the same thing whatever layout is drawn. Rules keep running while
+the session is locked: they are session automation, not something on the lock screen.
+
+```sh
+hogar-shell rule list        # id, trigger, state (on, off or invalid) and when it last fired, tab-separated
+hogar-shell rule run <id>    # run a rule's commands now, whatever its trigger, `when` and `enabled` say
+hogar-shell config check     # what keeps a rule from loading, at the line and column it is written
+```
+
+A rule written with a mistake — an unknown event, an expression that does not compile, a command line the shell
+does not have, a name two rules share — does not load, and `config check` and the problems notice say why. One that
+fails as it fires — a command refused, a `when` with no reading yet — is on the problems notice until it next fires
+cleanly. Saving `config.toml` reloads the rules without firing an unchanged one again or forgetting a crossing it is
+waiting on.
+
+## Running a command
+
+```sh
+hogar-shell shell run notify-send "build done"
+```
+
+`shell run` hands the rest of the line to `sh -c` and does not wait for it. It is also what a layout action or a
+rule uses to run something: every action is a line like these, checked when the layout loads. From the command
+line each argument stays the word your shell made it, so `"build done"` reaches `notify-send` as one argument with
+its spacing intact; to run a pipeline, hand it to `sh` yourself: `hogar-shell shell run sh -c 'ls | wc -l'`.
 
 ## Saying something
 
@@ -108,10 +186,36 @@ Three places take a command line, and all three take the *same* vocabulary:
 | --- | --- |
 | `[[idle.stages]] action` / `return_action` | on a timeout, and on wake |
 | `[launcher] actions` | from the launcher's `>` mode |
-| `[theme.export] hooks` | after a palette is written |
+| `[[rules]] run` | when a rule fires |
 
 Anything in `hogar-shell --list` is valid in all three, and a request line is validated **without being run** — so
 a typo in an idle stage is a warning rather than a surprise at 3 a.m.
+
+## Events
+
+The shell names what happens to it with one fixed set of events, each raised by the part of the shell that
+owns it:
+
+| Event | When |
+| --- | --- |
+| `started` | the shell has finished starting |
+| `wallpaper_changed` | a wallpaper was set or cleared, and the picture actually changed |
+| `colors_changed` | a wallpaper-derived palette was published, once its `[theme.export]` files are on disk |
+| `theme_mode_changed` | the palette switched between dark and light |
+| `session_locked`, `session_unlocked` | a lock **this shell** took was confirmed by the compositor, or ended; another locker's lock raises neither |
+| `logging_out`, `rebooting`, `shutting_down` | just before the session action is asked of logind |
+| `wifi_enabled`, `wifi_disabled`, `bluetooth_enabled`, `bluetooth_disabled` | the radio was switched, from the shell or from anywhere else |
+| `battery_state_changed` | the charger was plugged in or pulled |
+| `battery_under_threshold` | the charge crossed down through a `[battery] warn_levels` threshold, once per crossing |
+| `power_profile_changed` | power-profiles-daemon switched profile |
+
+A rule consumes them two ways. `trigger = { event = "<name>" }` fires the rule once for every such event raised
+after the rule is loaded — two palettes landing are two firings, since an event is a thing that happened rather than
+a state. `$event.<name>` reads the last one of a kind in an expression, as text: what it carried (the wallpaper's
+path, the profile, `dark` or `light`, `charging` or `discharging`, the threshold crossed) or the event's own name.
+
+The radios and the power profile are read only while something is watching them. A rule triggered by one of their
+events is something watching them: it keeps that service running for as long as the rule is loaded, locked or not.
 
 ## Related
 

@@ -12,13 +12,14 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use telar::{
-    AlignItems, BlendMode, BorderRadius, Clip, ClippedItem, Color, ConsumedKeys, Container,
-    Gradient, Image, ImageData, ImageSlice, Insets, Key, LayoutError, LayoutItem, LayoutStyle,
-    ObjectFit, Paint, Point, Raster, ReactiveList, RectStyle, Role, RwSignal, SizeDimension,
-    StyledContainer, TemplateTrack, box_item, motion::Animated, signal,
+    AlignItems, BlendMode, BorderRadius, ChildSlot, Clip, ClippedItem, Color, ConsumedKeys,
+    Container, Gradient, Image, ImageData, ImageSlice, Insets, Key, LayoutError, LayoutItem,
+    LayoutStyle, ObjectFit, Paint, Point, Raster, ReactiveList, RectStyle, Role, RwSignal,
+    SizeDimension, StyledContainer, TemplateTrack, box_item, motion::Animated, signal,
 };
 
 use crate::actions::{Bound, EmptySpace, NOTCH};
+use crate::expressions::{Expressions, Overlay, Repeat};
 use crate::layer_window::{
     AreaContext, Areas, Blur, Building, LayerWindowContext, Reserved, WindowAreas, blur_of,
     build_window_areas,
@@ -125,7 +126,28 @@ pub fn set_stack_builder(build: StackBuilder) {
 }
 
 /// The node `area` draws, or `None` for a kind no builder answers for yet, so a layer draws the areas it can rather than failing whole over the one it cannot.
+///
+/// An area with a `visible` it can read is taken out of layout while that is false, which hides its paint and every input target in it without rebuilding it.
 pub fn build(area: &ResolvedArea, surround: Surround) -> Option<Built> {
+    let Some(visible) = &area.visible else {
+        return drawn(area, surround);
+    };
+    telar::Scope::with(|| {
+        let at = rects::Node::area(surround.output, surround.layer, &area.id);
+        let shown = Expressions::here(surround.audience).visible(&at, visible);
+        let built = drawn(area, surround)?;
+        if let Ok(node) = &built {
+            let node = node.layout_node();
+            telar::effect(move || {
+                telar::set_display(node, shown.get());
+                let _ = telar::mark_dirty(node);
+            });
+        }
+        Some(built)
+    })
+}
+
+fn drawn(area: &ResolvedArea, surround: Surround) -> Option<Built> {
     let built = match &area.kind {
         ResolvedAreaKind::Bar { .. } => Some(crate::bar::build_bar(
             area,
@@ -980,40 +1002,110 @@ fn arranged(
     let at = rects::Node::area(surround.output, surround.layer, &area.id);
     let group_id = group.id.clone();
     let instance_at = at.clone();
-    let build = move |instance: &ResolvedInstance, surround: Surround| -> Built {
-        let node = instance_at.instance(&group_id, &instance.id);
-        let built = build(instance, &node, surround)?;
-        rects::track(node, built.layout_node());
-        Ok(built)
-    };
-    // A stack is the one child of the box its placement gives the group, so it is packed where the group would be: a dock's end zone packs it to the end instead of it stretching across the run.
-    let items = match group.stacked {
-        true => {
-            let key = (
-                surround.output.map(str::to_string),
-                area.id.clone(),
-                group.id.clone(),
-            );
-            vec![smart_stack(
-                key,
-                &group.children,
-                LayoutStyle::new().flex_column(),
-                surround,
-                build,
-            )?]
+    let build: BuildCopy = Rc::new(
+        move |instance: &ResolvedInstance, surround: Surround| -> Built {
+            let node = instance_at.instance(&group_id, &instance.id);
+            let built = build(instance, &node, surround)?;
+            rects::track(node, built.layout_node());
+            Ok(built)
+        },
+    );
+    let key = (
+        surround.output.map(str::to_string),
+        area.id.clone(),
+        group.id.clone(),
+    );
+    let node = match &group.repeat {
+        Some(expr) => {
+            let repeat = Expressions::here(surround.audience).repeat(&at.group(&group.id), expr);
+            let pages = LayoutStyle::new().flex_column();
+            Container::from_slots(
+                style,
+                copies(group, Some(repeat), (key, pages), surround, build),
+            )?
         }
-        false => group
-            .children
-            .iter()
-            .map(|instance| build(instance, surround))
-            .collect::<Result<Vec<_>, LayoutError>>()?,
+        None => {
+            // A stack is the one child of the box its placement gives the group, so it is packed where the group would be: a dock's end zone packs it to the end instead of it stretching across the run.
+            let items = match group.stacked {
+                true => vec![smart_stack(
+                    key,
+                    &group.children,
+                    LayoutStyle::new().flex_column(),
+                    surround,
+                    move |instance, surround| build(instance, surround),
+                )?],
+                false => group
+                    .children
+                    .iter()
+                    .map(|instance| build(instance, surround))
+                    .collect::<Result<Vec<_>, LayoutError>>()?,
+            };
+            Container::new(style, items)?
+        }
     };
     let node = match follows {
-        Some(follows) => Container::new(style, items)?.styled_by(follows),
-        None => Container::new(style, items)?,
+        Some(follows) => node.styled_by(follows),
+        None => node,
     };
     rects::track(at.group(&group.id), node.layout_node());
     Ok(Box::new(node))
+}
+
+/// Builds one instance of a group, under the surround it is handed — which a Smart Stack hands it again whenever it is cycled.
+pub(crate) type BuildCopy = Rc<dyn Fn(&ResolvedInstance, Surround) -> Built>;
+
+/// `group`'s children once per item of `repeat`, as what fills the group's own box: each copy a child of the box keyed by its index, so a list that grows or shrinks adds or drops copies at its end and leaves the others built; or, stacked, the copies as the pages of a stack laid out by `pages`, the stack built again only when how many there are changes. A `repeat` that cannot be read fills nothing.
+pub(crate) fn copies(
+    group: &ResolvedGroup,
+    repeat: Option<Repeat>,
+    (key, pages): (StackKey, LayoutStyle),
+    surround: Surround,
+    build: BuildCopy,
+) -> Vec<ChildSlot> {
+    let Some(repeat) = repeat else {
+        return Vec::new();
+    };
+    let children: Rc<[ResolvedInstance]> = group.children.clone().into();
+    let kept = Rc::new(Kept::of(surround));
+    let entered: BuildCopy = {
+        let repeat = repeat.clone();
+        Rc::new(move |copy: &ResolvedInstance, surround: Surround| {
+            repeat.enter(copy);
+            build(copy, surround)
+        })
+    };
+    let slot = match group.stacked {
+        true => telar::fragment(
+            move || vec![repeat.copies(&children)],
+            |copies: &Vec<ResolvedInstance>| copies.len(),
+            move |copies: Vec<ResolvedInstance>| {
+                let entered = Rc::clone(&entered);
+                or_nothing(smart_stack(
+                    key.clone(),
+                    &copies,
+                    pages.clone(),
+                    kept.surround(),
+                    move |page, surround| entered(page, surround),
+                ))
+            },
+            0.0,
+        ),
+        false => telar::fragment(
+            move || repeat.copies(&children),
+            |copy: &ResolvedInstance| copy.id.clone(),
+            move |copy: ResolvedInstance| or_nothing(entered(&copy, kept.surround())),
+            0.0,
+        ),
+    };
+    vec![slot]
+}
+
+/// What a copy draws when building it failed outright, below the error boundary every module is built in: nothing, rather than taking the group with it.
+fn or_nothing(built: Built) -> Built {
+    built.or_else(|failed| {
+        tracing::warn!("a copy of a repeated group could not be built: {failed}");
+        Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?))
+    })
 }
 
 /// Per output as well: the same group is drawn on every output, and each is cycled on its own.
@@ -1034,7 +1126,7 @@ pub fn forget_gone(gone: &layout::Placed) {
         shown.borrow_mut().retain(|(_, area, group), child| {
             !gone.areas.contains(area)
                 && !gone.groups.contains(&(area.clone(), group.clone()))
-                && !gone.instances.contains(child)
+                && !gone.instances.contains(&child.template())
         })
     });
     OPENED.with(|opened| {
@@ -1352,7 +1444,7 @@ fn along(edge: Edge, thickness: f32) -> LayoutStyle {
     }
 }
 
-/// One instance under a host told the box it was given and the options its entry sets, built inside the descriptor table's error boundary so a module that fails shows its placeholder instead of taking the area down with it.
+/// One instance under a host told the box it was given and the options its entry sets, built inside the descriptor table's error boundary so a module that fails shows its placeholder instead of taking the area down with it. An instance with bindings is built again, alone, each time what they say changes.
 fn place(
     instance: &ResolvedInstance,
     node: &rects::Node,
@@ -1361,16 +1453,40 @@ fn place(
     style: LayoutStyle,
     surround: Surround,
 ) -> Built {
+    // The last of three lines on "readings only, never controls" (TA-8): validation refuses a representation that acts on the lock layer, `layout add` refuses to place one, and a file that was hand-edited past both is drawn as a placeholder rather than built. Placed here because this is the one point every lock instance goes through, whatever kind of area holds it.
+    if surround.audience == Audience::Anyone && !reads_only(instance) {
+        return ui::placeholder::neutral(surround.theme);
+    }
+    let (placing, at, kept) = (instance.clone(), node.clone(), Kept::of(surround));
+    Expressions::here(surround.audience).bound_instance(
+        instance,
+        node,
+        style,
+        move |style, bound| placed(&placing, &at, extent, axis, style, kept.surround(), bound),
+    )
+}
+
+fn placed(
+    instance: &ResolvedInstance,
+    node: &rects::Node,
+    extent: Size,
+    axis: Option<Edge>,
+    style: LayoutStyle,
+    surround: Surround,
+    bound: Option<&Overlay>,
+) -> Built {
     let placed = Instance::new(
         InstanceId::new(instance.id.as_str()),
         &instance.module,
-        instance.options.clone(),
+        Overlay::options_or(bound, &instance.options),
     );
-    let accent = surround.theme.accent_by_name(
-        surround
-            .config
-            .accent_name(&placed.presentation(surround.config)),
-    );
+    let accent = Overlay::accent_or(bound, || {
+        surround.theme.accent_by_name(
+            surround
+                .config
+                .accent_name(&placed.presentation(surround.config)),
+        )
+    });
     let host = Host::placed(
         placed,
         Arc::clone(surround.config),
@@ -1383,13 +1499,9 @@ fn place(
         surround.output.map(str::to_string),
     )
     .shown_to(surround.audience);
-    // The last of three lines on "readings only, never controls" (TA-8): validation refuses a representation that acts on the lock layer, `layout add` refuses to place one, and a file that was hand-edited past both is drawn as a placeholder rather than built. Placed here because this is the one point every lock instance goes through, whatever kind of area holds it.
-    if surround.audience == Audience::Anyone && !reads_only(instance) {
-        return ui::placeholder::neutral(surround.theme);
-    }
-    let bound = Bound::of(&instance.actions, surround.audience)
+    let gestures = Bound::of(&instance.actions, surround.audience)
         .with_menu(crate::menu::on(node.clone(), surround.audience));
-    if bound.is_empty() {
+    if gestures.is_empty() {
         return ui::descriptor::place(&instance.module, &host, style);
     }
     // Around the module's own tree rather than in it: whatever the module answers itself, a button inside a widget, stays its own, and the bound gestures and the menu answer everywhere else on it — a placeholder standing in for a module that failed included.
@@ -1398,7 +1510,7 @@ fn place(
         &host,
         LayoutStyle::new().flex_column().flex_grow(1.0),
     )?;
-    Ok(Box::new(bound.on(StyledContainer::new(
+    Ok(Box::new(gestures.on(StyledContainer::new(
         style.flex_column(),
         |_| RectStyle::default(),
         vec![placed],
@@ -1567,6 +1679,7 @@ mod tests {
             id: GroupId::new("run"),
             kind,
             stacked: false,
+            repeat: None,
             children,
         }
     }

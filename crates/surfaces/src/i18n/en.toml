@@ -1,0 +1,9 @@
+[finding]
+last_good = "this layout could not be read, so the last copy of it that worked is being drawn; the file is unchanged"
+no_layout = "there is no layout called `{name}`; drawing the built-in layout instead"
+no_stack = "no output has a stack area, so notifications, toasts and OSDs are shown nowhere"
+no_blur = "the compositor offers no background blur (ext-background-effect-v1), so this area draws translucent without it"
+unknown_module = "there is no module called `{module}`"
+of_module = "`{module}`: {why}"
+and_more = "{first}; {rest}"
+no_store = "no running shell owns a layout store"

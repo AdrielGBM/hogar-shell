@@ -5,8 +5,9 @@ use telar::{LayoutError, LayoutItem, ReactiveList, RwSignal, signal};
 use config::NotificationDetail;
 use config::theme::{FontRole, NordTheme};
 use services::notifications::{self, SharedSnapshot, Snapshot};
+use telar_expression::Value;
 use ui::card::{Card, Density};
-use ui::descriptor::{FieldDef, Privacy, SourceDef};
+use ui::descriptor::{FieldDef, FieldType, Privacy, Reading, Sink, SourceDef, watch_feed};
 use ui::host::{Host, WidgetSize};
 use ui::scale::space;
 use util::reactive::{derive, fixed_text};
@@ -14,25 +15,49 @@ use util::reactive::{derive, fixed_text};
 pub const COUNT: FieldDef = FieldDef {
     name: "count",
     privacy: Privacy::Public,
+    ty: FieldType::Number,
 };
 /// Who a waiting notification came from is public on a locked screen only where `[lock] notification_detail` says so: an application name is often the message — a bank, a dating app, a clinic — so it is the user's call rather than the shell's.
 pub const APPS: FieldDef = FieldDef {
     name: "apps",
     privacy: Privacy::OnLock(|lock| lock.notification_detail == NotificationDetail::Apps),
+    ty: FieldType::List(&FieldType::Text),
 };
 pub const SUMMARY: FieldDef = FieldDef {
     name: "summary",
     privacy: Privacy::Private,
+    ty: FieldType::Text,
 };
 pub const BODY: FieldDef = FieldDef {
     name: "body",
     privacy: Privacy::Private,
+    ty: FieldType::Text,
 };
 
 pub const SOURCE: SourceDef = SourceDef {
     id: "notifications",
     fields: &[COUNT, APPS, SUMMARY, BODY],
+    feed,
 };
+
+fn feed(sink: Sink) {
+    watch_feed(
+        notifications::subscribe,
+        sink,
+        |snapshot: &SharedSnapshot| source_reading(snapshot),
+    );
+}
+
+/// What is waiting, in [`SOURCE`]'s field order: the summary and body are the newest notification's.
+fn source_reading(snapshot: &Snapshot) -> Reading {
+    let newest = snapshot.active.last();
+    Reading::from([
+        Value::Number(snapshot.active.len() as f64),
+        Value::list(apps(snapshot).into_iter().map(Value::from)),
+        Value::text(newest.map_or("", |n| n.summary.as_str())),
+        Value::text(newest.map_or("", |n| n.body.as_str())),
+    ])
+}
 
 /// How long a summary may run in a row before it is cut, so a long one elides rather than pushing the row past its widget.
 const SUMMARY_CHARS: usize = 40;
@@ -132,18 +157,12 @@ fn entries(snapshot: &Snapshot, host: &Host, limit: usize) -> Vec<Entry> {
         .map(|entry| Entry {
             id: entry.id,
             app: host.reveal(&APPS, entry.app_name.clone()),
-            summary: host.reveal(&SUMMARY, clipped(&entry.summary)),
+            summary: host.reveal(
+                &SUMMARY,
+                util::text::clipped(entry.summary.trim(), SUMMARY_CHARS),
+            ),
         })
         .collect()
-}
-
-fn clipped(text: &str) -> String {
-    let text = text.trim();
-    if text.chars().count() <= SUMMARY_CHARS {
-        return text.to_string();
-    }
-    let kept: String = text.chars().take(SUMMARY_CHARS - 1).collect();
-    format!("{}…", kept.trim_end())
 }
 
 #[cfg(test)]

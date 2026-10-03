@@ -13,7 +13,7 @@ use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use util::report::{Finding, Report};
+use util::report::{Finding, Message, Report};
 
 use crate::model::*;
 use crate::ops::{LayoutOp, OpError, apply_all};
@@ -59,22 +59,24 @@ pub enum StoreError {
     Safe,
 }
 
+impl StoreError {
+    /// Why the store refused, in no language yet.
+    pub fn message(&self) -> Message {
+        match self {
+            StoreError::ReadOnly(id) => util::message!("finding.built_in_read_only", id = id),
+            StoreError::Unknown(id) => util::message!("finding.unknown_layout", id = id),
+            StoreError::Failed(error) => error.message(),
+            StoreError::NothingToUndo => util::message!("finding.nothing_to_undo"),
+            StoreError::NothingToRedo => util::message!("finding.nothing_to_redo"),
+            StoreError::Safe => util::message!("finding.safe_layout"),
+        }
+    }
+}
+
+/// In English, as the command line says it.
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StoreError::ReadOnly(id) => write!(
-                f,
-                "`{id}` is the built-in layout and cannot be edited; copy it first"
-            ),
-            StoreError::Unknown(id) => write!(f, "there is no layout called `{id}`"),
-            StoreError::Failed(error) => write!(f, "{error}"),
-            StoreError::NothingToUndo => write!(f, "there is nothing to undo"),
-            StoreError::NothingToRedo => write!(f, "there is nothing to redo"),
-            StoreError::Safe => write!(
-                f,
-                "this shell was started with --safe-layout, which draws the built-in layout and writes none; restart it without the flag to edit"
-            ),
-        }
+        f.write_str(&self.message().english())
     }
 }
 
@@ -120,7 +122,7 @@ impl LayoutStore {
                     seen.insert(id, held);
                     layouts.insert(layout.id.clone(), layout);
                 }
-                Err(why) => report.error(Finding::new(path, "", why)),
+                Err(why) => report.error(Finding::new(path, "", Message::verbatim(why))),
             }
         }
 
@@ -159,7 +161,7 @@ impl LayoutStore {
                     self.seen.insert(id.clone(), held);
                     self.layouts.insert(id, layout);
                 }
-                Err(why) => report.error(Finding::new(path, "", why)),
+                Err(why) => report.error(Finding::new(path, "", Message::verbatim(why))),
             }
         }
 
@@ -368,7 +370,7 @@ impl LayoutStore {
             let text = match toml::to_string_pretty(layout) {
                 Ok(text) => text,
                 Err(why) => {
-                    report.error(Finding::new(path, "", why.to_string()));
+                    report.error(Finding::new(path, "", Message::verbatim(why.to_string())));
                     continue;
                 }
             };
@@ -377,7 +379,9 @@ impl LayoutStore {
                 Ok(()) => {
                     self.seen.insert(id, wrote);
                 }
-                Err(why) => report.error(Finding::new(path, "", why.to_string())),
+                Err(why) => {
+                    report.error(Finding::new(path, "", Message::verbatim(why.to_string())))
+                }
             }
         }
         self.changed_at = None;
@@ -458,17 +462,17 @@ fn held(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// The layout the shell is running, published so anything outside the reconcile — a preview, a sweep, a settings page — draws what the user is looking at rather than the shipped default.
-static RUNNING: std::sync::Mutex<Option<std::sync::Arc<Layout>>> = std::sync::Mutex::new(None);
+thread_local! {
+    /// The layout the shell is running, published so anything outside the reconcile — a preview, a sweep, a settings page — draws what the user is looking at rather than the shipped default. Kept on the driver thread that plans the screen and draws from it, so a test planning its own screen on its own thread reads its own.
+    static RUNNING: std::cell::RefCell<Option<std::sync::Arc<Layout>>> = const { std::cell::RefCell::new(None) };
+}
 
 /// Publishes the active layout. Called by the pass that plans the screen, so a reader always has the one the windows were last built from.
 pub fn set_running(layout: std::sync::Arc<Layout>) {
-    if let Ok(mut running) = RUNNING.lock() {
-        *running = Some(layout);
-    }
+    RUNNING.with(|running| *running.borrow_mut() = Some(layout));
 }
 
-/// The active layout, or `None` before the shell has planned a screen — a unit test, a CLI invocation, a preview on a machine with no shell running.
+/// The active layout, or `None` before the shell has planned a screen on this thread — a unit test, a CLI invocation, a preview on a machine with no shell running.
 pub fn running() -> Option<std::sync::Arc<Layout>> {
-    RUNNING.lock().ok().and_then(|running| running.clone())
+    RUNNING.with(|running| running.borrow().clone())
 }

@@ -16,7 +16,7 @@ use telar::{ReadSignal, RwSignal, signal};
 use layout::{
     BUILT_IN, Layout, LayoutId, LayoutOp, LayoutStore, Placed, SETTLE, StoreError, Transaction,
 };
-use util::report::{Finding, Report};
+use util::report::{Finding, Message, Report};
 
 /// The name the first edit to the built-in layout forks it under.
 const FORKED: &str = "custom";
@@ -82,18 +82,19 @@ pub fn edit<R>(
         let (ops, said) = {
             let layout = store
                 .get(&id)
-                .ok_or_else(|| as_message(StoreError::Unknown(id.clone())))?;
-            plan(layout, &id)?
+                .ok_or_else(|| StoreError::Unknown(id.clone()).message())?;
+            plan(layout, &id).map_err(Message::verbatim)?
         };
         store
             .commit(Transaction::new(label, id, ops))
-            .map_err(as_message)?;
+            .map_err(|why| why.message())?;
         Ok(said)
     })
+    .map_err(|why| why.english())
 }
 
 /// Commits a transaction prepared elsewhere — an edit mode's gesture, built while it previewed. One made for the layout being drawn lands where [`edit`] would put it, so while that is the built-in layout the first commit forks it.
-pub fn commit(transaction: Transaction) -> Result<(), String> {
+pub fn commit(transaction: Transaction) -> Result<(), Message> {
     change(|store| {
         let layout = match transaction.layout == *store.active_id() {
             true => editable(store)?,
@@ -104,17 +105,17 @@ pub fn commit(transaction: Transaction) -> Result<(), String> {
                 layout,
                 ..transaction
             })
-            .map_err(as_message)
+            .map_err(|why| why.message())
     })
 }
 
 /// Takes back the last committed transaction, whatever made it, and answers with what it was called.
-pub fn undo() -> Result<String, String> {
-    change(|store| store.undo().map_err(as_message))
+pub fn undo() -> Result<String, Message> {
+    change(|store| store.undo().map_err(|why| why.message()))
 }
 
-pub fn redo() -> Result<String, String> {
-    change(|store| store.redo().map_err(as_message))
+pub fn redo() -> Result<String, Message> {
+    change(|store| store.redo().map_err(|why| why.message()))
 }
 
 /// Shows `draft` in place of the active layout while it differs from what the store holds, and the store's own layout again once it does not: how an edit mode's undecided gesture reaches the screen without being committed ([`crate::reconcile::preview`]).
@@ -175,14 +176,14 @@ pub fn select_active(store: &mut LayoutStore, report: &mut Report) {
         report.warn(Finding::new(
             path,
             "layout",
-            "this layout could not be read, so the last copy of it that worked is being drawn; the file is unchanged".to_string(),
+            util::message!("finding.last_good"),
         ));
         return;
     }
     report.error(Finding::new(
         path,
         "layout",
-        format!("there is no layout called `{name}`; drawing the built-in layout instead"),
+        util::message!("finding.no_layout", name = name),
     ));
 }
 
@@ -198,6 +199,11 @@ fn store() -> Option<Rc<RefCell<LayoutStore>>> {
     LIVE.with(|live| live.borrow().as_ref().map(|it| Rc::clone(&it.store)))
 }
 
+/// Why a change to the layouts could not be made: no running shell owns a store to make it in.
+pub fn no_store() -> Message {
+    util::message!("finding.no_store")
+}
+
 fn bump() {
     REVISION.with(|revision| revision.update(|n| *n = n.wrapping_add(1)));
 }
@@ -205,14 +211,14 @@ fn bump() {
 /// Runs one change against the store, then brings the screen in line with it and asks for the write.
 ///
 /// A change that failed after the built-in layout forked still changed the store — the copy is the active layout now, and `state.json` says so — so it is redrawn and written like one that went through. Whatever the change stopped placing is forgotten before the redraw, wherever state is kept by id ([`forget_gone`]).
-fn change<R>(f: impl FnOnce(&mut LayoutStore) -> Result<R, String>) -> Result<R, String> {
+fn change<R>(f: impl FnOnce(&mut LayoutStore) -> Result<R, Message>) -> Result<R, Message> {
     let live = LIVE.with(|live| {
         live.borrow()
             .as_ref()
             .map(|it| (Rc::clone(&it.store), Rc::clone(&it.redraw)))
     });
     let Some((store, redraw)) = live else {
-        return Err("no running shell owns a layout store".to_string());
+        return Err(no_store());
     };
     // The borrow ends with the block, so the redraw below — which reads the store to plan the screen — is not inside it.
     let (done, changed, gone) = {
@@ -233,38 +239,34 @@ fn change<R>(f: impl FnOnce(&mut LayoutStore) -> Result<R, String>) -> Result<R,
     done
 }
 
-/// Forgets what every owner of state kept by id holds for what the layout no longer places: each instance's stores, and what the areas keep across rebuilds (F-3.4).
-fn forget_gone(gone: &Placed) {
+/// Forgets what every owner of state kept by id holds for what the layout no longer places: each instance's stores, the copies of a repeated child's included, and what the areas keep across rebuilds (F-3.4).
+pub(crate) fn forget_gone(gone: &Placed) {
     if gone.is_empty() {
         return;
     }
-    let instances: Vec<ui::host::InstanceId> = gone
-        .instances
-        .iter()
-        .map(|id| ui::host::InstanceId::new(id.as_str()))
-        .collect();
-    ui::host::forget(&instances);
+    ui::host::forget_where(|held| {
+        gone.instances
+            .contains(&layout::InstanceId::new(held.as_str()).template())
+    });
     crate::area::forget_gone(gone);
 }
 
 /// The layout an edit lands in: the one being drawn, or a copy of the built-in one under a name of the user's own.
 ///
 /// The shipped layout is read-only (TA-7), so the first edit to it forks. The copy becomes the active layout in the same breath, `state.json` included — which layout is drawn is a decision about this installation rather than a description of one, and `layout use` writes it the same way.
-fn editable(store: &mut LayoutStore) -> Result<LayoutId, String> {
+fn editable(store: &mut LayoutStore) -> Result<LayoutId, Message> {
     let active = store.active_id().clone();
     if active.as_str() != BUILT_IN {
         return Ok(active);
     }
     let name = free_name(store);
-    store.fork(&active, name.clone()).map_err(as_message)?;
-    store.use_layout(&name).map_err(as_message)?;
+    store
+        .fork(&active, name.clone())
+        .map_err(|why| why.message())?;
+    store.use_layout(&name).map_err(|why| why.message())?;
     services::state::update(|state| state.layout = Some(name.to_string()));
     tracing::info!("the built-in layout is read-only, so this edit forked it to `{name}`");
     Ok(name)
-}
-
-fn as_message(why: StoreError) -> String {
-    why.to_string()
 }
 
 /// A name no layout has yet, for the copy the first edit forks. The store knows every layout file in the directory, so a free name here is a free file there.

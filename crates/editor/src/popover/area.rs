@@ -1,15 +1,25 @@
 //! The rows every area's inspector has, and the rows of the kinds no mode edits: a dock's and a free area's.
 //!
-//! Each kind's rows are a tool registered by kind name ([`super::add_area_tool`]): the mode that edits a kind registers its rows ([`crate::modes`]) — a bar's, a grid's, a stack's, a region's, a texture's, the prompt's — with the handles they share values with by name ([`AreaDraft::value`]). What every area has comes after them ([`common`]), first among it the switch that edits the area for one workspace alone ([`variant_rows`]).
+//! Each kind's rows are a tool registered by kind name ([`super::add_area_tool`]): the mode that edits a kind registers its rows ([`crate::modes`]) — a bar's, a grid's, a stack's, a region's, a texture's, the prompt's — with the handles they share values with by name ([`AreaDraft::value`]). What every area has comes after them ([`common`]), first among it the switch that edits the area for one workspace alone ([`variant_rows`]), the expression that decides whether it is shown ([`visible_row`]) and what each of its groups repeats over ([`repeat_rows`]).
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use telar::Reactive;
+use telar::{
+    AlignItems, Children, Container, LayoutStyle, Reactive, ReactiveList, SizeDimension, box_item,
+};
+use telar_expression::Type;
 
 use config::Edge;
-use layout::{Area, AreaKind, Backdrop, Corners, LayerKind, Rect, ResolvedAreaKind, Within};
+use layout::{
+    Area, AreaKind, Backdrop, Corners, Expr, Group, GroupId, GroupKind, LayerKind, Origin, Rect,
+    ResolvedAreaKind, Unset, Within,
+};
+use ui::descriptor::Built;
+
+use crate::expr_field::{self, Field, Wanted};
 
 use super::draft::{AreaDraft, kind_field};
 use super::handles;
@@ -198,6 +208,10 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
     let style = draft.resolved.style.clone();
     let is_bar = draft.kind() == "bar";
     let mut list = variant_rows(&draft.node)?;
+    if draft.kind() != "prompt" {
+        list.push(visible_row(draft)?);
+    }
+    list.extend(repeat_rows(draft)?);
     list.push(rows::heading(|| telar::t!("editor.area.style"))?);
     let fill = draft.value(
         "style.fill",
@@ -346,4 +360,270 @@ pub(crate) fn variant_rows(node: &surfaces::rects::Node) -> Rows {
         help("OutputRule", "workspaces"),
         crate::variant::only(),
     )?])
+}
+
+/// What an expression row of an area writes: the text its field holds, and whether the level the popover writes takes back the expression it inherits there (DEC-26) — which an expression of its own makes moot.
+#[derive(Clone, Debug, PartialEq)]
+struct Held {
+    text: String,
+    taken_back: bool,
+}
+
+impl Held {
+    fn expr(&self) -> Option<Expr> {
+        (!self.text.is_empty()).then(|| Expr(self.text.clone()))
+    }
+
+    /// Writes into `unset` whether this takes `path` back.
+    fn write_unset(&self, unset: &mut Vec<Unset>, path: Unset) {
+        unset.retain(|held| *held != path);
+        if self.taken_back && self.text.is_empty() {
+            unset.push(path);
+        }
+    }
+}
+
+/// One expression an area row edits — its `visible`, or a group's `repeat`: how it is read and written, and whether a level under the one the popover writes gives it.
+struct ExprRow {
+    label: Reactive<String>,
+    help: Option<String>,
+    layer: LayerKind,
+    expected: Rc<dyn Fn() -> Wanted>,
+    empty: fn() -> String,
+    /// Whether the level takes the expression back, read reactively.
+    taken: Rc<dyn Fn() -> bool>,
+    peek: Rc<dyn Fn() -> Held>,
+    write: Rc<dyn Fn(Held)>,
+    inherited: bool,
+    /// Whether Remove may take the inherited expression back where the popover writes, or why not.
+    takes_back: Rc<dyn Fn() -> Result<(), String>>,
+}
+
+/// The row, made again whenever the level takes the inherited expression back, so its field starts empty from then on. An inherited expression has a Remove that takes it back where the popover writes, previewed and kept or reverted with the rest of the popover.
+fn expr_row(row: ExprRow) -> Built {
+    let ExprRow {
+        label,
+        help,
+        layer,
+        expected,
+        empty,
+        taken,
+        peek,
+        write,
+        inherited,
+        takes_back,
+    } = row;
+    let list = ReactiveList::with_style(
+        LayoutStyle::new()
+            .flex_column()
+            .gap(ui::scale::space::xs())
+            .width(SizeDimension::Percent(1.0)),
+        move || vec![taken()],
+        |taken_back: &bool| *taken_back,
+        move |taken_back: bool| {
+            let now = peek();
+            let seed = match taken_back {
+                true => String::new(),
+                false => now.text.clone(),
+            };
+            let (restored, reading, writing) = (seed.clone(), Rc::clone(&peek), Rc::clone(&write));
+            let field = expr_field::field(Field {
+                seed,
+                expected: Rc::clone(&expected),
+                env: expr_field::environment(layer),
+                empty,
+                checked: Rc::new(move |checked: Option<&str>| {
+                    let next = checked.map_or_else(|| restored.clone(), str::to_string);
+                    let now = reading();
+                    if now.text != next {
+                        writing(Held { text: next, ..now });
+                    }
+                }),
+            })?;
+            if !inherited || taken_back {
+                return Ok(field);
+            }
+            let (writing, takes_back) = (Rc::clone(&write), Rc::clone(&takes_back));
+            let remove = take_back_line(move || match takes_back() {
+                Ok(()) => writing(Held {
+                    text: String::new(),
+                    taken_back: true,
+                }),
+                Err(why) => crate::mode::refuse(why),
+            })?;
+            Ok(box_item(Container::new(
+                LayoutStyle::new()
+                    .flex_column()
+                    .gap(ui::scale::space::xs())
+                    .width(SizeDimension::Percent(1.0)),
+                vec![field, remove],
+            )?))
+        },
+    )?;
+    rows::captioned(label, help, Box::new(list))
+}
+
+/// What an inherited expression's row says under its field, with the Remove that takes it back.
+fn take_back_line(remove: impl Fn() + 'static) -> Built {
+    let note = rows::note(|| telar::t!("editor.expr.inherited"))?;
+    let button = telar::button(
+        telar::ButtonProps::props()
+            .label(label!("editor.popover.remove"))
+            .ghost(true)
+            .on_press(Rc::new(remove))
+            .build(),
+        Children::default(),
+    )?;
+    Ok(box_item(Container::new(
+        LayoutStyle::new()
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .width(SizeDimension::Percent(1.0)),
+        vec![
+            box_item(Container::new(
+                LayoutStyle::new().flex_grow(1.0),
+                vec![note],
+            )?),
+            button,
+        ],
+    )?))
+}
+
+/// When the area is drawn: an expression giving true or false, checked and evaluated as it is typed, on the lock layer over what the lock screen may show. The lock's prompt has none, since it can never be hidden (TA-8).
+pub(crate) fn visible_row(draft: &AreaDraft) -> Built {
+    let written = draft.area().peek();
+    let seed = Held {
+        text: draft
+            .resolved
+            .visible
+            .as_ref()
+            .map(|visible| visible.expr.0.clone())
+            .unwrap_or_default(),
+        taken_back: written.unset.contains(&Unset::Visible),
+    };
+    let inherited = draft.resolved.visible.is_some() && written.visible.is_none();
+    let takes_back = taking_back(
+        draft,
+        draft
+            .resolved
+            .visible
+            .as_ref()
+            .map(|visible| &visible.origin),
+    );
+    let value = draft.value(
+        "visible",
+        || seed,
+        |area, now: &Held| {
+            area.visible = now.expr();
+            now.write_unset(&mut area.unset, Unset::Visible);
+        },
+    );
+    expr_row(ExprRow {
+        label: label!("editor.expr.visible"),
+        help: help("Area", "visible"),
+        layer: draft.node.layer,
+        expected: Rc::new(|| Wanted::Exactly(Type::Bool)),
+        empty: || telar::t!("editor.expr.always"),
+        taken: Rc::new(move || value.with(|now| now.taken_back)),
+        peek: Rc::new(move || value.peek()),
+        write: Rc::new(move |next| value.set(next)),
+        inherited,
+        takes_back,
+    })
+}
+
+/// What each group the area places repeats its children over: a list expression per group, one copy of the children per item — but on a grid cell, whose footprint is fixed (DEC-23). A group the area only inherits gets a partial entry naming its `repeat` alone, and only once its expression changes.
+pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
+    let written = draft.area().peek();
+    let groups: Vec<(GroupId, Held, bool, Option<Origin>)> = draft
+        .resolved
+        .groups
+        .iter()
+        .filter(|group| !matches!(group.kind, GroupKind::Cell { .. }))
+        .map(|group| {
+            let own = written.groups.iter().find(|held| held.id == group.id);
+            let held = Held {
+                text: group
+                    .repeat
+                    .as_ref()
+                    .map(|repeat| repeat.expr.0.clone())
+                    .unwrap_or_default(),
+                taken_back: own.is_some_and(|own| own.unset.contains(&Unset::Repeat)),
+            };
+            let inherited = group.repeat.is_some() && own.is_none_or(|own| own.repeat.is_none());
+            let writer = group.repeat.as_ref().map(|repeat| repeat.origin.clone());
+            (group.id.clone(), held, inherited, writer)
+        })
+        .collect();
+    if groups.is_empty() {
+        return Ok(Vec::new());
+    }
+    let seeds: BTreeMap<GroupId, Held> = groups
+        .iter()
+        .map(|(id, held, ..)| (id.clone(), held.clone()))
+        .collect();
+    let started = seeds.clone();
+    let repeats = draft.value(
+        "repeat",
+        move || seeds.clone(),
+        move |area, now: &BTreeMap<GroupId, Held>| {
+            for (id, held) in now {
+                if started.get(id) == Some(held) {
+                    continue;
+                }
+                let group = match area.groups.iter().position(|group| group.id == *id) {
+                    Some(at) => &mut area.groups[at],
+                    None => {
+                        area.groups.push(Group {
+                            id: id.clone(),
+                            ..Group::default()
+                        });
+                        area.groups.last_mut().expect("a group was just pushed")
+                    }
+                };
+                group.repeat = held.expr();
+                held.write_unset(&mut group.unset, Unset::Repeat);
+            }
+        },
+    );
+    let mut list = vec![rows::heading(|| telar::t!("editor.expr.repeats"))?];
+    for (id, _, inherited, writer) in groups {
+        let (watched, reading, writing) = (id.clone(), id.clone(), id.clone());
+        let group = id.to_string();
+        list.push(expr_row(ExprRow {
+            label: Reactive::of(move || telar::t!("editor.expr.repeat", group = group.clone())),
+            help: help("Group", "repeat"),
+            layer: draft.node.layer,
+            expected: Rc::new(|| Wanted::AnyList),
+            empty: || telar::t!("editor.expr.once"),
+            taken: Rc::new(move || {
+                repeats.with(|now| now.get(&watched).is_some_and(|held| held.taken_back))
+            }),
+            peek: Rc::new(move || {
+                repeats.peek_with(|now| {
+                    now.get(&reading).cloned().unwrap_or(Held {
+                        text: String::new(),
+                        taken_back: false,
+                    })
+                })
+            }),
+            write: Rc::new(move |next| {
+                repeats.update(|now| {
+                    now.insert(writing.clone(), next);
+                });
+            }),
+            inherited,
+            takes_back: taking_back(draft, writer.as_ref()),
+        })?);
+    }
+    Ok(list)
+}
+
+/// Whether Remove may take back an inherited expression `writer` wrote where `draft` writes: only where that is laid over `writer`, else it would change nothing on screen, and the refusal says where it can be changed instead.
+fn taking_back(draft: &AreaDraft, writer: Option<&Origin>) -> Rc<dyn Fn() -> Result<(), String>> {
+    let (draft, writer) = (draft.clone(), writer.cloned());
+    Rc::new(move || match &writer {
+        Some(writer) if !draft.lays_over(writer) => Err(super::beyond(writer)),
+        _ => Ok(()),
+    })
 }

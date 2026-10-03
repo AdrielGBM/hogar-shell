@@ -6,14 +6,17 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use telar::{OwnerId, ReadSignal, Rect, RwSignal, effect, signal};
 
 use config::Config;
-use layout::{Area, AreaKind, Instance, Layout, LayoutOp, ResolvedArea, ResolvedInstance};
+use layout::{
+    Area, AreaKind, Expr, Instance, Layout, LayoutOp, Origin, ResolvedArea, ResolvedInstance, Site,
+    Unset,
+};
 use surfaces::reconcile::Desktop;
 use surfaces::rects::{self, Node, Part};
 
@@ -133,6 +136,12 @@ impl AreaDraft {
     /// The area as the popover has it now, as the layout writes it.
     pub fn area(&self) -> ReadSignal<Area> {
         self.area.read_only()
+    }
+
+    /// Whether what the popover writes is laid over `writer`, the level that wrote an expression the area shows: only then does taking it back where the popover writes take it off the screen.
+    pub fn lays_over(&self, writer: &Origin) -> bool {
+        let site = self.written.borrow().site.clone();
+        laid_over(&self.edit, &site, &self.node, writer)
     }
 
     /// Which kind of area this is, as the layout file spells it.
@@ -303,7 +312,7 @@ impl InstanceDraft {
                 &draft.node.area,
                 workspace.as_ref(),
             ) {
-                Ok(written) => draft.retarget(written.instance(&group, &id)),
+                Ok(written) => draft.retarget(written.instance(&group, &id.template())),
                 Err(why) => tracing::info!("the popover's change stays where it was: {why}"),
             }
         });
@@ -311,12 +320,34 @@ impl InstanceDraft {
 
     /// Writes the copy back where `written` says from now on: made again from what that rule writes, with every change made so far written into it once more.
     fn retarget(&self, written: WrittenInstance) {
-        let mut instance = written.instance.clone();
+        *self.written.borrow_mut() = written;
+        self.instance.set(self.replayed());
+    }
+
+    /// The instance as the layout writes it, with every change made so far written into it.
+    fn replayed(&self) -> Instance {
+        let mut instance = self.written.borrow().instance.clone();
         for (_, change) in self.changes.borrow().iter() {
             change(&mut instance);
         }
-        *self.written.borrow_mut() = written;
-        self.instance.set(instance);
+        instance
+    }
+
+    /// Takes back the change called `name`, so the copy is what the layout writes there again, every other change kept.
+    fn forget(&self, name: &str) {
+        let had = {
+            let mut changes = self.changes.borrow_mut();
+            let before = changes.len();
+            changes.retain(|(held, _)| held != name);
+            changes.len() != before
+        };
+        if !had {
+            return;
+        }
+        let instance = self.replayed();
+        if self.instance.peek_with(|now| *now != instance) {
+            self.instance.set(instance);
+        }
     }
 
     pub fn instance(&self) -> ReadSignal<Instance> {
@@ -375,11 +406,93 @@ impl InstanceDraft {
         self.instance
             .with(|held| value::get(&held.options, path).is_some())
     }
+
+    /// Binds the option at `path` (or `accent`) to `expr`, or takes the instance's own binding there off with `None`, replacing what was asked for that path before. An expression of its own makes taking back the one it inherits moot, so binding one drops that.
+    pub fn bind(&self, path: &str, expr: Option<Expr>) {
+        let (at, unset) = (path.to_string(), Unset::binding(path));
+        self.update(binding_change(path), move |held| match &expr {
+            Some(expr) => {
+                held.bindings.insert(at.clone(), expr.clone());
+                held.unset.retain(|taken| *taken != unset);
+            }
+            None => {
+                held.bindings.remove(&at);
+            }
+        });
+    }
+
+    /// Takes the binding at `path` back where the popover writes (DEC-26): its own expression off, and the one a broader level gives it named in its `unset`, so the option shows its value again.
+    pub fn take_back(&self, path: &str) {
+        let (at, unset) = (path.to_string(), Unset::binding(path));
+        self.update(binding_change(path), move |held| {
+            held.bindings.remove(&at);
+            if !held.unset.contains(&unset) {
+                held.unset.push(unset.clone());
+            }
+        });
+    }
+
+    /// Takes back whatever [`InstanceDraft::bind`] asked for at `path`, so the instance binds it as the layout writes it.
+    pub fn keep_binding(&self, path: &str) {
+        self.forget(&binding_change(path));
+    }
+
+    /// What the instance's bindings read besides the shell's names: `$item` and `$index` where its group repeats, as the layout being edited says where the popover writes it — what validation checks them against.
+    pub fn locals(&self) -> layout::Locals {
+        let Part::Instance(group, _) = &self.node.part else {
+            return layout::Locals::default();
+        };
+        layout::child_locals(
+            &crate::session::draft().peek(),
+            &surfaces::catalogue::Descriptors::installed(),
+            &self.written.borrow().area.site,
+            &self.node.area,
+            group,
+        )
+    }
+
+    /// Whether what the popover writes is laid over `writer`, the level that wrote an expression the instance shows: only then does taking it back where the popover writes take it off the screen.
+    pub fn lays_over(&self, writer: &Origin) -> bool {
+        let site = self.written.borrow().area.site.clone();
+        laid_over(&self.edit, &site, &self.node, writer)
+    }
+
+    /// Whether the binding at `path` comes from a level this instance's own entry only lies over: one its own entry cannot take away.
+    pub fn inherits_binding(&self, path: &str) -> bool {
+        self.resolved.bindings.contains_key(path)
+            && !self.written.borrow().instance.bindings.contains_key(path)
+    }
+
+    /// Every binding the instance has now, by path: what the screen showed when the popover opened, with what the popover has changed since — what it took back gone.
+    pub fn bindings(&self) -> BTreeMap<String, Expr> {
+        let mut shown: BTreeMap<String, Expr> = self
+            .resolved
+            .bindings
+            .iter()
+            .map(|(path, bound)| (path.clone(), bound.expr.clone()))
+            .collect();
+        let written = self.written.borrow().instance.bindings.clone();
+        self.instance.with(|own| {
+            for path in written.keys() {
+                if !own.bindings.contains_key(path) {
+                    shown.remove(path);
+                }
+            }
+            shown.retain(|path, _| !own.unset.contains(&Unset::binding(path.as_str())));
+            shown.extend(own.bindings.clone());
+        });
+        shown
+    }
 }
 
 /// The name a change to the option at `path` goes by, which a later change to the same option replaces.
 fn option_change(path: &[value::Step]) -> String {
     format!("options.{}", value::dotted(path))
+}
+
+/// The name a change to the binding at `path` goes by.
+fn binding_change(path: &str) -> String {
+    format!("bindings.{path}")
 }
 
 fn update<T: Clone + PartialEq + 'static>(held: RwSignal<T>, change: impl FnOnce(&mut T)) {
@@ -468,4 +581,22 @@ fn blank(kind: &str) -> Option<AreaKind> {
         "prompt" => AreaKind::Prompt { rect: None },
         _ => return None,
     })
+}
+
+/// Whether what the level `site` of the layout `edit` changes writes is laid over `writer` on the screen `node` is on ([`layout::lays_over`]).
+fn laid_over(edit: &Edit, site: &Site, node: &Node, writer: &Origin) -> bool {
+    let Some(layout) = edit.transaction().before() else {
+        return false;
+    };
+    let level = Origin {
+        layout: layout.id.clone(),
+        output: site.output.clone(),
+        workspace: site.workspace.clone(),
+    };
+    layout::lays_over(
+        &layout,
+        node.output.as_deref().unwrap_or_default(),
+        &level,
+        writer,
+    )
 }

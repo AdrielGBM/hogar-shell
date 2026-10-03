@@ -8,16 +8,20 @@ telar::rsx_modules!();
 
 pub use crate::built_in::{bar as default_bar, layout as built_in};
 pub use crate::model::*;
-pub use crate::ops::{LayoutOp, OpError, PromptEdit, Site, Spot};
+pub use crate::ops::{LayoutOp, Listed, OpError, PromptEdit, Site, Spot};
 pub use crate::placed::Placed;
 pub use crate::resolve::{
-    ActiveWorkspace, Paint, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedGroup,
-    ResolvedInstance, ResolvedLayer, resolve,
+    ActiveWorkspace, Origin, Paint, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedExpr,
+    ResolvedGroup, ResolvedInstance, ResolvedLayer, lays_over, resolve, sources,
 };
 pub use crate::routing::{RoutedCard, route_card};
 pub use crate::store::{
     BUILT_IN, LayoutStore, SETTLE, StoreError, Transaction, running, set_running,
 };
+pub use crate::take_back::{Held, TakeBack, Taken, taking_back};
 pub use crate::validate::{
-    Catalogue, check_unknown_keys, validate, validate_lock, validate_resolved,
+    Catalogue, INDEX, ITEM, Locals, Mistake, binding_errors, binding_errors_with,
+    check_unknown_keys, child_locals, locate_expressions, locate_unsets, repeat_errors,
+    repeat_item, repeat_locals, validate, validate_lock, validate_resolved, validate_unsets,
+    visible_errors,
 };

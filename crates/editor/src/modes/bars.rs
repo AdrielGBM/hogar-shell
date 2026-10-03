@@ -226,9 +226,9 @@ fn chips_on(output: &str, layer: LayerKind) -> Vec<InstanceId> {
     for (node, _) in rects::on(Some(output), layer) {
         if let Part::Instance(_, id) = &node.part
             && bars.contains(&node.area)
-            && !found.contains(id)
+            && !found.contains(&id.template())
         {
-            found.push(id.clone());
+            found.push(id.template());
         }
     }
     found
@@ -388,7 +388,7 @@ struct Carried {
 impl Carried {
     fn of(node: Node, output: &str, layer: LayerKind) -> Self {
         let carried = match &node.part {
-            Part::Instance(_, id) => Some(id.clone()),
+            Part::Instance(_, id) => Some(id.template()),
             _ => None,
         };
         let desktop = reconcile::desktop(Some(output));

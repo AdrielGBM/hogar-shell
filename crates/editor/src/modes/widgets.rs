@@ -220,9 +220,9 @@ fn widgets(output: &str, layer: LayerKind) -> Vec<InstanceId> {
     for (node, _) in rects::on(Some(output), layer) {
         if let Part::Instance(_, id) = &node.part
             && grids.contains(&node.area)
-            && !found.contains(id)
+            && !found.contains(&id.template())
         {
-            found.push(id.clone());
+            found.push(id.template());
         }
     }
     found
@@ -329,7 +329,7 @@ impl Carried {
                         false => group
                             .children
                             .iter()
-                            .find(|child| child.id == *id)
+                            .find(|child| child.id == id.template())
                             .map(|child| desktop::footprint(child.representation)),
                     }
                 }),

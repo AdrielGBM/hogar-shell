@@ -14,5 +14,6 @@ libloading.workspace = true
 platform-wayland = { workspace = true }
 rustix.workspace = true
 telar = { workspace = true }
+telar-expression = { workspace = true }
 tracing = { workspace = true }
 zbus.workspace = true

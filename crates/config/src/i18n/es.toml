@@ -1,7 +1,7 @@
 [battery.warning]
 title = "Batería baja"
 body = "Queda {level}% — conecta el cargador."
-[report]
+[finding]
 unknown_tab = "el panel no tiene ninguna página llamada '{id}'"
 every_tab = "ninguna página de esta lista es del panel, así que las muestra todas"
 unknown_theme = "no hay ningún tema llamado '{name}', así que se usa nord"
@@ -21,3 +21,20 @@ twelve_hour = "Formato de 12 horas"
 format = "Formato"
 show_date = "Mostrar fecha"
 date_format = "Formato de fecha"
+[finding.option]
+unknown = "no es una de sus opciones"
+takes = "admite {what}"
+nested = "`{key}` {why}"
+between = "va de {min} a {max}"
+at_least = "es como mínimo {min}"
+[finding.control]
+bool = "true o false"
+one_of = "uno de {variants}"
+whole_number = "un número entero"
+number = "un número"
+accent = "uno de los acentos del tema ({accents})"
+text = "texto"
+list = "una lista, cada elemento {each}"
+map = "una tabla, cada valor {each}"
+table = "una tabla"
+unknown = "un `{declared}`"

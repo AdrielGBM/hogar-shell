@@ -708,6 +708,7 @@ mod tests {
             sources: &[SourceDef {
                 id: "probe",
                 fields: &[PROBE_PUBLIC, PROBE_PRIVATE, PROBE_ASKED],
+                feed: |_| {},
             }],
         },
         ModuleDescriptor {
@@ -771,15 +772,18 @@ mod tests {
     const PROBE_PUBLIC: FieldDef = FieldDef {
         name: "public",
         privacy: Privacy::Public,
+        ty: ui::descriptor::FieldType::Text,
     };
     const PROBE_PRIVATE: FieldDef = FieldDef {
         name: "private",
         privacy: Privacy::Private,
+        ty: ui::descriptor::FieldType::Text,
     };
     /// The shape the notification applications and the media title have: private on a locked screen until `[lock]` says otherwise.
     const PROBE_ASKED: FieldDef = FieldDef {
         name: "asked",
         privacy: Privacy::OnLock(|lock| lock.notification_detail == NotificationDetail::Apps),
+        ty: ui::descriptor::FieldType::Text,
     };
 
     fn probe(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -812,6 +816,7 @@ mod tests {
             id: LayoutId::new("test"),
             name: "Test".into(),
             extends: None,
+            sources: Default::default(),
             outputs: vec![OutputRule {
                 matches: OutputMatch("*".into()),
                 layers: Layers {

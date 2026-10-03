@@ -17,6 +17,8 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use util::broadcast::{Broadcast, Service};
 
+use crate::events::{Radio, ShellEvent};
+
 const BLUEZ: &str = "org.bluez";
 const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
@@ -235,6 +237,12 @@ fn read_state(conn: &Connection) -> Bluetooth {
 
 static BLUETOOTH: Service<Bluetooth> = Service::new("hogar-shell-bluetooth", run);
 
+static RADIO: Radio = Radio::new(ShellEvent::BluetoothEnabled, ShellEvent::BluetoothDisabled);
+
+fn announce_radio(state: &Bluetooth) {
+    RADIO.announce(state.available, state.powered);
+}
+
 fn run(out: &Arc<Broadcast<Bluetooth>>) {
     let Some(conn) = connection(READ_TIMEOUT) else {
         // No system bus at all. Publishing the empty state rather than nothing is what tells a subscribed chip there is no radio here, instead of leaving it waiting for a first reading that never comes.
@@ -243,6 +251,7 @@ fn run(out: &Arc<Broadcast<Bluetooth>>) {
     };
     let mut last = read_state(&conn);
     out.publish(last.clone());
+    announce_radio(&last);
 
     let (tx, rx) = sync_channel::<()>(1);
     if watch_signals(tx).is_none() {
@@ -256,6 +265,7 @@ fn run(out: &Arc<Broadcast<Bluetooth>>) {
         if current != last {
             last = current.clone();
             out.publish(current);
+            announce_radio(&last);
         }
     }
 }
@@ -345,7 +355,7 @@ pub fn set_powered(on: bool) {
     let Some(state) = current().filter(|s| s.available) else {
         return;
     };
-    BLUETOOTH.publish(Bluetooth {
+    let switched = Bluetooth {
         powered: on,
         discovering: on && state.discovering,
         devices: if on {
@@ -354,7 +364,8 @@ pub fn set_powered(on: bool) {
             Vec::new()
         },
         ..state.clone()
-    });
+    };
+    BLUETOOTH.publish(switched);
     let path = state.adapter_path;
     act("power the adapter", move |conn| {
         set_property(conn, &path, ADAPTER_IFACE, "Powered", Value::Bool(on))
@@ -377,11 +388,12 @@ pub fn set_discovering(on: bool) {
     if on && !state.powered {
         set_powered(true);
     }
-    BLUETOOTH.publish(Bluetooth {
+    let scanning = Bluetooth {
         discovering: on,
         powered: state.powered || on,
         ..state.clone()
-    });
+    };
+    BLUETOOTH.publish(scanning);
     let path = state.adapter_path;
     let method = if on {
         "StartDiscovery"

@@ -264,7 +264,7 @@ impl DashboardConfig {
                 report.error(Finding::new(
                     file,
                     format!("dashboard.tabs[{index}]"),
-                    telar::t!("report.unknown_tab", id = id),
+                    util::message!("finding.unknown_tab", id = id),
                 ));
             }
         }
@@ -276,7 +276,7 @@ impl DashboardConfig {
             report.warn(Finding::new(
                 file,
                 "dashboard.tabs",
-                telar::t!("report.every_tab"),
+                util::message!("finding.every_tab"),
             ));
         }
         report
@@ -641,6 +641,78 @@ pub struct KeyNavConfig {
     pub vim: bool,
 }
 
+/// What a command or an address a layout reads from may cost (`[automation]`): the `poll`, `listen` and `http` sources declared under a layout's `[sources]`.
+///
+/// It also sets how long the session actions wait on rules for the events that announce them.
+///
+/// Each source runs one command or request at a time, however many places read it. A run that fails is retried after a wait that doubles with each failure in a row, from `backoff_seconds` up to `max_backoff_seconds`, and is reported where `hogar-shell layout check` and the problems notice list what a layout could not do.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct AutomationConfig {
+    /// How long one run of a `poll` command, or one `http` request, may take before it is stopped and reported.
+    /// Range: 1 to 60.
+    pub timeout_seconds: u64,
+    /// The longest line a source may print, in KiB. A longer one stops the command: a reading that size is not a reading.
+    /// Range: 1 to 1024.
+    pub max_line_kib: u64,
+    /// The most one run of a `poll` command, or one `http` response, may print, in KiB.
+    /// Range: 1 to 16384.
+    pub max_run_kib: u64,
+    /// The shortest `every` a `poll` or `http` source may ask for. A layout asking for less is reported, and the source runs at this interval instead.
+    /// Range: 1 to 3600.
+    pub min_interval_seconds: u64,
+    /// How long a failing source waits before its first retry.
+    /// Range: 1 to 3600.
+    pub backoff_seconds: u64,
+    /// The longest a failing source waits between retries, however many times in a row it has failed.
+    /// Range: 1 to 86400.
+    pub max_backoff_seconds: u64,
+    /// How long logging out, rebooting or powering off waits for the rules that `logging_out`, `rebooting` or `shutting_down` triggers to finish their commands before it goes ahead anyway. 0 does not wait.
+    /// Range: 0 to 30.
+    pub shutdown_grace_seconds: u64,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: 5,
+            max_line_kib: 64,
+            max_run_kib: 1024,
+            min_interval_seconds: 1,
+            backoff_seconds: 2,
+            max_backoff_seconds: 300,
+            shutdown_grace_seconds: 3,
+        }
+    }
+}
+
+impl AutomationConfig {
+    /// What one run may cost, clamped to the documented ranges so a typo cannot lift a limit off.
+    pub fn limits(&self) -> util::process::Limits {
+        util::process::Limits {
+            timeout: Duration::from_secs(self.timeout_seconds.clamp(1, 60)),
+            max_line: self.max_line_kib.clamp(1, 1024) as usize * 1024,
+            max_run: self.max_run_kib.clamp(1, 16 * 1024) as usize * 1024,
+        }
+    }
+
+    /// The longest the session actions hold for the rules an ending-session event triggers.
+    pub fn shutdown_grace(&self) -> Duration {
+        Duration::from_secs(self.shutdown_grace_seconds.min(30))
+    }
+
+    pub fn min_interval(&self) -> Duration {
+        Duration::from_secs(self.min_interval_seconds.clamp(1, 3600))
+    }
+
+    /// The first wait after a failure and the longest any wait grows to, the second never under the first.
+    pub fn backoff(&self) -> (Duration, Duration) {
+        let first = self.backoff_seconds.clamp(1, 3600);
+        let longest = self.max_backoff_seconds.clamp(first, 86_400);
+        (Duration::from_secs(first), Duration::from_secs(longest))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,7 +734,6 @@ mod tests {
     /// A misspelt page used to cost a log line and nothing else: the dashboard opened without it and gave no sign that anything had been asked for.
     #[test]
     fn an_unknown_tab_is_reported_where_it_is_listed() {
-        telar::set_locale("en");
         let report = dashboard(&["dash", "wether", "media"]).check(Path::new("config.toml"));
 
         assert_eq!(
@@ -671,7 +742,8 @@ mod tests {
             "the report points at the entry itself, so a user with a long list can find it"
         );
         assert_eq!(
-            report.errors[0].message, "the dashboard has no page called 'wether'",
+            report.errors[0].message.english(),
+            "the dashboard has no page called 'wether'",
             "and names the id as it was written"
         );
         assert!(
@@ -683,7 +755,6 @@ mod tests {
     /// The fallback is kept — a dashboard with no pages opens onto nothing — but it is no longer silent: a user who listed only misspelt pages sees every page and would otherwise have no way to tell why.
     #[test]
     fn a_list_with_no_page_left_falls_back_to_every_page_and_says_so() {
-        telar::set_locale("en");
         let config = dashboard(&["wether"]);
 
         assert_eq!(
@@ -712,16 +783,15 @@ mod tests {
 
     #[test]
     fn the_report_speaks_the_users_language() {
-        telar::set_locale("es");
         let report = dashboard(&["wether"]).check(Path::new("config.toml"));
-        telar::set_locale("en");
 
         assert_eq!(
-            report.errors[0].message, "el panel no tiene ninguna página llamada 'wether'",
-            "the message reaches a notification, so it is translated where it is written"
+            report.errors[0].message.render_in("es"),
+            "el panel no tiene ninguna página llamada 'wether'",
+            "the message reaches a notification, which shows it in the user's language"
         );
         assert_eq!(
-            report.warnings[0].message,
+            report.warnings[0].message.render_in("es"),
             "ninguna página de esta lista es del panel, así que las muestra todas"
         );
     }

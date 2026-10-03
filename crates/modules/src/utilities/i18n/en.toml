@@ -11,4 +11,6 @@ screenshot = "Screenshot"
 record = "Record"
 settings = "Settings"
 unknown = "Unknown"
+
+[finding]
 unknown_toggle = "there is no toggle called '{id}'"

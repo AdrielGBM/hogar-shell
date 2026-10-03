@@ -2,7 +2,7 @@
 //!
 //! Everything the shell can be told to do from outside — a Hyprland keybind, a script, another shell — arrives here. Commands run on the driver thread, the same thread every surface lives on, so a handler can open a panel or publish to a service exactly as a click handler would.
 //!
-//! The protocol is one request line in and one reply out, so `hogar-shell panel toggle clock` is also `printf 'panel toggle clock\n' | socat - UNIX-CONNECT:$sock`. Replies are prefixed `ok` or `err` so a script can branch without parsing prose. A reply is usually one line but need not be — a census, a palette or a list of monitors is a table — so its end is marked by the shell closing its side, not by a newline.
+//! The protocol is one request line in and one reply out, so `hogar-shell panel toggle clock` is also `printf 'panel toggle clock\n' | socat - UNIX-CONNECT:$sock`. A request is either a line as a person writes it, or a JSON array of words — what the `hogar-shell …` client sends, its own arguments, so `shell run notify-send "a  b"` reaches the shell as the words the user's shell made of it rather than rejoined with single spaces. No target starts with `[`, so the two cannot be mistaken for each other. Replies are prefixed `ok` or `err` so a script can branch without parsing prose. A reply is usually one line but need not be — a census, a palette or a list of monitors is a table — so its end is marked by the shell closing its side, not by a newline.
 
 use std::fs::{File, TryLockError};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -101,23 +101,30 @@ fn handle_client(stream: UnixStream, tx: &EventSender<Request>) -> bool {
     true
 }
 
-/// Runs a request that arrived over the socket. Called on the driver thread by the `watch` consumer.
+/// Runs a request that arrived over the socket: a JSON array as the words it holds, anything else as a line. Called on the driver thread by the `watch` consumer.
 pub fn handle(request: Request) {
-    let reply = super::commands::dispatch(request.line());
+    let line = request.line();
+    let reply = match line.trim_start().starts_with('[') {
+        true => match serde_json::from_str::<Vec<String>>(line) {
+            Ok(words) => super::commands::dispatch_words(&words),
+            Err(e) => format!("err a request that starts with `[` is a JSON array of words: {e}"),
+        },
+        false => super::commands::dispatch(line),
+    };
     request.answer(reply);
 }
 
-/// Sends one request to a running shell and returns its reply. The client half of the protocol, used by the CLI.
+/// Sends one request, as its words, to a running shell and returns its reply. The client half of the protocol, used by the CLI.
 ///
-/// The write half is closed before reading because a reply is not always one line: a census, a palette or a list of monitors is a table, and `read_line` would take its first row and silently drop the rest — which is what `shell status`, `shell screens`, `shell clients` and `scheme colors` all did. Half-closing tells the shell the request is complete, so it answers and closes its side, and that EOF is what bounds the read. The wire format is untouched: still a request line in, still `ok`/`err` leading the reply.
-pub fn call(line: &str) -> std::io::Result<String> {
-    call_at(&socket_path(), line)
+/// The write half is closed before reading because a reply is not always one line: a census, a palette or a list of monitors is a table, and `read_line` would take its first row and silently drop the rest — which is what `shell status`, `shell screens`, `shell clients` and `scheme colors` all did. Half-closing tells the shell the request is complete, so it answers and closes its side, and that EOF is what bounds the read.
+pub fn call(words: &[String]) -> std::io::Result<String> {
+    call_at(&socket_path(), words)
 }
 
 /// [`call`] against a given socket, so the client's framing can be tested against a real one.
-fn call_at(path: &std::path::Path, line: &str) -> std::io::Result<String> {
+fn call_at(path: &std::path::Path, words: &[String]) -> std::io::Result<String> {
     let mut stream = UnixStream::connect(path)?;
-    writeln!(stream, "{line}")?;
+    writeln!(stream, "{}", serde_json::to_string(words)?)?;
     stream.flush()?;
     stream.shutdown(std::net::Shutdown::Write)?;
     let mut reply = String::new();
@@ -201,9 +208,21 @@ mod tests {
             }
         });
 
-        let (reply_tx, reply_rx) = mpsc::channel();
-        tx.send(Request::attended("shell ping", reply_tx)).unwrap();
-        assert_eq!(reply_rx.recv_timeout(REPLY_TIMEOUT).unwrap(), "ok pong");
+        let ask = |frame: &str| {
+            let (reply_tx, reply_rx) = mpsc::channel();
+            tx.send(Request::attended(frame, reply_tx)).unwrap();
+            reply_rx.recv_timeout(REPLY_TIMEOUT).unwrap()
+        };
+        assert_eq!(ask("shell ping"), "ok pong");
+        assert_eq!(
+            ask(r#"["shell", "ping"]"#),
+            "ok pong",
+            "the same request as words"
+        );
+        assert!(
+            ask(r#"["shell", "ping""#).starts_with("err a request that starts with `[`"),
+            "a broken array is refused, not read as a line"
+        );
 
         drop(tx);
         driver.join().unwrap();
@@ -230,11 +249,18 @@ mod tests {
             let mut request = String::new();
             BufReader::new(stream).read_line(&mut request).unwrap();
             writeln!(out, "{body}").unwrap();
+            request
         });
 
-        let reply = call_at(&path, "shell status").unwrap();
+        let words = ["shell", "run", "notify-send", "a  b"].map(String::from);
+        let reply = call_at(&path, &words).unwrap();
 
-        server.join().unwrap();
+        let request = server.join().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(&request).unwrap(),
+            words,
+            "the client sends its words, each one whole"
+        );
         let _ = std::fs::remove_file(&path);
         assert_eq!(
             reply.trim_end(),

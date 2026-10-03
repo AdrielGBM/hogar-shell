@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use config::{Config, GLOBAL_ONLY_SECTIONS, LoadError};
 use services::notifications::{Urgency, notify_status, withdraw_status};
 use toml::de::{DeTable, DeValue};
-use util::report::{Finding, Report, Span};
+use util::report::{ENGLISH, Finding, Message, Report, Span};
 
 /// How many new findings a notification lists before it counts the rest. A card is read at a glance; the full list is what `config check` is for.
 const LISTED: usize = 3;
@@ -42,6 +42,8 @@ pub(crate) enum Home {
     },
     /// A field of each bar's own `shape` in the layout.
     BarShape(&'static str),
+    /// A `[[rules]]` entry triggered by this event, which runs the same commands when the same thing happens.
+    Rule(&'static str),
     /// Nowhere: nothing read it, so it went without taking another name.
     Removed,
 }
@@ -91,33 +93,39 @@ pub(crate) const RETIRED: &[Retired] = &[
     removed("shape.inactive_size"),
     moved("modules.*.width", Home::Presentation("float_width")),
     moved("modules.*.height", Home::Presentation("float_height")),
+    moved("theme.export.hooks", Home::Rule("colors_changed")),
 ];
 
 impl Retired {
     /// What `config check` says about `written`, the key as the file spelled it.
-    fn message(&self, written: &str, layout: &str) -> String {
+    fn message(&self, written: &str, layout: &str) -> Message {
         match self.home {
-            Home::Layout => telar::t!("config.moved_to_layout", key = written, layout = layout),
-            Home::Presentation(option) => telar::t!(
-                "config.moved_to_instance",
+            Home::Layout => {
+                util::message!("finding.moved_to_layout", key = written, layout = layout)
+            }
+            Home::Presentation(option) => util::message!(
+                "finding.moved_to_instance",
                 key = written,
                 option = option,
                 layout = layout
             ),
-            Home::Module { module, option } => telar::t!(
-                "config.moved_to_module",
+            Home::Module { module, option } => util::message!(
+                "finding.moved_to_module",
                 key = written,
                 module = module,
                 option = option,
                 layout = layout
             ),
-            Home::BarShape(field) => telar::t!(
-                "config.moved_to_bar",
+            Home::BarShape(field) => util::message!(
+                "finding.moved_to_bar",
                 key = written,
                 field = field,
                 layout = layout
             ),
-            Home::Removed => telar::t!("config.removed", key = written),
+            Home::Rule(event) => {
+                util::message!("finding.moved_to_rule", key = written, event = event)
+            }
+            Home::Removed => util::message!("finding.removed", key = written),
         }
     }
 }
@@ -163,6 +171,91 @@ fn retired(document: &DeValue, file: &Path) -> Report {
     report
 }
 
+/// What a rule's expressions are checked against and read through: every module's readings, the variables set now and the events, with `lock` deciding which readings a `store` would show the lock screen.
+pub(crate) fn rules_environment(lock: &config::LockConfig) -> automation::Environment {
+    automation::Environment::of_rules(crate::core::modules::MODULES, lock)
+}
+
+/// What is wrong with the `[[rules]]` `config` writes: each rule against the readings, variables and commands the shell has, and every key no rule has. With the file's `text`, a mistake inside an expression or a schedule is placed on the part of it that is wrong.
+fn rules(config: &Config, file: &Path, text: Option<&str>) -> Report {
+    let problems = automation::rules::check(
+        &config.rules,
+        &rules_environment(&config.lock),
+        &crate::core::commands::resolves,
+        &config.automation,
+    );
+    let document = text
+        .and_then(|text| DeTable::parse(text).ok())
+        .map(|document| DeValue::Table(document.into_inner()));
+    let mut report = Report::default();
+    for problem in problems {
+        let mut finding = Finding::new(file, &problem.key, problem.message);
+        if let (Some(text), Some(document)) = (text, &document) {
+            finding.span = span_of(document, &problem.key).map(|value| match problem.within {
+                Some(within) => Span::within_toml_string(text, value, within),
+                None => Span::locate(text, value),
+            });
+        }
+        match problem.warning {
+            true => report.warn(finding),
+            false => report.error(finding),
+        }
+    }
+    if let Some(document) = &document {
+        report.merge(unknown_rule_keys(document, file));
+    }
+    report
+}
+
+/// Every key a `[[rules]]` entry, its `trigger` or its `store` writes that none of them has: a misspelt `when` would otherwise leave the rule firing every time, without a word.
+fn unknown_rule_keys(document: &DeValue, file: &Path) -> Report {
+    let mut report = Report::default();
+    let Some(DeValue::Array(rules)) = document.get("rules").map(|rules| rules.get_ref()) else {
+        return report;
+    };
+    for (index, rule) in rules.iter().enumerate() {
+        let DeValue::Table(table) = rule.get_ref() else {
+            continue;
+        };
+        let at = format!("rules[{index}]");
+        unknown_keys(table, "RuleConfig", &at, file, &mut report);
+        for (nested, structure) in [("trigger", "RuleTrigger"), ("store", "RuleStore")] {
+            if let Some(DeValue::Table(inner)) = table.get(nested).map(|value| value.get_ref()) {
+                unknown_keys(
+                    inner,
+                    structure,
+                    &format!("{at}.{nested}"),
+                    file,
+                    &mut report,
+                );
+            }
+        }
+    }
+    report
+}
+
+fn unknown_keys(table: &DeTable, structure: &str, at: &str, file: &Path, report: &mut Report) {
+    let known: Vec<&str> = config::schema::CONFIG_FIELDS
+        .iter()
+        .filter(|(owner, _)| *owner == structure)
+        .map(|(_, field)| *field)
+        .collect();
+    for key in table.keys() {
+        let key = key.get_ref();
+        if !known.contains(&key.as_ref()) {
+            report.error(Finding::new(
+                file,
+                format!("{at}.{key}"),
+                util::message!(
+                    "finding.unknown_rule_key",
+                    key = key.as_ref(),
+                    known = known.join(", ")
+                ),
+            ));
+        }
+    }
+}
+
 /// The sections a monitor override sets that only `config.toml` may. The loader drops them without a word; the report is where the user hears that it did.
 fn global_only(table: &DeTable, file: &Path) -> Report {
     let mut report = Report::default();
@@ -171,7 +264,7 @@ fn global_only(table: &DeTable, file: &Path) -> Report {
             report.warn(Finding::new(
                 file,
                 *section,
-                telar::t!("config.global_only", section = section),
+                util::message!("finding.global_only", section = section),
             ));
         }
     }
@@ -191,6 +284,9 @@ fn check_text(file: &Path, text: &str, global: Option<&Path>) -> Report {
         }
     };
     let mut report = problems(&config, file);
+    if global.is_none() {
+        report.merge(rules(&config, file, Some(text)));
+    }
     if let Ok(document) = DeTable::parse(text) {
         let document = DeValue::Table(document.into_inner());
         report.merge(retired(&document, file));
@@ -228,14 +324,14 @@ fn span_of(document: &DeValue, key: &str) -> Option<Range<usize>> {
 
 /// A file whose text is not a config: why, and where it stops making sense when there is `text` to place it in. Keyless, because what is wrong is the file as a whole — which is also how the notice tells a file that was not applied from one that was.
 fn unparsable(file: &Path, error: &toml::de::Error, text: Option<&str>) -> Finding {
-    let mut finding = Finding::new(file, "", error.message().trim());
+    let mut finding = Finding::new(file, "", Message::verbatim(error.message().trim()));
     finding.span = text.and_then(|text| error.span().map(|bytes| Span::locate(text, bytes)));
     finding
 }
 
 /// A file that is there and could not be read. Keyless for the same reason as [`unparsable`].
 fn unreadable(file: &Path, error: &std::io::Error) -> Finding {
-    Finding::new(file, "", error.to_string())
+    Finding::new(file, "", Message::verbatim(error.to_string()))
 }
 
 /// The monitor overrides beside `path` that there is a file to read for.
@@ -281,7 +377,9 @@ pub fn running(config: &Config, path: &Path, failed: Option<&LoadError>) -> Repo
         Some(LoadError::Io(error)) => report.error(unreadable(path, error)),
         None => {
             report.merge(problems(config, path));
-            if let Ok(text) = std::fs::read_to_string(path) {
+            let text = std::fs::read_to_string(path).ok();
+            report.merge(rules(config, path, text.as_deref()));
+            if let Some(text) = text {
                 report.merge(retired_in(path, &text));
             }
         }
@@ -323,7 +421,7 @@ fn nothing_wrong(path: &Path) -> String {
 }
 
 /// What makes two findings the same problem: the file and what is wrong, not where in the file it is. Moving a module in front of a misspelt one shifts its index, and a notice redrawn every time a list was reordered would be a notice about the reordering.
-fn identity(finding: &Finding) -> (PathBuf, String) {
+fn identity(finding: &Finding) -> (PathBuf, Message) {
     (finding.file.clone(), finding.message.clone())
 }
 
@@ -365,11 +463,12 @@ impl Notices for Daemon {
     }
 }
 
-/// The config-problems notice as it stands: which of the daemon's notices it is, and the problems it shows.
+/// The config-problems notice as it stands: which of the daemon's notices it is, the problems it shows, and the language it shows them in.
 #[derive(Default)]
 struct Notice {
     id: Option<u32>,
-    showing: HashSet<(PathBuf, String)>,
+    showing: HashSet<(PathBuf, Message)>,
+    language: String,
 }
 
 thread_local! {
@@ -386,11 +485,11 @@ pub(crate) fn fresh_notice() {
 #[cfg(test)]
 pub(crate) fn showing() -> Vec<String> {
     let mut messages: Vec<String> = NOTICE.with(|notice| {
+        let notice = notice.borrow();
         notice
-            .borrow()
             .showing
             .iter()
-            .map(|(_, message)| message.clone())
+            .map(|(_, message)| message.render_in(&notice.language))
             .collect()
     });
     messages.sort();
@@ -411,10 +510,11 @@ pub fn announce(report: &Report) {
 }
 
 fn announce_to(report: &Report, notices: &mut impl Notices) {
-    let current: HashSet<(PathBuf, String)> = report.findings().map(identity).collect();
+    let current: HashSet<(PathBuf, Message)> = report.findings().map(identity).collect();
+    let language = telar::current_locale().unwrap_or_else(|| ENGLISH.to_string());
     NOTICE.with(|notice| {
         let mut notice = notice.borrow_mut();
-        if current == notice.showing {
+        if current == notice.showing && language == notice.language {
             return;
         }
         let mut logged = HashSet::new();
@@ -431,42 +531,39 @@ fn announce_to(report: &Report, notices: &mut impl Notices) {
         } else if report.errors.iter().any(|finding| finding.key.is_empty()) {
             notice.id = notices.post(
                 notice.id,
-                &telar::t!("config.error_title"),
-                &card(report),
+                &telar::t!("notice.error_title"),
+                &card(report, &language),
                 Urgency::Critical,
             );
         } else {
             notice.id = notices.post(
                 notice.id,
-                &telar::t!("config.problems_title"),
-                &card(report),
+                &telar::t!("notice.problems_title"),
+                &card(report, &language),
                 Urgency::Normal,
             );
         }
         notice.showing = current;
+        notice.language = language;
     });
 }
 
-/// The notice's text: each problem once, by what is wrong, then how many more there are and where to find them all.
-fn card(report: &Report) -> String {
+/// The notice's text, in `language`: each problem once, by what is wrong, then how many more there are and where to find them all.
+fn card(report: &Report, language: &str) -> String {
     let mut seen = HashSet::new();
-    let problems: Vec<&str> = report
+    let problems: Vec<String> = report
         .findings()
-        .map(|finding| finding.message.as_str())
-        .filter(|message| seen.insert(*message))
+        .map(|finding| finding.message.render_in(language))
+        .filter(|message| seen.insert(message.clone()))
         .collect();
-    let mut lines: Vec<String> = problems
-        .iter()
-        .take(LISTED)
-        .map(|message| message.to_string())
-        .collect();
+    let mut lines: Vec<String> = problems.iter().take(LISTED).cloned().collect();
     if problems.len() > LISTED {
         lines.push(telar::t!(
-            "config.problems_more",
+            "notice.problems_more",
             count = problems.len() - LISTED
         ));
     }
-    lines.push(telar::t!("config.problems_hint"));
+    lines.push(telar::t!("notice.problems_hint"));
     lines.join("\n")
 }
 
@@ -485,7 +582,6 @@ toggles = ["wifi", "teleporter"]
     /// The report, snapshotted: one entry each for the tab and the toggle, at the line and column the id is written, in the order `config check` prints them — and nothing for the ids that are fine.
     #[test]
     fn a_config_with_an_unknown_tab_and_toggle_reports_both() {
-        telar::set_locale("en");
         let report = check_text(Path::new("config.toml"), FIXTURE, None);
 
         assert_eq!(
@@ -512,7 +608,6 @@ bse = "#2e3440"
     /// Each is reported once, at the line it is written on, by the owner that knows the name: the cluster for its icons, the palette for its names and tokens. The theme and the accent are warnings, since the shell puts a palette and an accent of its own in their place.
     #[test]
     fn every_other_silent_drop_is_reported_where_it_is_written() {
-        telar::set_locale("en");
         let report = check_text(Path::new("config.toml"), MORE_DROPS, None);
 
         assert_eq!(
@@ -528,7 +623,6 @@ bse = "#2e3440"
     /// Every key that used to say where something is drawn is now the layout's to say, so writing one is an error rather than something silently followed, and it names the layout file to move it to.
     #[test]
     fn a_config_naming_a_retired_layout_key_reports_it_at_the_layout_file() {
-        telar::set_locale("en");
         let layout = surfaces::layouts::file_for_edits().display().to_string();
         let text = r#"[bars.top]
 start = ["workspaces"]
@@ -572,8 +666,8 @@ width = 320
             );
             assert_eq!(
                 finding.message,
-                telar::t!(
-                    "config.moved_to_layout",
+                util::message!(
+                    "finding.moved_to_layout",
                     key = *key,
                     layout = layout.as_str()
                 ),
@@ -590,41 +684,48 @@ width = 320
                  config.toml:14:8: error: stack.edge: {}\n\
                  config.toml:15:9: error: stack.align: {}\n\
                  config.toml:16:9: error: stack.width: {}\n",
-                telar::t!(
-                    "config.moved_to_layout",
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "bars",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_layout",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "corners",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_layout",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "widgets",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_layout",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "general.show_over_fullscreen",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_layout",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "stack.edge",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_layout",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "stack.align",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_layout",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "stack.width",
                     layout = layout.as_str()
-                ),
+                )
+                .english(),
             ),
             "the exact rendering `config check` prints, one line per retired key"
         );
@@ -633,7 +734,6 @@ width = 320
     /// DEC-18's keys: a panel's and a hover card's sizes are each module's presentation now, the centre's depth an option of the notifications module, and `[shape]` no fallback for any bar — so each is an error naming the option that took its place, placed where the file wrote it.
     #[test]
     fn a_size_or_shape_key_that_moved_into_the_layout_names_where_it_lives_now() {
-        telar::set_locale("en");
         let layout = surfaces::layouts::file_for_edits().display().to_string();
         let text = "[panels]\ndrag_threshold = 40\n\n[panels.drawer]\nwidth = 400\n\n\
                     [popouts]\nmax_height = 320\n\n[sidebar]\nsize = 500\n\n\
@@ -647,37 +747,42 @@ width = 320
                  config.toml:11:8: error: sidebar.size: {}\n\
                  config.toml:15:8: error: shape.mode: {}\n\
                  config.toml:18:9: error: modules.settings.width: {}\n",
-                telar::t!(
-                    "config.moved_to_instance",
+                util::message!(
+                    "finding.moved_to_instance",
                     key = "panels.drawer.width",
                     option = "drawer_width",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_instance",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_instance",
                     key = "popouts.max_height",
                     option = "popout_max_height",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_module",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_module",
                     key = "sidebar.size",
                     module = "notifications",
                     option = "sidebar_size",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_bar",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_bar",
                     key = "shape.mode",
                     field = "mode",
                     layout = layout.as_str()
-                ),
-                telar::t!(
-                    "config.moved_to_instance",
+                )
+                .english(),
+                util::message!(
+                    "finding.moved_to_instance",
                     key = "modules.settings.width",
                     option = "float_width",
                     layout = layout.as_str()
-                ),
+                )
+                .english(),
             ),
             "the keys that stayed — `drag_threshold`, `frame` — say nothing"
         );
@@ -693,14 +798,13 @@ width = 320
     /// D-37: `[shape] inactive_size` was read by nothing, so it has no new home to point at — it is reported as gone, where it is written, and `frame` beside it stays quiet.
     #[test]
     fn a_key_nothing_read_is_reported_as_gone_rather_than_moved() {
-        telar::set_locale("en");
         let text = "[shape]\nframe = true\ninactive_size = 6\n";
         let report = check_text(Path::new("config.toml"), text, None);
         assert_eq!(
             report.render(),
             format!(
                 "config.toml:3:17: error: shape.inactive_size: {}\n",
-                telar::t!("config.removed", key = "shape.inactive_size")
+                util::message!("finding.removed", key = "shape.inactive_size").english()
             )
         );
         assert!(
@@ -710,10 +814,155 @@ width = 320
         );
     }
 
+    /// D-22: the export's own command list is gone, and what it did is a rule on `colors_changed` — so writing it is an error that says how to write that rule.
+    #[test]
+    fn the_export_hooks_point_at_a_rule_on_colors_changed() {
+        let text = "[theme.export]\nenabled = true\nhooks = [\"makoctl reload\"]\n";
+        let report = check_text(Path::new("config.toml"), text, None);
+        assert_eq!(
+            report.render(),
+            format!(
+                "config.toml:3:9: error: theme.export.hooks: {}\n",
+                util::message!(
+                    "finding.moved_to_rule",
+                    key = "theme.export.hooks",
+                    event = "colors_changed"
+                )
+                .english()
+            )
+        );
+        assert!(
+            report
+                .render()
+                .contains("trigger = { event = \"colors_changed\" }"),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// A rule is checked where it is written: an expression's mistake at the part of the expression that is wrong, a command line the shell lacks at that line, a key no rule has where it is written, and a second rule with the same name at its `id`.
+    #[test]
+    fn a_rule_is_checked_where_it_is_written_down_to_the_part_of_an_expression() {
+        let text = r#"[[rules]]
+id = "low"
+trigger = { edge = "$battery.levle < 15" }
+run = ["toast show low", "toast shw low"]
+wen = "true"
+
+[[rules]]
+id = "low"
+trigger = { event = "colours_changed" }
+run = ["toast show x"]
+"#;
+        let report = check_text(Path::new("config.toml"), text, None);
+        let placed: Vec<(String, String)> = report
+            .findings()
+            .map(|finding| (finding.location(), finding.key.clone()))
+            .collect();
+        assert_eq!(
+            placed,
+            [
+                (
+                    "config.toml:3:21".to_string(),
+                    "rules[0].trigger.edge".to_string()
+                ),
+                (
+                    "config.toml:4:26".to_string(),
+                    "rules[0].run[1]".to_string()
+                ),
+                (
+                    "config.toml:9:21".to_string(),
+                    "rules[1].trigger.event".to_string()
+                ),
+                ("config.toml:8:6".to_string(), "rules[1].id".to_string()),
+                ("config.toml:5:7".to_string(), "rules[0].wen".to_string()),
+            ],
+            "{}",
+            report.render()
+        );
+        let rendered = report.render();
+        assert!(rendered.contains("`$battery` has no `levle`"), "{rendered}");
+        assert!(
+            rendered.contains("`toast shw low` is not a command"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`colours_changed` is not an event"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`wen` is not something a rule has"),
+            "{rendered}"
+        );
+    }
+
+    /// TA-8: a `store` that keeps what the lock screen hides in a variable, which the lock screen reads, is warned of — under the file's own `[lock]`, which decides what the lock screen hides.
+    #[test]
+    fn keeping_a_reading_the_lock_screen_hides_follows_the_file_s_lock_section() {
+        let rule = r#"[[rules]]
+id = "senders"
+trigger = { event = "started" }
+store = { var = "senders", value = "$notifications.apps" }
+"#;
+        let warned = |text: &str| {
+            let report = check_text(Path::new("config.toml"), text, None);
+            assert!(report.errors.is_empty(), "{}", report.render());
+            report.warnings.iter().any(|finding| {
+                finding
+                    .message
+                    .english()
+                    .contains("hidden on the lock screen")
+            })
+        };
+        assert!(warned(rule), "the default lock screen hides who wrote");
+        assert!(
+            !warned(&format!("[lock]\nnotification_detail = \"apps\"\n\n{rule}")),
+            "a lock screen that shows who wrote shows nothing more through the variable"
+        );
+    }
+
+    /// An interval shorter than `[automation]` allows runs at the limit, so it is a warning, not a rule that does not load.
+    #[test]
+    fn a_rule_asking_for_less_than_the_shortest_interval_is_warned_of() {
+        let text = r#"[[rules]]
+id = "often"
+trigger = { every = "200ms" }
+run = ["toast show often"]
+"#;
+        let report = check_text(Path::new("config.toml"), text, None);
+        assert!(report.errors.is_empty(), "{}", report.render());
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|finding| finding.key == "rules[0].trigger.every"
+                    && finding.message.english().contains("min_interval_seconds")),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn rules_written_right_report_nothing() {
+        let text = r#"[[rules]]
+id = "reload-gtk"
+trigger = { event = "colors_changed" }
+run = ["shell run makoctl reload"]
+
+[[rules]]
+id = "evening"
+trigger = { schedule = "19:00 mon-fri" }
+when = "$power.profile != 'power-saver'"
+run = ["toast show evening"]
+store = { var = "evening_from", value = "$clock.time" }
+"#;
+        let report = check_text(Path::new("config.toml"), text, None);
+        assert!(report.is_clean(), "{}", report.render());
+    }
+
     /// A file that never wrote any of the retired keys reports none of them.
     #[test]
     fn a_config_naming_no_retired_key_reports_none() {
-        telar::set_locale("en");
         let report = retired(
             &{
                 let document = toml::de::DeTable::parse("[dashboard]\ntabs = [\"dash\"]\n")
@@ -728,7 +977,6 @@ width = 320
     /// A monitor override can write a retired key just as easily as `config.toml`, and is checked the same way, against the file it is actually in.
     #[test]
     fn a_monitor_override_naming_a_retired_key_is_reported_too() {
-        telar::set_locale("en");
         let layout = surfaces::layouts::file_for_edits().display().to_string();
         let report = check_text(
             Path::new("monitors/DP-1/config.toml"),
@@ -740,11 +988,12 @@ width = 320
             report.render(),
             format!(
                 "monitors/DP-1/config.toml:1:2: error: bars: {}\n",
-                telar::t!(
-                    "config.moved_to_layout",
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "bars",
                     layout = layout.as_str()
                 )
+                .english()
             ),
         );
     }
@@ -767,7 +1016,6 @@ width = 320
     /// `config check` answers a script as well as a person: it fails on an error and only on one, and when there is nothing to report it says so and names what it read — the way `deps` says "nothing is missing" rather than printing nothing.
     #[test]
     fn config_check_fails_on_an_error_and_says_plainly_when_nothing_is_wrong() {
-        telar::set_locale("en");
         let dir = util::paths::isolated_root()
             .expect("a test process resolves under its scratch root")
             .join("check-command");
@@ -808,7 +1056,6 @@ width = 320
     /// Only what the file actually wrote has a place in it: a monitor override that names `[general]` gets a warning pointing at it, and the section it may set gets nothing.
     #[test]
     fn a_monitor_override_setting_a_global_section_is_warned_about() {
-        telar::set_locale("en");
         let report = check_text(
             Path::new("monitors/DP-1/config.toml"),
             "[general]\nlanguage = \"es\"\n\n[dashboard]\ntabs = [\"dash\"]\n",
@@ -996,7 +1243,7 @@ width = 320
         );
         assert_eq!(
             daemon.heading,
-            Some((telar::t!("config.error_title"), Urgency::Critical)),
+            Some((telar::t!("notice.error_title"), Urgency::Critical)),
             "titled as the config not applied, and waiting to be read"
         );
 
@@ -1011,7 +1258,7 @@ width = 320
         );
         assert_eq!(
             daemon.heading,
-            Some((telar::t!("config.problems_title"), Urgency::Normal)),
+            Some((telar::t!("notice.problems_title"), Urgency::Normal)),
             "and back to a card about problems in a config that applied"
         );
 
@@ -1031,19 +1278,65 @@ width = 320
             ("es", "Problemas en la configuración"),
         ] {
             telar::set_locale(locale);
-            assert_eq!(telar::t!("config.problems_title"), title);
-            assert!(!telar::t!("config.problems_hint").is_empty());
-            assert!(telar::t!("config.problems_more", count = 2).contains('2'));
-            assert!(telar::t!("config.global_only", section = "general").contains("[general]"));
+            assert_eq!(telar::t!("notice.problems_title"), title);
+            assert!(!telar::t!("notice.problems_hint").is_empty());
+            assert!(telar::t!("notice.problems_more", count = 2).contains('2'));
             assert!(
-                telar::t!(
-                    "config.moved_to_layout",
+                util::message!("finding.global_only", section = "general")
+                    .render_in(locale)
+                    .contains("[general]")
+            );
+            assert!(
+                util::message!(
+                    "finding.moved_to_layout",
                     key = "bars",
                     layout = "layouts/custom.toml"
                 )
+                .render_in(locale)
                 .contains("bars")
             );
         }
         telar::set_locale("en");
+    }
+
+    /// DEC-27: one finding, two readers. `config check` answers in English whatever language the shell speaks, and the notice the running shell raises says the same finding in the user's language.
+    #[test]
+    fn a_finding_is_english_on_the_command_line_and_the_user_s_language_on_the_notice() {
+        let dir = util::paths::isolated_root()
+            .expect("a test process resolves under its scratch root")
+            .join("check-languages");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[dashboard]\ntabs = [\"wether\", \"dash\"]\n").expect("a config");
+
+        telar::set_locale("es");
+        fresh_notice();
+        let failed = command(&path).expect_err("an unknown page is an error");
+        let mut daemon = Cards::default();
+        announce_to(&on_disk(&path), &mut daemon);
+        telar::set_locale("en");
+
+        assert!(
+            failed.contains("dashboard.tabs[0]: the dashboard has no page called 'wether'"),
+            "the command line answers in English: {failed}"
+        );
+        let body = &daemon.shown[0].1;
+        assert!(
+            body.contains("el panel no tiene ninguna página llamada 'wether'"),
+            "the notice speaks the user's language: {body}"
+        );
+        assert_eq!(
+            daemon.heading.as_ref().map(|(title, _)| title.as_str()),
+            Some("Problemas en la configuración")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_finding_and_notice_has_words_in_every_language_the_shell_speaks() {
+        assert_eq!(
+            util::report::untranslated(&crate::__rsx_i18n::CATALOG, &["finding.", "notice."]),
+            Vec::<String>::new()
+        );
     }
 }

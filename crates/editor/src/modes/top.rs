@@ -287,6 +287,7 @@ fn written_group(group: &ResolvedGroup) -> Group {
         id: group.id.clone(),
         kind: Some(group.kind),
         stacked: group.stacked.then_some(true),
+        repeat: group.repeat.as_ref().map(|repeat| repeat.expr.clone()),
         ..Group::default()
     }
 }
@@ -685,6 +686,7 @@ pub(crate) fn chip_moved(
     let Part::Instance(from_group, id) = &node.part else {
         return Err(EditError::nothing());
     };
+    let id = &id.template();
     let layer = node.layer;
     let mut work = Work::new(layout, desktop, layer);
     let source = bar(&work, &node.area)?;
@@ -959,7 +961,7 @@ fn written_as(area: &ResolvedArea) -> Area {
         above_fullscreen: Some(area.above_fullscreen),
         within: Some(area.within),
         style: area.style.clone(),
-        visible: area.visible.clone(),
+        visible: area.visible.as_ref().map(|visible| visible.expr.clone()),
         groups: area
             .groups
             .iter()

@@ -5,7 +5,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::resolve::{ActiveWorkspace, Resolved, ResolvedAreaKind, resolve};
-    use crate::validate::{Catalogue, validate, validate_resolved};
+    use crate::validate::{Catalogue, validate, validate_resolved, validate_unsets};
     use crate::*;
 
     /// A catalogue that knows three modules: `clock` and `battery` are readings, `mixer` can be interacted with.
@@ -28,13 +28,74 @@ mod tests {
             line.starts_with("panel toggle")
         }
 
-        fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, String)> {
+        fn option_problems(
+            &self,
+            module: &str,
+            options: &toml::Table,
+        ) -> Vec<(String, util::report::Message)> {
             match module {
                 "clock" => config::fields::check(
                     &config::fields::section("clock").expect("[clock]"),
                     options,
                 ),
                 _ => Vec::new(),
+            }
+        }
+
+        fn is_service_source(&self, name: &str) -> bool {
+            name == "battery"
+        }
+
+        /// `$battery.percent` is a public number, `$battery.cells` a list of them, and `$secrets` a private list that reads empty on the lock; `$temp` is a command source that is not `lock_safe`.
+        fn compile_with(
+            &self,
+            source: &str,
+            on_lock: bool,
+            locals: &crate::Locals,
+        ) -> Result<telar_expression::Compiled, telar_expression::Errors> {
+            use telar_expression::{HostError, Reference, Registry, Type};
+            let names = move |reference: &Reference| {
+                if reference.path.is_empty()
+                    && let Some(ty) = locals.get(&reference.name)
+                {
+                    return Ok(ty.clone());
+                }
+                match reference.dotted().as_str() {
+                    "battery.percent" => Ok(Type::Number),
+                    "battery.cells" => Ok(Type::list(Type::Number)),
+                    "secrets" => Ok(Type::list(Type::Text)),
+                    "temp" if on_lock => Err(HostError::new(
+                        "test.lock",
+                        "`$temp` runs a command, and the lock screen reads only sources marked `lock_safe = true`",
+                    )),
+                    "temp" => Ok(Type::Number),
+                    other => Err(HostError::new(
+                        "test.unknown",
+                        format!("nothing is called `${other}`"),
+                    )),
+                }
+            };
+            telar_expression::compile(source, &names, &Registry::standard())
+        }
+
+        /// `$later` is a variable not set yet.
+        fn awaits_variable(&self, source: &str, error: &telar_expression::Error) -> bool {
+            source.get(error.span.range()) == Some("$later")
+        }
+
+        fn binding_type(
+            &self,
+            module: &str,
+            path: &str,
+        ) -> Result<telar_expression::Type, util::report::Message> {
+            use telar_expression::Type;
+            match (module, path) {
+                (_, "accent") => Ok(Type::Color),
+                ("clock", "show_date") => Ok(Type::Bool),
+                ("clock", "date_format") => Ok(Type::Text),
+                _ => Err(util::report::Message::verbatim(format!(
+                    "`{module}` has no option `{path}` to bind"
+                ))),
             }
         }
     }
@@ -444,7 +505,9 @@ mod tests {
             "the rule did not apply"
         );
         assert!(
-            report.findings().any(|f| f.message.contains("Hyprland")),
+            report
+                .findings()
+                .any(|f| f.message.key() == Some("finding.workspace_id_needs_hyprland")),
             "and said why: {}",
             report.render()
         );
@@ -508,7 +571,9 @@ mod tests {
         let parsed = layout(&LOCKED.replace(r#"module = "clock""#, r#"module = "mixer""#));
         let report = validate(&parsed, &Modules);
         assert!(
-            report.findings().any(|f| f.message.contains("readings")),
+            report
+                .findings()
+                .any(|f| f.message.key() == Some("finding.lock_interactive")),
             "{}",
             report.render()
         );
@@ -563,7 +628,9 @@ mod tests {
         let resolved = alone(&parsed, "DP-1");
         let report = validate_resolved(&resolved, "layouts/test.toml", &theme());
         assert!(
-            report.findings().any(|f| f.message.contains("no prompt")),
+            report
+                .findings()
+                .any(|f| f.message.key() == Some("finding.no_prompt")),
             "{}",
             report.render()
         );
@@ -628,7 +695,7 @@ mod tests {
             "#,
         );
         let report = validate(&parsed, &Modules);
-        let messages: Vec<&str> = report.findings().map(|f| f.message.as_str()).collect();
+        let messages: Vec<String> = report.findings().map(|f| f.message.english()).collect();
         assert!(
             messages.iter().any(|m| m.contains("`ghost`")),
             "{messages:?}"
@@ -651,15 +718,11 @@ mod tests {
             "#
         ));
         let report = validate(&parsed, &Modules);
+        let said: Vec<String> = report.findings().map(|f| f.message.english()).collect();
         let found: Vec<(&str, &str, &str)> = report
             .findings()
-            .map(|f| {
-                (
-                    f.file.to_str().unwrap_or(""),
-                    f.key.as_str(),
-                    f.message.as_str(),
-                )
-            })
+            .zip(&said)
+            .map(|(f, said)| (f.file.to_str().unwrap_or(""), f.key.as_str(), said.as_str()))
             .collect();
         let at = "outputs.*.layers.top.areas.bar-top.groups.start.children.clock-1.options";
         assert_eq!(
@@ -681,6 +744,487 @@ mod tests {
         );
     }
 
+    const BINDING_AT: &str =
+        "outputs.*.layers.top.areas.bar-top.groups.start.children.clock-1.bindings";
+
+    /// Every binding is compiled where it is written, and each mistake is a finding at its key with the span inside the expression it is about.
+    #[test]
+    fn a_binding_that_does_not_compile_is_reported_at_its_key_with_its_span() {
+        let parsed = layout(&format!(
+            r#"{ONE_BAR}
+            [outputs.layers.top.areas.groups.children.bindings]
+            show_date = "$battery.percent > 50 && $nope"
+            date_format = "fmt('{{}}%', $battery.percent)"
+            "#
+        ));
+        let report = validate(&parsed, &Modules);
+        let said: Vec<String> = report.findings().map(|f| f.message.english()).collect();
+        let found: Vec<(&str, &str, Option<std::ops::Range<usize>>)> = report
+            .findings()
+            .zip(&said)
+            .map(|(f, said)| {
+                (
+                    f.key.as_str(),
+                    said.as_str(),
+                    f.span.as_ref().map(|span| span.bytes.clone()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                format!("{BINDING_AT}.show_date").as_str(),
+                "nothing is called `$nope`",
+                Some(25..30)
+            )],
+            "{}",
+            report.render()
+        );
+    }
+
+    /// Variables are set while the shell runs, so a layout may name one before it is: a warning where the variable is read, every other mistake still an error, and nothing refused by `layout set`.
+    #[test]
+    fn a_variable_not_set_yet_is_a_warning_where_it_is_read() {
+        let parsed = layout(&format!(
+            r#"{ONE_BAR}
+            [outputs.layers.top.areas.groups.children.bindings]
+            show_date = "$later && $battery.percent > 50"
+            date_format = "$later + $nope"
+            "#
+        ));
+        let report = validate(&parsed, &Modules);
+        let said = |findings: &[util::report::Finding]| {
+            findings
+                .iter()
+                .map(|f| {
+                    (
+                        f.key.trim_start_matches(BINDING_AT).to_string(),
+                        f.span.as_ref().map(|span| span.bytes.clone()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            said(&report.errors),
+            [(".date_format".to_string(), Some(9..14))],
+            "{}",
+            report.render()
+        );
+        assert_eq!(
+            said(&report.warnings),
+            [
+                (".date_format".to_string(), Some(0..6)),
+                (".show_date".to_string(), Some(0..6)),
+            ],
+            "{}",
+            report.render()
+        );
+        let expr = Expr("$later".to_string());
+        assert!(binding_errors(&Modules, Some("clock"), "show_date", &expr, false).is_empty());
+    }
+
+    #[test]
+    fn a_binding_must_give_the_type_its_option_takes() {
+        let parsed = layout(&format!(
+            r##"{ONE_BAR}
+            [outputs.layers.top.areas.groups.children.bindings]
+            show_date = "$battery.percent"
+            accent = "#88c0d0"
+            colour = "true"
+            "##
+        ));
+        let report = validate(&parsed, &Modules);
+        let said: Vec<String> = report.findings().map(|f| f.message.english()).collect();
+        let found: Vec<(&str, &str)> = report
+            .findings()
+            .zip(&said)
+            .map(|(f, said)| (f.key.as_str(), said.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    format!("{BINDING_AT}.colour").as_str(),
+                    "`clock` has no option `colour` to bind"
+                ),
+                (
+                    format!("{BINDING_AT}.show_date").as_str(),
+                    "expected bool, but this gives number"
+                ),
+            ],
+            "{}",
+            report.render()
+        );
+        let mismatch = report
+            .findings()
+            .find(|f| f.key.ends_with("show_date"))
+            .and_then(|f| f.span.clone())
+            .expect("located");
+        assert_eq!(
+            mismatch.bytes,
+            0..16,
+            "the whole expression is the wrong type"
+        );
+    }
+
+    #[test]
+    fn an_area_s_visible_has_to_give_true_or_false() {
+        let parsed = layout(&format!(
+            r#"{ONE_BAR}
+            [[outputs.layers.top.areas]]
+            id = "shown"
+            kind = "free"
+            rect = {{ x = 0.0, y = 0.0, w = 0.5, h = 0.5 }}
+            visible = "$battery.percent > 50"
+            [[outputs.layers.top.areas]]
+            id = "counted"
+            kind = "free"
+            rect = {{ x = 0.0, y = 0.0, w = 0.5, h = 0.5 }}
+            visible = "$battery.percent"
+            "#
+        ));
+        let report = validate(&parsed, &Modules);
+        let keys: Vec<&str> = report.findings().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["outputs.*.layers.top.areas.counted.visible"],
+            "{}",
+            report.render()
+        );
+    }
+
+    /// A reserving area hidden by its expression still holds its edge, since reservation never follows a workspace or a reading (F-6.7), and that is worth saying.
+    #[test]
+    fn a_reserving_area_with_a_visible_expression_is_warned_about() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            reserve = true
+            visible = "$battery.percent > 50"
+            "#,
+        );
+        let report = validate(&parsed, &Modules);
+        assert!(report.errors.is_empty(), "{}", report.render());
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|f| f.key == "outputs.*.layers.top.areas.bar-top.visible"),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// On the lock layer an expression reads what anyone may: a command source that is not `lock_safe` is refused there and nowhere else, and the lock's own check says so.
+    #[test]
+    fn the_lock_layer_refuses_a_command_source_that_is_not_lock_safe() {
+        let on = |layer: &str| {
+            layout(&format!(
+                r#"
+                id = "test"
+                [[outputs]]
+                match = "*"
+                [[outputs.layers.{layer}.areas]]
+                id = "readings"
+                kind = "free"
+                rect = {{ x = 0.0, y = 0.0, w = 0.5, h = 0.5 }}
+                visible = "$temp > 30"
+                [[outputs.layers.{layer}.areas.groups]]
+                id = "g"
+                place = "zone"
+                zone = "start"
+                [[outputs.layers.{layer}.areas.groups.children]]
+                id = "clock-1"
+                module = "clock"
+                [outputs.layers.{layer}.areas.groups.children.bindings]
+                show_date = "$temp > 30"
+                "#
+            ))
+        };
+        assert!(
+            validate(&on("desktop"), &Modules).is_clean(),
+            "{}",
+            validate(&on("desktop"), &Modules).render()
+        );
+
+        let report = crate::validate_lock(&on("lock"), &Modules);
+        assert!(
+            report.errors.is_empty(),
+            "a binding the lock cannot read is left out, never a reason to fall back to the minimal lock: {}",
+            report.render()
+        );
+        let keys: Vec<&str> = report.findings().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "outputs.*.layers.lock.areas.readings.visible",
+                "outputs.*.layers.lock.areas.readings.groups.g.children.clock-1.bindings.show_date",
+            ],
+            "{}",
+            report.render()
+        );
+        assert!(
+            report
+                .findings()
+                .all(|f| f.message.english().contains("lock_safe")),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// `layout check` has the file's text, so it points at the mistake in the file rather than inside the expression.
+    #[test]
+    fn an_expression_finding_is_placed_in_the_file_it_was_written_in() {
+        let text = format!(
+            r#"{ONE_BAR}
+            [outputs.layers.top.areas.groups.children.bindings]
+            show_date = "1 > $nope"
+            "#
+        );
+        let mut report = validate(&layout(&text), &Modules);
+        crate::locate_expressions(&text, &mut report);
+        let span = report
+            .findings()
+            .next()
+            .and_then(|f| f.span.clone())
+            .expect("a located finding");
+        assert_eq!(&text[span.bytes.clone()], "$nope");
+        assert_eq!(
+            span.line,
+            text[..span.bytes.start].matches('\n').count() + 1
+        );
+    }
+
+    /// `ONE_BAR`'s start group repeated over `repeat`, its clock bound as `bindings` says.
+    fn repeated(repeat: &str, bindings: &str) -> String {
+        format!(
+            r#"{ONE_BAR}
+            [outputs.layers.top.areas.groups.children.bindings]
+            {bindings}
+            "#
+        )
+        .replacen(
+            "zone = \"start\"",
+            &format!("zone = \"start\"\n        repeat = \"{repeat}\""),
+            1,
+        )
+    }
+
+    const START_AT: &str = "outputs.*.layers.top.areas.bar-top.groups.start";
+
+    /// Inside a repeated group a child reads its item, of the list's element type, and its index; outside one neither name exists.
+    #[test]
+    fn a_repeated_group_s_children_read_their_item_and_index() {
+        let parsed = layout(&repeated(
+            "$battery.cells",
+            "show_date = \"$item > 50 && $index < 3\"\ndate_format = \"fmt('{}', $item)\"",
+        ));
+        let report = validate(&parsed, &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+        assert_eq!(
+            alone(&parsed, "DP-1")
+                .layer(LayerKind::Top)
+                .expect("a top layer")
+                .areas[0]
+                .groups[0]
+                .repeat
+                .as_ref()
+                .map(|repeat| &repeat.expr),
+            Some(&Expr("$battery.cells".into()))
+        );
+
+        let typed = validate(
+            &layout(&repeated("$battery.cells", "show_date = \"$item\"")),
+            &Modules,
+        );
+        let said: Vec<String> = typed.findings().map(|f| f.message.english()).collect();
+        let found: Vec<(&str, &str)> = typed
+            .findings()
+            .zip(&said)
+            .map(|(f, said)| (f.key.as_str(), said.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                format!("{BINDING_AT}.show_date").as_str(),
+                "expected bool, but this gives number"
+            )],
+            "`$item` is a number here, since the list is of numbers: {}",
+            typed.render()
+        );
+
+        let outside = validate(
+            &layout(&format!(
+                "{ONE_BAR}\n[outputs.layers.top.areas.groups.children.bindings]\nshow_date = \"$index > 0\"\n"
+            )),
+            &Modules,
+        );
+        assert!(
+            outside
+                .findings()
+                .any(|f| f.key.ends_with("show_date") && f.message.english().contains("$index")),
+            "{}",
+            outside.render()
+        );
+    }
+
+    /// A `repeat` has to give a list, and its mistakes are located in the file like any expression's. One that gives no list is reported there once, not again by every child that reads `$item`.
+    #[test]
+    fn a_repeat_that_gives_no_list_is_reported_once_at_its_key() {
+        let text = repeated("$battery.percent", "show_date = \"$item > 1\"");
+        let report = validate(&layout(&text), &Modules);
+        let said: Vec<String> = report.findings().map(|f| f.message.english()).collect();
+        let found: Vec<(&str, &str)> = report
+            .findings()
+            .zip(&said)
+            .map(|(f, said)| (f.key.as_str(), said.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                format!("{START_AT}.repeat").as_str(),
+                "expected a list to repeat the group's children over, but this gives number"
+            )],
+            "{}",
+            report.render()
+        );
+
+        let text = repeated("$battery.nope", "show_date = \"$item > 1\"");
+        let mut report = validate(&layout(&text), &Modules);
+        crate::locate_expressions(&text, &mut report);
+        let finding = report.findings().next().expect("a finding");
+        assert_eq!(finding.key, format!("{START_AT}.repeat"));
+        let span = finding.span.clone().expect("located");
+        assert_eq!(&text[span.bytes], "$battery.nope");
+    }
+
+    /// DEC-23: a grid cell covers the cells it was placed at and no more, so a `repeat` there is refused — and a file edited past that draws the children once, as written.
+    #[test]
+    fn a_grid_cell_refuses_repeat_and_draws_its_children_once() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            rect = { x = 0.0, y = 0.0, w = 0.5, h = 0.5 }
+            [[outputs.layers.desktop.areas.groups]]
+            id = "g"
+            place = "cell"
+            col = 0
+            row = 0
+            repeat = "$battery.cells"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            representation = "widget_s"
+            "#,
+        );
+        let report = validate(&parsed, &Modules);
+        let keys: Vec<&str> = report.errors.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["outputs.*.layers.desktop.areas.widgets.groups.g.repeat"],
+            "{}",
+            report.render()
+        );
+        let resolved = alone(&parsed, "DP-1");
+        let group = &resolved
+            .layer(LayerKind::Desktop)
+            .expect("a desktop layer")
+            .areas[0]
+            .groups[0];
+        assert_eq!(group.repeat, None);
+        assert_eq!(group.children.len(), 1);
+    }
+
+    /// A monitor rule that adds a child to a group the `*` rule repeats is checked as a child of that repeat, and a group the layout inherits from its parent, which this file cannot see, is given the benefit of the doubt rather than a false error.
+    #[test]
+    fn a_child_added_by_another_level_reads_the_repeat_of_the_group_it_lands_in() {
+        let added = layout(&format!(
+            r#"{}
+                [[outputs]]
+                match = "DP-1"
+                [[outputs.layers.top.areas]]
+                id = "bar-top"
+                [[outputs.layers.top.areas.groups]]
+                id = "start"
+                [[outputs.layers.top.areas.groups.children]]
+                id = "clock-2"
+                module = "clock"
+                [outputs.layers.top.areas.groups.children.bindings]
+                show_date = "$item > 1"
+                "#,
+            repeated("$battery.cells", "")
+        ));
+        let report = validate(&added, &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+        assert_eq!(
+            crate::child_locals(
+                &added,
+                &Modules,
+                &Site::new("DP-1", LayerKind::Top),
+                &AreaId::new("bar-top"),
+                &GroupId::new("start"),
+            ),
+            crate::Locals::of_copy(telar_expression::Type::Number),
+            "what `layout set` checks a binding of that child against"
+        );
+
+        let parent_only = layout(
+            r#"
+            id = "child"
+            extends = "parent"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            [[outputs.layers.top.areas.groups.children]]
+            id = "clock-2"
+            module = "clock"
+            [outputs.layers.top.areas.groups.children.bindings]
+            show_date = "$index > 1"
+            "#,
+        );
+        let report = validate(&parent_only, &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+    }
+
+    /// DEC-23: a copy is drawn as `<id>#<index>`, so a written id may not contain the mark, and a copy's id names the child it copies.
+    #[test]
+    fn a_copy_s_id_names_its_child_and_no_written_id_may_look_like_one() {
+        let player = InstanceId::new("player");
+        let copy = player.copy(2);
+        assert_eq!(copy.as_str(), "player#2");
+        assert_eq!(copy.template(), player);
+        assert_eq!(copy.copy_index(), Some(2));
+        assert_eq!(player.copy_index(), None);
+        assert_eq!(player.template(), player);
+        assert_eq!(InstanceId::new("a#b").template(), InstanceId::new("a#b"));
+
+        let report = validate(&layout(&ONE_BAR.replace("clock-1", "clock#1")), &Modules);
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|f| f.key.ends_with("children.clock#1")
+                    && f.message.key() == Some("finding.copy_mark")),
+            "{}",
+            report.render()
+        );
+    }
+
     #[test]
     fn two_instances_may_not_share_an_id() {
         let parsed = layout(&format!(
@@ -694,7 +1238,7 @@ mod tests {
         assert!(
             report
                 .findings()
-                .any(|f| f.message.contains("already used")),
+                .any(|f| f.message.key() == Some("finding.shared_instance_id")),
             "{}",
             report.render()
         );
@@ -944,6 +1488,7 @@ mod tests {
                     Trigger::ScrollUp,
                     Action(vec!["panel toggle clock".into()]),
                 )]),
+                unset: vec![Unset::Visible],
                 ..Area::default()
             };
             let report = validate::check_unknown_keys(&written_layout(area), &LayoutId::new("t"));
@@ -1000,17 +1545,248 @@ mod tests {
                     id: GroupId::new("g"),
                     kind: Some(kind),
                     stacked: Some(true),
+                    repeat: Some(Expr("$battery.cells".into())),
+                    children: vec![Instance {
+                        id: InstanceId::new("clock-1"),
+                        module: Some("clock".into()),
+                        bindings: BTreeMap::from([(
+                            "show_date".to_string(),
+                            Expr("$battery.percent > 50".into()),
+                        )]),
+                        actions: BTreeMap::from([(
+                            Trigger::Press,
+                            Action(vec!["panel toggle clock".into()]),
+                        )]),
+                        unset: vec![Unset::binding("accent")],
+                        ..Instance::default()
+                    }],
+                    unset: vec![Unset::Repeat],
                     ..Group::default()
                 }],
                 ..Area::default()
             };
-            let report = validate::check_unknown_keys(&written_layout(area), &LayoutId::new("t"));
+            let written = written_layout(area);
+            let report = validate::check_unknown_keys(&written, &LayoutId::new("t"));
             assert!(
                 report.is_clean(),
                 "a group writes keys validation does not know: {}",
                 report.render()
             );
+            toml::from_str::<Layout>(&written)
+                .expect("an instance's own keys are refused by serde, and these all parse back");
         }
+    }
+
+    /// The same guard for a declared source: its `kind` decides which keys it has.
+    #[test]
+    fn every_field_a_source_kind_has_is_a_key_validation_knows() {
+        let filled = [
+            Source::Poll {
+                cmd: Some("date".into()),
+                every: Some("5s".into()),
+                initial: Some(toml::Value::Integer(0)),
+                parse: Some("text".into()),
+                while_: Some(While::Always),
+                lock_safe: Some(true),
+            },
+            Source::Listen {
+                cmd: Some("date".into()),
+                initial: Some(toml::Value::Integer(0)),
+                parse: Some("text".into()),
+                while_: Some(While::Always),
+                lock_safe: Some(true),
+            },
+            Source::Http {
+                url: Some("https://example.org".into()),
+                every: Some("5m".into()),
+                initial: Some(toml::Value::Integer(0)),
+                parse: Some("json:.a".into()),
+                while_: Some(While::Always),
+                lock_safe: Some(true),
+            },
+        ];
+        for source in filled {
+            let kind = source.kind_name();
+            let layout = Layout {
+                id: LayoutId::new("t"),
+                sources: BTreeMap::from([("probe".to_string(), source)]),
+                ..Layout::default()
+            };
+            let text = toml::to_string_pretty(&layout).expect("the layout serializes");
+            let report = validate::check_unknown_keys(&text, &LayoutId::new("t"));
+            assert!(
+                report.is_clean(),
+                "a `{kind}` source writes keys validation does not know: {}",
+                report.render()
+            );
+            assert_eq!(
+                toml::from_str::<Layout>(&text).expect("it parses back"),
+                layout
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_a_source_does_not_have_is_found_where_it_is_written() {
+        let text = "id = \"t\"\n[sources.load]\nkind = \"poll\"\ncmd = \"date\"\nurl = \"https://example.org\"\n";
+        let report = validate::check_unknown_keys(text, &LayoutId::new("t"));
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        assert_eq!(report.errors[0].key, "sources.load.url");
+        assert_eq!(
+            report.errors[0].span.as_ref().map(|span| span.line),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn sources_merge_by_name_along_the_extends_chain() {
+        let base: Layout = toml::from_str(
+            r#"
+            id = "base"
+            [sources.load]
+            kind = "poll"
+            cmd = "cat /proc/loadavg"
+            every = "5s"
+            [sources.feed]
+            kind = "poll"
+            cmd = "date"
+            "#,
+        )
+        .expect("parses");
+        let child: Layout = toml::from_str(
+            r#"
+            id = "mine"
+            extends = "base"
+            [sources.load]
+            kind = "poll"
+            every = "10s"
+            [sources.feed]
+            kind = "http"
+            url = "https://example.org/feed"
+            [sources.own]
+            kind = "listen"
+            cmd = "tail -f log"
+            "#,
+        )
+        .expect("parses");
+        let known = BTreeMap::from([(base.id.clone(), base)]);
+        let (merged, report) = crate::sources(&child, &known);
+        assert!(report.is_clean(), "{}", report.render());
+
+        assert_eq!(merged["load"].cmd(), Some("cat /proc/loadavg"), "inherited");
+        assert_eq!(merged["load"].every(), Some("10s"), "the child wins");
+        assert_eq!(
+            merged["feed"].url(),
+            Some("https://example.org/feed"),
+            "a level that changes the kind replaces the source outright"
+        );
+        assert_eq!(merged["feed"].cmd(), None);
+        assert_eq!(merged["own"].kind_name(), "listen");
+    }
+
+    /// `lock_safe` vouches for one command. A layout that extends a lock-safe source and swaps only its command would otherwise put a command nobody vouched for on the lock screen.
+    #[test]
+    fn a_level_that_changes_what_a_source_runs_has_to_say_lock_safe_again() {
+        let base: Layout = toml::from_str(
+            r#"
+            id = "base"
+            [sources.load]
+            kind = "poll"
+            cmd = "cat /proc/loadavg"
+            lock_safe = true
+            [sources.feed]
+            kind = "http"
+            url = "https://example.org/a"
+            lock_safe = true
+            [sources.tail]
+            kind = "listen"
+            cmd = "tail -f a"
+            lock_safe = true
+            [sources.kept]
+            kind = "poll"
+            cmd = "date"
+            lock_safe = true
+            "#,
+        )
+        .expect("parses");
+        let child: Layout = toml::from_str(
+            r#"
+            id = "mine"
+            extends = "base"
+            [sources.load]
+            kind = "poll"
+            cmd = "cat /etc/shadow"
+            [sources.feed]
+            kind = "http"
+            url = "https://example.org/b"
+            [sources.tail]
+            kind = "listen"
+            cmd = "tail -f b"
+            lock_safe = true
+            [sources.kept]
+            kind = "poll"
+            every = "1m"
+            "#,
+        )
+        .expect("parses");
+        let known = BTreeMap::from([(base.id.clone(), base)]);
+        let (merged, report) = crate::sources(&child, &known);
+        assert!(report.is_clean(), "{}", report.render());
+
+        assert!(
+            !merged["load"].lock_safe(),
+            "a swapped command is not vouched for"
+        );
+        assert!(!merged["feed"].lock_safe(), "nor a swapped address");
+        assert!(
+            merged["tail"].lock_safe(),
+            "the level that swaps it may vouch for it itself"
+        );
+        assert!(
+            merged["kept"].lock_safe(),
+            "a level that leaves the command alone keeps what was said about it"
+        );
+    }
+
+    #[test]
+    fn a_source_with_nothing_to_run_after_every_level_is_reported_and_left_out() {
+        let lone: Layout =
+            toml::from_str("id = \"mine\"\n[sources.load]\nkind = \"poll\"\nevery = \"10s\"\n")
+                .expect("parses");
+        let (merged, report) = crate::sources(&lone, &BTreeMap::new());
+        assert!(merged.is_empty());
+        assert_eq!(report.errors[0].key, "sources.load.cmd");
+    }
+
+    #[test]
+    fn a_level_is_validated_by_what_it_calls_its_sources_and_nothing_it_says_twice() {
+        let written: Layout = toml::from_str(
+            r#"
+            id = "t"
+            [sources.battery]
+            kind = "poll"
+            cmd = "acpi"
+            [sources.2fast]
+            kind = "poll"
+            cmd = "date"
+            [sources.eager]
+            kind = "poll"
+            cmd = "date"
+            every = "0s"
+            [sources.fine]
+            kind = "poll"
+            cmd = "date"
+            "#,
+        )
+        .expect("parses");
+        let report = validate(&written, &Modules);
+        let keys: Vec<&str> = report.errors.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["sources.2fast", "sources.battery"],
+            "what a source says is checked once, where the merged chain is read to run: {}",
+            report.render()
+        );
     }
 
     #[test]
@@ -1090,7 +1866,7 @@ mod tests {
             thikness = 32
         "#;
         let report = validate::check_unknown_keys(text, &LayoutId::new("test"));
-        let messages: Vec<&str> = report.findings().map(|f| f.message.as_str()).collect();
+        let messages: Vec<String> = report.findings().map(|f| f.message.english()).collect();
         assert!(
             messages.iter().any(|m| m.contains("thikness")),
             "{messages:?}"
@@ -1524,7 +2300,7 @@ mod tests {
         assert!(
             report
                 .findings()
-                .any(|f| f.message.contains("at most 8 stops")),
+                .any(|f| f.message.key() == Some("finding.gradient_stops")),
             "{}",
             report.render()
         );
@@ -2151,9 +2927,11 @@ mod tests {
             "#,
         );
         let report = validate(&parsed, &Modules);
+        let said: Vec<String> = report.findings().map(|f| f.message.english()).collect();
         let keys: Vec<(&str, &str)> = report
             .findings()
-            .map(|f| (f.key.as_str(), f.message.as_str()))
+            .zip(&said)
+            .map(|(f, said)| (f.key.as_str(), said.as_str()))
             .collect();
         assert!(
             keys.iter()
@@ -2686,7 +3464,8 @@ mod tests {
             assert!(
                 report
                     .findings()
-                    .any(|f| f.key.ends_with("prompt.style.fill") && f.message.contains("WCAG AA")),
+                    .any(|f| f.key.ends_with("prompt.style.fill")
+                        && f.message.key() == Some("finding.prompt_contrast")),
                 "`{unreadable}` under the prompt's text: {}",
                 report.render()
             );
@@ -3087,6 +3866,692 @@ mod tests {
             ),
             None,
             "with no stack that routes nothing, what no route takes is shown nowhere"
+        );
+    }
+
+    /// A bar whose visibility, whose start zone's copies and whose clock's accent and date are each driven by an expression, for every output.
+    const EXPRESSIVE: &str = r##"
+        id = "base"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        visible = "$battery.percent > 50"
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        place = "zone"
+        zone = "start"
+        repeat = "$battery.cells"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "clock-1"
+        module = "clock"
+        bindings = { accent = "#ff0000", show_date = "$battery.percent > 20" }
+    "##;
+
+    /// A rule taking back all three kinds of expression the bar inherits, for the outputs `matches` names.
+    fn taking_back(matches: &str) -> String {
+        format!(
+            r#"
+            [[outputs]]
+            match = "{matches}"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            unset = ["visible"]
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            unset = ["repeat"]
+            [[outputs.layers.top.areas.groups.children]]
+            id = "clock-1"
+            unset = ["bindings.accent"]
+            "#
+        )
+    }
+
+    /// The bar's `visible`, its start zone's `repeat` and the paths its clock binds, as `resolved` has them.
+    fn expressions(resolved: &Resolved) -> (Option<Expr>, Option<Expr>, Vec<String>) {
+        let bar = resolved
+            .area(LayerKind::Top, &AreaId::new("bar-top"))
+            .expect("the bar resolves");
+        let start = &bar.groups[0];
+        (
+            bar.visible.clone().map(|visible| visible.expr),
+            start.repeat.clone().map(|repeat| repeat.expr),
+            start.children[0].bindings.keys().cloned().collect(),
+        )
+    }
+
+    fn expressive_shown() -> (Option<Expr>, Option<Expr>, Vec<String>) {
+        (
+            Some(Expr("$battery.percent > 50".into())),
+            Some(Expr("$battery.cells".into())),
+            vec!["accent".to_string(), "show_date".to_string()],
+        )
+    }
+
+    fn taken_back() -> (Option<Expr>, Option<Expr>, Vec<String>) {
+        (None, None, vec!["show_date".to_string()])
+    }
+
+    #[test]
+    fn unset_round_trips_through_toml_as_the_paths_it_takes_back() {
+        let parsed = layout(&format!("{EXPRESSIVE}{}", taking_back("DP-1")));
+        let layers = &parsed.outputs[1].layers.top;
+        let bar = &layers.areas[0];
+        assert_eq!(bar.unset, [Unset::Visible]);
+        assert_eq!(bar.groups[0].unset, [Unset::Repeat]);
+        assert_eq!(bar.groups[0].children[0].unset, [Unset::binding("accent")]);
+
+        let text = toml::to_string_pretty(&parsed).expect("serializes");
+        assert!(text.contains(r#"unset = ["bindings.accent"]"#), "{text}");
+        assert_eq!(toml::from_str::<Layout>(&text).expect("re-parses"), parsed);
+
+        for (written, read) in [
+            ("visible", Unset::Visible),
+            ("repeat", Unset::Repeat),
+            ("bindings.style.color", Unset::binding("style.color")),
+            ("bindings.", Unset::Unknown("bindings.".into())),
+            ("accent", Unset::Unknown("accent".into())),
+        ] {
+            assert_eq!(Unset::from(written), read);
+            assert_eq!(
+                read.to_string(),
+                written,
+                "and it is written back as it was"
+            );
+        }
+    }
+
+    /// DEC-26 across output rules: a monitor's rule takes back each kind of expression the `*` rule gives, and every other monitor keeps them.
+    #[test]
+    fn an_output_rule_takes_back_what_a_broader_rule_drives_by_an_expression() {
+        let parsed = layout(&format!("{EXPRESSIVE}{}", taking_back("DP-1")));
+        assert_eq!(expressions(&alone(&parsed, "DP-1")), taken_back());
+        assert_eq!(expressions(&alone(&parsed, "eDP-1")), expressive_shown());
+        assert!(
+            validate(&parsed, &Modules).is_clean(),
+            "{}",
+            validate(&parsed, &Modules).render()
+        );
+        assert!(validate_unsets(&parsed, &BTreeMap::new()).is_clean());
+    }
+
+    /// DEC-26 across `extends`: a layout takes back what the layout it extends drives, and a level above it can drive it again, since a level's own keys are laid over after what it takes back.
+    #[test]
+    fn a_layout_takes_back_what_the_layout_it_extends_drives_by_an_expression() {
+        let base = layout(EXPRESSIVE);
+        let known = BTreeMap::from([(base.id.clone(), base.clone())]);
+        let mut mine = layout(&format!(
+            "id = \"mine\"\nextends = \"base\"\n{}",
+            taking_back("*")
+        ));
+        let (resolved, report) = resolve(&mine, &known, "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        assert_eq!(expressions(&resolved), taken_back());
+        assert!(validate_unsets(&mine, &known).is_clean());
+
+        let driven_again: Layout = layout(
+            r#"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            visible = "$battery.percent > 80"
+            "#,
+        );
+        mine.outputs.extend(driven_again.outputs);
+        let (resolved, _) = resolve(&mine, &known, "DP-1", None);
+        assert_eq!(
+            expressions(&resolved).0,
+            Some(Expr("$battery.percent > 80".into()))
+        );
+        assert_eq!(
+            expressions(&resolve(&mine, &known, "eDP-1", None).0).0,
+            None
+        );
+    }
+
+    /// Flattening an `extends` chain into one level — what a reset puts back — keeps what a level of it took back, so the chain and its flattened form show the same.
+    #[test]
+    fn a_chain_flattened_into_one_level_keeps_what_a_level_of_it_took_back() {
+        let base = layout(EXPRESSIVE);
+        let middle = layout(&format!(
+            "id = \"middle\"\nextends = \"base\"\n{}",
+            taking_back("*")
+        ));
+        let known = BTreeMap::from([
+            (base.id.clone(), base.clone()),
+            (middle.id.clone(), middle.clone()),
+        ]);
+        let mine = layout("id = \"mine\"\nextends = \"middle\"\n");
+        let flat = crate::reset::base_of(&mine, &known);
+        assert_eq!(
+            expressions(&resolve(&mine, &known, "DP-1", None).0),
+            taken_back()
+        );
+        assert_eq!(expressions(&alone(&flat, "DP-1")), taken_back());
+    }
+
+    /// A level that writes a key and takes it back too is an error naming the key, since which of the two it meant is anybody's guess.
+    #[test]
+    fn a_level_that_writes_and_takes_back_the_same_key_is_an_error_naming_it() {
+        let parsed = layout(&format!(
+            r##"{EXPRESSIVE}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            visible = "$battery.percent > 80"
+            unset = ["visible"]
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            repeat = "$battery.cells"
+            unset = ["repeat"]
+            [[outputs.layers.top.areas.groups.children]]
+            id = "clock-1"
+            bindings = {{ accent = "#00ff00" }}
+            unset = ["bindings.show_date", "bindings.accent"]
+            "##
+        ));
+        let report = validate(&parsed, &Modules);
+        let at = "outputs.DP-1.layers.top.areas.bar-top";
+        let said: Vec<String> = report.errors.iter().map(|f| f.message.english()).collect();
+        let errors: Vec<(&str, &str)> = report
+            .errors
+            .iter()
+            .zip(&said)
+            .map(|(finding, said)| (finding.key.as_str(), said.as_str()))
+            .collect();
+        assert_eq!(errors.len(), 3, "{}", report.render());
+        for (key, path) in [
+            (format!("{at}.unset[0]"), "`visible`"),
+            (format!("{at}.groups.start.unset[0]"), "`repeat`"),
+            (
+                format!("{at}.groups.start.children.clock-1.unset[1]"),
+                "`bindings.accent`",
+            ),
+        ] {
+            assert!(
+                errors
+                    .iter()
+                    .any(|(found, message)| *found == key && message.contains(path)),
+                "{key} says {path}: {}",
+                report.render()
+            );
+        }
+    }
+
+    /// A path a holder has no expression at is an error where it is written; so is a binding the instance's module cannot have, the module read from the level that names it.
+    #[test]
+    fn a_path_that_names_nothing_to_take_back_is_an_error_where_it_is_written() {
+        let text = format!(
+            r#"{EXPRESSIVE}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            unset = ["visible", "repeat", "colour"]
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            unset = ["visible"]
+            [[outputs.layers.top.areas.groups.children]]
+            id = "clock-1"
+            unset = ["accent", "bindings.nope", "bindings.show_date"]
+            "#
+        );
+        let parsed = layout(&text);
+        let mut report = validate(&parsed, &Modules);
+        let at = "outputs.DP-1.layers.top.areas.bar-top";
+        let mut keys: Vec<&str> = report.errors.iter().map(|f| f.key.as_str()).collect();
+        keys.sort_unstable();
+        let mut wanted = vec![
+            format!("{at}.unset[1]"),
+            format!("{at}.unset[2]"),
+            format!("{at}.groups.start.unset[0]"),
+            format!("{at}.groups.start.children.clock-1.unset[0]"),
+            format!("{at}.groups.start.children.clock-1.unset[1]"),
+        ];
+        wanted.sort_unstable();
+        assert_eq!(keys, wanted, "{}", report.render());
+        assert!(
+            report
+                .findings()
+                .any(|finding| finding.message.key() == Some("finding.unset_no_binding")),
+            "{}",
+            report.render()
+        );
+
+        crate::locate_unsets(&text, &mut report);
+        let colour = report
+            .errors
+            .iter()
+            .find(|finding| finding.key == format!("{at}.unset[2]"))
+            .and_then(|finding| finding.span.as_ref())
+            .expect("the entry is found in the file");
+        let line = text
+            .lines()
+            .position(|line| line.contains("\"colour\""))
+            .unwrap()
+            + 1;
+        assert_eq!(colour.line, line);
+        assert_eq!(&text[colour.bytes.clone()], "\"colour\"");
+    }
+
+    /// Taking back what nothing under the level writes changes nothing, so it is a warning — against the `extends` chain and the rules applied first, and never against a rule for another monitor.
+    #[test]
+    fn taking_back_what_nothing_under_the_level_writes_is_a_warning() {
+        let plain = layout(&format!("{ONE_BAR}{}", taking_back("DP-1")));
+        let report = validate_unsets(&plain, &BTreeMap::new());
+        assert!(report.errors.is_empty(), "{}", report.render());
+        let at = "outputs.DP-1.layers.top.areas.bar-top";
+        let mut warned: Vec<&str> = report.warnings.iter().map(|f| f.key.as_str()).collect();
+        warned.sort_unstable();
+        assert_eq!(
+            warned,
+            [
+                format!("{at}.groups.start.children.clock-1.unset[0]"),
+                format!("{at}.groups.start.unset[0]"),
+                format!("{at}.unset[0]"),
+            ],
+            "{}",
+            report.render()
+        );
+        assert!(
+            report.warnings[0].message.key() == Some("finding.unset_nothing"),
+            "{}",
+            report.render()
+        );
+
+        let elsewhere = layout(&format!(
+            "{}{}",
+            EXPRESSIVE.replace("match = \"*\"", "match = \"HDMI-1\""),
+            taking_back("DP-1")
+        ));
+        assert_eq!(
+            validate_unsets(&elsewhere, &BTreeMap::new()).warnings.len(),
+            3,
+            "a rule for another monitor is never under this one"
+        );
+
+        let base = layout(EXPRESSIVE);
+        let known = BTreeMap::from([(base.id.clone(), base)]);
+        let extending = layout(&format!(
+            "id = \"mine\"\nextends = \"base\"\n{}",
+            taking_back("DP-*")
+        ));
+        assert!(validate_unsets(&extending, &known).is_clean());
+        assert_eq!(
+            validate_unsets(&extending, &BTreeMap::new()).warnings.len(),
+            3,
+            "with the layout it extends missing, nothing is under it"
+        );
+    }
+
+    /// A workspace rule takes back what its output's rules drive, which is under it.
+    #[test]
+    fn a_workspace_rule_takes_back_what_its_output_drives() {
+        let parsed = layout(&format!(
+            r#"{EXPRESSIVE}
+            [[outputs.workspaces]]
+            match = "2"
+            [[outputs.workspaces.layers.top.areas]]
+            id = "bar-top"
+            unset = ["visible"]
+            "#
+        ));
+        assert!(validate(&parsed, &Modules).is_clean());
+        assert!(validate_unsets(&parsed, &BTreeMap::new()).is_clean());
+        let on = |name: &str| {
+            let workspace = ActiveWorkspace {
+                name: name.into(),
+                ..ActiveWorkspace::default()
+            };
+            expressions(&resolve(&parsed, &BTreeMap::new(), "DP-1", Some(&workspace)).0).0
+        };
+        assert_eq!(on("2"), None);
+        assert_eq!(on("1"), Some(Expr("$battery.percent > 50".into())));
+    }
+
+    /// The lock's prompt can never be hidden, so it never has a `visible` to take back: one written takes nothing back, and is no reason to refuse the lock screen.
+    #[test]
+    fn taking_back_the_lock_prompts_visibility_is_harmless() {
+        let parsed = layout(
+            r#"
+            id = "locked"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.lock.areas]]
+            id = "prompt"
+            kind = "prompt"
+            unset = ["visible"]
+            "#,
+        );
+        assert!(validate(&parsed, &Modules).errors.is_empty());
+        assert!(crate::validate_lock(&parsed, &Modules).errors.is_empty());
+        let resolved = alone(&parsed, "DP-1");
+        assert!(validate_resolved(&resolved, "locked", &theme()).is_clean());
+        assert_eq!(
+            validate_unsets(&parsed, &BTreeMap::new()).warnings.len(),
+            1,
+            "nothing under it gives the prompt an expression"
+        );
+    }
+
+    /// Merging is by id, so a monitor's rule naming an instance where the `*` rule placed it refines that instance; the same id placed anywhere else is a second instance, which IPC could not tell apart.
+    #[test]
+    fn a_rule_refines_an_instance_where_it_is_placed_and_nowhere_else() {
+        let refined = layout(&format!(
+            r#"{ONE_BAR}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            [[outputs.layers.top.areas.groups.children]]
+            id = "clock-1"
+            options = {{ format = "%H" }}
+            "#
+        ));
+        assert!(
+            validate(&refined, &Modules).errors.is_empty(),
+            "{}",
+            validate(&refined, &Modules).render()
+        );
+
+        let moved = layout(&format!(
+            r#"{ONE_BAR}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            [[outputs.layers.top.areas.groups]]
+            id = "end"
+            place = "zone"
+            zone = "end"
+            [[outputs.layers.top.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            "#
+        ));
+        let report = validate(&moved, &Modules);
+        assert!(
+            report.errors.iter().any(|finding| finding.key
+                == "outputs.DP-1.layers.top.areas.bar-top.groups.end.children.clock-1"),
+            "{}",
+            report.render()
+        );
+    }
+
+    const PROVENANCE_BASE: &str = r##"
+        id = "base"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        visible = "true"
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        place = "zone"
+        zone = "start"
+        repeat = "{1, 2}"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "clock"
+        module = "clock"
+        bindings = { accent = "#ff0000", show_date = "true" }
+    "##;
+
+    const PROVENANCE_MINE: &str = r##"
+        id = "mine"
+        extends = "base"
+        [[outputs]]
+        match = "*"
+        [[outputs]]
+        match = "DP-1"
+        [[outputs.layers.top.areas]]
+        id = "bar"
+        visible = "false"
+        [[outputs.workspaces]]
+        match = "2"
+        [[outputs.workspaces.layers.top.areas]]
+        id = "bar"
+        [[outputs.workspaces.layers.top.areas.groups]]
+        id = "start"
+        [[outputs.workspaces.layers.top.areas.groups.children]]
+        id = "clock"
+        bindings = { accent = "#00ff00" }
+        [[outputs]]
+        match = "HDMI-*"
+        [[outputs.layers.top.areas]]
+        id = "bar"
+        unset = ["visible"]
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        remove = ["clock"]
+        [[outputs.layers.top.areas.groups.children]]
+        id = "clock"
+        module = "clock"
+    "##;
+
+    fn provenance() -> (Layout, BTreeMap<LayoutId, Layout>) {
+        let (base, mine) = (layout(PROVENANCE_BASE), layout(PROVENANCE_MINE));
+        let known = BTreeMap::from([(base.id.clone(), base), (mine.id.clone(), mine.clone())]);
+        (mine, known)
+    }
+
+    fn origin(layout: &str, output: &str, workspace: Option<&str>) -> Origin {
+        Origin {
+            layout: LayoutId::new(layout),
+            output: OutputMatch(output.to_string()),
+            workspace: workspace.map(|workspace| WorkspaceMatch(workspace.to_string())),
+        }
+    }
+
+    /// Resolution keeps, beside each expression, the level that wrote it: a layout this one extends, one of its output rules, or the workspace rule up on the screen; a level that takes an expression back or places an item afresh leaves nothing of the old one's.
+    #[test]
+    fn every_resolved_expression_names_the_level_that_wrote_it() {
+        let (mine, known) = provenance();
+        let on = |output: &str, workspace: &str| {
+            let active = ActiveWorkspace {
+                name: workspace.to_string(),
+                ..ActiveWorkspace::default()
+            };
+            let resolved = resolve(&mine, &known, output, Some(&active)).0;
+            resolved
+                .area(LayerKind::Top, &AreaId::new("bar"))
+                .expect("the bar")
+                .clone()
+        };
+        let bar = on("DP-1", "1");
+        let clock = &bar.groups[0].children[0];
+        assert_eq!(
+            bar.visible.as_ref().map(|visible| visible.origin.clone()),
+            Some(origin("mine", "DP-1", None))
+        );
+        assert_eq!(
+            bar.groups[0]
+                .repeat
+                .as_ref()
+                .map(|repeat| repeat.origin.clone()),
+            Some(origin("base", "*", None))
+        );
+        assert_eq!(clock.bindings["accent"].origin, origin("base", "*", None));
+        assert_eq!(
+            clock.bindings["show_date"].origin,
+            origin("base", "*", None)
+        );
+
+        let bar = on("DP-1", "2");
+        let clock = &bar.groups[0].children[0];
+        assert_eq!(
+            clock.bindings["accent"].origin,
+            origin("mine", "DP-1", Some("2"))
+        );
+        assert_eq!(clock.bindings["accent"].expr, Expr("#00ff00".into()));
+        assert_eq!(
+            origin("mine", "DP-1", Some("2")).rule(),
+            "outputs.DP-1.workspaces.2"
+        );
+
+        let bar = on("HDMI-A-1", "1");
+        assert_eq!(bar.visible, None, "taken back");
+        assert!(
+            bar.groups[0].children[0].bindings.is_empty(),
+            "a child placed afresh keeps nothing of the one it replaced"
+        );
+    }
+
+    /// Taking an expression back is written in the narrowest rule of the edited layout for every screen it is for, which has to come after whatever writes it there: what the rule writes itself is deleted, and it names the expression in its `unset` while a level under it still gives one.
+    #[test]
+    fn taking_back_is_written_where_it_is_laid_over_every_writer() {
+        let (mine, known) = provenance();
+        let screens = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+        let (bar, start) = (AreaId::new("bar"), GroupId::new("start"));
+        let visible = Taken {
+            layer: LayerKind::Top,
+            area: &bar,
+            held: Held::Visible,
+        };
+        let repeat = Taken {
+            held: Held::Repeat(&start),
+            ..visible
+        };
+
+        assert_eq!(
+            crate::taking_back(&mine, &known, &screens(&["DP-1"]), visible),
+            Ok(TakeBack {
+                site: Site::new("DP-1", LayerKind::Top),
+                own: true,
+                unset: true,
+            }),
+            "its own expression deleted, and the inherited one under it taken back"
+        );
+        assert_eq!(
+            crate::taking_back(&mine, &known, &screens(&["*"]), repeat),
+            Ok(TakeBack {
+                site: Site::everywhere(LayerKind::Top),
+                own: false,
+                unset: true,
+            })
+        );
+
+        let refused = crate::taking_back(&mine, &known, &screens(&["DP-1", "eDP-1"]), visible)
+            .expect_err("`*` is the rule for both, and `DP-1` comes after it")
+            .english();
+        assert!(
+            refused.contains("`outputs.DP-1` of `layouts/mine.toml`"),
+            "{refused}"
+        );
+
+        let mut ruled = mine.clone();
+        ruled.outputs[1].workspaces[0].layers.top.areas[0].visible = Some(Expr("true".into()));
+        let refused = crate::taking_back(&ruled, &known, &screens(&["DP-1"]), visible)
+            .expect_err("a workspace rule comes after every output rule")
+            .english();
+        assert!(refused.contains("`outputs.DP-1.workspaces.2`"), "{refused}");
+
+        let refused = crate::taking_back(&mine, &known, &screens(&["HDMI-A-1"]), visible)
+            .expect_err("the HDMI rule takes it back already")
+            .english();
+        assert!(
+            refused.contains("nothing gives `visible` of `bar`"),
+            "{refused}"
+        );
+    }
+
+    /// A binding is taken back the way `visible` and `repeat` are: in the narrowest rule laid over every level that gives it on the screens the edit is for, named in that rule's `unset` while a level under it still gives one.
+    #[test]
+    fn a_binding_is_taken_back_where_it_is_laid_over_every_writer() {
+        let (mine, known) = provenance();
+        let (bar, start, clock) = (
+            AreaId::new("bar"),
+            GroupId::new("start"),
+            InstanceId::new("clock"),
+        );
+        let binding = |path| Taken {
+            layer: LayerKind::Top,
+            area: &bar,
+            held: Held::Binding {
+                group: &start,
+                instance: &clock,
+                path,
+            },
+        };
+        let every = ["*".to_string()];
+
+        assert_eq!(
+            crate::taking_back(&mine, &known, &every, binding("show_date")),
+            Ok(TakeBack {
+                site: Site::everywhere(LayerKind::Top),
+                own: false,
+                unset: true,
+            }),
+            "the layout it extends gives it, so the broadest rule of this one takes it back"
+        );
+
+        let refused = crate::taking_back(&mine, &known, &["DP-1".to_string()], binding("accent"))
+            .expect_err("a workspace rule of `DP-1` gives it, which comes after every output rule");
+        assert_eq!(refused.key(), Some("finding.taken_back_elsewhere"));
+        assert!(
+            refused.english().contains("`outputs.DP-1.workspaces.2`"),
+            "{}",
+            refused.english()
+        );
+
+        let refused = crate::taking_back(
+            &mine,
+            &known,
+            &["HDMI-A-1".to_string()],
+            binding("show_date"),
+        )
+        .expect_err("the HDMI rule places the clock afresh, without it");
+        assert_eq!(
+            refused.english(),
+            "nothing gives `bindings.show_date` of `clock` on `HDMI-A-1`, so there is nothing to take back"
+        );
+        assert_eq!(
+            refused.render_in("es"),
+            "nada da el `bindings.show_date` de `clock` en `HDMI-A-1`, así que no hay nada que retirar"
+        );
+    }
+
+    #[test]
+    fn every_finding_has_words_in_every_language_the_shell_speaks() {
+        assert_eq!(
+            util::report::untranslated(&crate::__rsx_i18n::CATALOG, &["finding."]),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A finding is carried as what it says rather than as words, so the command line and a Spanish session read the same finding each in their own language.
+    #[test]
+    fn a_finding_reads_in_english_on_the_command_line_and_in_spanish_in_the_shell() {
+        let parsed = layout(&format!(
+            r#"{ONE_BAR}
+            [outputs.layers.top.areas.groups.children.bindings]
+            show_date = "$battery.percent"
+            "#
+        ));
+        let report = validate(&parsed, &Modules);
+        let finding = &report.errors[0];
+        assert_eq!(finding.message.key(), Some("expression.expected_type"));
+        assert_eq!(
+            finding.message.english(),
+            "expected bool, but this gives number"
+        );
+        assert_eq!(
+            finding.message.render_in("es"),
+            "se esperaba booleano, pero esto da número"
         );
     }
 }

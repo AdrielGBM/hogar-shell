@@ -165,7 +165,7 @@ fn found(node: &Node, layer: &ResolvedLayer) -> Option<Node> {
                 group
                     .children
                     .iter()
-                    .any(|child| child.id == *instance)
+                    .any(|child| child.id == instance.template())
                     .then(|| at(&area.id).instance(&group.id, instance))
             })
         }),
@@ -259,7 +259,7 @@ impl fmt::Display for EditError {
         match self {
             Self::Nested => f.write_str(&telar::t!("editor.draft.nested")),
             Self::NotOpen => f.write_str(&telar::t!("editor.draft.not_open")),
-            Self::Safe => write!(f, "{}", StoreError::Safe),
+            Self::Safe => f.write_str(&StoreError::Safe.message().render()),
             Self::Refused(why) => f.write_str(why),
         }
     }
@@ -269,7 +269,7 @@ impl std::error::Error for EditError {}
 
 impl From<layout::OpError> for EditError {
     fn from(error: layout::OpError) -> Self {
-        Self::Refused(error.to_string())
+        Self::Refused(error.message().render())
     }
 }
 
@@ -349,8 +349,7 @@ impl Edit {
         refuse_under_safe_layout()?;
         let before = self.0.transaction.before().ok_or(EditError::NotOpen)?;
         let mut next = before.clone();
-        layout::ops::apply_all(&mut next, &ops)
-            .map_err(|why| EditError::Refused(why.to_string()))?;
+        layout::ops::apply_all(&mut next, &ops).map_err(EditError::from)?;
         crate::modes::lock::kept(&before, &next).map_err(EditError::Refused)?;
         self.0.transaction.preview(move |draft| *draft = next)?;
         *self.0.ops.borrow_mut() = ops;
@@ -381,14 +380,19 @@ impl Pending {
         if ops.is_empty() || before == after {
             return;
         }
-        let committed = layouts::read(|store| store.active_id().clone())
-            .ok_or_else(|| "no running shell owns a layout store".to_string())
-            .and_then(|active| {
+        let committed = match layouts::read(|store| store.active_id().clone()) {
+            Some(active) => {
                 layouts::commit(layout::Transaction::new(self.label.clone(), active, ops))
-            });
+            }
+            None => Err(layouts::no_store()),
+        };
         if let Err(why) = committed {
-            tracing::warn!(edit = self.label, "the edit was not recorded: {why}");
-            *self.refused.borrow_mut() = Some(why);
+            tracing::warn!(
+                edit = self.label,
+                "the edit was not recorded: {}",
+                why.english()
+            );
+            *self.refused.borrow_mut() = Some(why.render());
             if let Some(stored) = stored() {
                 DRAFT.with(|draft| draft.set(stored));
             }
@@ -416,7 +420,7 @@ pub fn undo() -> Result<String, String> {
         edit.revert().map_err(|why| why.to_string())?;
         return Ok(edit.label().to_string());
     }
-    layouts::undo()
+    layouts::undo().map_err(|why| why.render())
 }
 
 /// Puts back what the last undo took, reverting an edit still open first: the redo was planned against the layout without it.
@@ -424,7 +428,7 @@ pub fn redo() -> Result<String, String> {
     if let Some(edit) = open() {
         edit.revert().map_err(|why| why.to_string())?;
     }
-    layouts::redo()
+    layouts::redo().map_err(|why| why.render())
 }
 
 /// Which way through the history a key asks to go.

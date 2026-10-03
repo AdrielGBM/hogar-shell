@@ -30,27 +30,28 @@ hogar-shell scheme export     # write now, ignoring `enabled`
 | `scheme.sh` | shell variables |
 | terminal OSC sequences | live terminals |
 
-`[theme.export]` — `enabled`, `dir`, `json`, `gtk`, `qt`, `terminal`, `hooks`.
+`[theme.export]` — `enabled`, `dir`, `json`, `gtk`, `qt`, `terminal`.
 
 Each format is a switch, so you write only what you use.
 
-## Hooks
+## Telling other programs
 
-`hooks` is a list of commands run **after** the files are written — the point at which a reload is safe.
+Once a new palette's files are on disk the shell raises the `colors_changed` event — the point at which a reload
+is safe. A [rule](../../guides/scripting.md#rules) on that event runs whatever has to re-read them:
 
 ```toml
-[theme.export]
-hooks = ["gsettings set org.gnome.desktop.interface gtk-theme adw-gtk3-dark"]
+[[rules]]
+id = "reload-gtk"
+trigger = { event = "colors_changed" }
+run = [
+  "shell run gsettings set org.gnome.desktop.interface gtk-theme adw-gtk3-dark",
+  "shell run makoctl reload",
+]
 ```
 
-This is one of the shell's two extension surfaces, alongside `[launcher] actions`. Both are scripts rather than
-loaded code, which is deliberate: there is no plugin runtime, and the answer to "hogar-shell cannot do X" is meant
-to be a command rather than a module.
-
-## Known limit
-
-Hooks run on **one** event: a scheme was written. There is no general event vocabulary — nothing fires on lock,
-unlock, wallpaper change or network up.
+Each line of `run` is a `hogar-shell` command, checked by `config check` without being run; `shell run` hands
+the rest of its line to `sh -c`. The same rule can trigger on anything else the shell raises — a lock, a wallpaper,
+the battery — or on a time of day, which is why the commands live in a rule rather than in this section.
 
 ## What it needs
 

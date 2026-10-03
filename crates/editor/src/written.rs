@@ -155,6 +155,25 @@ impl Written {
         })
     }
 
+    /// The area `id` as the output rule `site` names writes it, else a new entry there naming only its id — for an edit that has already decided which level it is written in.
+    pub fn at(layout: &Layout, site: Site, id: &AreaId) -> Self {
+        let layer = layout::ops::layer(layout, &site).ok();
+        match layer.and_then(|layer| layer.areas.iter().find(|area| area.id == *id)) {
+            Some(area) => Self {
+                area: area.clone(),
+                site,
+                insert_at: None,
+                rule: None,
+            },
+            None => Self {
+                insert_at: Some(layer.map_or(0, new_at)),
+                site,
+                area: blank(id),
+                rule: None,
+            },
+        }
+    }
+
     /// Whether the rule writes the area already, rather than inheriting it.
     pub fn is_present(&self) -> bool {
         self.insert_at.is_none()

@@ -35,14 +35,14 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let format = settings.time_format(&chip).to_string();
     let date_format = settings.date_format(&chip).to_string();
     let started = chrono::Local::now();
-    let first = started.format(&format).to_string();
+    let first = clock::draw(&started, &format);
     let glyphs = first.chars().count();
     let now = signal(first);
-    let today = signal(started.format(&date_format).to_string());
+    let today = signal(clock::draw(&started, &date_format));
     let (tick_time, tick_date) = (now, today);
     platform_wayland::watch(clock::subscribe, move |at: clock::Now| {
-        tick_time.set(at.format(&format).to_string());
-        tick_date.set(at.format(&date_format).to_string());
+        tick_time.set(clock::draw(&at, &format));
+        tick_date.set(clock::draw(&at, &date_format));
     });
 
     let size = fitted(

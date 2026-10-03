@@ -403,7 +403,7 @@ pub(crate) const WALLPAPER: Target = Target {
             name: "set",
             args: "<path> [--region <area>] [output]",
             help: "put an image on every screen, on one of them, or in one region of the layout",
-            run: set_wallpaper,
+            run: |args| set_wallpaper(args),
         },
         Command {
             name: "random",
@@ -447,34 +447,15 @@ fn set_wallpaper(args: &[&str]) -> Result<String, String> {
     if !path.is_file() {
         return Err(format!("'{}' is not a file", path.display()));
     }
-    let (region, rest) = region_named(&args[1..])?;
+    let region = flag(&args[1..], "--region", "area")?;
+    let rest = without(&args[1..], region.as_ref());
     let output = target_output(rest.first().copied())?;
     match region {
-        Some(area) => super::layout::show_in_region(layout::AreaId::new(area), &path, output),
+        Some(area) => super::layout::show_in_region(layout::AreaId::new(area.value), &path, output),
         None => {
             services::wallpaper::set(&path, output.as_deref());
             refresh_scheme();
             Ok(path.display().to_string())
         }
     }
-}
-
-/// The area `--region` names among `args`, wherever it sits, and the arguments left once it is taken out.
-fn region_named<'a>(args: &[&'a str]) -> Result<(Option<&'a str>, Vec<&'a str>), String> {
-    let mut region = None;
-    let mut rest = Vec::with_capacity(args.len());
-    let mut words = args.iter().copied();
-    while let Some(word) = words.next() {
-        if word != "--region" {
-            rest.push(word);
-            continue;
-        }
-        let area = words
-            .next()
-            .ok_or("missing argument <area> after --region")?;
-        if region.replace(area).is_some() {
-            return Err("--region is given twice".to_string());
-        }
-    }
-    Ok((region, rest))
 }

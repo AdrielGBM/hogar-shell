@@ -1,7 +1,7 @@
 [battery.warning]
 title = "Battery low"
 body = "{level}% left — plug in the charger."
-[report]
+[finding]
 unknown_tab = "the dashboard has no page called '{id}'"
 every_tab = "no page listed here is one the dashboard has, so it shows every page"
 unknown_theme = "there is no theme called '{name}', so the shell uses nord"
@@ -21,3 +21,20 @@ twelve_hour = "Twelve hour"
 format = "Format"
 show_date = "Show date"
 date_format = "Date format"
+[finding.option]
+unknown = "is not one of its options"
+takes = "takes {what}"
+nested = "`{key}` {why}"
+between = "is between {min} and {max}"
+at_least = "is at least {min}"
+[finding.control]
+bool = "true or false"
+one_of = "one of {variants}"
+whole_number = "a whole number"
+number = "a number"
+accent = "one of the theme's accents ({accents})"
+text = "text"
+list = "a list, each {each}"
+map = "a table, each value {each}"
+table = "a table"
+unknown = "a `{declared}`"

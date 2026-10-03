@@ -121,3 +121,49 @@ fn rig_across(
         _shell: shell,
     }
 }
+
+/// The card of the popover drawn in `tree`: the largest rectangle painted in the surface colour.
+pub(crate) fn card_of(tree: &telar::ComponentList) -> telar::Rect {
+    let surface = telar::use_theme::<config::theme::NordTheme>().surface;
+    let mut found = Vec::new();
+    telar::for_each_with_matrix(&tree.commands(), |command, [a, b, c, d, e, f]| {
+        if let telar::DrawCommand::Rect { rect, style } = command
+            && style.fill == Some(telar::Paint::Solid(surface))
+        {
+            found.push(telar::Rect::new(
+                a * rect.x + c * rect.y + e,
+                b * rect.x + d * rect.y + f,
+                rect.width,
+                rect.height,
+            ));
+        }
+    });
+    found
+        .into_iter()
+        .max_by(|a, b| a.height.total_cmp(&b.height))
+        .expect("the card is drawn")
+}
+
+/// A turn of the wheel over `at` that takes the rows `pixels` further down, or up when negative.
+pub(crate) fn wheel_at((x, y): (f32, f32), pixels: f32) -> telar::Event {
+    telar::Event::Scrolled {
+        delta: telar::ScrollDelta::Pixels { x: 0.0, y: -pixels },
+        x: x.into(),
+        y: y.into(),
+    }
+}
+
+/// How much of the card, below a row's top, a row's own controls need to be in view.
+pub(crate) const ROW_ROOM: f32 = 80.0;
+
+/// Where to turn the wheel to bring a row at `row` into the card's visible rows, or nothing when it is already in them.
+pub(crate) fn wheel_toward(card: telar::Rect, row: telar::Rect) -> Option<f32> {
+    let header = 60.0;
+    if row.y + row.height + ROW_ROOM > card.y + card.height {
+        Some(60.0)
+    } else if row.y < card.y + header {
+        Some(-60.0)
+    } else {
+        None
+    }
+}

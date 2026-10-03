@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+automation.workspace = true
 config = { workspace = true }
 platform-wayland = { workspace = true }
 serde = { workspace = true }

@@ -971,7 +971,7 @@ mod tests {
                 ],
             ),
         ];
-        const PENDING: &[(&str, &str)] = &[("widget-visibility", "T-8.3")];
+        const PENDING: &[(&str, &str)] = &[];
         let _owner = Owner::new();
         let _rig = rig_with("keys-coverage", |_| {});
         for (layer, operations) in TA5 {

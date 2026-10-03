@@ -31,6 +31,13 @@ hogar-shell --list        # every target, command and argument
 it, so two compositors on one login session get one socket each; outside Hyprland the name is still stable and
 the client still finds the shell.
 
+## The request format
+
+A request is one line: either the command as a person writes it, `panel toggle clock`, or a JSON array of its
+words, `["shell", "run", "notify-send", "a  b"]`. The client sends the array, its own arguments, so a word with
+spaces in it arrives as the one word your shell made of it instead of being rejoined with single spaces. A raw
+client can send either; no target starts with `[`, so the two are never mistaken for each other.
+
 ## The reply format
 
 Every reply starts with `ok` or `err`, and the payload follows on the same line. A caller can branch on the

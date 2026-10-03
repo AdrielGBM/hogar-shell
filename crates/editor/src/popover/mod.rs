@@ -7,6 +7,7 @@
 //! **What it shows.** An area's popover is its kind's tools and then what every area has; an instance's is generated from its module's options (F-3.2). Either is extended by adding tools ([`add_area_tool`], [`add_instance_tool`]), each giving rows for the card and handles for the item, which share values by name through the draft.
 
 pub(crate) mod area;
+pub(crate) mod bindings;
 mod draft;
 pub mod handles;
 mod instance;
@@ -50,8 +51,8 @@ pub const ID: &str = "editor:popover";
 
 /// How wide a popover's card is.
 const WIDTH: f32 = 360.0;
-/// A rough height per row, for sizing the card to what it holds before it is laid out.
-const ROW: f32 = 40.0;
+/// The most of the usable height a card takes before its rows scroll.
+const TALLEST: f32 = 0.7;
 
 /// What one tool adds to a popover: rows for its card, and handles laid over the item it customizes.
 #[derive(Default)]
@@ -90,6 +91,7 @@ pub fn settle_instances_in(kind: &'static str, settle: Settle) {
 
 pub(crate) fn install() {
     area::install();
+    add_instance_tool(bindings::tool);
 }
 
 /// The popover that is open.
@@ -163,6 +165,11 @@ pub fn close() {
 /// What the open popover customizes.
 pub fn current() -> Option<Node> {
     OPEN.with(|open| open.borrow().as_ref().map(|open| open.node.clone()))
+}
+
+/// The open popover's own open state, read reactively: what its expression fields gate their readings on. `None` while no popover is open.
+pub(crate) fn showing() -> Option<RwSignal<bool>> {
+    OPEN.with(|open| open.borrow().as_ref().map(|open| open.open))
 }
 
 /// The value called `name` that the open area popover's rows and handles share ([`AreaDraft::value`]): a corner radius, a handle's clamped state. `None` while no area popover is open, or none of its tools made one by that name and type.
@@ -316,7 +323,7 @@ fn subject(
         .groups
         .iter()
         .find(|held| held.id == group)
-        .and_then(|held| held.children.iter().find(|child| child.id == id))
+        .and_then(|held| held.children.iter().find(|child| child.id == id.template()))
         .cloned()
         .ok_or_else(|| EditError::gone(&node.area))?;
     let name = ui::descriptor::find(&resolved.module)
@@ -337,7 +344,7 @@ fn subject(
             resolved,
             kind,
             shown,
-            written.instance(&group, &id),
+            written.instance(&group, &id.template()),
             settle,
         ))
     });
@@ -488,8 +495,12 @@ fn card(
     )?;
     let output = node.output.clone();
     let inner = WIDTH - 2.0 * pad;
-    let tall = (rows.len() as f32 * ROW + pad)
-        .min((crate::host::usable(output.as_deref()).height * 0.7).max(ROW));
+    let gap = ui::scale::space::md();
+    let tracked = |item: &dyn LayoutItem, what: &str| {
+        telar::track_layout(item.layout_node())
+            .ok_or_else(|| LayoutError::Engine(format!("a popover's {what} has no layout node")))
+    };
+    let header_height = tracked(&header, "header")?;
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
@@ -497,10 +508,39 @@ fn card(
             .width(inner),
         rows,
     )?;
-    let scroll = LayoutScrollArea::new(
-        LayoutStyle::new().width(inner).height(tall),
-        box_item(column),
-    )?;
+    let content = tracked(&column, "rows")?;
+    let viewport = Rc::new(RefCell::new(None));
+    let scroll = {
+        let captured = Rc::clone(&viewport);
+        LayoutScrollArea::new_with(
+            LayoutStyle::new()
+                .width(inner)
+                .height(SizeDimension::Percent(1.0)),
+            move |scrolling| {
+                *captured.borrow_mut() = Some(scrolling);
+                Ok(box_item(column))
+            },
+        )?
+    };
+    if let Some(viewport) = viewport.take() {
+        keep_focus_in_view(viewport);
+    }
+    let rows_room = {
+        let output = output.clone();
+        move || {
+            let usable = crate::host::usable(output.as_deref());
+            let card = (usable.height * TALLEST).min(usable.height - 2.0 * place::GAP);
+            (card - header_height.get().height - gap - 2.0 * pad).max(0.0)
+        }
+    };
+    let fitted = move || {
+        LayoutStyle::new()
+            .width(inner)
+            .height(content.get().height.min(rows_room()))
+    };
+    let rows_box =
+        StyledContainer::new(fitted(), |_| RectStyle::default(), vec![Box::new(scroll)])?
+            .styled_by(fitted);
     let body = StyledContainer::new(
         LayoutStyle::new()
             .absolute()
@@ -508,10 +548,10 @@ fn card(
             .inset_top(0.0)
             .width(WIDTH)
             .flex_column()
-            .gap(ui::scale::space::md())
+            .gap(gap)
             .padding_all(pad),
         move |_| RectStyle::filled(theme.surface, radius),
-        vec![box_item(header), Box::new(scroll)],
+        vec![box_item(header), box_item(rows_box)],
     )?
     .input_opaque()
     .with_transform(move |laid| {
@@ -525,6 +565,26 @@ fn card(
         Some([1.0, 0.0, 0.0, 1.0, x - laid.x, y - laid.y])
     });
     Ok(Box::new(body))
+}
+
+/// Scrolls the card's rows so the one holding keyboard focus is on screen, which moving focus by Tab or arrows would otherwise leave behind the clip.
+fn keep_focus_in_view(viewport: telar::ScrollViewport) {
+    effect(move || {
+        let Some(focused) = telar::focus::current() else {
+            return;
+        };
+        let Some(row) = telar::focus::exposed()
+            .into_iter()
+            .find(|at| at.id == focused)
+        else {
+            return;
+        };
+        let inside = telar::enclosing_scroll_viewport(row.node)
+            .is_some_and(|found| found.area() == viewport.area());
+        if inside {
+            viewport.reveal(row.node, place::GAP);
+        }
+    });
 }
 
 /// The tree of the popover `serial` opened, or nothing once it is closed.
@@ -558,4 +618,13 @@ pub(crate) fn instance_draft() -> Option<InstanceDraft> {
         Subject::Instance(draft) => Some(draft.clone()),
         Subject::Area(_) => None,
     })
+}
+
+/// Why Remove does not take back an expression `writer` wrote: the level the popover writes comes before it, so taking it back there would change nothing on screen.
+pub(crate) fn beyond(writer: &layout::Origin) -> String {
+    telar::t!(
+        "editor.expr.beyond",
+        rule = writer.rule(),
+        file = writer.file()
+    )
 }

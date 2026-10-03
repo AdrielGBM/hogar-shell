@@ -630,16 +630,8 @@ fn temperature_card(settings: &TemperatureConfig, theme: NordTheme) -> Card {
 }
 
 fn sensor_label(resources: Option<&resources::Resources>, wanted: &str) -> String {
-    if !wanted.trim().is_empty() {
-        return wanted.trim().to_string();
-    }
-    let Some(resources) = resources else {
-        return telar::t!("sysinfo.no_reading");
-    };
     resources
-        .sensors
-        .iter()
-        .max_by(|a, b| a.celsius.total_cmp(&b.celsius))
+        .and_then(|resources| resources.sensor_of(wanted))
         .map(|s| format!("{} {}", s.chip, s.label).trim().to_string())
         .unwrap_or_else(|| telar::t!("sysinfo.no_reading"))
 }
@@ -728,7 +720,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_sensor_row_names_the_configured_sensor_or_the_hottest_one() {
+    fn the_sensor_row_names_the_sensor_whose_reading_the_card_shows() {
         let r = resources::Resources {
             sensors: vec![
                 resources::Sensor {
@@ -744,7 +736,13 @@ mod tests {
             ],
             ..resources::Resources::default()
         };
-        assert_eq!(sensor_label(Some(&r), " Tctl "), "Tctl");
+        assert_eq!(sensor_label(Some(&r), " Package "), "coretemp Package");
+        assert_eq!(sensor_label(Some(&r), "coretemp"), "coretemp Package");
         assert_eq!(sensor_label(Some(&r), ""), "k10temp Tctl");
+        assert_eq!(
+            sensor_label(Some(&r), "nvme"),
+            "k10temp Tctl",
+            "a name that matches nothing reads the hottest, so the row names it rather than the name written"
+        );
     }
 }

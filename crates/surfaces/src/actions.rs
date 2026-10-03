@@ -1,6 +1,6 @@
 //! What a layout binds to the gestures on an instance or on an area's empty space, and running it.
 //!
-//! An action is a chain of IPC lines, run through the same command table the socket answers ([`services::command::run`]), so a press, a keybind and `hogar-shell …` reach the same code. A bound trigger takes the place of whatever the shell itself would have done with that gesture — a chip's own press, its wheel — and leaves every other gesture as it was. Nothing is ever bound on the lock layer (TA-8).
+//! An action is a chain of IPC lines, run through the same command table the socket answers ([`services::command::run_chain`]), so a press, a keybind and `hogar-shell …` reach the same code. A bound trigger takes the place of whatever the shell itself would have done with that gesture — a chip's own press, its wheel — and leaves every other gesture as it was. Nothing is ever bound on the lock layer (TA-8).
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -215,15 +215,10 @@ pub struct EmptySpace {
     pub area: AreaId,
 }
 
-/// Runs `action` line by line, stopping at the first line the shell refuses: a later line of a chain is written expecting the earlier ones to have happened.
+/// Runs `action`'s chain, stopping at the first line the shell refuses ([`services::command::run_chain`]).
 pub fn run(action: &Action) {
-    for line in &action.0 {
-        let reply = services::command::run(line);
-        if let Some(why) = reply.strip_prefix("err ") {
-            tracing::warn!("action '{line}': {why}");
-            return;
-        }
-        tracing::debug!("action '{line}'");
+    if let Err(refused) = services::command::run_chain(&action.0) {
+        tracing::warn!("action {refused}");
     }
 }
 

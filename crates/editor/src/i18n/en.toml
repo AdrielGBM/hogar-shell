@@ -35,6 +35,32 @@ add = "Add"
 remove = "Remove"
 new_name = "New name"
 
+[editor.expr]
+visible = "Shown while"
+always = "Always shown"
+bindings = "Driven by expressions"
+target = "Drives"
+accent = "Accent colour"
+add = "Add binding"
+unbound = "Not bound: the option keeps its value"
+placeholder = "An expression, like $battery.level < 20"
+value = "= {value} · {ty}"
+waiting = "No value yet"
+sources = "Sources ({count})"
+repeats = "Repeated over a list"
+repeat = "{group}: one copy per item"
+once = "Drawn once"
+inherited = "Set by a broader level: Remove takes it back here"
+beyond = "{rule} in {file} gives this and comes after where this popover writes, so taking it back here would change nothing on screen: change it there"
+
+[editor.expr.kind]
+local = "this copy"
+source = "source"
+var = "variable"
+event = "event"
+function = "function"
+constant = "constant"
+
 [editor.area]
 edge = "Edge"
 thickness = "Thickness"

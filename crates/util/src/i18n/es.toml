@@ -1,0 +1,101 @@
+[expression]
+invalid_number = "`{written}` no es un número"
+number_too_large = "`{written}` es demasiado grande"
+reference_needs_name = "`$` debe ir seguido de un nombre, como en `$battery.level`"
+unclosed_text = "este texto nunca se cierra con {quote}"
+unknown_escape = "escape desconocido; escribe \\n, \\t, \\\\, \\\" o \\'"
+invalid_color = "`{written}` no es un color; escribe #rgb, #rgba, #rrggbb o #rrggbbaa"
+lone_operator = "`{found}` no es un operador; {advice}"
+unexpected_character = "`{found}` no significa nada aquí"
+empty_expression = "la expresión está vacía"
+trailing_token = "{found} no puede seguir a una expresión completa"
+expected_closing = "se esperaba `{expected}` {closing}, pero {found}"
+expected_value = "se esperaba un valor, pero {found}"
+too_deep = "la expresión se anida demasiado"
+if_needs_call = "`if` se escribe if(condición, entonces, si_no)"
+if_arity = "`if` toma tres argumentos: if(condición, entonces, si_no)"
+expected_type = "se esperaba {expected}, pero esto da {found}"
+operand_type = "{context} necesita {expected}, pero esto es {found}"
+branch_mismatch = "las dos ramas de `if` deben dar el mismo tipo, pero la primera da {first} y esta {second}"
+list_item_mismatch = "los elementos de una lista deben ser de un mismo tipo, pero este es {item} en una {list}"
+name_is_function = "`{name}` es una función; llámala como {name}(…)"
+unknown_name = "nombre desconocido `{name}`"
+name_is_constant = "`{name}` es una constante; escríbela sin paréntesis"
+unknown_function = "función desconocida `{name}`"
+compare_mismatch = "`{operator}` no puede comparar {left} con {right}"
+not_orderable = "`{operator}` compara números o textos, no {found}"
+no_matching_form = "ninguna forma de `{name}` toma ({given}); toma {forms}"
+argument_type = "el argumento {number} de `{name}` debe ser {expected}, pero esto es {found}"
+argument_count = "`{name}` toma {takes}, pero {given}"
+reference_type = "{reference} dio {found} donde se declaró {declared}"
+reference_not_finite = "{reference} dio un número no finito donde se declaró {declared}"
+result_type = "`{name}` dio {found} donde se declaró {declared}"
+no_finite_result = "`{name}` no tiene un resultado finito para estos argumentos"
+division_by_zero = "división por cero"
+no_real_result = "esto no tiene un resultado real"
+result_too_large = "el resultado es demasiado grande"
+text_too_long = "el texto superaría los {limit} bytes"
+mistyped_value = "un valor del tipo equivocado llegó a este punto"
+missing_argument = "falta el argumento {number}"
+expected_argument = "se esperaba {expected}"
+malformed_format = "un marcador del formato debe ser {{}}, {{N}} o {{{{, y una }} sola se escribe }}}}"
+format_missing_value = "el formato pide el valor {index}, pero {given}"
+decimals_not_whole = "el número de decimales debe ser entero"
+position_not_whole = "una posición debe ser un número entero"
+position_outside = "la posición {position} está fuera de una lista de {len}"
+found_clause = "se encontró {found}"
+ended = "la expresión terminó"
+series = "{first}, {rest}"
+either = "{first} o {rest}"
+
+[expression.advice]
+compare = "para comparar escribe `{suggestion}`"
+write = "escribe `{suggestion}`"
+
+[expression.takes]
+one = "{count} argumento"
+other = "{count} argumentos"
+
+[expression.takes_at_least]
+one = "al menos {count} argumento"
+other = "al menos {count} argumentos"
+
+[expression.given]
+one = "se dio {count}"
+other = "se dieron {count}"
+
+[expression.type]
+number = "número"
+text = "texto"
+bool = "booleano"
+colour = "color"
+list = "lista de {item}"
+empty_list = "lista vacía"
+nothing = "nada"
+any = "cualquiera"
+
+[expression.found]
+number = "un número"
+text = "un texto"
+colour = "un color"
+name = "`{name}`"
+reference = "`${name}`"
+symbol = "`{symbol}`"
+end = "el final de la expresión"
+
+[expression.closing]
+list = "para cerrar la lista"
+group = "para cerrar el paréntesis"
+call = "para cerrar la llamada"
+
+[expression.context]
+operator = "`{operator}`"
+add_after_text = "`+` tras un texto"
+if_condition = "la condición de `if`"
+
+[expression.kind]
+number = "un número"
+text = "un texto"
+bool = "un booleano"
+colour = "un color"
+list = "una lista"

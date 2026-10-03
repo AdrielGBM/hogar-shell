@@ -232,6 +232,29 @@ pub fn text(label: Reactive<String>, help: Option<String>, value: RwSignal<Strin
     explained(label, help, row)
 }
 
+/// A control too wide for the label column, under its label instead.
+pub fn captioned(
+    label: Reactive<String>,
+    help: Option<String>,
+    control: Box<dyn LayoutItem>,
+) -> Built {
+    let theme = use_theme::<NordTheme>();
+    let shown = label.clone();
+    let caption = Text::new(
+        move || shown.get(),
+        LayoutStyle::new(),
+        move || theme.text_style(FontRole::Body, theme.subtle),
+    )?;
+    let column = telar::Container::new(
+        LayoutStyle::new()
+            .flex_column()
+            .gap(ui::scale::space::xs())
+            .width(telar::SizeDimension::Percent(1.0)),
+        vec![box_item(caption), control],
+    )?;
+    explained(label, help, box_item(column))
+}
+
 /// A line of quiet text under the rows it is about.
 pub fn note(said: impl Fn() -> String + 'static) -> Built {
     let theme = use_theme::<NordTheme>();

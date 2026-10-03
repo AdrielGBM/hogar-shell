@@ -401,6 +401,13 @@ pub const PAGES: &[Page] = &[
                 crate::sections::keynav::KeynavProps::props().build(),
                 telar::Children::default(),
             )),
+            section!("automation", ["automation"], || {
+                crate::sections::automation::automation(
+                    crate::sections::automation::AutomationProps::props().build(),
+                    telar::Children::default(),
+                )
+            }),
+            section!("rules", ["rules"], crate::sections::rules::rules_section),
         ],
     },
     Page {

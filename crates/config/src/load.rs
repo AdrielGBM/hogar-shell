@@ -47,6 +47,8 @@ pub const GLOBAL_ONLY_SECTIONS: &[&str] = &[
     "bluetooth",
     "gpu",
     "weather",
+    "automation",
+    "rules",
 ];
 
 pub(crate) fn monitor_config_path(path: &Path, output: impl AsRef<Path>) -> PathBuf {

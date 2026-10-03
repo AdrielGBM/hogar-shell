@@ -45,6 +45,7 @@ mod tests {
             id: LayoutId::new("test"),
             name: "Test".into(),
             extends: None,
+            sources: Default::default(),
             outputs: vec![OutputRule {
                 matches: OutputMatch("*".into()),
                 layers: Layers {
@@ -142,7 +143,7 @@ mod tests {
         assert!(
             report
                 .findings()
-                .any(|finding| finding.message.contains("stack area")),
+                .any(|finding| finding.message.key() == Some("finding.no_stack")),
             "{}",
             report.render()
         );
@@ -170,9 +171,8 @@ mod tests {
         });
         let (_, report) = on(&layout, &outputs(), None);
         assert!(
-            report
-                .findings()
-                .any(|finding| finding.key == "top.bar-top" && finding.message.contains("blur")),
+            report.findings().any(|finding| finding.key == "top.bar-top"
+                && finding.message.key() == Some("finding.no_blur")),
             "{}",
             report.render()
         );

@@ -189,6 +189,7 @@ mod tests {
             layer: LayerKind::Top,
             output: Some(SCREEN.to_string()),
             demands: Rc::new(Demands::new(platform_wayland::Layer::Top)),
+            mapped: telar::signal(true).read_only(),
         });
         let layer =
             surfaces::area::stand_in(&screen(), LayerKind::Top).expect("the top layer builds");

@@ -19,6 +19,8 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use config::NetworkConfig;
 use util::broadcast::{Broadcast, Service};
 
+use crate::events::{Radio, ShellEvent};
+
 const NET_DIR: &str = "/sys/class/net";
 const NM_BUS: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
@@ -472,6 +474,12 @@ fn read_wifi(conn: &Connection) -> Wifi {
 
 static WIFI: Service<Wifi> = Service::new("hogar-shell-wifi", run_wifi);
 
+static RADIO: Radio = Radio::new(ShellEvent::WifiEnabled, ShellEvent::WifiDisabled);
+
+fn announce_radio(wifi: &Wifi) {
+    RADIO.announce(wifi.available, wifi.enabled);
+}
+
 /// The `[network]` settings, or the defaults outside a started shell. Read through the cross-thread snapshot: the rescan timer runs on the producer, which cannot see the driver thread's copy.
 fn settings() -> NetworkConfig {
     config::shared_config()
@@ -486,6 +494,7 @@ fn run_wifi(out: &Arc<Broadcast<Wifi>>) {
     };
     let mut last = read_wifi(&conn);
     out.publish(last.clone());
+    announce_radio(&last);
 
     let (tx, rx) = sync_channel::<()>(1);
     if watch_nm_signals(tx.clone()).is_none() {
@@ -510,6 +519,7 @@ fn run_wifi(out: &Arc<Broadcast<Wifi>>) {
         if current != last {
             last = current.clone();
             out.publish(current);
+            announce_radio(&last);
         }
     }
 }
@@ -570,7 +580,7 @@ pub fn set_wifi_enabled(enabled: bool) {
     let Some(state) = current_wifi().filter(|w| w.available) else {
         return;
     };
-    WIFI.publish(Wifi {
+    let switched = Wifi {
         enabled,
         points: if enabled {
             state.points.clone()
@@ -578,7 +588,8 @@ pub fn set_wifi_enabled(enabled: bool) {
             Vec::new()
         },
         ..state
-    });
+    };
+    WIFI.publish(switched);
     act("switch the radio", move |conn| {
         if let Err(e) = conn.call_method(
             Some(NM_BUS),

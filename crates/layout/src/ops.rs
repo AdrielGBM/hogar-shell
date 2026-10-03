@@ -11,6 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use util::report::Message;
+
 use crate::model::*;
 use crate::validate::reserving_under;
 
@@ -200,7 +202,7 @@ pub enum OpError {
     NoInstance(InstanceId),
     /// An index past the end of the list it names.
     OutOfRange {
-        what: &'static str,
+        what: Listed,
         index: usize,
         len: usize,
     },
@@ -221,45 +223,67 @@ pub enum PromptEdit {
     Hide,
 }
 
-impl fmt::Display for OpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// A list an edit names a position in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Listed {
+    Areas,
+    Groups,
+    Instances,
+    OutputRules,
+    WorkspaceRules,
+}
+
+impl Listed {
+    /// `len` of them, as a sentence counts them.
+    fn counted(self, len: usize) -> Message {
+        match self {
+            Listed::Areas => util::message!("finding.listed.areas", len = len),
+            Listed::Groups => util::message!("finding.listed.groups", len = len),
+            Listed::Instances => util::message!("finding.listed.instances", len = len),
+            Listed::OutputRules => util::message!("finding.listed.output_rules", len = len),
+            Listed::WorkspaceRules => util::message!("finding.listed.workspace_rules", len = len),
+        }
+    }
+}
+
+impl OpError {
+    /// Why the edit was refused, in no language yet.
+    pub fn message(&self) -> Message {
         match self {
             OpError::NoOutputRule(pattern) => {
-                write!(f, "there is no output rule matching `{pattern}`")
+                util::message!("finding.no_output_rule", pattern = pattern)
             }
-            OpError::NoWorkspaceRule { output, workspace } => write!(
-                f,
-                "the output rule `{output}` has no workspace rule matching `{workspace}`"
+            OpError::NoWorkspaceRule { output, workspace } => util::message!(
+                "finding.no_workspace_rule",
+                output = output,
+                workspace = workspace
             ),
-            OpError::NoLockLayer { workspace } => write!(
-                f,
-                "the workspace rule `{workspace}` has no lock layer: no workspace is visible while the screen is locked"
-            ),
-            OpError::RuleExists(at) => write!(f, "there is already a rule at `{at}`"),
-            OpError::NoArea(id) => write!(f, "there is no area called `{id}`"),
-            OpError::NoGroup(id) => write!(f, "there is no group called `{id}`"),
-            OpError::NoInstance(id) => write!(f, "there is no instance called `{id}`"),
-            OpError::OutOfRange { what, index, len } => {
-                write!(f, "position {index} is past the {len} {what} there are")
+            OpError::NoLockLayer { workspace } => {
+                util::message!("finding.no_lock_layer", workspace = workspace)
             }
-            OpError::Prompt { id, refused } => {
-                write!(
-                    f,
-                    "`{id}` is the lock screen's password prompt, which can be moved and restyled "
-                )?;
-                match refused {
-                    PromptEdit::Remove => f.write_str("but never removed"),
-                    PromptEdit::ChangeKind => f.write_str("but never turned into another kind of area"),
-                    PromptEdit::Hide => f.write_str(
-                        "but never given a visibility expression: one that turned false would lock the user out",
-                    ),
-                }
-            }
-            OpError::Reservation(id) => write!(
-                f,
-                "a workspace rule cannot add, remove or resize `{id}` or change what it reserves: reservation is decided per output, so that switching workspaces never re-tiles windows"
+            OpError::RuleExists(at) => util::message!("finding.rule_exists", at = at),
+            OpError::NoArea(id) => util::message!("finding.no_area", id = id),
+            OpError::NoGroup(id) => util::message!("finding.no_group", id = id),
+            OpError::NoInstance(id) => util::message!("finding.no_instance", id = id),
+            OpError::OutOfRange { what, index, len } => util::message!(
+                "finding.out_of_range",
+                index = index,
+                listed = what.counted(*len)
             ),
+            OpError::Prompt { id, refused } => match refused {
+                PromptEdit::Remove => util::message!("finding.prompt_removed", id = id),
+                PromptEdit::ChangeKind => util::message!("finding.prompt_kind", id = id),
+                PromptEdit::Hide => util::message!("finding.prompt_hidden", id = id),
+            },
+            OpError::Reservation(id) => util::message!("finding.reservation", id = id),
         }
+    }
+}
+
+/// In English, as the command line says it.
+impl fmt::Display for OpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message().english())
     }
 }
 
@@ -271,7 +295,7 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
         LayoutOp::InsertArea { site, index, area } => {
             leaves_reservation(layout, site, area)?;
             let areas = &mut layer_mut(layout, site)?.areas;
-            bounds("areas", *index, areas.len())?;
+            bounds(Listed::Areas, *index, areas.len())?;
             areas.insert(*index, (**area).clone());
             Ok(LayoutOp::DeleteArea {
                 site: site.clone(),
@@ -294,7 +318,7 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
             let areas = &mut layer_mut(layout, site)?.areas;
             let from =
                 index_of(areas.iter().map(|a| &a.id), id).ok_or(OpError::NoArea(id.clone()))?;
-            bounds("areas", *index, areas.len().saturating_sub(1))?;
+            bounds(Listed::Areas, *index, areas.len().saturating_sub(1))?;
             let area = areas.remove(from);
             areas.insert(*index, area);
             Ok(LayoutOp::MoveArea {
@@ -378,7 +402,7 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
             group,
         } => {
             let groups = &mut area_mut(layout, site, area)?.groups;
-            bounds("groups", *index, groups.len())?;
+            bounds(Listed::Groups, *index, groups.len())?;
             groups.insert(*index, (**group).clone());
             Ok(LayoutOp::DeleteGroup {
                 site: site.clone(),
@@ -435,7 +459,7 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
             instance,
         } => {
             let children = &mut spot_mut(layout, spot)?.children;
-            bounds("instances", *index, children.len())?;
+            bounds(Listed::Instances, *index, children.len())?;
             children.insert(*index, (**instance).clone());
             Ok(LayoutOp::DeleteInstance {
                 spot: spot.clone(),
@@ -469,7 +493,7 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
                 let children = &mut spot_mut(layout, from)?.children;
                 children.insert(was, instance);
                 return Err(OpError::OutOfRange {
-                    what: "instances",
+                    what: Listed::Instances,
                     index: *index,
                     len: landing_len(layout, to)?,
                 });
@@ -522,7 +546,7 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
             if layout.outputs.iter().any(|it| it.matches == rule.matches) {
                 return Err(OpError::RuleExists(format!("outputs.{}", rule.matches.0)));
             }
-            bounds("output rules", *index, layout.outputs.len())?;
+            bounds(Listed::OutputRules, *index, layout.outputs.len())?;
             layout.outputs.insert(*index, (**rule).clone());
             Ok(LayoutOp::DeleteOutputRule {
                 output: rule.matches.clone(),
@@ -570,7 +594,7 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
                     output.0, rule.matches.0
                 )));
             }
-            bounds("workspace rules", *index, workspaces.len())?;
+            bounds(Listed::WorkspaceRules, *index, workspaces.len())?;
             workspaces.insert(*index, (**rule).clone());
             Ok(LayoutOp::DeleteWorkspaceRule {
                 output: output.clone(),
@@ -859,7 +883,7 @@ fn landing_len(layout: &mut Layout, spot: &Spot) -> Result<usize, OpError> {
     Ok(spot_mut(layout, spot)?.children.len())
 }
 
-fn bounds(what: &'static str, index: usize, len: usize) -> Result<(), OpError> {
+fn bounds(what: Listed, index: usize, len: usize) -> Result<(), OpError> {
     if index > len {
         return Err(OpError::OutOfRange { what, index, len });
     }

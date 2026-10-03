@@ -97,6 +97,9 @@ every open window: address, workspace, class and title
 \fBdpms\fR \fI<on|off>\fR
 switch every monitor's output on or off
 .TP
+\fBrun\fR \fI<command...>\fR
+run a command through sh, detached, without waiting for it
+.TP
 \fBquit\fR
 shut the shell down
 .SS lock
@@ -508,14 +511,34 @@ take a placed module, or a whole area, out of the layout
 \fBmove\fR \fI<id> <group> [index]\fR
 put a placed module in another group, or elsewhere in its own
 .TP
-\fBset\fR \fI<instance> <key> <value>\fR
-change one property of a placed module
+\fBset\fR \fI<instance|area|area.group> <key> <value...>\fR
+change one property of a placed module, or an area's visible or a group's repeat
 .TP
 \fBreset\fR \fI<id|layer|all>\fR
 put a part of the layout back to what the layout it extends says, or the built\-in one
 .TP
 \fBedit\fR \fI<background|desktop|top|overlay|lock|off> [output]\fR
 edit one layer on one screen (the focused one unless named), or stop
+.SS var
+.TP
+\fBget\fR \fI<name>\fR
+a variable's value
+.TP
+\fBset\fR \fI<name> <value...> [\-\-type <t>]\fR
+set a variable to the rest of the line, keeping its type; a new one is text unless \-\-type says number, bool, colour, image, font or list:<type>
+.TP
+\fBlist\fR
+every variable: name, type and value, tab\-separated
+.TP
+\fBremove\fR \fI<name>\fR
+forget a variable
+.SS rule
+.TP
+\fBlist\fR
+every rule: id, trigger, state (on, off, invalid or suspended) and when it last fired, tab\-separated
+.TP
+\fBrun\fR \fI<id>\fR
+run a rule's commands now, ignoring its trigger, `when` and `enabled`, and print each with its reply; its `store` is not written
 .SS deps
 .TP
 \fBlist\fR

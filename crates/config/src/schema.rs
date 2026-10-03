@@ -53,6 +53,8 @@ fn section_structs() -> HashMap<&'static str, &'static str> {
         ("tray", "TrayConfig"),
         ("animation", "AnimationConfig"),
         ("keynav", "KeyNavConfig"),
+        ("automation", "AutomationConfig"),
+        ("rules", "RuleConfig"),
     ]
     .into_iter()
     .collect()
@@ -88,6 +90,18 @@ pub struct Table {
     pub path: String,
     pub doc: Option<&'static str>,
     pub entries: Vec<Entry>,
+    /// A section written once per entry, as `[[rules]]`, whose entries describe the keys of one of them. A fresh install has none, so there is no default to print.
+    pub repeated: bool,
+}
+
+impl Table {
+    /// The header a file writes to open this table: `[clock]`, `[theme.scale]` or `[[rules]]`.
+    pub fn header(&self) -> String {
+        match self.repeated {
+            true => format!("[[{}]]", self.path),
+            false => format!("[{}]", self.path),
+        }
+    }
 }
 
 /// What a table holds, in the order any rendering has to emit it — TOML puts every bare key before the first sub-table header, since a header printed first would swallow the keys that follow it.
@@ -140,15 +154,18 @@ pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
         if section.is_some_and(|wanted| wanted != name) {
             continue;
         }
-        let Some(value) = table.get(name).and_then(toml::Value::as_table) else {
-            continue;
+        let (value, repeated) = match (table.get(name), repeated_element(name)?) {
+            (_, Some(element)) => (element, true),
+            (Some(toml::Value::Table(value)), None) => (value.clone(), false),
+            _ => continue,
         };
         sections.push((
             name,
             Table {
                 path: name.to_string(),
                 doc: doc_for(structure, ""),
-                entries: walk(name, value, structure),
+                entries: walk(name, &value, structure),
+                repeated,
             },
         ));
     }
@@ -161,11 +178,24 @@ pub fn outline(section: Option<&str>) -> Result<Vec<Table>, String> {
                 path: module_path.to_string(),
                 doc: doc_for(module_struct, ""),
                 entries: walk(module_path, value, module_struct),
+                repeated: false,
             },
         ));
     }
     sections.sort_by_key(|(name, _)| *name);
     Ok(sections.into_iter().map(|(_, table)| table).collect())
+}
+
+/// One entry of a section written as a list of tables, with every key at its default, for the reference to describe the keys of; `None` for a section that is one table.
+fn repeated_element(section: &str) -> Result<Option<toml::map::Map<String, toml::Value>>, String> {
+    let element = match section {
+        "rules" => toml::Value::try_from(crate::RuleConfig::default()),
+        _ => return Ok(None),
+    };
+    match element.map_err(|e| format!("serializing a default `[[{section}]]`: {e}"))? {
+        toml::Value::Table(table) => Ok(Some(table)),
+        _ => Err(format!("a default `[[{section}]]` is not a table")),
+    }
 }
 
 /// One table's entries: its own keys, then the optional ones serde left out, then its sub-tables, then its lists of tables.
@@ -185,6 +215,7 @@ fn walk(path: &str, table: &toml::map::Map<String, toml::Value>, structure: &str
                 path: child,
                 doc: doc_for(structure, key),
                 entries,
+                repeated: false,
             }));
             continue;
         }
@@ -224,11 +255,24 @@ pub fn render(section: Option<&str>) -> Result<String, String> {
         if let Some(doc) = table.doc {
             out.push_str(&comment(doc));
         }
-        let _ = writeln!(out, "[{}]", table.path);
-        out.push_str(&render_entries(&table.entries));
+        let body = format!("{}\n{}", table.header(), render_entries(&table.entries));
+        match table.repeated {
+            true => out.push_str(&commented_out(&body)),
+            false => out.push_str(&body),
+        }
         out.push('\n');
     }
     Ok(out)
+}
+
+/// `text` with every line that is not already a comment turned into one. A fresh install has no entry of a repeated section, so the reference shows the shape of one without adding it to a config that copies the reference.
+fn commented_out(text: &str) -> String {
+    text.lines()
+        .map(|line| match line.starts_with('#') || line.is_empty() {
+            true => format!("{line}\n"),
+            false => format!("# {line}\n"),
+        })
+        .collect()
 }
 
 /// A table's entries as TOML. A list of tables has to carry its section in the header — serializing it as a bare one-key map yields a reference whose own text does not parse back into the section it documents.
@@ -443,6 +487,28 @@ mod tests {
         // The same shape one section over, so the fix is not one special case.
         let battery = render(Some("battery")).expect("renders");
         assert!(battery.contains("[[battery.warn_levels]]"), "{battery}");
+    }
+
+    /// `[[rules]]` is a section written once per rule, and a fresh install has none: the reference describes every key of one, as comments, so a config copied from it gains no rule.
+    #[test]
+    fn a_section_written_once_per_entry_describes_one_entry_without_adding_it() {
+        let text = render(Some("rules")).expect("renders");
+        assert!(text.contains("# [[rules]]\n"), "{text}");
+        for key in ["id", "when", "run", "store", "enabled"] {
+            assert!(
+                text.contains(&format!("\n# {key} =")),
+                "`{key}` is described: {text}"
+            );
+        }
+        assert!(text.contains("# [rules.trigger]\n"), "{text}");
+        assert!(text.contains("# edge =   # unset by default"), "{text}");
+        let parsed: Config = toml::from_str(&text).expect("the printed section parses");
+        assert!(parsed.rules.is_empty());
+
+        let whole: Config = toml::from_str(&render(None).unwrap()).expect("the reference parses");
+        assert!(whole.rules.is_empty());
+        let rules = outline(Some("rules")).unwrap();
+        assert_eq!(rules[0].header(), "[[rules]]");
     }
 
     #[test]

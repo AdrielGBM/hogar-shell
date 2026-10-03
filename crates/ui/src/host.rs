@@ -87,7 +87,7 @@ struct Slot<T> {
 
 /// What [`forget`] reaches every store through, whatever it holds.
 trait Forgets: Sync {
-    fn forget(&self, instance: &InstanceId);
+    fn forget(&self, gone: &dyn Fn(&InstanceId) -> bool);
 }
 
 /// Every [`InstanceStore`] that has kept a value, listed by the store itself on first use, so forgetting an instance needs no list of stores kept by hand.
@@ -95,25 +95,32 @@ static STORES: Mutex<Vec<&'static dyn Forgets>> = Mutex::new(Vec::new());
 
 /// Drops what every [`InstanceStore`] keeps for `instances`: the layout no longer places them, and an instance added later under the same id starts from its module's defaults rather than from a removed one's state (F-3.4).
 pub fn forget(instances: &[InstanceId]) {
+    forget_where(|held| instances.contains(held));
+}
+
+/// [`forget`] for every instance `gone` answers for: what a removed child of a repeated group kept under each of its copies' ids, which only the layout can tell apart.
+pub fn forget_where(gone: impl Fn(&InstanceId) -> bool) {
     let stores: Vec<&'static dyn Forgets> = STORES
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     for store in stores {
-        for instance in instances {
-            store.forget(instance);
-        }
+        store.forget(&gone);
     }
 }
 
 impl<T: Clone + Send + 'static> Forgets for InstanceStore<T> {
-    fn forget(&self, instance: &InstanceId) {
-        let gone = self
+    fn forget(&self, gone: &dyn Fn(&InstanceId) -> bool) {
+        let mut slots = self
             .slots
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(instance);
-        drop(gone);
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let kept = std::mem::take(&mut *slots);
+        let (dropped, kept): (BTreeMap<_, _>, BTreeMap<_, _>) =
+            kept.into_iter().partition(|(held, _)| gone(held));
+        *slots = kept;
+        drop(slots);
+        drop(dropped);
     }
 }
 
@@ -414,7 +421,7 @@ impl Host {
 
     /// Whether this build may draw `field`: any field for the owner, and for anyone else only one the field itself says they may see.
     pub fn may_show(&self, field: &FieldDef) -> bool {
-        self.audience == Audience::Owner || field.privacy.allows_anyone(&self.config.lock)
+        field.shown_to(self.audience, &self.config.lock)
     }
 
     /// `value` when this build may draw `field`, else the field's typed empty value. The one path a reading takes to a private field, so what it draws for [`Audience::Anyone`] cannot hold one.
@@ -651,10 +658,12 @@ mod tests {
         let secret = FieldDef {
             name: "summary",
             privacy: Privacy::Private,
+            ty: crate::descriptor::FieldType::Text,
         };
         let count = FieldDef {
             name: "count",
             privacy: Privacy::Public,
+            ty: crate::descriptor::FieldType::Number,
         };
         let owner = chip(Edge::Top, 32);
         assert_eq!(
@@ -678,6 +687,7 @@ mod tests {
             privacy: Privacy::OnLock(|lock| {
                 lock.notification_detail == config::NotificationDetail::Apps
             }),
+            ty: crate::descriptor::FieldType::Text,
         };
         let anyone = chip(Edge::Top, 32).shown_to(Audience::Anyone);
         assert_eq!(

@@ -908,6 +908,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 name = "hogar-shell"
 version = "0.1.0"
 dependencies = [
+ "hogar-shell-automation",
  "hogar-shell-config",
  "hogar-shell-editor",
  "hogar-shell-layout",
@@ -919,11 +920,35 @@ dependencies = [
  "hogar-shell-util",
  "libc",
  "platform-wayland",
+ "serde_json",
  "telar",
+ "telar-expression",
  "toml",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "hogar-shell-automation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hogar-shell-config",
+ "hogar-shell-layout",
+ "hogar-shell-services",
+ "hogar-shell-ui",
+ "hogar-shell-util",
+ "libc",
+ "platform-wayland",
+ "regex",
+ "serde",
+ "serde_json",
+ "telar",
+ "telar-expression",
+ "toml",
+ "tracing",
+ "ureq",
 ]
 
 [[package]]
@@ -951,6 +976,7 @@ version = "0.1.0"
 name = "hogar-shell-editor"
 version = "0.1.0"
 dependencies = [
+ "hogar-shell-automation",
  "hogar-shell-config",
  "hogar-shell-layout",
  "hogar-shell-modules",
@@ -961,6 +987,7 @@ dependencies = [
  "platform-wayland",
  "serde",
  "telar",
+ "telar-expression",
  "toml",
  "tracing",
 ]
@@ -974,6 +1001,7 @@ dependencies = [
  "hogar-shell-util",
  "serde",
  "telar",
+ "telar-expression",
  "toml",
  "toml_edit",
  "tracing",
@@ -993,6 +1021,7 @@ dependencies = [
  "platform-wayland",
  "serde",
  "telar",
+ "telar-expression",
  "toml",
  "tracing",
 ]
@@ -1023,6 +1052,7 @@ dependencies = [
 name = "hogar-shell-settings"
 version = "0.1.0"
 dependencies = [
+ "hogar-shell-automation",
  "hogar-shell-config",
  "hogar-shell-services",
  "hogar-shell-surfaces",
@@ -1051,6 +1081,7 @@ name = "hogar-shell-surfaces"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hogar-shell-automation",
  "hogar-shell-config",
  "hogar-shell-layout",
  "hogar-shell-services",
@@ -1059,6 +1090,7 @@ dependencies = [
  "image",
  "platform-wayland",
  "telar",
+ "telar-expression",
  "telar-platform-headless",
  "toml",
  "tracing",
@@ -1077,6 +1109,7 @@ dependencies = [
  "serde_json",
  "telar",
  "telar-dynamic",
+ "telar-expression",
  "toml",
  "tracing",
  "ureq",
@@ -1092,6 +1125,7 @@ dependencies = [
  "platform-wayland",
  "rustix",
  "telar",
+ "telar-expression",
  "tracing",
  "zbus",
 ]
@@ -1975,6 +2009,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "regex-automata"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2528,6 +2574,14 @@ dependencies = [
  "telar-renderer-core",
  "telar-ui-core",
  "tracing",
+]
+
+[[package]]
+name = "telar-expression"
+version = "0.2.1"
+dependencies = [
+ "telar-geometry-core",
+ "telar-reactive-core",
 ]
 
 [[package]]
@@ -3644,7 +3698,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

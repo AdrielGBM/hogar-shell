@@ -7,15 +7,19 @@
 //! - **A workspace rule may not touch reservation.** Reservation is what keeps windows out of a bar's strip, and the compositor re-tiles every window when it changes. If switching workspaces could change it, every workspace switch would shuffle the user's windows. So a workspace rule that adds, removes or resizes a reserving area is rejected with its path, and the output-level arrangement stands.
 //! - **The lock layer holds readings, never controls.** Anything placed there is on a screen that anyone walking past can see and touch, so only representations a module declares `ReadOnly` may go there, actions are refused outright, and a command source has to opt in. A layout that breaks any of it is not silently fixed: the lock falls back to the built-in minimal lock, because a half-corrected lock screen is worse than a plain one.
 //!
-//! What this crate cannot know on its own — whether a module exists, whether it has a representation, whether that representation is read-only, and whether a command line resolves — is asked of a [`Catalogue`]. That keeps the layout model free of the module registry and the IPC table, and lets a test state exactly which modules it is talking about.
+//! What this crate cannot know on its own — whether a module exists, whether it has a representation, whether that representation is read-only, whether a command line resolves, and what an expression's names read — is asked of a [`Catalogue`]. That keeps the layout model free of the module registry, the IPC table and the shell's readings, and lets a test state exactly which modules and names it is talking about.
+//!
+//! **Expressions are checked where they are written.** Every `visible` and every binding is compiled against the names it may read on its layer and typed against what it drives: a `visible` gives a bool, a binding what its option takes. A finding is located at the expression's key, with the span inside the expression it is about; [`locate_expressions`] moves that span into the file for a caller that has the file's text. A binding that fails is left out where it is drawn and its instance keeps its written options, so one bad expression costs only itself.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use config::scheme;
 use config::theme::NordTheme;
-use util::report::{Finding, Report};
+use telar_expression::{Compiled, ErrorCode, ErrorKind, Errors, HostError, Type, is_identifier};
+use util::report::{Finding, Message, Report, Span};
 
-use crate::merge::merge_layers;
+use crate::merge::{At, merge_layers, merge_session_layers};
 use crate::model::*;
 use crate::resolve::{Resolved, ResolvedAreaKind};
 
@@ -29,7 +33,64 @@ pub trait Catalogue {
     /// Whether the line names a real IPC command, checked without running it.
     fn command_resolves(&self, line: &str) -> bool;
     /// What is wrong with an instance of `module` setting `options`, as `(key, why)`: a key the module does not declare, or a value of the wrong kind.
-    fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, String)>;
+    fn option_problems(&self, module: &str, options: &toml::Table) -> Vec<(String, Message)>;
+    /// Whether a module already gives a reading called `name`, which a layout's own source would shadow.
+    fn is_service_source(&self, name: &str) -> bool;
+    /// Parses and type-checks an expression against every name it may read. `on_lock` reads as whoever is in front of the lock screen: a private field is its type's empty value, and a source that runs a command is refused unless it says `lock_safe = true` (TA-8).
+    fn compile(&self, source: &str, on_lock: bool) -> Result<Compiled, Errors> {
+        self.compile_with(source, on_lock, &Locals::default())
+    }
+    /// [`Catalogue::compile`] for an expression that also reads `locals`: `$item` and `$index` in a copy of a repeated group's children. A local is read before any name of the shell's, inside the copy alone.
+    fn compile_with(
+        &self,
+        source: &str,
+        on_lock: bool,
+        locals: &Locals,
+    ) -> Result<Compiled, Errors>;
+    /// Whether `error`, from compiling `source`, is only that a `$name` it reads names nothing yet: a variable, which the shell sets while it runs, so the expression is warned of rather than refused and comes alive once the variable is set. A catalogue that knows no variables waits for none.
+    fn awaits_variable(&self, _source: &str, _error: &telar_expression::Error) -> bool {
+        false
+    }
+    /// The type a binding at `path` on an instance of `module` has to give — an option `module` declares, or `accent` — or why nothing can be bound there.
+    fn binding_type(&self, module: &str, path: &str) -> Result<Type, Message>;
+    /// What an expression's failure says. A failure of a name this catalogue answers for is in the words of whoever answers for it; a catalogue that knows no such words says the expression language's own.
+    fn describe(&self, code: &ErrorCode) -> Message {
+        Message::expression(code)
+    }
+}
+
+/// One thing wrong with an expression: which stage refused it, the bytes of it that are wrong, and what is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mistake {
+    pub kind: ErrorKind,
+    pub span: telar_expression::Span,
+    pub message: Message,
+}
+
+impl Mistake {
+    /// What `error` is, in the words `catalogue` has for it.
+    pub fn of(catalogue: &dyn Catalogue, error: &telar_expression::Error) -> Self {
+        Self {
+            kind: error.kind,
+            span: error.span,
+            message: catalogue.describe(&error.code),
+        }
+    }
+
+    /// A mistake with `expr` as a whole rather than with a part of it.
+    fn whole(expr: &Expr, message: Message) -> Self {
+        Self {
+            kind: ErrorKind::Type,
+            span: telar_expression::Span::new(0, expr.0.len()),
+            message,
+        }
+    }
+
+    /// As the command line shows it: in English, over `source` with a caret under the part that is wrong.
+    pub fn render(&self, source: &str) -> String {
+        let said = ErrorCode::Host(HostError::new("", self.message.english()));
+        telar_expression::Error::new(self.kind, self.span, said).render(source)
+    }
 }
 
 /// Everything wrong with `layout` that does not depend on which output it is shown on.
@@ -37,23 +98,55 @@ pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
     let mut report = Report::default();
     let file = format!("layouts/{}.toml", layout.id);
 
-    let mut instances = BTreeSet::new();
+    let mut instances = BTreeMap::new();
     for rule in &layout.outputs {
         let at = format!("outputs.{}", rule.matches.0);
         check_layer_ids(&rule.layers, &at, &file, &mut instances, &mut report);
         check_lock_layer(&rule.layers.lock, &at, &file, catalogue, &mut report);
         check_modules(&rule.layers, &at, &file, catalogue, &mut report);
         check_actions(&rule.layers, &at, &file, catalogue, &mut report);
+        let scope = output_level(layout, &rule.matches);
+        let level = Level {
+            layers: &rule.layers,
+            scope: &scope,
+            inherits: layout.extends.is_some(),
+            at: &at,
+            file: &file,
+        };
+        check_expressions(level, catalogue, Severity::Error, &mut report);
+        check_unsets(level, catalogue, Severity::Error, &mut report);
         check_gradients(&rule.layers, &at, &file, &mut report);
         check_bar_corners(&rule.layers, &at, &file, &mut report);
         check_workspace_rules(layout, rule, &at, &file, catalogue, &mut report);
     }
+    check_sources(layout, &file, catalogue, &mut report);
     report
+}
+
+/// What a level calls its sources. What each one says is checked once every level of the chain is laid over the others, where the shell reads them to run (`automation::sources::UserSources::of`): a key a level leaves out may come from the layout it extends.
+fn check_sources(layout: &Layout, file: &str, catalogue: &dyn Catalogue, report: &mut Report) {
+    for name in layout.sources.keys() {
+        let at = format!("sources.{name}");
+        if !is_identifier(name) {
+            report.error(Finding::new(
+                file,
+                at.clone(),
+                util::message!("finding.source_name", name = name),
+            ));
+        }
+        if catalogue.is_service_source(name) {
+            report.error(Finding::new(
+                file,
+                at,
+                util::message!("finding.source_shadows", name = name),
+            ));
+        }
+    }
 }
 
 /// Everything wrong with a layout's **lock layer alone**.
 ///
-/// For the one caller that must not hear about a bar: the session opener decides between the layout's lock screen and the built-in minimal one, and a mistyped desktop widget is no reason to take away a lock screen the user configured. Every check it runs is one [`validate`] runs too — this is the same set narrowed to one layer, not a second opinion about it.
+/// For the one caller that must not hear about a bar: the session opener decides between the layout's lock screen and the built-in minimal one, and a mistyped desktop widget is no reason to take away a lock screen the user configured. Every check it runs is one [`validate`] runs too — this is the same set narrowed to one layer, not a second opinion about it. One thing is said differently: an expression that does not check is a warning here, since it is left out where it is drawn, and a binding the lock cannot read is no reason to take the lock screen away.
 pub fn validate_lock(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
     let mut report = Report::default();
     let file = format!("layouts/{}.toml", layout.id);
@@ -66,6 +159,16 @@ pub fn validate_lock(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
         check_lock_layer(&rule.layers.lock, &at, &file, catalogue, &mut report);
         check_modules(&alone, &at, &file, catalogue, &mut report);
         check_actions(&alone, &at, &file, catalogue, &mut report);
+        let scope = output_level(layout, &rule.matches);
+        let level = Level {
+            layers: &alone,
+            scope: &scope,
+            inherits: layout.extends.is_some(),
+            at: &at,
+            file: &file,
+        };
+        check_expressions(level, catalogue, Severity::Warning, &mut report);
+        check_unsets(level, catalogue, Severity::Warning, &mut report);
         check_gradients(&alone, &at, &file, &mut report);
     }
     report
@@ -95,8 +198,7 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
             report.error(Finding::new(
                 file,
                 at.clone(),
-                "the lock layer has no prompt, so there would be nothing to type a password into"
-                    .to_string(),
+                util::message!("finding.no_prompt"),
             ));
             return report;
         }
@@ -104,7 +206,7 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
             report.error(Finding::new(
                 file,
                 at.clone(),
-                format!("the lock layer has {several} prompts, and only the one holding keyboard focus would work"),
+                util::message!("finding.prompts", count = several),
             ));
             return report;
         }
@@ -120,21 +222,21 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
         report.error(Finding::new(
             file,
             format!("{at}.areas.{}.visible", prompt.id),
-            "the prompt cannot be given a visibility expression: an expression that turns false locks the user out".to_string(),
+            util::message!("finding.prompt_visible"),
         ));
     }
     if !rect.is_on_output() {
         report.error(Finding::new(
             file,
             format!("{at}.areas.{}.rect", prompt.id),
-            "the prompt does not lie on the output, so it could not be reached".to_string(),
+            util::message!("finding.prompt_off_output"),
         ));
     }
     if rect.w < SMALLEST_PROMPT || rect.h < SMALLEST_PROMPT {
         report.error(Finding::new(
             file,
             format!("{at}.areas.{}.rect", prompt.id),
-            "the prompt is too small to type into".to_string(),
+            util::message!("finding.prompt_too_small"),
         ));
     }
     let style = &prompt.style;
@@ -144,7 +246,11 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
         report.error(Finding::new(
             file,
             format!("{at}.areas.{}.style.opacity", prompt.id),
-            format!("the prompt is drawn at {opacity}, too faint to find; it stays at {FAINTEST_PROMPT} or above"),
+            util::message!(
+                "finding.prompt_faint",
+                opacity = opacity,
+                least = FAINTEST_PROMPT
+            ),
         ));
     }
     // Only a fill the layout chose is judged: the theme's own surface is what the minimal lock draws too, so refusing it would fall back to the same card.
@@ -154,10 +260,10 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
             report.error(Finding::new(
                 file,
                 format!("{at}.areas.{}.style.fill", prompt.id),
-                format!(
-                    "the prompt's text is {:.1}:1 against this card, under the {}:1 it needs to be read (WCAG AA)",
-                    theme.text.contrast_ratio(card),
-                    scheme::MIN_TEXT_CONTRAST
+                util::message!(
+                    "finding.prompt_contrast",
+                    ratio = format!("{:.1}", theme.text.contrast_ratio(card)),
+                    needed = scheme::MIN_TEXT_CONTRAST
                 ),
             ));
         }
@@ -166,10 +272,7 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
         report.error(Finding::new(
             file,
             format!("{at}.areas.{}", covering.id),
-            format!(
-                "`{}` is stacked over the prompt, which would cover it",
-                covering.id
-            ),
+            util::message!("finding.prompt_covered", id = &covering.id),
         ));
     }
     report
@@ -187,10 +290,13 @@ const AREA_KEYS: &[&str] = &[
     "groups",
     "remove",
     "actions",
+    "unset",
 ];
 
 /// The keys every group has, wherever it sits.
-const GROUP_KEYS: &[&str] = &["id", "place", "stacked", "children", "remove"];
+const GROUP_KEYS: &[&str] = &[
+    "id", "place", "stacked", "repeat", "children", "remove", "unset",
+];
 
 fn keys_of_kind(kind: &str) -> &'static [&'static str] {
     match kind {
@@ -213,6 +319,15 @@ fn keys_of_kind(kind: &str) -> &'static [&'static str] {
     }
 }
 
+fn keys_of_source(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "poll" => &["cmd", "every", "initial", "parse", "while", "lock_safe"],
+        "listen" => &["cmd", "initial", "parse", "while", "lock_safe"],
+        "http" => &["url", "every", "initial", "parse", "while", "lock_safe"],
+        _ => &[],
+    }
+}
+
 fn keys_of_place(place: &str) -> &'static [&'static str] {
     match place {
         "zone" => &["zone"],
@@ -230,6 +345,26 @@ pub fn check_unknown_keys(text: &str, id: &LayoutId) -> Report {
     let Ok(parsed) = toml_edit::Document::parse(text) else {
         return report;
     };
+
+    if let Some(sources) = parsed.get("sources").and_then(|it| it.as_table_like()) {
+        for (name, source) in sources.iter() {
+            let Some(source) = source.as_table_like() else {
+                continue;
+            };
+            let kind = source.get("kind").and_then(|it| it.as_str()).unwrap_or("");
+            report_strays(
+                source,
+                &["kind"],
+                keys_of_source(kind),
+                &format!("sources.{name}"),
+                Holding::Source,
+                kind,
+                text,
+                &file,
+                &mut report,
+            );
+        }
+    }
 
     let Some(outputs) = parsed.get("outputs").and_then(|it| it.as_array_of_tables()) else {
         return report;
@@ -279,7 +414,15 @@ fn check_rule_keys(rule: &toml_edit::Table, at: &str, text: &str, file: &str, re
             let allowed = keys_of_kind(kind);
             let at = format!("outputs.{at}.layers.{layer}.areas.{area_id}");
             report_strays(
-                area, AREA_KEYS, allowed, &at, "area", kind, text, file, report,
+                area,
+                AREA_KEYS,
+                allowed,
+                &at,
+                Holding::Area,
+                kind,
+                text,
+                file,
+                report,
             );
 
             let Some(groups) = area.get("groups").and_then(|it| it.as_array_of_tables()) else {
@@ -294,7 +437,7 @@ fn check_rule_keys(rule: &toml_edit::Table, at: &str, text: &str, file: &str, re
                     GROUP_KEYS,
                     keys_of_place(place),
                     &at,
-                    "group",
+                    Holding::Group,
                     place,
                     text,
                     file,
@@ -305,13 +448,37 @@ fn check_rule_keys(rule: &toml_edit::Table, at: &str, text: &str, file: &str, re
     }
 }
 
+/// What a table of keys belongs to.
+#[derive(Clone, Copy)]
+enum Holding {
+    Area,
+    Group,
+    Source,
+}
+
+impl Holding {
+    /// What a sentence calls one, of `kind` where it says one.
+    fn named(self, kind: &str) -> Message {
+        match (self, kind.is_empty()) {
+            (Holding::Area, true) => util::message!("finding.holder.area"),
+            (Holding::Group, true) => util::message!("finding.holder.group"),
+            (Holding::Source, true) => util::message!("finding.holder.source"),
+            (Holding::Area, false) => util::message!("finding.holder.area_of_kind", kind = kind),
+            (Holding::Group, false) => util::message!("finding.holder.group_of_kind", kind = kind),
+            (Holding::Source, false) => {
+                util::message!("finding.holder.source_of_kind", kind = kind)
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn report_strays(
-    table: &toml_edit::Table,
+    table: &dyn toml_edit::TableLike,
     common: &[&str],
     allowed: &[&str],
     at: &str,
-    what: &str,
+    holding: Holding,
     kind: &str,
     text: &str,
     file: &str,
@@ -324,10 +491,11 @@ fn report_strays(
         let mut finding = Finding::new(
             file,
             format!("{at}.{key}"),
-            match kind.is_empty() {
-                true => format!("`{key}` is not a key of an {what}"),
-                false => format!("`{key}` is not a key of a `{kind}` {what}"),
-            },
+            util::message!(
+                "finding.unknown_key",
+                key = key,
+                holder = holding.named(kind)
+            ),
         );
         finding.span = value
             .span()
@@ -353,10 +521,11 @@ fn check_gradients(layers: &Layers, at: &str, file: &str, report: &mut Report) {
                 report.error(Finding::new(
                     file,
                     format!("{at}.layers.{kind}.areas.{}.gradient.stops", area.id),
-                    format!(
-                        "a gradient is drawn from at most {MOST_STOPS} stops and this one has {}, so the last {} would never appear",
-                        gradient.stops.len(),
-                        gradient.stops.len() - MOST_STOPS
+                    util::message!(
+                        "finding.gradient_stops",
+                        most = MOST_STOPS,
+                        count = gradient.stops.len(),
+                        extra = gradient.stops.len() - MOST_STOPS
                     ),
                 ));
             }
@@ -372,7 +541,7 @@ fn check_bar_corners(layers: &Layers, at: &str, file: &str, report: &mut Report)
                 report.warn(Finding::new(
                     file,
                     format!("{at}.layers.{kind}.areas.{}.style.radius", area.id),
-                    "a bar is rounded by its `shape.radius`, so this one is not drawn".to_string(),
+                    util::message!("finding.bar_radius"),
                 ));
             }
         }
@@ -383,9 +552,10 @@ fn check_layer_ids(
     layers: &Layers,
     at: &str,
     file: &str,
-    instances: &mut BTreeSet<InstanceId>,
+    instances: &mut BTreeMap<InstanceId, (LayerKind, AreaId, GroupId)>,
     report: &mut Report,
 ) {
+    let mut named = BTreeSet::new();
     for (kind, layer) in layers.each() {
         let mut areas = BTreeSet::new();
         for area in &layer.areas {
@@ -393,8 +563,7 @@ fn check_layer_ids(
                 report.error(Finding::new(
                     file,
                     format!("{at}.layers.{kind}.areas.{}", area.id),
-                    "two areas on this layer share an id, so a rule cannot say which it means"
-                        .to_string(),
+                    util::message!("finding.shared_area_id"),
                 ));
             }
             let mut groups = BTreeSet::new();
@@ -403,15 +572,38 @@ fn check_layer_ids(
                     report.error(Finding::new(
                         file,
                         format!("{at}.layers.{kind}.areas.{}.groups.{}", area.id, group.id),
-                        "two groups in this area share an id".to_string(),
+                        util::message!("finding.shared_group_id"),
                     ));
                 }
                 for instance in &group.children {
-                    if !instances.insert(instance.id.clone()) {
+                    if instance.id.as_str().contains(COPY_MARK) {
                         report.error(Finding::new(
                             file,
-                            format!("{at}.layers.{kind}.areas.{}.groups.{}.children.{}", area.id, group.id, instance.id),
-                            "this instance id is already used elsewhere in the layout, and IPC addresses instances by id".to_string(),
+                            format!(
+                                "{at}.layers.{kind}.areas.{}.groups.{}.children.{}",
+                                area.id, group.id, instance.id
+                            ),
+                            util::message!(
+                                "finding.copy_mark",
+                                mark = COPY_MARK,
+                                example = format!("{}{COPY_MARK}0", instance.id.template())
+                            ),
+                        ));
+                    }
+                    let place = (kind, area.id.clone(), group.id.clone());
+                    // A later rule naming the instance where an earlier one placed it refines it; anywhere else it is a second instance under the same id.
+                    let elsewhere = *instances
+                        .entry(instance.id.clone())
+                        .or_insert_with(|| place.clone())
+                        != place;
+                    if !named.insert(instance.id.clone()) || elsewhere {
+                        report.error(Finding::new(
+                            file,
+                            format!(
+                                "{at}.layers.{kind}.areas.{}.groups.{}.children.{}",
+                                area.id, group.id, instance.id
+                            ),
+                            util::message!("finding.shared_instance_id"),
                         ));
                     }
                 }
@@ -440,7 +632,7 @@ fn check_modules(
                 report.error(Finding::new(
                     file,
                     format!("{path}.module"),
-                    format!("there is no module called `{module}`"),
+                    util::message!("finding.unknown_module", module = module),
                 ));
                 continue;
             }
@@ -449,9 +641,10 @@ fn check_modules(
                 report.error(Finding::new(
                     file,
                     format!("{path}.representation"),
-                    format!(
-                        "`{module}` cannot be drawn as `{}`",
-                        representation.as_str()
+                    util::message!(
+                        "finding.no_representation",
+                        module = module,
+                        representation = representation.as_str()
                     ),
                 ));
             }
@@ -459,7 +652,7 @@ fn check_modules(
                 report.error(Finding::new(
                     file,
                     format!("{path}.options.{key}"),
-                    format!("`{module}`: `{key}` {why}"),
+                    util::message!("finding.option", module = module, key = key, why = why),
                 ));
             }
         }
@@ -501,8 +694,774 @@ fn check_chains(
                 report.error(Finding::new(
                     file,
                     format!("{at}.actions.{}", trigger.as_str()),
-                    format!("`{line}` is not a command this shell has"),
+                    util::message!("finding.unknown_command", line = line),
                 ));
+            }
+        }
+    }
+}
+
+/// What a copy of a repeated group's children reads as `$item`: an element of the list.
+pub const ITEM: &str = "item";
+/// What a copy of a repeated group's children reads as `$index`: its place in the list, from 0.
+pub const INDEX: &str = "index";
+
+/// The names an expression reads besides the shell's own, by type: `$item` and `$index` in a copy of a repeated group's children, and nothing anywhere else.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Locals(Vec<(&'static str, Type)>);
+
+impl Locals {
+    /// What a copy of a repeated group's children reads: `$item`, an element of the list, and `$index`, a number.
+    pub fn of_copy(item: Type) -> Self {
+        Self(vec![(ITEM, item), (INDEX, Type::Number)])
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Type> {
+        self.0
+            .iter()
+            .find(|(held, _)| *held == name)
+            .map(|(_, ty)| ty)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &Type)> {
+        self.0.iter().map(|(name, ty)| (*name, ty))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Everything wrong with `expr` as the binding `path` of an instance of `module`, on the lock layer when `on_lock`: what keeps it from compiling, and a type that does not fit what it drives. `module` is `None` where the level being checked does not say which module the instance shows, and then only the expression's own mistakes can be found. A variable it reads that is not set yet is not wrong ([`Catalogue::awaits_variable`]).
+pub fn binding_errors(
+    catalogue: &dyn Catalogue,
+    module: Option<&str>,
+    path: &str,
+    expr: &Expr,
+    on_lock: bool,
+) -> Vec<Mistake> {
+    binding_errors_with(catalogue, module, path, expr, on_lock, &Locals::default())
+}
+
+/// [`binding_errors`] for an instance that also reads `locals` — a child of a repeated group, whose locals [`repeat_locals`] answers.
+pub fn binding_errors_with(
+    catalogue: &dyn Catalogue,
+    module: Option<&str>,
+    path: &str,
+    expr: &Expr,
+    on_lock: bool,
+    locals: &Locals,
+) -> Vec<Mistake> {
+    binding_problems(catalogue, module, path, expr, on_lock, locals).errors
+}
+
+fn binding_problems(
+    catalogue: &dyn Catalogue,
+    module: Option<&str>,
+    path: &str,
+    expr: &Expr,
+    on_lock: bool,
+    locals: &Locals,
+) -> Problems {
+    let expected = match module.filter(|module| catalogue.knows_module(module)) {
+        Some(module) => match catalogue.binding_type(module, path) {
+            Ok(ty) => Some(ty),
+            Err(why) => {
+                return Problems {
+                    errors: vec![Mistake::whole(expr, why)],
+                    awaiting: Vec::new(),
+                };
+            }
+        },
+        None => None,
+    };
+    typed_problems(catalogue, expr, expected.as_ref(), on_lock, locals)
+}
+
+/// Everything wrong with `expr` as an area's `visible`, which has to give a bool.
+pub fn visible_errors(catalogue: &dyn Catalogue, expr: &Expr, on_lock: bool) -> Vec<Mistake> {
+    visible_problems(catalogue, expr, on_lock).errors
+}
+
+fn visible_problems(catalogue: &dyn Catalogue, expr: &Expr, on_lock: bool) -> Problems {
+    typed_problems(
+        catalogue,
+        expr,
+        Some(&Type::Bool),
+        on_lock,
+        &Locals::default(),
+    )
+}
+
+fn typed_problems(
+    catalogue: &dyn Catalogue,
+    expr: &Expr,
+    expected: Option<&Type>,
+    on_lock: bool,
+    locals: &Locals,
+) -> Problems {
+    Problems::of(
+        catalogue,
+        expr,
+        catalogue.compile_with(&expr.0, on_lock, locals),
+        |compiled| match expected {
+            Some(expected) => compiled
+                .require(expected)
+                .map(drop)
+                .map_err(|error| Mistake::of(catalogue, &error)),
+            None => Ok(()),
+        },
+    )
+}
+
+/// Everything wrong with `expr` as a group's `repeat`, which has to give a list.
+pub fn repeat_errors(catalogue: &dyn Catalogue, expr: &Expr, on_lock: bool) -> Vec<Mistake> {
+    repeat_problems(catalogue, expr, on_lock).errors
+}
+
+fn repeat_problems(catalogue: &dyn Catalogue, expr: &Expr, on_lock: bool) -> Problems {
+    Problems::of(
+        catalogue,
+        expr,
+        catalogue.compile(&expr.0, on_lock),
+        |compiled| {
+            repeat_item(compiled.ty())
+                .map(drop)
+                .map_err(|why| Mistake::whole(expr, why))
+        },
+    )
+}
+
+/// The type of what a group repeated over a list of `ty` reads as `$item`, or why `ty` is no list to repeat over. A type that fits anything fits a list.
+pub fn repeat_item(ty: &Type) -> Result<Type, Message> {
+    match ty {
+        Type::List(item) => Ok((**item).clone()),
+        Type::Never => Ok(Type::Never),
+        other => Err(util::message!(
+            "finding.repeat_needs_list",
+            found = Message::type_name(other)
+        )),
+    }
+}
+
+/// What the copies of a group repeated over `repeat` read: `$item` of the type of the list's elements. A `repeat` that gives no list leaves `$item` fitting anything, so its mistake is reported once, at `repeat`, rather than again by every binding that reads an item.
+pub fn repeat_locals(catalogue: &dyn Catalogue, repeat: &Expr, on_lock: bool) -> Locals {
+    Locals::of_copy(
+        catalogue
+            .compile(&repeat.0, on_lock)
+            .ok()
+            .and_then(|compiled| repeat_item(compiled.ty()).ok())
+            .unwrap_or(Type::Never),
+    )
+}
+
+/// What is wrong with one expression: what keeps it from being drawn, and each variable it reads that is not set yet, which a layout may name before the shell sets it.
+struct Problems {
+    errors: Vec<Mistake>,
+    awaiting: Vec<Mistake>,
+}
+
+impl Problems {
+    /// What `compiled`, `expr` compiled, gets wrong, where a compiled expression has to pass `fits` as well.
+    fn of(
+        catalogue: &dyn Catalogue,
+        expr: &Expr,
+        compiled: Result<Compiled, Errors>,
+        fits: impl FnOnce(Compiled) -> Result<(), Mistake>,
+    ) -> Self {
+        match compiled {
+            Ok(compiled) => Self {
+                errors: fits(compiled).err().into_iter().collect(),
+                awaiting: Vec::new(),
+            },
+            Err(errors) => {
+                let (awaiting, errors): (Vec<_>, Vec<_>) = errors
+                    .into_iter()
+                    .partition(|error| catalogue.awaits_variable(&expr.0, error));
+                let said = |errors: Vec<telar_expression::Error>| {
+                    errors
+                        .iter()
+                        .map(|error| Mistake::of(catalogue, error))
+                        .collect()
+                };
+                Self {
+                    errors: said(errors),
+                    awaiting: said(awaiting),
+                }
+            }
+        }
+    }
+}
+
+/// How an expression that does not check is reported.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    Error,
+    Warning,
+}
+
+impl Severity {
+    fn say(self, report: &mut Report, finding: Finding) {
+        match self {
+            Severity::Error => report.error(finding),
+            Severity::Warning => report.warn(finding),
+        }
+    }
+}
+
+/// Where the expressions of one level are checked: the level's own `layers`, and `scope`, that level merged over everything of the same file under it, which says whether a group the level writes into repeats. `inherits` is whether the layout extends another, whose groups this file cannot see.
+#[derive(Clone, Copy)]
+struct Level<'a> {
+    layers: &'a Layers,
+    scope: &'a Layers,
+    inherits: bool,
+    at: &'a str,
+    file: &'a str,
+}
+
+fn check_expressions(
+    level: Level<'_>,
+    catalogue: &dyn Catalogue,
+    severity: Severity,
+    report: &mut Report,
+) {
+    let Level {
+        layers,
+        scope,
+        inherits,
+        at,
+        file,
+    } = level;
+    let found = |report: &mut Report, key: String, expr: &Expr, problems: Problems| {
+        let said = problems
+            .errors
+            .into_iter()
+            .map(|mistake| (severity, mistake))
+            .chain(
+                problems
+                    .awaiting
+                    .into_iter()
+                    .map(|mistake| (Severity::Warning, mistake)),
+            );
+        for (severity, mistake) in said {
+            let mut finding = Finding::new(file, key.clone(), mistake.message);
+            finding.span = Some(Span::locate(&expr.0, mistake.span.range()));
+            severity.say(report, finding);
+        }
+    };
+    for (kind, layer) in layers.each() {
+        let on_lock = kind == LayerKind::Lock;
+        for area in &layer.areas {
+            let at = format!("{at}.layers.{kind}.areas.{}", area.id);
+            if let Some(visible) = &area.visible {
+                found(
+                    report,
+                    format!("{at}.visible"),
+                    visible,
+                    visible_problems(catalogue, visible, on_lock),
+                );
+            }
+            for group in &area.groups {
+                let at = format!("{at}.groups.{}", group.id);
+                let merged = merged_group(scope, kind, &area.id, &group.id);
+                let placed = merged.and_then(|merged| merged.kind).or(group.kind);
+                let repeat = merged
+                    .and_then(|merged| merged.repeat.as_ref())
+                    .or(group.repeat.as_ref());
+                if let Some(written) = &group.repeat {
+                    found(
+                        report,
+                        format!("{at}.repeat"),
+                        written,
+                        repeat_problems(catalogue, written, on_lock),
+                    );
+                }
+                let on_cell = matches!(placed, Some(GroupKind::Cell { .. }));
+                if on_cell && repeat.is_some() && (group.repeat.is_some() || group.kind.is_some()) {
+                    let key = match group.repeat {
+                        Some(_) => format!("{at}.repeat"),
+                        None => format!("{at}.place"),
+                    };
+                    let finding = Finding::new(file, key, util::message!("finding.cell_repeats"));
+                    severity.say(report, finding);
+                }
+                let locals = copy_locals(catalogue, placed, repeat, inherits, on_lock);
+                for instance in &group.children {
+                    for (path, expr) in &instance.bindings {
+                        let problems = binding_problems(
+                            catalogue,
+                            instance.module.as_deref(),
+                            path,
+                            expr,
+                            on_lock,
+                            &locals,
+                        );
+                        found(
+                            report,
+                            format!("{at}.children.{}.bindings.{path}", instance.id),
+                            expr,
+                            problems,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    for (kind, layer) in layers.each() {
+        for area in layer.areas.iter().filter(|area| area.visible.is_some()) {
+            if area.reserve == Some(true) {
+                report.warn(Finding::new(
+                    file,
+                    format!("{at}.layers.{kind}.areas.{}.visible", area.id),
+                    util::message!("finding.hidden_reserve"),
+                ));
+            }
+        }
+    }
+}
+
+/// `group` of `area` on the `kind` layer of `scope`, if it is there.
+fn merged_group<'a>(
+    scope: &'a Layers,
+    kind: LayerKind,
+    area: &AreaId,
+    group: &GroupId,
+) -> Option<&'a Group> {
+    scope
+        .get(kind)
+        .areas
+        .iter()
+        .find(|held| held.id == *area)
+        .and_then(|held| held.groups.iter().find(|held| held.id == *group))
+}
+
+/// What the children of a group `placed` and repeated over `repeat`, as far as one file says, read besides the shell's names. A group this file never places is one it inherits when it `inherits`: its parent may repeat it, so its children may read `$item` and `$index` as anything rather than be refused for it.
+fn copy_locals(
+    catalogue: &dyn Catalogue,
+    placed: Option<GroupKind>,
+    repeat: Option<&Expr>,
+    inherits: bool,
+    on_lock: bool,
+) -> Locals {
+    match repeat {
+        Some(repeat) => repeat_locals(catalogue, repeat, on_lock),
+        None if placed.is_none() && inherits => Locals::of_copy(Type::Never),
+        None => Locals::default(),
+    }
+}
+
+/// What a child of `group` in `area`, where `site` writes it, reads besides the shell's names: `$item` and `$index` when the group repeats, as `layout` and the broader rules under `site` say — what validation checks that child's bindings against, for a caller writing one.
+pub fn child_locals(
+    layout: &Layout,
+    catalogue: &dyn Catalogue,
+    site: &crate::ops::Site,
+    area: &AreaId,
+    group: &GroupId,
+) -> Locals {
+    let mut scope = output_level(layout, &site.output);
+    if let Some(workspace) = &site.workspace {
+        let written = layout
+            .outputs
+            .iter()
+            .filter(|rule| rule.matches == site.output)
+            .flat_map(|rule| rule.workspaces.iter())
+            .filter(|rule| rule.matches == *workspace);
+        for rule in written {
+            merge_session_layers(&mut scope, &rule.layers);
+        }
+    }
+    let merged = merged_group(&scope, site.layer, area, group);
+    copy_locals(
+        catalogue,
+        merged.and_then(|merged| merged.kind),
+        merged.and_then(|merged| merged.repeat.as_ref()),
+        layout.extends.is_some(),
+        site.layer == LayerKind::Lock,
+    )
+}
+
+/// What can take an expression back, and so which paths its `unset` may name.
+#[derive(Clone, Copy)]
+enum Holder {
+    Area,
+    Group,
+    Instance,
+}
+
+impl Holder {
+    fn takes(self, unset: &Unset) -> bool {
+        matches!(
+            (self, unset),
+            (Holder::Area, Unset::Visible)
+                | (Holder::Group, Unset::Repeat)
+                | (Holder::Instance, Unset::Binding(_))
+        )
+    }
+
+    fn refusal(self, unset: &Unset) -> Message {
+        match self {
+            Holder::Area => util::message!("finding.unset_on_area", unset = unset),
+            Holder::Group => util::message!("finding.unset_on_group", unset = unset),
+            Holder::Instance => util::message!("finding.unset_on_instance", unset = unset),
+        }
+    }
+}
+
+/// Everything wrong with what each `unset` of one level names: a path its holder has no expression at, a binding its module cannot have, and a key the same level writes as well, which would leave which of the two it meant to chance.
+fn check_unsets(
+    level: Level<'_>,
+    catalogue: &dyn Catalogue,
+    severity: Severity,
+    report: &mut Report,
+) {
+    let Level {
+        layers,
+        scope,
+        at,
+        file,
+        ..
+    } = level;
+    let mut say = |key: String, why: Message| severity.say(report, Finding::new(file, key, why));
+    for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            let at = format!("{at}.layers.{kind}.areas.{}", area.id);
+            for (index, unset) in area.unset.iter().enumerate() {
+                let key = format!("{at}.unset[{index}]");
+                if !Holder::Area.takes(unset) {
+                    say(key, Holder::Area.refusal(unset));
+                } else if area.visible.is_some() {
+                    say(key, both(unset));
+                }
+            }
+            for group in &area.groups {
+                let at = format!("{at}.groups.{}", group.id);
+                for (index, unset) in group.unset.iter().enumerate() {
+                    let key = format!("{at}.unset[{index}]");
+                    if !Holder::Group.takes(unset) {
+                        say(key, Holder::Group.refusal(unset));
+                    } else if group.repeat.is_some() {
+                        say(key, both(unset));
+                    }
+                }
+                for instance in &group.children {
+                    let at = format!("{at}.children.{}", instance.id);
+                    let module = instance.module.as_deref().or_else(|| {
+                        merged_group(scope, kind, &area.id, &group.id)?
+                            .children
+                            .iter()
+                            .find(|held| held.id == instance.id)?
+                            .module
+                            .as_deref()
+                    });
+                    for (index, unset) in instance.unset.iter().enumerate() {
+                        let key = format!("{at}.unset[{index}]");
+                        let Unset::Binding(path) = unset else {
+                            say(key, Holder::Instance.refusal(unset));
+                            continue;
+                        };
+                        if instance.bindings.contains_key(path) {
+                            say(key, both(unset));
+                            continue;
+                        }
+                        if let Some(module) = module.filter(|module| catalogue.knows_module(module))
+                            && let Err(why) = catalogue.binding_type(module, path)
+                        {
+                            say(
+                                key,
+                                util::message!(
+                                    "finding.unset_no_binding",
+                                    module = module,
+                                    path = path,
+                                    why = why
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn both(unset: &Unset) -> Message {
+    util::message!("finding.unset_and_written", unset = unset)
+}
+
+/// What `layout` takes back that nothing under it writes: every `unset` of its own rules, against its `extends` chain and the rules of its own applied before each one.
+///
+/// A warning rather than an error, because taking back nothing changes nothing. It needs the layouts `layout` extends, which [`validate`] does not see. A rule counts as under another when both could speak for one output, so a pattern that could be the same monitor is never said to have nothing under it; a path that names no expression at all is [`validate`]'s to report.
+pub fn validate_unsets(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Report {
+    let mut report = Report::default();
+    let file = format!("layouts/{}.toml", layout.id);
+    let chain = crate::resolve::chain_of(layout, known, &mut Report::default());
+    let parents = &chain[..chain.len().saturating_sub(1)];
+    let mut order: Vec<&OutputRule> = layout.outputs.iter().collect();
+    order.sort_by_key(|rule| rule.matches.specificity());
+
+    let inherited = |rule: &OutputRule| {
+        let mut under = BTreeSet::new();
+        for other in parents.iter().flat_map(|level| level.outputs.iter()) {
+            if may_share_an_output(&rule.matches, &other.matches) {
+                written_in(other.layers.each(), &mut under);
+                for workspace in &other.workspaces {
+                    written_in(workspace.layers.each(), &mut under);
+                }
+            }
+        }
+        under
+    };
+    for (position, rule) in order.iter().enumerate() {
+        let mut under = inherited(rule);
+        for earlier in &order[..position] {
+            if may_share_an_output(&rule.matches, &earlier.matches) {
+                written_in(earlier.layers.each(), &mut under);
+            }
+        }
+        let at = format!("outputs.{}", rule.matches.0);
+        unset_nothing(rule.layers.each(), &under, &at, &file, &mut report);
+    }
+    let mut ruled: BTreeSet<At> = BTreeSet::new();
+    for rule in &order {
+        let mut under = inherited(rule);
+        for other in order
+            .iter()
+            .filter(|other| may_share_an_output(&rule.matches, &other.matches))
+        {
+            written_in(other.layers.each(), &mut under);
+        }
+        for workspace in &rule.workspaces {
+            under.extend(ruled.iter().cloned());
+            let at = format!(
+                "outputs.{}.workspaces.{}",
+                rule.matches.0, workspace.matches.0
+            );
+            unset_nothing(workspace.layers.each(), &under, &at, &file, &mut report);
+            written_in(workspace.layers.each(), &mut ruled);
+        }
+    }
+    report
+}
+
+/// Whether some output could be spoken for by both patterns. Two patterns with a wildcard each are taken to overlap, since nothing short of every output name answers it.
+fn may_share_an_output(one: &OutputMatch, other: &OutputMatch) -> bool {
+    match (one.0.contains('*'), other.0.contains('*')) {
+        (false, _) => other.matches(&one.0),
+        (true, false) => one.matches(&other.0),
+        (true, true) => true,
+    }
+}
+
+fn written_in<'a>(
+    layers: impl IntoIterator<Item = (LayerKind, &'a Layer)>,
+    into: &mut BTreeSet<At>,
+) {
+    for (kind, layer) in layers {
+        for area in &layer.areas {
+            if area.visible.is_some() {
+                into.insert((kind, area.id.clone(), None, None, Unset::Visible));
+            }
+            for group in &area.groups {
+                let held = Some(group.id.clone());
+                if group.repeat.is_some() {
+                    into.insert((kind, area.id.clone(), held.clone(), None, Unset::Repeat));
+                }
+                for instance in &group.children {
+                    for path in instance.bindings.keys() {
+                        into.insert((
+                            kind,
+                            area.id.clone(),
+                            held.clone(),
+                            Some(instance.id.clone()),
+                            Unset::binding(path),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn unset_nothing<'a>(
+    layers: impl IntoIterator<Item = (LayerKind, &'a Layer)>,
+    under: &BTreeSet<At>,
+    at: &str,
+    file: &str,
+    report: &mut Report,
+) {
+    let mut warn = |key: String, unset: &Unset| {
+        report.warn(Finding::new(
+            file,
+            key,
+            util::message!("finding.unset_nothing", unset = unset),
+        ));
+    };
+    for (kind, layer) in layers {
+        for area in &layer.areas {
+            let at = format!("{at}.layers.{kind}.areas.{}", area.id);
+            for (index, unset) in area.unset.iter().enumerate() {
+                let found = (kind, area.id.clone(), None, None, unset.clone());
+                if Holder::Area.takes(unset) && !under.contains(&found) {
+                    warn(format!("{at}.unset[{index}]"), unset);
+                }
+            }
+            for group in &area.groups {
+                let at = format!("{at}.groups.{}", group.id);
+                let held = Some(group.id.clone());
+                for (index, unset) in group.unset.iter().enumerate() {
+                    let found = (kind, area.id.clone(), held.clone(), None, unset.clone());
+                    if Holder::Group.takes(unset) && !under.contains(&found) {
+                        warn(format!("{at}.unset[{index}]"), unset);
+                    }
+                }
+                for instance in &group.children {
+                    let at = format!("{at}.children.{}", instance.id);
+                    for (index, unset) in instance.unset.iter().enumerate() {
+                        let found = (
+                            kind,
+                            area.id.clone(),
+                            held.clone(),
+                            Some(instance.id.clone()),
+                            unset.clone(),
+                        );
+                        if Holder::Instance.takes(unset) && !under.contains(&found) {
+                            warn(format!("{at}.unset[{index}]"), unset);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Moves the span of every expression finding in `report` from the expression into the layout file `text`, so `file:line:column` points at the mistake itself. A finding whose expression cannot be found in the text, or is written with escapes that make its bytes differ from what was read, points at the whole value instead.
+pub fn locate_expressions(text: &str, report: &mut Report) {
+    let written = written_values(text, |holder, table, at| {
+        let spanned = |key: &str, item: Option<&toml_edit::Item>| {
+            item.and_then(toml_edit::Item::span)
+                .map(|span| (format!("{at}.{key}"), span))
+        };
+        match holder {
+            Holder::Area => spanned("visible", table.get("visible"))
+                .into_iter()
+                .collect(),
+            Holder::Group => spanned("repeat", table.get("repeat")).into_iter().collect(),
+            Holder::Instance => table
+                .get("bindings")
+                .and_then(|it| it.as_table_like())
+                .into_iter()
+                .flat_map(|bindings| bindings.iter())
+                .filter_map(|(path, expr)| {
+                    expr.span()
+                        .map(|span| (format!("{at}.bindings.{path}"), span))
+                })
+                .collect(),
+        }
+    });
+    for finding in report.findings_mut() {
+        let (Some(value), Some(span)) = (written.get(&finding.key), &finding.span) else {
+            continue;
+        };
+        finding.span = Some(Span::within_toml_string(
+            text,
+            value.clone(),
+            span.bytes.clone(),
+        ));
+    }
+}
+
+/// Points every finding about an entry of an `unset` in `report` at that entry in the layout file `text`, so `file:line:column` is the path that takes nothing back or clashes.
+pub fn locate_unsets(text: &str, report: &mut Report) {
+    let written = written_values(text, |_, table, at| {
+        let paths = table.get("unset").and_then(|it| it.as_array());
+        paths
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(index, path)| {
+                path.span()
+                    .map(|span| (format!("{at}.unset[{index}]"), span))
+            })
+            .collect()
+    });
+    for finding in report.findings_mut() {
+        if let Some(value) = written.get(&finding.key) {
+            finding.span = Some(Span::locate(text, value.clone()));
+        }
+    }
+}
+
+/// Where each value `pick` names sits in the layout file `text`, by the key validation reports it at. `pick` is shown every area, group and instance the file writes, with the key it is reported at.
+fn written_values(
+    text: &str,
+    mut pick: impl FnMut(Holder, &toml_edit::Table, &str) -> Vec<(String, Range<usize>)>,
+) -> BTreeMap<String, Range<usize>> {
+    let mut written = BTreeMap::new();
+    let Ok(parsed) = toml_edit::Document::parse(text) else {
+        return written;
+    };
+    let Some(outputs) = parsed.get("outputs").and_then(|it| it.as_array_of_tables()) else {
+        return written;
+    };
+    let mut visit =
+        |holder, table: &toml_edit::Table, at: &str| written.extend(pick(holder, table, at));
+    for rule in outputs {
+        let at = format!(
+            "outputs.{}",
+            rule.get("match").and_then(|it| it.as_str()).unwrap_or("*")
+        );
+        holders_of(rule, &at, &mut visit);
+        for workspace in rule
+            .get("workspaces")
+            .and_then(|it| it.as_array_of_tables())
+            .into_iter()
+            .flatten()
+        {
+            let matches = workspace
+                .get("match")
+                .and_then(|it| it.as_str())
+                .unwrap_or("");
+            holders_of(workspace, &format!("{at}.workspaces.{matches}"), &mut visit);
+        }
+    }
+    written
+}
+
+/// Shows `visit` every area, group and instance one output rule or workspace rule of a layout file writes, with the key validation reports it at.
+fn holders_of(
+    level: &toml_edit::Table,
+    at: &str,
+    visit: &mut impl FnMut(Holder, &toml_edit::Table, &str),
+) {
+    let Some(layers) = level.get("layers").and_then(|it| it.as_table()) else {
+        return;
+    };
+    let id = |table: &toml_edit::Table| {
+        table
+            .get("id")
+            .and_then(|it| it.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    for (layer, value) in layers.iter() {
+        let areas = value
+            .as_table()
+            .and_then(|it| it.get("areas"))
+            .and_then(|it| it.as_array_of_tables());
+        for area in areas.into_iter().flatten() {
+            let at = format!("{at}.layers.{layer}.areas.{}", id(area));
+            visit(Holder::Area, area, &at);
+            let groups = area.get("groups").and_then(|it| it.as_array_of_tables());
+            for group in groups.into_iter().flatten() {
+                let at = format!("{at}.groups.{}", id(group));
+                visit(Holder::Group, group, &at);
+                let children = group.get("children").and_then(|it| it.as_array_of_tables());
+                for instance in children.into_iter().flatten() {
+                    visit(
+                        Holder::Instance,
+                        instance,
+                        &format!("{at}.children.{}", id(instance)),
+                    );
+                }
             }
         }
     }
@@ -519,8 +1478,7 @@ fn check_lock_layer(
         report.error(Finding::new(
             file,
             format!("{path}.actions"),
-            "the lock layer holds readings, never controls, so an action here is refused"
-                .to_string(),
+            util::message!("finding.lock_action"),
         ));
     };
     for area in lock.areas.iter().filter(|area| !area.actions.is_empty()) {
@@ -542,9 +1500,10 @@ fn check_lock_layer(
             report.error(Finding::new(
                 file,
                 format!("{path}.module"),
-                format!(
-                    "`{module}` as `{}` can be interacted with, and the lock layer takes readings only",
-                    representation.as_str()
+                util::message!(
+                    "finding.lock_interactive",
+                    module = module,
+                    representation = representation.as_str()
                 ),
             ));
         }
@@ -577,7 +1536,7 @@ fn check_workspace_rules(
                     report.error(Finding::new(
                         file,
                         format!("{at}.layers.{kind}.remove"),
-                        format!("`{id}` reserves space, and a workspace rule that removed it would re-tile every window on each workspace switch"),
+                        util::message!("finding.workspace_removes_reserving", id = id),
                     ));
                 }
             }
@@ -587,14 +1546,14 @@ fn check_workspace_rules(
                     report.error(Finding::new(
                         file,
                         format!("{path}.reserve"),
-                        "a workspace rule cannot change what an area reserves: reservation is decided per output, so that switching workspaces never re-tiles windows".to_string(),
+                        util::message!("finding.workspace_reserve"),
                     ));
                 }
                 if reserving.contains(&area.id) && area.kind.is_some() {
                     report.error(Finding::new(
                         file,
                         format!("{path}.kind"),
-                        format!("`{}` reserves space, so a workspace rule may change what is inside it but not its geometry", area.id),
+                        util::message!("finding.workspace_reserving_kind", id = &area.id),
                     ));
                 }
             }
@@ -602,24 +1561,40 @@ fn check_workspace_rules(
 
         check_actions(&layers, &at, file, catalogue, report);
         check_modules(&layers, &at, file, catalogue, report);
+        let mut scope = output_level(layout, &rule.matches);
+        merge_session_layers(&mut scope, &workspace.layers);
+        let level = Level {
+            layers: &layers,
+            scope: &scope,
+            inherits: layout.extends.is_some(),
+            at: &at,
+            file,
+        };
+        check_expressions(level, catalogue, Severity::Error, report);
+        check_unsets(level, catalogue, Severity::Error, report);
     }
 }
 
 /// What reserves space under the workspace rules of the output rule `matches` names: that rule and every broader one of the same layout, merged the way resolution merges them. A workspace rule may change what is inside one of these areas, never whether it is there, what it reserves or how big it is (TA-2).
 pub(crate) fn reserving_under(layout: &Layout, matches: &OutputMatch) -> BTreeSet<AreaId> {
-    let mut output_level = Layers::default();
-    for other in &layout.outputs {
-        if other.matches.specificity() <= matches.specificity() {
-            merge_layers(&mut output_level, &other.layers);
-        }
-    }
-    output_level
+    output_level(layout, matches)
         .each()
         .into_iter()
         .flat_map(|(_, layer)| layer.areas.iter())
         .filter(|area| area.reserve == Some(true))
         .map(|area| area.id.clone())
         .collect()
+}
+
+/// The output rule `matches` names and every broader one of the same layout, merged the way resolution merges them: what that rule's output is drawn from, as far as this file says.
+fn output_level(layout: &Layout, matches: &OutputMatch) -> Layers {
+    let mut merged = Layers::default();
+    for other in &layout.outputs {
+        if other.matches.specificity() <= matches.specificity() {
+            merge_layers(&mut merged, &other.layers);
+        }
+    }
+    merged
 }
 
 fn instances_of(layer: &Layer) -> impl Iterator<Item = (&Area, &Group, &Instance)> {

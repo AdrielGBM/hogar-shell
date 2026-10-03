@@ -2,7 +2,7 @@
 //!
 //! Distinct from `config.toml`, which the user owns and hand-edits: this is machine-written state — which wallpaper is up, whether do-not-disturb is on, how often each app was launched. It lives in `$XDG_STATE_HOME/hogar-shell/state.json` so a reload, a restart or a re-login lands back where the user left off, and so a toggle flipped from one surface is the same toggle every other surface reads.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use platform_wayland::EventSender;
@@ -29,6 +29,59 @@ pub struct ShellState {
     pub launch_counts: HashMap<String, u32>,
     /// Which layout the shell draws, by name. Machine state rather than a config key: it is a choice about this installation, not a description of one, and `layout use` is what changes it. `None`, or a name no layout answers to, falls back to the built-in one.
     pub layout: Option<String>,
+    /// Typed values the user's layouts, rules and scripts set and read by name (`$name` in an expression), kept across restarts.
+    pub vars: BTreeMap<String, Var>,
+}
+
+/// One stored variable: its type and its value together, so a value can never be read back as a type it was not set as.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "lowercase")]
+pub enum Var {
+    Text(String),
+    /// Always finite.
+    Number(f64),
+    Bool(bool),
+    /// `#rrggbb` or `#rrggbbaa`.
+    Color(String),
+    /// A path to a picture.
+    Image(String),
+    /// A font family name.
+    Font(String),
+    List(VarList),
+}
+
+/// A list variable: every item is of the one declared type, so an empty list still has one.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VarList {
+    pub of: VarType,
+    pub items: Vec<Var>,
+}
+
+/// What a variable holds.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VarType {
+    Text,
+    Number,
+    Bool,
+    Color,
+    Image,
+    Font,
+    List(Box<VarType>),
+}
+
+impl Var {
+    pub fn ty(&self) -> VarType {
+        match self {
+            Var::Text(_) => VarType::Text,
+            Var::Number(_) => VarType::Number,
+            Var::Bool(_) => VarType::Bool,
+            Var::Color(_) => VarType::Color,
+            Var::Image(_) => VarType::Image,
+            Var::Font(_) => VarType::Font,
+            Var::List(list) => VarType::List(Box::new(list.of.clone())),
+        }
+    }
 }
 
 fn path() -> PathBuf {
@@ -58,8 +111,8 @@ static STATE: Store<ShellState> = Store::new(load);
 /// Hands `state` to [`util::writer`], which writes it off the UI thread — a synchronous write in a click handler would stall the frame — to a sibling temp file it then renames, so a crash mid-write can't leave a truncated file behind.
 ///
 /// A queue rather than a thread per call, which is what this used to be. Both writes were atomic and the race was in which one finished last: two toggles a few milliseconds apart could rename in either order, so the *older* state won and the user's last flick of the switch came back undone after a restart. The writer hands out a generation per path and drops anything a newer write has overtaken, so the last state the shell was in is the state on disk.
-fn persist(state: ShellState) {
-    let Ok(text) = serde_json::to_string_pretty(&state) else {
+fn persist(state: &ShellState) {
+    let Ok(text) = serde_json::to_string_pretty(state) else {
         return;
     };
     writer::queue(path(), text.into_bytes());
@@ -70,10 +123,14 @@ pub fn get() -> ShellState {
     STATE.get()
 }
 
-/// Applies `change`, fans the result out to every subscriber, and persists it. The single write path, so no caller has to remember to save.
+/// Applies `change`, fans the result out to every subscriber, and persists it. The single write path, so no caller has to remember to save; the write is queued before the next change can start, so the file ends with the last change made.
 pub fn update(change: impl FnOnce(&mut ShellState)) {
-    let next = STATE.update(change);
-    persist(next);
+    STATE.update_then(change, persist);
+}
+
+/// [`update`] for a change that may be refused: an `Err` from `change` leaves the state as it was, and nothing is fanned out or persisted.
+pub fn try_update<R, E>(change: impl FnOnce(&mut ShellState) -> Result<R, E>) -> Result<R, E> {
+    STATE.try_update_then(change, persist)
 }
 
 /// Registers `tx` for live state changes, sending the current value immediately. Pass to `platform_wayland::watch` from a surface that reflects a persisted toggle.
@@ -110,6 +167,27 @@ mod tests {
         assert!(load_from(&file).dnd, "a valid file is read back");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_variable_keeps_its_type_through_the_file() {
+        let text = r##"{"vars": {
+            "count": {"type": "number", "value": 3},
+            "accent": {"type": "color", "value": "#88c0d0"},
+            "tags": {"type": "list", "value": {"of": "text", "items": [{"type": "text", "value": "a"}]}}
+        }}"##;
+        let state: ShellState = serde_json::from_str(text).expect("parses");
+        assert_eq!(state.vars["count"], Var::Number(3.0));
+        assert_eq!(state.vars["accent"].ty(), VarType::Color);
+        assert_eq!(
+            state.vars["tags"].ty(),
+            VarType::List(Box::new(VarType::Text))
+        );
+        let written = serde_json::to_string(&state).expect("writes");
+        assert_eq!(
+            serde_json::from_str::<ShellState>(&written).expect("reads back"),
+            state
+        );
     }
 
     #[test]

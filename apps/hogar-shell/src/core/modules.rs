@@ -11,13 +11,15 @@ use config::{
     WeatherConfig, WorkspacesConfig,
 };
 use ui::descriptor::{
-    ActionDef, Built, CardDef, Category, ChipDef, FieldDef, Input, ModuleDescriptor, OptionsType,
-    PanelDef, Privacy, Representations, SourceDef, WidgetDef,
+    ActionDef, Built, CardDef, Category, ChipDef, Input, ModuleDescriptor, OptionsType, PanelDef,
+    Representations, WidgetDef,
 };
 use ui::host::{Host, WidgetSize};
 
 use modules::dashboard::cards;
 use modules::popout_cards as popouts;
+
+use crate::core::sources;
 
 /// A representation that is an `.rsx` component: parameterless, reading its host with `Host::current`.
 macro_rules! rsx {
@@ -42,13 +44,6 @@ const fn card(build: fn(&Host) -> ui::card::Card, input: Input) -> Option<CardDe
 
 const fn action(id: &'static str, command: &'static str) -> ActionDef {
     ActionDef { id, command }
-}
-
-const fn public(name: &'static str) -> FieldDef {
-    FieldDef {
-        name,
-        privacy: Privacy::Public,
-    }
 }
 
 /// A reading at `sizes`: every widget the shell ships only shows what its sources read, so each is one the lock layer may place.
@@ -129,10 +124,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             popout: popout(popouts::battery),
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "battery",
-            fields: &[public("level"), public("charging")],
-        }],
+        sources: &[sources::BATTERY, sources::POWER],
     },
     ModuleDescriptor {
         id: "bluetooth",
@@ -197,10 +189,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "clock",
-            fields: &[public("time"), public("date")],
-        }],
+        sources: &[sources::CLOCK],
     },
     ModuleDescriptor {
         id: "cpu",
@@ -222,10 +211,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "cpu",
-            fields: &[public("usage"), public("frequency")],
-        }],
+        sources: &[sources::CPU],
     },
     ModuleDescriptor {
         id: "dashboard",
@@ -264,10 +250,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "gpu",
-            fields: &[public("usage"), public("vram")],
-        }],
+        sources: &[sources::GPU],
     },
     ModuleDescriptor {
         id: "kblayout",
@@ -395,10 +378,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "memory",
-            fields: &[public("used"), public("total")],
-        }],
+        sources: &[sources::MEMORY],
     },
     ModuleDescriptor {
         id: "mic",
@@ -464,10 +444,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "netspeed",
-            fields: &[public("down"), public("up")],
-        }],
+        sources: &[sources::NETSPEED],
     },
     ModuleDescriptor {
         id: "network",
@@ -626,10 +603,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "temperature",
-            fields: &[public("celsius"), public("sensor")],
-        }],
+        sources: &[sources::TEMPERATURE],
     },
     // Self-managed: one pressable box per application, each with its own click, middle-click, right-click and scroll — a single chip shell around the row could carry none of that.
     ModuleDescriptor {
@@ -663,10 +637,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "user",
-            fields: &[public("name"), public("avatar")],
-        }],
+        sources: &[sources::USER],
     },
     ModuleDescriptor {
         id: "utilities",
@@ -704,10 +675,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "spectrum",
-            fields: &[public("silent")],
-        }],
+        sources: &[sources::SPECTRUM],
     },
     ModuleDescriptor {
         id: "volume",
@@ -733,7 +701,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             action("down", "volume down"),
             action("mute", "volume mute"),
         ],
-        sources: &[],
+        sources: &[sources::VOLUME],
     },
     ModuleDescriptor {
         id: "weather",
@@ -749,10 +717,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[SourceDef {
-            id: "weather",
-            fields: &[public("place"), public("temperature"), public("condition")],
-        }],
+        sources: &[sources::WEATHER],
     },
     ModuleDescriptor {
         id: "windowinfo",
@@ -789,7 +754,7 @@ pub static MODULES: &[ModuleDescriptor] = &[
             ..Representations::NONE
         },
         actions: &[],
-        sources: &[],
+        sources: &[sources::WORKSPACE],
     },
 ];
 
@@ -800,7 +765,7 @@ mod tests {
 
     use config::{Config, Edge};
     use telar::{LayoutItem, reset_layout_runtime, set_theme};
-    use ui::descriptor::input_answer;
+    use ui::descriptor::{FieldDef, input_answer};
     use ui::host::{Audience, Instance, Representation, Size};
 
     use super::*;
@@ -1118,6 +1083,7 @@ mod tests {
                     zone: layout::Zone::Center,
                 },
                 stacked: false,
+                repeat: None,
                 children: vec![layout::ResolvedInstance {
                     id: layout::InstanceId::new(module),
                     module: module.to_string(),
@@ -1391,6 +1357,47 @@ mod tests {
         drop(scope);
         telar::dispose_owner(owner);
         assert!(built > 100, "only {built} rows were built");
+    }
+
+    /// `$source.field` names one reading: two modules giving a source the same id, a source two fields of one name, or a source called `event` (where event readings live) would each make a name mean two things.
+    #[test]
+    fn every_source_and_field_has_a_name_of_its_own() {
+        let mut ids = BTreeSet::new();
+        for source in MODULES.iter().flat_map(|module| module.sources.iter()) {
+            assert!(
+                ids.insert(source.id),
+                "two sources are called `{}`",
+                source.id
+            );
+            assert_ne!(source.id, automation::EVENT);
+            let mut fields = BTreeSet::new();
+            for field in source.fields {
+                assert!(
+                    fields.insert(field.name),
+                    "`{}` has two fields called `{}`",
+                    source.id,
+                    field.name
+                );
+            }
+        }
+        for expected in ["battery", "power", "clock", "media", "workspace", "cpu"] {
+            assert!(ids.contains(expected), "no `{expected}` source");
+        }
+    }
+
+    /// Every module reading can be named in an expression and is checked to the type it declares.
+    #[test]
+    fn every_module_reading_compiles_with_its_declared_type() {
+        let env = automation::Environment::of_modules(MODULES, automation::UserSources::default());
+        for source in MODULES.iter().flat_map(|module| module.sources.iter()) {
+            for field in source.fields {
+                let written = format!("${}.{}", source.id, field.name);
+                let compiled = env
+                    .compile(&written)
+                    .unwrap_or_else(|errors| panic!("`{written}`: {errors}"));
+                assert_eq!(*compiled.ty(), field.ty.ty(), "{written}");
+            }
+        }
     }
 
     /// Notification text is the one reading that must never reach a screen anyone can read, whatever `[lock]` asks for; which applications are waiting is the user's to allow, and how many is public either way.

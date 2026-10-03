@@ -1,29 +1,49 @@
 use config::{MediaConfig, MediaDetail, MediaScroll};
 use services::mpris::{self, Playback, Player};
-use ui::descriptor::{FieldDef, Privacy, SourceDef};
+use telar_expression::Value;
+use ui::descriptor::{FieldDef, FieldType, Privacy, Reading, Sink, SourceDef, watch_feed};
 
 /// What is playing, as fields a reading may draw. The three that name it are public on a locked screen only while `[lock] media_detail` says so — a track title is a taste, a podcast title can be a good deal more than that — and whether anything is playing at all is public either way, because a pause symbol tells nobody anything.
 pub const TITLE: FieldDef = FieldDef {
     name: "title",
     privacy: Privacy::OnLock(named_on_lock),
+    ty: FieldType::Text,
 };
 pub const ARTIST: FieldDef = FieldDef {
     name: "artist",
     privacy: Privacy::OnLock(named_on_lock),
+    ty: FieldType::Text,
 };
 pub const ART: FieldDef = FieldDef {
     name: "art",
     privacy: Privacy::OnLock(named_on_lock),
+    ty: FieldType::Text,
 };
 pub const PLAYING: FieldDef = FieldDef {
     name: "playing",
     privacy: Privacy::Public,
+    ty: FieldType::Bool,
 };
 
 pub const SOURCE: SourceDef = SourceDef {
     id: "media",
     fields: &[TITLE, ARTIST, ART, PLAYING],
+    feed,
 };
+
+fn feed(sink: Sink) {
+    watch_feed(mpris::subscribe, sink, reading);
+}
+
+/// What is playing, in [`SOURCE`]'s field order. The art is the address the player gives for it.
+fn reading(player: &Player) -> Reading {
+    Reading::from([
+        Value::text(player.title.as_str()),
+        Value::text(player.artist.as_str()),
+        Value::text(player.art_url.as_str()),
+        Value::Bool(player.playback == Playback::Playing),
+    ])
+}
 
 fn named_on_lock(lock: &config::LockConfig) -> bool {
     lock.media_detail == MediaDetail::Title
@@ -61,7 +81,7 @@ pub fn marquee(player: &Player, config: &MediaConfig, step: usize) -> String {
     let max = config.max_chars as usize;
     let text = player.summary();
     if max == 0 || text.chars().count() <= max {
-        return truncate(&text, max);
+        return util::text::clipped(&text, max);
     }
     let looped: Vec<char> = text.chars().chain(MARQUEE_GAP.chars()).collect();
     let offset = step % looped.len();
@@ -76,18 +96,6 @@ pub fn marquee(player: &Player, config: &MediaConfig, step: usize) -> String {
 /// Whether a title is long enough to be worth scrolling. The ticker is only started when it is, so a bar showing a short title costs nothing.
 pub fn overflows(player: &Player, config: &MediaConfig) -> bool {
     !player.is_empty() && player.summary().chars().count() > config.max_chars.max(1) as usize
-}
-
-/// Cuts `text` to `max` characters, ending in `…` when it had to. Counts characters, not bytes, so a track title with accents or CJK is never cut mid-codepoint.
-fn truncate(text: &str, max: usize) -> String {
-    if max == 0 {
-        return String::new();
-    }
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
-    format!("{}…", kept.trim_end())
 }
 
 /// The marquee's clock: one tick per `step`, until the surface it was watched from goes away; a `watch` producer rather than a re-armed `timeout` so the ticker ends with its surface instead of firing into a torn-down one.
@@ -244,12 +252,5 @@ mod tests {
             12,
             "and the marquee still steps through its own twelve-character window"
         );
-    }
-
-    #[test]
-    fn truncation_counts_characters_not_bytes() {
-        assert_eq!(truncate("mañana señor", 6), "mañan…");
-        assert_eq!(truncate("東京の夜", 3), "東京…");
-        assert_eq!(truncate("short", 40), "short", "what fits is untouched");
     }
 }

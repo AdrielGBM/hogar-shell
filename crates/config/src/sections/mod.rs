@@ -7,6 +7,7 @@ pub mod audio;
 pub mod lock;
 pub mod notifications;
 pub mod panels;
+pub mod rules;
 pub mod system;
 pub mod wallpaper;
 
@@ -15,6 +16,7 @@ pub use audio::*;
 pub use lock::*;
 pub use notifications::*;
 pub use panels::*;
+pub use rules::*;
 pub use system::*;
 pub use wallpaper::*;
 

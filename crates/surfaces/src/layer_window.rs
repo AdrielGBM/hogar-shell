@@ -12,9 +12,9 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use telar::{
-    App, Color, Component, Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, Rect,
-    RwSignal, ScopedTheme, SizeDimension, WindowConfig, WindowRoot, box_item, effect, on_cleanup,
-    provide_theme, reset_layout_runtime, set_context, signal, track_layout,
+    App, Color, Component, Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList,
+    ReadSignal, Rect, RwSignal, ScopedTheme, SizeDimension, WindowConfig, WindowRoot, box_item,
+    effect, on_cleanup, provide_theme, reset_layout_runtime, set_context, signal, track_layout,
 };
 
 use config::theme::NordTheme;
@@ -297,6 +297,7 @@ impl LayerWindows {
         }));
         let generation = Generation::default();
         let shown = ScreenFeed::default();
+        let mapped = MappedFeed::default();
         let surface = {
             let kind = key.layer;
             let output = key.output.clone();
@@ -306,6 +307,7 @@ impl LayerWindows {
             let screen = Rc::clone(&screen);
             let generation = generation.clone();
             let shown = shown.clone();
+            let mapped = mapped.clone();
             let areas = Rc::clone(&self.areas);
             move || {
                 let on = demands.layer();
@@ -322,6 +324,7 @@ impl LayerWindows {
                         screen: Rc::clone(&screen),
                         generation: generation.clone(),
                         shown: shown.clone(),
+                        mapped: mapped.clone(),
                         areas: Rc::clone(&areas),
                     },
                 ));
@@ -329,7 +332,7 @@ impl LayerWindows {
                 handle
             }
         };
-        let presence = Presence::new(while_empty(key.layer), Box::new(surface));
+        let presence = Presence::new(while_empty(key.layer), Box::new(surface), mapped);
         presence.set_draws(window_draws(&layer.get()));
         done.opened += 1;
         self.live.push((
@@ -452,22 +455,28 @@ pub struct Presence {
     on_screen: Cell<bool>,
     /// Set when the host lets the window go, so a [`Hold`] that outlives it cannot open a surface nothing owns.
     shut: Cell<bool>,
+    /// What the window's tree reads [`Presence::on_screen`] through.
+    mapped: MappedFeed,
 }
 
 impl Presence {
-    fn new(empty: WhileEmpty, surface: Box<dyn Fn() -> Rc<LayerWindowHandle>>) -> Rc<Self> {
-        let window = match empty {
-            WhileEmpty::Hide => Some(surface()),
-            WhileEmpty::Close => None,
-        };
+    fn new(
+        empty: WhileEmpty,
+        surface: Box<dyn Fn() -> Rc<LayerWindowHandle>>,
+        mapped: MappedFeed,
+    ) -> Rc<Self> {
+        let on_screen = empty == WhileEmpty::Hide;
+        mapped.set(on_screen);
+        let window = on_screen.then(&surface);
         Rc::new(Self {
             empty,
-            on_screen: Cell::new(window.is_some()),
+            on_screen: Cell::new(on_screen),
             window: RefCell::new(window),
             surface,
             draws: Cell::new(false),
             holds: Cell::new(0),
             shut: Cell::new(false),
+            mapped,
         })
     }
 
@@ -488,6 +497,7 @@ impl Presence {
     fn shut(&self) {
         self.shut.set(true);
         self.on_screen.set(false);
+        self.mapped.set(false);
         let closing = self.window.borrow_mut().take();
         drop(closing);
     }
@@ -501,6 +511,7 @@ impl Presence {
             return;
         }
         self.on_screen.set(wanted);
+        self.mapped.set(wanted);
         match (self.empty, wanted) {
             (WhileEmpty::Close, true) => *self.window.borrow_mut() = Some((self.surface)()),
             (WhileEmpty::Close, false) => {
@@ -602,6 +613,39 @@ impl ScreenFeed {
 
     fn attach(&self, signal: RwSignal<Screen>) {
         self.0.set(Some(signal));
+    }
+}
+
+/// Whether a window is on screen, as a signal its tree reads: what an expression drawn in it subscribes by, since a hidden window keeps its tree (F-2.16) and tree disposal alone would never stop one. The host writes it as the window is mapped and hidden; a tree built before the host first says reads it as on screen.
+#[derive(Clone)]
+pub(crate) struct MappedFeed {
+    now: Rc<Cell<bool>>,
+    signal: Rc<Cell<Option<RwSignal<bool>>>>,
+}
+
+impl Default for MappedFeed {
+    fn default() -> Self {
+        Self {
+            now: Rc::new(Cell::new(true)),
+            signal: Rc::default(),
+        }
+    }
+}
+
+impl MappedFeed {
+    fn set(&self, mapped: bool) {
+        self.now.set(mapped);
+        if let Some(signal) = self.signal.get().filter(RwSignal::is_alive)
+            && signal.peek() != mapped
+        {
+            signal.set(mapped);
+        }
+    }
+
+    fn attach(&self) -> ReadSignal<bool> {
+        let mapped = signal(self.now.get());
+        self.signal.set(Some(mapped));
+        mapped.read_only()
     }
 }
 
@@ -861,7 +905,7 @@ fn window_layer(kind: LayerKind) -> Option<(Layer, &'static str)> {
 ///
 /// Paint is always something: a wallpaper region and a texture are their own content. Everything else draws what is placed in it, plus whatever its own style fills — so a bar with no modules and no fill of its own is a strip of nothing, and does not earn its layer a mapped window.
 ///
-/// An area with a `visible` expression counts as visible. The evaluator arrives with the data sprint, and until it does, hiding what the user placed because the shell cannot yet read the condition is the worse of the two wrong answers.
+/// An area with a `visible` expression counts whatever the expression says now: an expression is read only while its window is on screen, so a window taken off screen because one turned false would never hear it turn true again. While false the area draws nothing and takes no input inside a window that stays up.
 pub fn area_draws(area: &ResolvedArea) -> bool {
     !area.kind.holds_instances()
         || area.style.fill.is_some()
@@ -980,6 +1024,8 @@ pub struct LayerWindowContext {
     pub layer: LayerKind,
     pub output: Option<String>,
     pub demands: Rc<Demands>,
+    /// Whether the window is on screen now, read reactively: what an expression drawn in it is gated on.
+    pub mapped: ReadSignal<bool>,
 }
 
 impl LayerWindowContext {
@@ -1000,6 +1046,7 @@ struct LayerApp {
     screen: Rc<Cell<Screen>>,
     generation: Generation,
     shown: ScreenFeed,
+    mapped: MappedFeed,
     areas: Rc<dyn Areas>,
 }
 
@@ -1269,6 +1316,7 @@ impl App for LayerApp {
             layer: self.kind,
             output: self.output.clone(),
             demands: Rc::clone(&self.demands),
+            mapped: self.mapped.attach(),
         });
 
         let generation = signal(Builds::default());
@@ -1397,6 +1445,7 @@ mod tests {
                 id: GroupId::new("start"),
                 kind: GroupKind::Zone { zone: Zone::Start },
                 stacked: false,
+                repeat: None,
                 children: modules.iter().map(instance).collect(),
             }],
         }
@@ -1782,12 +1831,20 @@ mod tests {
         assert!(area_draws(&wallpaper()));
     }
 
-    /// Until the expression evaluator lands, an area conditioned on one counts as visible: hiding what the user placed because the shell cannot read the condition is the worse of the two wrong answers.
+    /// An area its expression hides keeps its window on screen: the expression is read only while the window is mapped, so taking the window away for a false one would leave nothing to hear it turn true. What it hides is the area's paint and input, inside the window (`expressions_tests`).
     #[test]
-    fn an_area_hidden_by_an_expression_still_counts_as_visible_for_now() {
+    fn an_area_hidden_by_an_expression_keeps_its_window_on_screen_to_hear_it_change() {
         let mut conditional = bar("bar-top", &["clock"]);
-        conditional.visible = Some(Expr("gaming".into()));
+        conditional.visible = Some(layout::ResolvedExpr {
+            expr: Expr("$media.playing".into()),
+            origin: layout::Origin {
+                layout: layout::LayoutId::new("conditional"),
+                output: layout::OutputMatch::default(),
+                workspace: None,
+            },
+        });
         assert!(area_draws(&conditional));
+        assert!(window_draws(&drawn(vec![conditional])));
     }
 
     #[test]
@@ -1964,6 +2021,7 @@ mod tests {
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Counting(Rc::clone(&areas))),
         };
         let content = Rc::new(Cell::new(0));
@@ -2024,6 +2082,7 @@ mod tests {
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Naming(Rc::clone(&built))),
         };
         let _root = app.root();
@@ -2138,6 +2197,7 @@ mod tests {
             })),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(crate::area::ShellAreas),
         };
         let tree = telar::testing::mount(app.root(), WIDE, HIGH);
@@ -2193,6 +2253,7 @@ mod tests {
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Counting(Rc::clone(built))),
         }
     }
@@ -2277,6 +2338,7 @@ mod tests {
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Counting(Rc::clone(&areas))),
         };
         let _root = app.root();
@@ -2348,6 +2410,7 @@ mod tests {
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(crate::area::ShellAreas),
         };
         let _root = app.root();
@@ -2402,6 +2465,7 @@ mod tests {
             })),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Pressable(Rc::clone(&pressed))),
         };
         crate::transient::open(crate::transient::Spec::new(
@@ -2547,6 +2611,7 @@ mod tests {
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
         }
     }
@@ -2567,6 +2632,7 @@ mod tests {
             screen: Rc::new(Cell::new(screen())),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
         };
 
@@ -2764,6 +2830,7 @@ mod tests {
             id: GroupId::new("end"),
             kind: GroupKind::Zone { zone: Zone::End },
             stacked: false,
+            repeat: None,
             children: end.iter().map(instance).collect(),
         });
         area
@@ -2783,6 +2850,7 @@ mod tests {
             })),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(crate::area::ShellAreas),
         }
     }
@@ -2991,6 +3059,7 @@ mod grid_tests {
                 row_span: 1,
             },
             stacked: false,
+            repeat: None,
             children: vec![ResolvedInstance {
                 id: InstanceId::new(id),
                 module: id.to_string(),
@@ -3063,6 +3132,7 @@ mod grid_tests {
             })),
             generation: Generation::default(),
             shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
             areas: Rc::new(Counted(Rc::clone(&builds))),
         };
         let mut root = app.root();

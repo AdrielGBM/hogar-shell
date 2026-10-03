@@ -35,6 +35,32 @@ add = "Añadir"
 remove = "Quitar"
 new_name = "Nombre nuevo"
 
+[editor.expr]
+visible = "Visible mientras"
+always = "Siempre visible"
+bindings = "Controlado por expresiones"
+target = "Controla"
+accent = "Color de acento"
+add = "Añadir vínculo"
+unbound = "Sin vincular: la opción conserva su valor"
+placeholder = "Una expresión, como $battery.level < 20"
+value = "= {value} · {ty}"
+waiting = "Aún sin valor"
+sources = "Fuentes ({count})"
+repeats = "Repetido sobre una lista"
+repeat = "{group}: una copia por elemento"
+once = "Se dibuja una vez"
+inherited = "Lo fija un nivel más amplio: Quitar lo retira aquí"
+beyond = "Esto lo da {rule} en {file}, que va después de donde escribe este panel, así que quitarlo aquí no cambiaría nada en pantalla: cámbialo allí"
+
+[editor.expr.kind]
+local = "esta copia"
+source = "fuente"
+var = "variable"
+event = "evento"
+function = "función"
+constant = "constante"
+
 [editor.area]
 edge = "Borde"
 thickness = "Grosor"

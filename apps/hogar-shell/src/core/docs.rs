@@ -137,7 +137,7 @@ fn layout_page() -> String {
 
 /// One table and everything under it. A sub-table becomes a heading of its own rather than an indent, which is what the file itself does: `[theme.scale]` is a header a reader types.
 fn render_table(table: &Table, depth: usize, out: &mut String) {
-    let _ = writeln!(out, "{} `[{}]`\n", "#".repeat(depth), table.path);
+    let _ = writeln!(out, "{} `{}`\n", "#".repeat(depth), table.header());
     if let Some(doc) = table.doc {
         let _ = writeln!(out, "{doc}\n");
     }

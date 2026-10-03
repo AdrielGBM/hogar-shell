@@ -69,6 +69,29 @@ id_type!(
     InstanceId
 );
 
+/// What separates a repeated child's id from the index of one of its copies: `player#2`. Refused in a written id, so a copy can never share an id with a child.
+pub const COPY_MARK: char = '#';
+
+impl InstanceId {
+    /// The copy at `index` of this child of a group with `repeat`.
+    pub fn copy(&self, index: usize) -> Self {
+        Self::new(format!("{self}{COPY_MARK}{index}"))
+    }
+
+    /// The child as the layout writes it: this id, or the one it is a copy of.
+    pub fn template(&self) -> Self {
+        match self.0.rsplit_once(COPY_MARK) {
+            Some((template, index)) if index.parse::<usize>().is_ok() => Self::new(template),
+            _ => self.clone(),
+        }
+    }
+
+    /// Which copy this is, for a copy of a repeated child.
+    pub fn copy_index(&self) -> Option<usize> {
+        self.0.rsplit_once(COPY_MARK)?.1.parse().ok()
+    }
+}
+
 /// One named arrangement of everything the shell draws.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -80,6 +103,9 @@ pub struct Layout {
     pub name: String,
     /// A layout this one starts from. The chain is applied root first, so this layout's own rules win.
     pub extends: Option<LayoutId>,
+    /// Readings this layout declares itself, by the name an expression reads each as (`$name`): a command run on an interval, a command that prints a line per update, or an address fetched on an interval. Merged by name along `extends`, so a layout can change one key of a source it inherits. A name a module's own source already has is an error.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, Source>,
     /// Output rules in file order. Every one whose glob matches is applied, most-specific glob last, so a `*` rule is the base and a named monitor refines it.
     pub outputs: Vec<OutputRule>,
 }
@@ -384,7 +410,7 @@ pub struct Area {
     pub within: Option<Within>,
     #[serde(skip_serializing_if = "AreaStyle::is_empty")]
     pub style: AreaStyle,
-    /// An expression that decides whether the area draws. An invisible area contributes nothing to the input region.
+    /// An expression giving true or false that decides whether the area draws: while it is false the area paints nothing and takes no input, and nothing else on its layer is rebuilt when it flips. Shown until it first answers, and through an evaluation error after that it keeps its last answer. Not allowed on the lock prompt.
     pub visible: Option<Expr>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<Group>,
@@ -394,6 +420,9 @@ pub struct Area {
     /// What each gesture on the area's own background runs — a press or a scroll that lands between its instances rather than on one. Refused on the lock layer, which holds readings, never controls.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub actions: BTreeMap<Trigger, Action>,
+    /// Expressions a level under this one gave the area that this level takes back, as though nothing under it had written them: `unset = ["visible"]` shows on one monitor an area a broader rule hides behind an expression. An area takes back `visible`. They are taken back before this level's own keys apply, so a level that takes a key back and writes it too is an error, and one that takes back what nothing under it writes is reported.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unset: Vec<Unset>,
 }
 
 /// What kind of region an area is, and the geometry that kind needs, as a level wrote it.
@@ -997,11 +1026,16 @@ pub struct Group {
     pub kind: Option<GroupKind>,
     /// Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set.
     pub stacked: Option<bool>,
+    /// An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a stacked group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn.
+    pub repeat: Option<Expr>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Instance>,
     /// Ids of instances an earlier level placed that this one takes away.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remove: Vec<InstanceId>,
+    /// Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them. A group takes back `repeat`, the way an area takes back `visible`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unset: Vec<Unset>,
 }
 
 /// Where in its area a group sits.
@@ -1056,12 +1090,15 @@ pub struct Instance {
     /// Option overrides for this instance alone, over its module's defaults: any key of the module's own section (`[clock]` for a clock), and any of `[modules.<id>]` — `accent`, `variant`, `open` and the sizes of what it opens. A key the module does not have is an error.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]
     pub options: toml::Table,
-    /// Properties driven by an expression instead of a fixed value, keyed by the property's path.
+    /// Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), or `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`). Each value is laid over `options` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, Expr>,
     /// What each gesture on this instance runs.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub actions: BTreeMap<Trigger, Action>,
+    /// Bindings a level under this one gave the instance that this level takes back, each as `bindings.<path>`: `unset = ["bindings.accent"]` puts back the accent its options give it where a broader rule drives it by an expression. A path has to be one `bindings` could hold, the way an area takes back `visible`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unset: Vec<Unset>,
 }
 
 /// How big a placed module is drawn, which is the same module seen at a different size rather than a different module.
@@ -1148,9 +1185,9 @@ impl Trigger {
 #[serde(transparent)]
 pub struct Action(pub Vec<String>);
 
-/// A bound expression, held as written.
+/// An expression in the shell's language (TA-6), held as written: `$battery.level < 20`, `mix($theme.accent, #f00, $cpu.usage / 100)`.
 ///
-/// The evaluator arrives with the data and automation sprint. Until then an expression parses, round-trips and is reported where a layer forbids it, which is what lets the model be complete before the language exists.
+/// The model keeps the text, so a layout round-trips byte for byte and an edit never rewrites what the user typed. Validation compiles it against the names its layer may read and the type it drives, and reports a mistake at its key with the span inside it ([`crate::validate`]); a layer window binds it to live readings for as long as what it drives is built and the window is on screen.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct Expr(pub String);
@@ -1159,4 +1196,209 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// An expression a level takes back from the levels under it, written as the path of the key it takes back: `visible` on an area, `repeat` on a group, `bindings.<path>` on an instance.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[serde(from = "String", into = "String", rename_all = "snake_case")]
+pub enum Unset {
+    Visible,
+    Repeat,
+    Binding(String),
+    /// A path that names no expression, kept as written so validation can say where it is. It takes nothing back.
+    Unknown(String),
+}
+
+impl Unset {
+    const BINDINGS: &str = "bindings.";
+
+    pub fn binding(path: impl Into<String>) -> Self {
+        Self::Binding(path.into())
+    }
+}
+
+impl From<&str> for Unset {
+    fn from(path: &str) -> Self {
+        match path {
+            "visible" => Self::Visible,
+            "repeat" => Self::Repeat,
+            _ => match path.strip_prefix(Self::BINDINGS) {
+                Some(binding) if !binding.is_empty() => Self::Binding(binding.to_string()),
+                _ => Self::Unknown(path.to_string()),
+            },
+        }
+    }
+}
+
+impl From<String> for Unset {
+    fn from(path: String) -> Self {
+        Self::from(path.as_str())
+    }
+}
+
+impl From<Unset> for String {
+    fn from(unset: Unset) -> Self {
+        unset.to_string()
+    }
+}
+
+impl fmt::Display for Unset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Unset::Visible => f.write_str("visible"),
+            Unset::Repeat => f.write_str("repeat"),
+            Unset::Binding(path) => write!(f, "{}{path}", Self::BINDINGS),
+            Unset::Unknown(path) => f.write_str(path),
+        }
+    }
+}
+
+/// A reading a layout declares itself, under `[sources.<name>]`, which an expression reads as `$name`.
+///
+/// Each is run once however many instances read it, only while something that reads it is on screen (unless `while = "always"`), and within `[automation]`'s limits: a run that outstays the timeout or prints too much is stopped, and a failing source waits longer before each retry. What fails is reported with the source's name.
+///
+/// The fields are optional because a layout that extends this one may write only the key it changes; once every level is laid over the others, a `poll` or `listen` without `cmd` and an `http` without `url` are errors.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Source {
+    /// A command run on an interval, like eww's `defpoll`: each run's output is one reading.
+    Poll {
+        /// The command line, run through `sh -c`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cmd: Option<String>,
+        /// How often it runs, counted from the start of one run to the start of the next: `500ms`, `5s`, `2m` or `1h`. Never more often than `[automation] min_interval_seconds`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        every: Option<String>,
+        /// The reading before the first run answers, and the type of every reading after it: a number makes the source a number, `true` or `false` a bool, a list a list of texts. A text, or nothing at all, makes it text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initial: Option<toml::Value>,
+        /// How the output becomes a reading: `text` (the default: all of it, trimmed), `lines` (a list, one per line), `json:<path>` (the value at a path such as `.current.temp` or `.items[0].name`) or `regex:<pattern>` (the first match, or its first group when it has one).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parse: Option<String>,
+        /// `visible` (the default) runs only while something showing the reading is on screen; `always` runs while anything reads it at all, hidden or not.
+        #[serde(default, rename = "while", skip_serializing_if = "Option::is_none")]
+        while_: Option<While>,
+        /// Whether the lock screen may show it. Off unless set: what a command prints is unaudited text, and the lock screen is read by whoever is in the room. A level that changes `cmd` says it again, or the source is not lock-safe: what a level under it vouched for was the command it replaced.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lock_safe: Option<bool>,
+    },
+    /// A command that keeps running and prints one reading per line, like eww's `deflisten`. It is started again, after a wait, if it exits.
+    Listen {
+        /// The command line, run through `sh -c`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cmd: Option<String>,
+        /// The reading before the first line arrives, and the type of every reading after it, as for a `poll` source.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initial: Option<toml::Value>,
+        /// How each line becomes a reading, as for a `poll` source; `lines` is not one, since every line is a reading of its own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parse: Option<String>,
+        /// `visible` (the default) keeps the command running only while something showing the reading is on screen; `always` while anything reads it at all.
+        #[serde(default, rename = "while", skip_serializing_if = "Option::is_none")]
+        while_: Option<While>,
+        /// Whether the lock screen may show it, as for a `poll` source.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lock_safe: Option<bool>,
+    },
+    /// An address fetched on an interval: each response body is one reading.
+    Http {
+        /// What is fetched, with a `GET`: an `http://` or `https://` address.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        /// How often it is fetched, as for a `poll` source.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        every: Option<String>,
+        /// The reading before the first response, and the type of every reading after it, as for a `poll` source.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initial: Option<toml::Value>,
+        /// How the body becomes a reading, as for a `poll` source.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parse: Option<String>,
+        /// Whether it is fetched only while shown, as for a `poll` source.
+        #[serde(default, rename = "while", skip_serializing_if = "Option::is_none")]
+        while_: Option<While>,
+        /// Whether the lock screen may show it, as for a `poll` source: a level that changes `url` says it again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lock_safe: Option<bool>,
+    },
+}
+
+impl Source {
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Source::Poll { .. } => "poll",
+            Source::Listen { .. } => "listen",
+            Source::Http { .. } => "http",
+        }
+    }
+
+    pub fn is_same_kind(&self, other: &Source) -> bool {
+        self.kind_name() == other.kind_name()
+    }
+
+    /// The command line, for the two kinds that run one.
+    pub fn cmd(&self) -> Option<&str> {
+        match self {
+            Source::Poll { cmd, .. } | Source::Listen { cmd, .. } => cmd.as_deref(),
+            Source::Http { .. } => None,
+        }
+    }
+
+    pub fn url(&self) -> Option<&str> {
+        match self {
+            Source::Http { url, .. } => url.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The interval as written, for the two kinds that run on one.
+    pub fn every(&self) -> Option<&str> {
+        match self {
+            Source::Poll { every, .. } | Source::Http { every, .. } => every.as_deref(),
+            Source::Listen { .. } => None,
+        }
+    }
+
+    pub fn initial(&self) -> Option<&toml::Value> {
+        match self {
+            Source::Poll { initial, .. }
+            | Source::Listen { initial, .. }
+            | Source::Http { initial, .. } => initial.as_ref(),
+        }
+    }
+
+    pub fn parse(&self) -> Option<&str> {
+        match self {
+            Source::Poll { parse, .. }
+            | Source::Listen { parse, .. }
+            | Source::Http { parse, .. } => parse.as_deref(),
+        }
+    }
+
+    pub fn running_while(&self) -> While {
+        match self {
+            Source::Poll { while_, .. }
+            | Source::Listen { while_, .. }
+            | Source::Http { while_, .. } => while_.unwrap_or_default(),
+        }
+    }
+
+    pub fn lock_safe(&self) -> bool {
+        match self {
+            Source::Poll { lock_safe, .. }
+            | Source::Listen { lock_safe, .. }
+            | Source::Http { lock_safe, .. } => lock_safe.unwrap_or(false),
+        }
+    }
+}
+
+/// When a declared source runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum While {
+    /// Only while something showing its reading is on screen.
+    #[default]
+    Visible,
+    /// While anything reads it at all, on screen or not.
+    Always,
 }

@@ -60,6 +60,8 @@ pub struct Config {
     pub tray: TrayConfig,
     pub animation: AnimationConfig,
     pub keynav: KeyNavConfig,
+    pub automation: AutomationConfig,
+    pub rules: Vec<RuleConfig>,
     pub modules: HashMap<String, ModuleOverride>,
 }
 

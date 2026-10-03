@@ -1,0 +1,2 @@
+# A Regex only caches matcher state behind its lock: nothing keyed by one depends on that state.
+ignore-interior-mutability = ["regex::Regex"]

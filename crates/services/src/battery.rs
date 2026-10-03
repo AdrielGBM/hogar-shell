@@ -10,6 +10,8 @@ use zbus::blocking::fdo::PropertiesProxy;
 use config::BatteryWarning;
 use util::broadcast::{Broadcast, Service};
 
+use crate::events::{self, ShellEvent};
+
 const SUPPLY_DIR: &str = "/sys/class/power_supply";
 const UPOWER: &str = "org.freedesktop.UPower";
 const DISPLAY_DEVICE: &str = "/org/freedesktop/UPower/devices/DisplayDevice";
@@ -261,15 +263,44 @@ thread_local! {
     static LAST: Cell<Option<Battery>> = const { Cell::new(None) };
 }
 
-/// Raises the configured low-battery warning as the charge crosses a threshold, and runs `[battery] critical_action` once it drops to `critical_level`.
+/// What a change from `previous` to `now` announces: the charger being plugged in or pulled, and a warning threshold crossed on the way down.
+///
+/// The crossing is [`warning_for`]'s, so the event and the notification can never disagree about whether a threshold was passed — and a reading that sits under one announces nothing.
+fn events_for(
+    previous: Option<Battery>,
+    now: Battery,
+    levels: &[BatteryWarning],
+) -> Vec<ShellEvent> {
+    let mut events = Vec::new();
+    if previous.is_some_and(|before| before.charging != now.charging) {
+        events.push(ShellEvent::BatteryStateChanged {
+            level: now.level,
+            charging: now.charging,
+        });
+    }
+    if let Some(warning) = warning_for(previous, now, levels) {
+        events.push(ShellEvent::BatteryUnderThreshold {
+            level: now.level,
+            threshold: warning.level,
+        });
+    }
+    events
+}
+
+/// Announces the reading's events, raises the configured low-battery warning as the charge crosses a threshold, and runs `[battery] critical_action` once it drops to `critical_level`.
 ///
 /// Installed on the driver thread by the shell's startup path rather than run inside the producer: the producer thread has neither the live config nor a way to reach the notification daemon's surface.
+///
+/// The events go out whatever `[battery] enabled` says: that switch silences the shell's own warnings, and a rule is the user's own, separate opt-in.
 pub fn on_reading(reading: Battery) {
     let previous = LAST.replace(Some(reading));
     let Some(config) = config::config() else {
         return;
     };
     let battery = &config.battery;
+    for event in events_for(previous, reading, &battery.warn_levels) {
+        events::emit(event);
+    }
     if !battery.enabled {
         return;
     }
@@ -370,6 +401,62 @@ mod tests {
         assert!(
             warning_for(None, discharging(95), &levels).is_none(),
             "a healthy battery says nothing"
+        );
+    }
+
+    #[test]
+    fn under_threshold_is_announced_once_per_crossing_not_on_every_reading() {
+        let levels = levels();
+        let readings = [21, 19, 18, 17, 15, 12, 11, 9, 8].map(discharging);
+        let mut previous = None;
+        let mut announced = Vec::new();
+        for reading in readings {
+            announced.extend(events_for(previous, reading, &levels));
+            previous = Some(reading);
+        }
+        assert_eq!(
+            announced,
+            [
+                ShellEvent::BatteryUnderThreshold {
+                    level: 19,
+                    threshold: 20
+                },
+                ShellEvent::BatteryUnderThreshold {
+                    level: 9,
+                    threshold: 10
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn plugging_in_and_pulling_the_charger_each_announce_a_state_change() {
+        let levels = levels();
+        let plugged = Battery {
+            level: 50,
+            charging: true,
+        };
+        assert_eq!(
+            events_for(Some(discharging(50)), plugged, &levels),
+            [ShellEvent::BatteryStateChanged {
+                level: 50,
+                charging: true
+            }]
+        );
+        assert_eq!(
+            events_for(Some(plugged), discharging(50), &levels),
+            [ShellEvent::BatteryStateChanged {
+                level: 50,
+                charging: false
+            }]
+        );
+        assert!(
+            events_for(None, plugged, &levels).is_empty(),
+            "the first reading is how the battery is, not a change to it"
+        );
+        assert!(
+            events_for(Some(discharging(51)), discharging(50), &levels).is_empty(),
+            "a level moving is not a state change"
         );
     }
 

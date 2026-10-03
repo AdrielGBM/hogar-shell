@@ -9,9 +9,9 @@
 use std::collections::BTreeMap;
 
 use config::{Edge, glob_matches};
-use util::report::{Finding, Report};
+use util::report::{Finding, Message, Report};
 
-use crate::merge::{merge_layers, merge_session_layers};
+use crate::merge::{At, Origins, merge_layers, merge_session_layers, merge_sources};
 use crate::model::*;
 
 /// The workspace a resolution is for, as much of it as the compositor could say.
@@ -22,6 +22,35 @@ pub struct ActiveWorkspace {
     pub name: String,
     pub id: Option<i64>,
     pub special: Option<bool>,
+}
+
+/// The level of a layout that wrote an expression resolution kept: the layout whose file says it, and the rule in that file — an output rule, or one of that rule's workspace rules.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Origin {
+    pub layout: LayoutId,
+    pub output: OutputMatch,
+    pub workspace: Option<WorkspaceMatch>,
+}
+
+impl Origin {
+    pub fn file(&self) -> String {
+        layout_path(&self.layout)
+    }
+
+    /// The key of the rule in its file, which every key validation reports inside that rule starts with.
+    pub fn rule(&self) -> String {
+        match &self.workspace {
+            None => format!("outputs.{}", self.output.0),
+            Some(workspace) => format!("outputs.{}.workspaces.{}", self.output.0, workspace.0),
+        }
+    }
+}
+
+/// An expression resolution kept, with the level that wrote it: where a failure of it is reported, and what a level has to come after to take it back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedExpr {
+    pub expr: Expr,
+    pub origin: Origin,
 }
 
 /// What one output shows, with every field answered.
@@ -95,7 +124,7 @@ pub struct ResolvedArea {
     /// Which box this area's geometry is measured in.
     pub within: Within,
     pub style: AreaStyle,
-    pub visible: Option<Expr>,
+    pub visible: Option<ResolvedExpr>,
     pub groups: Vec<ResolvedGroup>,
     pub actions: BTreeMap<Trigger, Action>,
 }
@@ -213,6 +242,8 @@ pub struct ResolvedGroup {
     pub kind: GroupKind,
     /// Whether the group shows one instance at a time.
     pub stacked: bool,
+    /// The list the children are drawn once per item of. Never on a grid cell: validation refuses it there, and a file edited past that draws the children once, as written.
+    pub repeat: Option<ResolvedExpr>,
     pub children: Vec<ResolvedInstance>,
 }
 
@@ -222,7 +253,7 @@ pub struct ResolvedInstance {
     pub module: String,
     pub representation: Representation,
     pub options: toml::Table,
-    pub bindings: BTreeMap<String, Expr>,
+    pub bindings: BTreeMap<String, ResolvedExpr>,
     pub actions: BTreeMap<Trigger, Action>,
 }
 
@@ -241,24 +272,33 @@ pub fn resolve(
     let mut layers = Layers::default();
     // The same arrangement with every workspace rule left out, which is the only thing an exclusive zone may be derived from: a rule that could re-tile the user's windows would do it on every workspace switch (F-6.7). Kept beside rather than recomputed, because it is the same merge and two of them could drift.
     let mut without_rules = Layers::default();
+    let (mut origins, mut origins_without_rules) = (Origins::default(), Origins::default());
     let mut ruled = false;
     for level in &chain {
-        let mut rules: Vec<&OutputRule> = level
-            .outputs
-            .iter()
-            .filter(|rule| rule.matches.matches(output))
-            .collect();
-        rules.sort_by_key(|rule| rule.matches.specificity());
+        let rules = rules_for(level, output);
 
         for rule in &rules {
+            let origin = Origin {
+                layout: level.id.clone(),
+                output: rule.matches.clone(),
+                workspace: None,
+            };
             merge_layers(&mut layers, &rule.layers);
+            origins.lay(rule.layers.each(), &origin);
             merge_layers(&mut without_rules, &rule.layers);
+            origins_without_rules.lay(rule.layers.each(), &origin);
         }
         for rule in &rules {
             for workspace_rule in &rule.workspaces {
                 match matches_workspace(&workspace_rule.matches, workspace) {
                     WorkspaceVerdict::Matches => {
                         merge_session_layers(&mut layers, &workspace_rule.layers);
+                        let origin = Origin {
+                            layout: level.id.clone(),
+                            output: rule.matches.clone(),
+                            workspace: Some(workspace_rule.matches.clone()),
+                        };
+                        origins.lay(workspace_rule.layers.each(), &origin);
                         ruled = true;
                     }
                     WorkspaceVerdict::Differs => {}
@@ -275,12 +315,13 @@ pub fn resolve(
         }
     }
 
-    let answered = answer_layers(&layers, layout, &mut report);
+    let answered = answer_layers(&layers, &origins, layout, &mut report);
     // A workspace rule may only add, remove and restyle; what each edge takes off the screen is settled before any of them runs. Answering the rule-free arrangement a second time is the cost of that, and only where a rule actually matched — its own findings are the ones already reported, so they go to a report nobody reads.
     let reserved = match ruled {
         false => reserved_edges(&answered),
         true => reserved_edges(&answer_layers(
             &without_rules,
+            &origins_without_rules,
             layout,
             &mut Report::default(),
         )),
@@ -300,13 +341,44 @@ pub fn resolve(
 
 fn answer_layers(
     layers: &Layers,
+    origins: &Origins,
     layout: &Layout,
     report: &mut Report,
 ) -> BTreeMap<LayerKind, ResolvedLayer> {
     LayerKind::ALL
         .into_iter()
-        .map(|kind| (kind, answer_layer(layers.get(kind), kind, layout, report)))
+        .map(|kind| {
+            let answering = Answering {
+                layer: kind,
+                origins,
+                layout,
+            };
+            (kind, answer_layer(layers.get(kind), answering, report))
+        })
         .collect()
+}
+
+/// What answering one layer of a merge reads besides the merge: which layer it is, who wrote each expression the merge kept, and the layout being resolved, whose file names what could not be answered.
+#[derive(Clone, Copy)]
+struct Answering<'a> {
+    layer: LayerKind,
+    origins: &'a Origins,
+    layout: &'a Layout,
+}
+
+impl Answering<'_> {
+    /// `expr`, which the merge kept at `at`, with the level that wrote it.
+    fn sourced(&self, expr: &Expr, at: At) -> ResolvedExpr {
+        let origin = self
+            .origins
+            .of(&at)
+            .expect("the merge records the level of every expression it keeps")
+            .clone();
+        ResolvedExpr {
+            expr: expr.clone(),
+            origin,
+        }
+    }
 }
 
 /// What each edge of the output is taken by, in `Edge::ALL` order: its deepest reserving area, since every area on one edge hugs that edge and the ones beside each other along it share one band rather than stacking.
@@ -319,6 +391,41 @@ fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
             .filter_map(|area| area.kind.reserving_thickness(edge))
             .fold(0.0, f32::max)
     })
+}
+
+/// The sources `layout` declares, each laid over what the layouts it extends declare under the same name.
+///
+/// A source that is still missing what it runs once every level has had its say — a `poll` or `listen` with no `cmd`, an `http` with no `url` — is reported and left out, so the rest still run.
+pub fn sources(
+    layout: &Layout,
+    known: &BTreeMap<LayoutId, Layout>,
+) -> (BTreeMap<String, Source>, Report) {
+    let mut report = Report::default();
+    let mut merged = BTreeMap::new();
+    for level in chain_of(layout, known, &mut report) {
+        merge_sources(&mut merged, &level.sources);
+    }
+    merged.retain(|name, source| {
+        let missing = match source {
+            Source::Poll { cmd: None, .. } | Source::Listen { cmd: None, .. } => Some("cmd"),
+            Source::Http { url: None, .. } => Some("url"),
+            _ => None,
+        };
+        let Some(missing) = missing else {
+            return true;
+        };
+        report.error(Finding::new(
+            layout_path(&layout.id),
+            format!("sources.{name}.{missing}"),
+            util::message!(
+                "finding.source_missing",
+                kind = source.kind_name(),
+                key = missing
+            ),
+        ));
+        false
+    });
+    (merged, report)
 }
 
 /// The layouts to apply, root first. A cycle stops at the layout that closes it, reported once, so a file that extends itself is a message rather than a hang.
@@ -336,7 +443,7 @@ pub(crate) fn chain_of<'a>(
             report.error(Finding::new(
                 layout_path(&layout.id),
                 "extends",
-                format!("`{id}` extends itself through this chain, so it was not applied"),
+                util::message!("finding.extends_itself", id = id),
             ));
             break;
         }
@@ -344,7 +451,7 @@ pub(crate) fn chain_of<'a>(
             report.error(Finding::new(
                 layout_path(&layout.id),
                 "extends",
-                format!("there is no layout called `{id}`"),
+                util::message!("finding.unknown_layout", id = id),
             ));
             break;
         };
@@ -365,7 +472,7 @@ enum WorkspaceVerdict {
     Matches,
     Differs,
     /// The compositor did not report what the rule matches on.
-    Unanswerable(String),
+    Unanswerable(Message),
 }
 
 fn matches_workspace(
@@ -386,54 +493,45 @@ fn matches_workspace(
         WorkspaceMatchKind::Id => match (active.id, pattern.value().parse::<i64>()) {
             (Some(active_id), Ok(wanted)) if active_id == wanted => WorkspaceVerdict::Matches,
             (Some(_), Ok(_)) => WorkspaceVerdict::Differs,
-            (_, Err(_)) => WorkspaceVerdict::Unanswerable(format!(
-                "`{}` is not a workspace number, so this rule never applies",
-                pattern.value()
+            (_, Err(_)) => WorkspaceVerdict::Unanswerable(util::message!(
+                "finding.workspace_number",
+                value = pattern.value()
             )),
-            (None, Ok(_)) => WorkspaceVerdict::Unanswerable(
-                "matching a workspace by number needs Hyprland, which is not running, so this rule is inactive".into(),
-            ),
+            (None, Ok(_)) => WorkspaceVerdict::Unanswerable(util::message!(
+                "finding.workspace_id_needs_hyprland"
+            )),
         },
         WorkspaceMatchKind::Special => match active.special {
-            Some(true) if glob_matches(pattern.value(), active.name.trim_start_matches("special:")) => {
+            Some(true)
+                if glob_matches(pattern.value(), active.name.trim_start_matches("special:")) =>
+            {
                 WorkspaceVerdict::Matches
             }
             Some(_) => WorkspaceVerdict::Differs,
-            None => WorkspaceVerdict::Unanswerable(
-                "matching a special workspace needs Hyprland, which is not running, so this rule is inactive".into(),
-            ),
+            None => WorkspaceVerdict::Unanswerable(util::message!(
+                "finding.workspace_special_needs_hyprland"
+            )),
         },
     }
 }
 
-fn answer_layer(
-    layer: &Layer,
-    kind: LayerKind,
-    layout: &Layout,
-    report: &mut Report,
-) -> ResolvedLayer {
+fn answer_layer(layer: &Layer, answering: Answering<'_>, report: &mut Report) -> ResolvedLayer {
     let areas = layer
         .areas
         .iter()
-        .filter_map(|area| answer_area(area, kind, layout, report))
+        .filter_map(|area| answer_area(area, answering, report))
         .collect();
     ResolvedLayer { areas }
 }
 
-fn answer_area(
-    area: &Area,
-    layer: LayerKind,
-    layout: &Layout,
-    report: &mut Report,
-) -> Option<ResolvedArea> {
+fn answer_area(area: &Area, answering: Answering<'_>, report: &mut Report) -> Option<ResolvedArea> {
+    let Answering { layer, layout, .. } = answering;
     let at = format!("layers.{layer}.areas.{}", area.id);
     let mut miss = |field: &str, kind: &str| {
         report.error(Finding::new(
             layout_path(&layout.id),
             format!("{at}.{field}"),
-            format!(
-                "a `{kind}` area needs `{field}`, and nothing set it, so this area was left out"
-            ),
+            util::message!("finding.area_needs", kind = kind, field = field),
         ));
     };
 
@@ -441,7 +539,7 @@ fn answer_area(
         report.error(Finding::new(
             layout_path(&layout.id),
             format!("layers.{layer}.areas"),
-            "an area has no `id`, so nothing can address it and it was left out".to_string(),
+            util::message!("finding.area_no_id"),
         ));
         return None;
     }
@@ -450,7 +548,7 @@ fn answer_area(
         report.error(Finding::new(
             layout_path(&layout.id),
             format!("{at}.kind"),
-            "this area never says what kind it is, so it was left out".to_string(),
+            util::message!("finding.area_no_kind"),
         ));
         return None;
     };
@@ -460,17 +558,14 @@ fn answer_area(
     let groups = if kind.holds_instances() {
         area.groups
             .iter()
-            .filter_map(|group| answer_group(group, &at, layout, report))
+            .filter_map(|group| answer_group(group, &area.id, &at, answering, report))
             .collect()
     } else {
         if !area.groups.is_empty() {
             report.warn(Finding::new(
                 layout_path(&layout.id),
                 format!("{at}.groups"),
-                format!(
-                    "a `{}` area is paint and holds nothing, so its groups were left out",
-                    kind.name()
-                ),
+                util::message!("finding.paint_holds_nothing", kind = kind.name()),
             ));
         }
         Vec::new()
@@ -483,7 +578,12 @@ fn answer_area(
         above_fullscreen: area.above_fullscreen.unwrap_or(false),
         within: area.within.unwrap_or_default(),
         style: area.style.clone(),
-        visible: area.visible.clone(),
+        visible: area.visible.as_ref().map(|visible| {
+            answering.sourced(
+                visible,
+                (layer, area.id.clone(), None, None, Unset::Visible),
+            )
+        }),
         groups,
         actions: area.actions.clone(),
     })
@@ -602,16 +702,18 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
 
 fn answer_group(
     group: &Group,
+    area: &AreaId,
     at: &str,
-    layout: &Layout,
+    answering: Answering<'_>,
     report: &mut Report,
 ) -> Option<ResolvedGroup> {
+    let layout = answering.layout;
     let at = format!("{at}.groups.{}", group.id);
     if group.id.is_empty() {
         report.error(Finding::new(
             layout_path(&layout.id),
             at,
-            "a group has no `id`, so nothing can address it and it was left out".to_string(),
+            util::message!("finding.group_no_id"),
         ));
         return None;
     }
@@ -619,35 +721,52 @@ fn answer_group(
         report.error(Finding::new(
             layout_path(&layout.id),
             format!("{at}.place"),
-            "this group never says where it sits, so it was left out".to_string(),
+            util::message!("finding.group_no_place"),
         ));
         return None;
     };
+    let held = (area, &group.id);
     let children = group
         .children
         .iter()
-        .filter_map(|instance| answer_instance(instance, &at, layout, report))
+        .filter_map(|instance| answer_instance(instance, held, &at, answering, report))
         .collect();
+    let at = |slot| {
+        (
+            answering.layer,
+            area.clone(),
+            Some(group.id.clone()),
+            None,
+            slot,
+        )
+    };
     Some(ResolvedGroup {
         id: group.id.clone(),
         kind,
         stacked: group.stacked.unwrap_or(false),
+        repeat: group
+            .repeat
+            .as_ref()
+            .filter(|_| !matches!(kind, GroupKind::Cell { .. }))
+            .map(|repeat| answering.sourced(repeat, at(Unset::Repeat))),
         children,
     })
 }
 
 fn answer_instance(
     instance: &Instance,
+    (area, group): (&AreaId, &GroupId),
     at: &str,
-    layout: &Layout,
+    answering: Answering<'_>,
     report: &mut Report,
 ) -> Option<ResolvedInstance> {
+    let layout = answering.layout;
     let at = format!("{at}.children.{}", instance.id);
     if instance.id.is_empty() {
         report.error(Finding::new(
             layout_path(&layout.id),
             at,
-            "an instance has no `id`, so nothing can address it and it was left out".to_string(),
+            util::message!("finding.instance_no_id"),
         ));
         return None;
     }
@@ -655,16 +774,67 @@ fn answer_instance(
         report.error(Finding::new(
             layout_path(&layout.id),
             format!("{at}.module"),
-            "this instance never says which module it shows, so it was left out".to_string(),
+            util::message!("finding.instance_no_module"),
         ));
         return None;
     };
+    let bindings = instance
+        .bindings
+        .iter()
+        .map(|(path, expr)| {
+            let at = (
+                answering.layer,
+                area.clone(),
+                Some(group.clone()),
+                Some(instance.id.clone()),
+                Unset::binding(path),
+            );
+            (path.clone(), answering.sourced(expr, at))
+        })
+        .collect();
     Some(ResolvedInstance {
         id: instance.id.clone(),
         module,
         representation: instance.representation.unwrap_or(Representation::Chip),
         options: instance.options.clone(),
-        bindings: instance.bindings.clone(),
+        bindings,
         actions: instance.actions.clone(),
     })
+}
+
+/// The output rules of `layout` that speak for a screen called `screen`, in the order resolution lays them: broadest glob first, file order between equals.
+fn rules_for<'a>(layout: &'a Layout, screen: &str) -> Vec<&'a OutputRule> {
+    let mut rules: Vec<&OutputRule> = layout
+        .outputs
+        .iter()
+        .filter(|rule| rule.matches.matches(screen))
+        .collect();
+    rules.sort_by_key(|rule| rule.matches.specificity());
+    rules
+}
+
+/// Whether what `level` writes is laid over what `writer` wrote on a screen called `screen`, whichever workspace is up (TA-2). `level` is a level of `layout`, `writer` one of `layout` or of a layout it extends: every level of a layout it extends is under every level of its own, and within one layout the output rules come first, broadest first, then their workspace rules in the same order.
+pub fn lays_over(layout: &Layout, screen: &str, level: &Origin, writer: &Origin) -> bool {
+    if level.layout != layout.id {
+        return false;
+    }
+    if writer.layout != layout.id {
+        return true;
+    }
+    let rules = rules_for(layout, screen);
+    let order: Vec<(&OutputMatch, Option<&WorkspaceMatch>)> = rules
+        .iter()
+        .map(|rule| (&rule.matches, None))
+        .chain(rules.iter().flat_map(|rule| {
+            rule.workspaces
+                .iter()
+                .map(|workspace| (&rule.matches, Some(&workspace.matches)))
+        }))
+        .collect();
+    let at = |origin: &Origin| {
+        order.iter().position(|(output, workspace)| {
+            **output == origin.output && *workspace == origin.workspace.as_ref()
+        })
+    };
+    matches!((at(level), at(writer)), (Some(level), Some(writer)) if level > writer)
 }

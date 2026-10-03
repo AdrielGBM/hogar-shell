@@ -246,8 +246,7 @@ pub fn plan(
         report.warn(util::report::Finding::new(
             format!("layouts/{}.toml", layout.id),
             "outputs",
-            "no output has a stack area, so notifications, toasts and OSDs are shown nowhere"
-                .to_string(),
+            util::message!("finding.no_stack"),
         ));
     }
     if !platform_wayland::background_effect_supported() {
@@ -255,7 +254,7 @@ pub fn plan(
             report.warn(util::report::Finding::new(
                 format!("layouts/{}.toml", layout.id),
                 area,
-                "the compositor offers no background blur (ext-background-effect-v1), so this area draws translucent without it".to_string(),
+                util::message!("finding.no_blur"),
             ));
         }
     }

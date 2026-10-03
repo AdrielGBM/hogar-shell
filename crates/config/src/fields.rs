@@ -9,6 +9,7 @@ use crate::Config;
 use crate::schema::{CONFIG_FIELD_RUST, CONFIG_FIELDS, CONFIG_VARIANTS, doc_for, struct_for};
 use crate::sections::ModuleOverride;
 use crate::theme::NordTheme;
+use util::report::Message;
 
 /// The struct behind `[modules.<id>]`, whose keys every instance may also set on itself.
 const PRESENTATION: &str = "ModuleOverride";
@@ -78,7 +79,7 @@ fn words(name: &str) -> String {
 
 impl Control {
     /// Whether `value` is one this control takes, and what it takes when it is not.
-    pub fn accepts(&self, value: &toml::Value) -> Result<(), String> {
+    pub fn accepts(&self, value: &toml::Value) -> Result<(), Message> {
         use toml::Value;
         match (self, value) {
             (Control::Unknown(_), _) | (Control::Bool, Value::Boolean(_)) => Ok(()),
@@ -99,46 +100,65 @@ impl Control {
             }
             (Control::Table(fields), Value::Table(entries)) => match check(fields, entries).first()
             {
-                Some((key, why)) => Err(format!("`{key}` {why}")),
+                Some((key, why)) => Err(util::message!(
+                    "finding.option.nested",
+                    key = key,
+                    why = why
+                )),
                 None => Ok(()),
             },
-            _ => Err(format!("takes {}", self.describe())),
+            _ => Err(util::message!(
+                "finding.option.takes",
+                what = self.describe()
+            )),
         }
     }
 
-    fn describe(&self) -> String {
+    fn describe(&self) -> Message {
         match self {
-            Control::Bool => "true or false".to_string(),
-            Control::Enum(variants) => format!(
-                "one of {}",
-                variants
+            Control::Bool => util::message!("finding.control.bool"),
+            Control::Enum(variants) => util::message!(
+                "finding.control.one_of",
+                variants = variants
                     .iter()
                     .map(|variant| format!("`{variant}`"))
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Control::Number(number) if number.integer => "a whole number".to_string(),
-            Control::Number(_) => "a number".to_string(),
-            Control::Colour => format!(
-                "one of the theme's accents ({})",
-                crate::theme::ACCENTS.join(", ")
+            Control::Number(number) if number.integer => {
+                util::message!("finding.control.whole_number")
+            }
+            Control::Number(_) => util::message!("finding.control.number"),
+            Control::Colour => util::message!(
+                "finding.control.accent",
+                accents = crate::theme::ACCENTS.join(", ")
             ),
-            Control::Text => "text".to_string(),
-            Control::List(element) => format!("a list, each {}", element.describe()),
-            Control::Map(element) => format!("a table, each value {}", element.describe()),
-            Control::Table(_) => "a table".to_string(),
-            Control::Unknown(declared) => format!("a `{declared}`"),
+            Control::Text => util::message!("finding.control.text"),
+            Control::List(element) => {
+                util::message!("finding.control.list", each = element.describe())
+            }
+            Control::Map(element) => {
+                util::message!("finding.control.map", each = element.describe())
+            }
+            Control::Table(_) => util::message!("finding.control.table"),
+            Control::Unknown(declared) => {
+                util::message!("finding.control.unknown", declared = declared)
+            }
         }
     }
 }
 
 impl Number {
-    fn holds(&self, value: f64) -> Result<(), String> {
+    fn holds(&self, value: f64) -> Result<(), Message> {
         let below = self.min.is_some_and(|min| value < min);
         let above = self.max.is_some_and(|max| value > max);
         match (self.min, self.max) {
-            (Some(min), Some(max)) if below || above => Err(format!("is between {min} and {max}")),
-            (Some(min), None) if below => Err(format!("is at least {min}")),
+            (Some(min), Some(max)) if below || above => Err(util::message!(
+                "finding.option.between",
+                min = min,
+                max = max
+            )),
+            (Some(min), None) if below => Err(util::message!("finding.option.at_least", min = min)),
             _ => Ok(()),
         }
     }
@@ -162,7 +182,7 @@ pub fn presentation() -> Vec<OptionField> {
 }
 
 /// What is wrong with `options` against `fields`, as `(key, why)`: a key none of them is, or a value its control does not take.
-pub fn check(fields: &[OptionField], options: &toml::Table) -> Vec<(String, String)> {
+pub fn check(fields: &[OptionField], options: &toml::Table) -> Vec<(String, Message)> {
     let mut problems = Vec::new();
     walk(fields, options, "", &mut problems);
     problems
@@ -172,7 +192,7 @@ fn walk(
     fields: &[OptionField],
     table: &toml::Table,
     prefix: &str,
-    problems: &mut Vec<(String, String)>,
+    problems: &mut Vec<(String, Message)>,
 ) {
     for (key, value) in table {
         let path = format!("{prefix}{key}");
@@ -186,7 +206,7 @@ fn walk(
         {
             walk(fields, inner, &nested, problems);
         } else {
-            problems.push((path, "is not one of its options".to_string()));
+            problems.push((path, util::message!("finding.option.unknown")));
         }
     }
 }
@@ -510,7 +530,10 @@ mod tests {
             "show_date = \"yes\"\nnope = 1\nface = { scale = 2.0, colour = \"red\" }\ntwelve_hour = true\n",
         )
         .expect("toml");
-        let problems = check(&clock, &options);
+        let problems: Vec<(String, String)> = check(&clock, &options)
+            .into_iter()
+            .map(|(key, why)| (key, why.english()))
+            .collect();
         assert_eq!(
             problems,
             [

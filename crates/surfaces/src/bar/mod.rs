@@ -2,13 +2,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use telar::{
-    AlignItems, BorderRadius, Clip, ClippedItem, Color, Container, JustifyContent, LayoutError,
-    LayoutItem, LayoutStyle, RectStyle, RwSignal, Slots, StyledContainer, box_transform,
-    motion::Animated, track_layout,
+    AlignItems, BorderRadius, ChildSlot, Clip, ClippedItem, Color, Container, JustifyContent,
+    LayoutError, LayoutItem, LayoutStyle, RectStyle, RwSignal, Slots, StyledContainer,
+    box_transform, motion::Animated, track_layout,
 };
 
 use crate::actions::{Bound, Wheel};
 use crate::area::Surround;
+use crate::expressions::{Expressions, Overlay};
 use crate::layer_window::{LayerWindowContext, Reserved};
 use crate::rects;
 use crate::transient::chips::Site;
@@ -269,10 +270,11 @@ pub fn bar_shape(config: &Config, shape: BarShape) -> ResolvedShape {
     )
 }
 
-/// One thing a zone lays out: a chip, or a stacked group's chips shown one at a time in one place.
+/// One thing a zone lays out: a chip, a stacked group's chips shown one at a time in one place, or a repeated group's copies.
 enum Slot<'a> {
     Chip(&'a ResolvedGroup, &'a ResolvedInstance),
     Stacked(&'a ResolvedGroup),
+    Repeated(&'a ResolvedGroup),
 }
 
 /// A bar's three zones, each what is placed in it.
@@ -284,9 +286,10 @@ fn zones_of(groups: &[ResolvedGroup]) -> Zones<'_> {
         groups
             .iter()
             .filter(|group| matches!(group.kind, GroupKind::Zone { zone } if zone == wanted))
-            .flat_map(|group| match group.stacked {
-                true => vec![Slot::Stacked(group)],
-                false => group
+            .flat_map(|group| match (group.repeat.is_some(), group.stacked) {
+                (true, _) => vec![Slot::Repeated(group)],
+                (false, true) => vec![Slot::Stacked(group)],
+                (false, false) => group
                     .children
                     .iter()
                     .map(|instance| Slot::Chip(group, instance))
@@ -636,12 +639,19 @@ fn build_units(
     let mut slots = Vec::with_capacity(3);
     for (entries, in_zone) in zones {
         let items = build_items(chrome, entries, modules, rest, shell_radius)?;
-        let content: Vec<Box<dyn LayoutItem>> = if items.is_empty() {
+        let content: Vec<ChildSlot> = if items.is_empty() {
             Vec::new()
         } else {
             match granularity {
                 Granularity::Section => {
-                    vec![unit(edge, *in_zone, shape.radius, spacing, surface, items)?]
+                    vec![ChildSlot::stat(unit(
+                        edge,
+                        *in_zone,
+                        shape.radius,
+                        spacing,
+                        surface,
+                        items,
+                    )?)]
                 }
                 Granularity::Chip => items,
             }
@@ -694,7 +704,7 @@ fn unit(
     radius: f32,
     spacing: f32,
     fill: Color,
-    items: Vec<Box<dyn LayoutItem>>,
+    items: Vec<ChildSlot>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let style = LayoutStyle::new()
         .align_items(AlignItems::STRETCH)
@@ -707,7 +717,7 @@ fn unit(
         style.min_height(0.0)
     };
     Ok(Box::new(painted_chrome(
-        StyledContainer::new(
+        StyledContainer::from_slots(
             axis(style, edge),
             move |_r| RectStyle::filled(fill, radius),
             items,
@@ -733,14 +743,14 @@ fn zone(
     spacing: f32,
     ends: (f32, f32),
     cross: AlignItems,
-    items: Vec<Box<dyn LayoutItem>>,
+    items: Vec<ChildSlot>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let style = LayoutStyle::new()
         .align_items(cross)
         .justify_content(justify(in_zone))
         .gap(spacing);
     if let Zone::Center = in_zone {
-        return Ok(Box::new(Container::new(axis(style, edge), items)?));
+        return Ok(Box::new(holding(axis(style, edge), items)?));
     }
     let style = style.flex_grow(1.0).flex_basis(0.0);
     let (lead, trail) = ends;
@@ -762,8 +772,26 @@ fn zone(
             .margin_block_end(end);
         (style, Clip::y())
     };
-    let zone = Container::new(axis(style, edge), items)?;
+    let zone = holding(axis(style, edge), items)?;
     Ok(Box::new(ClippedItem::new(Box::new(zone), clip)))
+}
+
+/// A box around `slots`: a plain one unless a repeated group's copies are among them, which need a box that reconciles them in place as its list moves.
+fn holding(style: LayoutStyle, slots: Vec<ChildSlot>) -> Result<Container, LayoutError> {
+    if slots
+        .iter()
+        .any(|slot| matches!(slot, ChildSlot::Dynamic(_)))
+    {
+        return Container::from_slots(style, slots);
+    }
+    let items = slots
+        .into_iter()
+        .filter_map(|slot| match slot {
+            ChildSlot::Static(item) => Some(item),
+            ChildSlot::Dynamic(_) => None,
+        })
+        .collect();
+    Container::new(style, items)
 }
 
 fn end_air(abut: (bool, bool), air: f32) -> (f32, f32) {
@@ -860,14 +888,14 @@ fn axis(style: LayoutStyle, edge: Edge) -> LayoutStyle {
     }
 }
 
-/// What a chip speaks for: its state keyed by the module, and its entry's own options.
+/// What a chip speaks for: its state keyed by the module, and its entry's own options under what its bindings say over them (`overlay`).
 ///
 /// Keyed by the module rather than by the placed instance's own id: a chip's press, a keybind and `hogar-shell panel toggle` all name a module, so a chip that kept its state under a layout id would stop sharing it with the three ways the same instance is reached from outside the bar. The options are the entry's own, so what it draws and what it opens follow what the layout says about it (TA-2).
-fn chip_instance(instance: &ResolvedInstance) -> Instance {
+fn chip_instance(instance: &ResolvedInstance, overlay: Option<&Overlay>) -> Instance {
     Instance::new(
         InstanceId::of_module(&instance.module),
         &instance.module,
-        instance.options.clone(),
+        Overlay::options_or(overlay, &instance.options),
     )
 }
 
@@ -880,9 +908,9 @@ fn build_items(
     modules: &[ModuleDescriptor],
     rest: Color,
     radius: f32,
-) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
+) -> Result<Vec<ChildSlot>, LayoutError> {
     let kit = Rc::new(ChipKit::of(chrome, modules, rest, radius));
-    let mut items: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(slots.len());
+    let mut items: Vec<ChildSlot> = Vec::with_capacity(slots.len());
     let mut spans: Vec<(&GroupId, Vec<RwSignal<telar::Rect>>)> = Vec::new();
     for slot in slots {
         match slot {
@@ -896,9 +924,12 @@ fn build_items(
                     }
                 };
                 spans[at].1.extend(rect);
-                items.push(item);
+                items.push(ChildSlot::stat(item));
             }
-            Slot::Stacked(group) => items.push(kit.stacked(group, chrome.surround)?),
+            Slot::Stacked(group) => {
+                items.push(ChildSlot::stat(kit.stacked(group, chrome.surround)?))
+            }
+            Slot::Repeated(group) => items.extend(kit.repeated(group, chrome.surround)),
         }
     }
     for (group, rects) in spans {
@@ -960,15 +991,45 @@ impl ChipKit {
         )
     }
 
-    /// One instance's chip, registered in [`rects`] under `group`, and the rect it is tracked by.
-    fn chip(&self, group: &GroupId, instance: &ResolvedInstance) -> Result<Tracked, LayoutError> {
+    /// One instance's chip, registered in [`rects`] under `group`, and the rect it is tracked by. A chip with bindings is built again, alone, each time what they say changes.
+    fn chip(
+        self: &Rc<Self>,
+        group: &GroupId,
+        instance: &ResolvedInstance,
+    ) -> Result<Tracked, LayoutError> {
+        let at = self.at.instance(group, &instance.id);
+        let style = ui::descriptor::lookup(&self.modules, &instance.module)
+            .and_then(|module| module.representations.chip)
+            .map_or_else(
+                || axis(LayoutStyle::new(), self.edge),
+                |chip| chip_box(&chip, self.edge),
+            );
+        let (kit, dressing, node) = (Rc::clone(self), instance.clone(), at.clone());
+        let item = Expressions::here(self.audience).bound_instance(
+            instance,
+            &at,
+            style,
+            move |_, overlay| kit.dressed(&node, &dressing, overlay),
+        )?;
+        let rect = track_layout(item.layout_node());
+        Ok((item, rect))
+    }
+
+    /// One build of a chip, its written options under what `overlay` binds over them. It lays itself out in its chip's own box, whatever box its bindings are rebuilt in.
+    fn dressed(
+        &self,
+        at: &rects::Node,
+        instance: &ResolvedInstance,
+        overlay: Option<&Overlay>,
+    ) -> Built {
         let config = &self.config;
         let id = &instance.module;
-        let at = self.at.instance(group, &instance.id);
-        let speaks_for = chip_instance(instance);
+        let speaks_for = chip_instance(instance, overlay);
         let presentation = speaks_for.presentation(config);
         let variant = presentation.variant;
-        let accent = self.theme.accent_by_name(config.accent_name(&presentation));
+        let accent = Overlay::accent_or(overlay, || {
+            self.theme.accent_by_name(config.accent_name(&presentation))
+        });
         let host = self.host(
             speaks_for,
             accent,
@@ -979,8 +1040,8 @@ impl ChipKit {
             .and_then(|module| Some((*module, module.representations.chip?)));
         let Some((module, chip)) = placed else {
             let item = placeholder(id, None, &host, self.theme, menu)?;
-            let rect = rects::track(at, item.layout_node());
-            return Ok((item, rect));
+            rects::track(at.clone(), item.layout_node());
+            return Ok(item);
         };
         let look = Look {
             variant,
@@ -998,10 +1059,9 @@ impl ChipKit {
         let item = ui::descriptor::guard(id, &host, style, menu, move || {
             placed_chip(&module, &chip, &built, look)
         })?;
-        let rect = track_layout(item.layout_node());
-        if let Some(rect) = rect {
+        if let Some(rect) = track_layout(item.layout_node()) {
             rects::track_chip(
-                at,
+                at.clone(),
                 rect,
                 rects::Chip {
                     instance: host.instance(),
@@ -1009,7 +1069,7 @@ impl ChipKit {
                 },
             );
         }
-        Ok((item, rect))
+        Ok(item)
     }
 
     /// A stacked group's chips, one at a time where one chip would be.
@@ -1029,6 +1089,42 @@ impl ChipKit {
             })?;
         rects::track(self.at.group(&group.id), node.layout_node());
         Ok(node)
+    }
+
+    /// A repeated group's chips, one per copy, straight into the zone beside every other chip — or, stacked, its copies one at a time where one chip would be. The group is where its chips are now, whichever copies it has.
+    fn repeated(self: &Rc<Self>, group: &ResolvedGroup, surround: Surround) -> Vec<ChildSlot> {
+        let repeat = group
+            .repeat
+            .as_ref()
+            .map(|expr| Expressions::here(self.audience).repeat(&self.at.group(&group.id), expr));
+        let chips: rects::Copies = telar::signal(Default::default());
+        rects::track_copies(self.at.group(&group.id), chips);
+        let (kit, id) = (Rc::clone(self), group.id.clone());
+        let build: crate::area::BuildCopy = Rc::new(move |copy: &ResolvedInstance, _: Surround| {
+            let (item, rect) = kit.chip(&id, copy)?;
+            if let Some(rect) = rect {
+                let copy = copy.id.clone();
+                chips.update(|held| {
+                    held.insert(copy.clone(), rect);
+                });
+                telar::on_cleanup(move || {
+                    if chips.is_alive() {
+                        chips.update(|held| {
+                            held.remove(&copy);
+                        });
+                    }
+                });
+            }
+            Ok(item)
+        });
+        let key = (self.output.clone(), self.at.area.clone(), group.id.clone());
+        let pages = axis(
+            LayoutStyle::new()
+                .align_items(AlignItems::STRETCH)
+                .flex_shrink(0.0),
+            self.edge,
+        );
+        crate::area::copies(group, repeat, (key, pages), surround, build)
     }
 }
 
@@ -1324,6 +1420,7 @@ mod tests {
             id: layout::GroupId::new(id),
             kind: GroupKind::Zone { zone },
             stacked: false,
+            repeat: None,
             children: ids.iter().map(|id| instance(id)).collect(),
         }
     }
@@ -1623,6 +1720,7 @@ mod tests {
                         id: layout::GroupId::new("start"),
                         kind: GroupKind::Zone { zone: Zone::Start },
                         stacked: false,
+                        repeat: None,
                         children: vec![
                             styled_instance("dummy", config::Variant::Filled, "green"),
                             instance(broken),
@@ -1934,9 +2032,9 @@ mod tests {
             reset_layout_runtime();
             set_theme(NordTheme::new());
             let host = test_host(edge);
-            let overrun = || -> Vec<Box<dyn LayoutItem>> {
+            let overrun = || -> Vec<ChildSlot> {
                 (0..4)
-                    .map(|_| wide(&host).expect("a chip builds"))
+                    .map(|_| ChildSlot::stat(wide(&host).expect("a chip builds")))
                     .collect()
             };
 
@@ -1958,7 +2056,7 @@ mod tests {
                 SPACING,
                 (0.0, 0.0),
                 AlignItems::STRETCH,
-                vec![centre_chip],
+                vec![ChildSlot::stat(centre_chip)],
             )
             .unwrap();
             let end_zone = zone(
@@ -2422,7 +2520,7 @@ mod tests {
                 0.0,
                 (0.0, 0.0),
                 AlignItems::STRETCH,
-                vec![wrapped],
+                vec![ChildSlot::stat(wrapped)],
             )
             .unwrap();
             let (w, h) = if edge.is_vertical() {

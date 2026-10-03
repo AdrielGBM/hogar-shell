@@ -147,11 +147,11 @@ pub(crate) const APPS: Target = Target {
             help: "the launcher's ranking for a query, best first",
             run: |args| {
                 use modules::launcher;
-                let query = args.join(" ");
+                let query = args.rest(0);
                 let config = config::config()
                     .map(|c| c.launcher.clone())
                     .unwrap_or_default();
-                let names: Vec<String> = launcher::results(services::apps::all(), &query, &config)
+                let names: Vec<String> = launcher::results(services::apps::all(), query, &config)
                     .into_iter()
                     .map(|a| a.name)
                     .collect();
@@ -170,7 +170,7 @@ pub(crate) const NOTIFS: Target = Target {
             help: "drop one application's notifications, or the whole history",
             run: |args| {
                 use services::notifications as notifs;
-                let app = args.join(" ");
+                let app = args.rest(0);
                 match app.trim() {
                     "" => notifs::clear_all(),
                     app => notifs::clear_app(app),
@@ -260,7 +260,7 @@ pub(crate) const TOAST: Target = Target {
             help: "show an in-shell toast, for a script that wants to say something",
             run: |args| {
                 use services::toaster::{self, Event};
-                let text = args.join(" ");
+                let text = args.rest(0).to_string();
                 if text.trim().is_empty() {
                     return Err("missing argument <text>".to_string());
                 }

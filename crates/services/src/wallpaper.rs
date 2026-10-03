@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime};
 use ::image::{DynamicImage, ImageFormat, ImageResult};
 use platform_wayland::EventSender;
 
+use crate::events::{self, ShellEvent};
 use crate::state;
 use config::{Config, WallpaperConfig};
 use util::broadcast::Store;
@@ -199,6 +200,13 @@ pub struct Assignment {
 }
 
 impl Assignment {
+    fn of(state: &state::ShellState) -> Self {
+        Self {
+            global: state.wallpaper.clone(),
+            monitors: state.wallpaper_monitors.clone(),
+        }
+    }
+
     /// The runtime choice for `output`, before the config fallbacks. `None` means "nothing set at runtime".
     pub fn for_output(&self, output: Option<&str>) -> Option<&PathBuf> {
         output
@@ -207,13 +215,7 @@ impl Assignment {
     }
 }
 
-static ASSIGNED: Store<Assignment> = Store::new(|| {
-    let state = state::get();
-    Assignment {
-        global: state.wallpaper.clone(),
-        monitors: state.wallpaper_monitors.clone(),
-    }
-});
+static ASSIGNED: Store<Assignment> = Store::new(|| Assignment::of(&state::get()));
 
 pub fn assignment() -> Assignment {
     ASSIGNED.get()
@@ -229,50 +231,48 @@ pub fn subscribe(tx: EventSender<Assignment>) {
 /// Setting the global one clears the per-output overrides on purpose: "set this wallpaper" means all of them, and a screen quietly keeping its old picture would read as the command having half worked.
 pub fn set(path: &Path, output: Option<&str>) {
     let path = paths::expand_tilde(path);
-    match output {
+    assign(output, |s| match output {
         Some(name) => {
-            let name = name.to_string();
-            let value = path.clone();
-            state::update(move |s| {
-                s.wallpaper_monitors.insert(name, value);
-            });
+            s.wallpaper_monitors.insert(name.to_string(), path);
         }
         None => {
-            let value = path.clone();
-            state::update(move |s| {
-                s.wallpaper = Some(value);
-                s.wallpaper_monitors.clear();
-            });
+            s.wallpaper = Some(path);
+            s.wallpaper_monitors.clear();
         }
-    }
-    publish();
+    });
 }
 
 /// Drops the runtime choice, putting `[background]` back in charge.
 pub fn clear(output: Option<&str>) {
-    match output {
+    assign(output, |s| match output {
         Some(name) => {
-            let name = name.to_string();
-            state::update(move |s| {
-                s.wallpaper_monitors.remove(&name);
-            });
+            s.wallpaper_monitors.remove(name);
         }
-        None => state::update(|s| {
+        None => {
             s.wallpaper = None;
             s.wallpaper_monitors.clear();
-        }),
-    }
-    publish();
-}
-
-fn publish() {
-    let state = state::get();
-    ASSIGNED.update(|assigned| {
-        *assigned = Assignment {
-            global: state.wallpaper.clone(),
-            monitors: state.wallpaper_monitors.clone(),
         }
     });
+}
+
+/// Persists a runtime choice, fans it out to the surfaces, and announces it when it moved — a `set` of the image already up changes nothing anybody can see.
+///
+/// Whether it moved is read off the persisted state as it changes rather than off [`ASSIGNED`], which seeds itself from that same state on first touch and so would take the change in as its starting value.
+fn assign(output: Option<&str>, change: impl FnOnce(&mut state::ShellState)) {
+    let mut moved = false;
+    state::update(|s| {
+        let before = Assignment::of(s);
+        change(s);
+        moved = Assignment::of(s) != before;
+    });
+    ASSIGNED.update(|assigned| *assigned = Assignment::of(&state::get()));
+    if moved {
+        let config = config::shared_config().unwrap_or_default();
+        events::emit(ShellEvent::WallpaperChanged {
+            output: output.map(str::to_string),
+            path: current_image(&config, output),
+        });
+    }
 }
 
 /// A decoded wallpaper, ready for a surface to paint without touching the disk on the frame.
@@ -438,6 +438,38 @@ mod tests {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, b"not really an image").unwrap();
+    }
+
+    #[test]
+    fn setting_a_wallpaper_announces_it_once_and_setting_it_again_does_not() {
+        let screen = "events-test-screen";
+        let image = temp("announce").join("a.png");
+        let changes_on = |events: &events::Events| {
+            std::iter::from_fn(|| events.next_within(Duration::from_millis(50)))
+                .filter(|event| {
+                    matches!(event, ShellEvent::WallpaperChanged { output, .. } if output.as_deref() == Some(screen))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let events = events::listen();
+        set(&image, Some(screen));
+        assert_eq!(
+            changes_on(&events),
+            [ShellEvent::WallpaperChanged {
+                output: Some(screen.to_string()),
+                path: Some(image.clone()),
+            }]
+        );
+
+        set(&image, Some(screen));
+        assert!(
+            changes_on(&events).is_empty(),
+            "the same image on the same screen is not a change"
+        );
+
+        clear(Some(screen));
+        std::fs::remove_dir_all(image.parent().unwrap()).ok();
     }
 
     #[test]

@@ -183,7 +183,11 @@ fn take_out(work: &mut Work, node: &Node) -> Result<Instance, EditError> {
         .groups
         .into_iter()
         .find(|held| held.id == *group)
-        .and_then(|held| held.children.into_iter().find(|child| child.id == *id))
+        .and_then(|held| {
+            held.children
+                .into_iter()
+                .find(|child| child.id == id.template())
+        })
         .ok_or_else(EditError::nothing)?;
     let ops = context::removal(&work.layout, work.desktop, node)?;
     work.apply(ops)?;
@@ -254,8 +258,13 @@ pub(crate) fn placed_as(resolved: &ResolvedInstance) -> Instance {
         module: Some(resolved.module.clone()),
         representation: Some(resolved.representation),
         options: resolved.options.clone(),
-        bindings: resolved.bindings.clone(),
+        bindings: resolved
+            .bindings
+            .iter()
+            .map(|(path, bound)| (path.clone(), bound.expr.clone()))
+            .collect(),
         actions: resolved.actions.clone(),
+        unset: Vec::new(),
     }
 }
 
@@ -435,7 +444,7 @@ pub(crate) fn resized_to(
     let mut work = Work::new(layout, desktop, instance.layer);
     let written = work
         .written(work.layer, &instance.area)?
-        .instance(group, id);
+        .instance(group, &id.template());
     let mut changed = written.instance.clone();
     changed.representation = Some(representation);
     work.apply(written.ops(&changed))?;
@@ -639,7 +648,7 @@ pub(crate) fn put(
             };
             let placed = moved_onto(&after, &desktop, node, (layer, &area), representation, cell)?;
             let label = telar::t!("editor.desktop.moved_from_bar", name = name);
-            (placed, id.clone(), label)
+            (placed, id.template(), label)
         }
     };
     ops.extend(placed);
@@ -834,6 +843,6 @@ pub(crate) fn shown_instance(desktop: &Desktop, node: &Node) -> Option<ResolvedI
         .find(|held| held.id == *group)?
         .children
         .iter()
-        .find(|child| child.id == *id)
+        .find(|child| child.id == id.template())
         .cloned()
 }

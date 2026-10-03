@@ -42,6 +42,7 @@ mod tests {
     const APPS: FieldDef = FieldDef {
         name: "apps",
         privacy: Shown::OnLock(|lock| lock.notification_detail == NotificationDetail::Apps),
+        ty: ui::descriptor::FieldType::Text,
     };
 
     fn line(said: String) -> Built {
@@ -248,7 +249,7 @@ mod tests {
         )
         .errors
         .into_iter()
-        .map(|found| found.message)
+        .map(|found| found.message.english())
         .collect()
     }
 

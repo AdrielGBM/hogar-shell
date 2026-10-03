@@ -34,6 +34,7 @@ pub enum Dep {
     NetworkManager,
     BlueZ,
     UPower,
+    PowerProfiles,
     Logind,
     Fprintd,
     GameMode,
@@ -309,6 +310,17 @@ pub const ALL: &[Entry] = &[
         need: Need::Optional,
         what: "battery charge, health and time remaining",
         without: "the battery falls back to sysfs, and is hidden if that is absent too",
+    },
+    Entry {
+        dep: Dep::PowerProfiles,
+        id: "power-profiles-daemon",
+        kind: Kind::Bus {
+            name: "org.freedesktop.UPower.PowerProfiles",
+            system: true,
+        },
+        need: Need::Optional,
+        what: "the active power profile — performance, balanced or power saver — and the `power_profile_changed` event",
+        without: "the power profile reads as unavailable and `power_profile_changed` never fires",
     },
     Entry {
         dep: Dep::PowerSupply,

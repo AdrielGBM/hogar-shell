@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use layout::{
-        Area, AreaId, AreaKind, GroupId, InstanceId, LayerKind, Layout, LayoutId, LayoutOp,
+        Area, AreaId, AreaKind, Expr, GroupId, InstanceId, LayerKind, Layout, LayoutId, LayoutOp,
         OutputMatch, OutputRule, Site, WorkspaceMatch,
     };
 
@@ -94,6 +94,37 @@ mod tests {
                 .iter()
                 .any(|child| child.id.as_str() == "nothing")
         }));
+    }
+
+    /// An expression is part of what is written: a binding on an instance and an area's `visible` each come out of the operations that write the change, and the operations that undo them take each back exactly — which is what puts an expression edit in the history.
+    #[test]
+    fn a_binding_and_a_visible_are_written_and_undone_with_their_instance_and_area() {
+        let before = layout::built_in();
+        let written =
+            Written::area(&before, Some("DP-1"), LayerKind::Top, &bar(), None).expect("the bar");
+        let clock = written.instance(&GroupId::new("center"), &InstanceId::new("clock"));
+        let mut bound = clock.instance.clone();
+        bound.bindings.insert(
+            "accent".to_string(),
+            Expr("if($battery.level < 20, #f00, #0f0)".to_string()),
+        );
+        let mut shown_while = written.area.clone();
+        shown_while.visible = Some(Expr("$battery.level < 20".to_string()));
+
+        for ops in [clock.ops(&bound), written.ops(&shown_while)] {
+            assert!(!ops.is_empty(), "the change is written");
+            let mut after = before.clone();
+            let undo = layout::ops::apply_all(&mut after, &ops).expect("it applies");
+            assert_ne!(after, before);
+            layout::ops::apply_all(&mut after, &undo).expect("and is undone");
+            assert_eq!(after, before, "undo takes the expression back exactly");
+        }
+        let mut after = before.clone();
+        layout::ops::apply_all(&mut after, &clock.ops(&bound)).expect("it applies");
+        let again = Written::area(&after, Some("DP-1"), LayerKind::Top, &bar(), None)
+            .expect("the bar")
+            .instance(&GroupId::new("center"), &InstanceId::new("clock"));
+        assert_eq!(again.instance.bindings, bound.bindings);
     }
 
     /// A change for one workspace goes into that workspace's rule of the narrowest output rule, which the first such change makes; once the rule writes the area, the next change is made to it in place.

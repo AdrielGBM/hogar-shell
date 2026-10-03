@@ -100,7 +100,7 @@ pub(crate) fn name_of(selection: &Selection) -> String {
         Part::Instance(_, id) => reconcile::desktops_now()
             .iter()
             .flat_map(|desktop| desktop.resolved.instances())
-            .find(|instance| instance.id == *id)
+            .find(|instance| instance.id == id.template())
             .map(|instance| {
                 ui::descriptor::find(&instance.module)
                     .map_or_else(|| instance.module.clone(), |module| module.name.to_string())
@@ -119,7 +119,7 @@ pub(crate) fn moved(
 ) -> Result<Vec<LayoutOp>, EditError> {
     let target = Target::of(selection)?;
     match &target.node.part {
-        Part::Instance(_, id) => move_instance(&target, draft, id, direction),
+        Part::Instance(_, id) => move_instance(&target, draft, &id.template(), direction),
         Part::Group(group) => move_group(&target, draft, group, direction),
         Part::Area => move_area(&target, draft, direction),
     }
@@ -133,7 +133,7 @@ pub(crate) fn resized(
 ) -> Result<Vec<LayoutOp>, EditError> {
     let target = Target::of(selection)?;
     match &target.node.part {
-        Part::Instance(_, id) => resize_instance(&target, draft, id, direction),
+        Part::Instance(_, id) => resize_instance(&target, draft, &id.template(), direction),
         Part::Group(group) => resize_group(&target, draft, group, direction),
         Part::Area => resize_area(&target, draft, direction),
     }

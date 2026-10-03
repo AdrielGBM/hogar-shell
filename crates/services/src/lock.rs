@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use platform_wayland::{CompositorLock, EventSender, LockHandle};
 
+use crate::events::{self, Edge, ShellEvent};
 use crate::pam::{self, AuthError};
 use util::broadcast::Store;
 
@@ -123,6 +124,26 @@ pub fn subscribe(tx: EventSender<LockState>) {
 /// Whether the session is locked *and the compositor has confirmed it* — what `hogar-shell lock status` reports and what a `lockstatus`-style indicator reads.
 pub fn is_locked() -> bool {
     STATE.get().locked
+}
+
+thread_local! {
+    static LOCKED: Cell<Option<telar::RwSignal<bool>>> = const { Cell::new(None) };
+}
+
+/// [`is_locked`] as a signal on this thread, fed by [`subscribe`] for the life of the process: what reads it in an effect or a memo runs again as the compositor confirms a lock or it ends. The one answer to "is the session locked" for anything on the driver thread.
+pub fn locked() -> bool {
+    let held = LOCKED.with(Cell::get).filter(|locked| locked.is_alive());
+    let locked = held.unwrap_or_else(|| {
+        let locked = telar::detached(|| telar::signal(is_locked()));
+        platform_wayland::app_watch(subscribe, move |state: LockState| {
+            if locked.is_alive() && locked.peek() != state.locked {
+                locked.set(state.locked);
+            }
+        });
+        LOCKED.with(|cell| cell.set(Some(locked)));
+        locked
+    });
+    locked.get()
 }
 
 /// Why the lock screen fell back to the built-in one, held until the session is unlocked.
@@ -256,8 +277,14 @@ pub fn can_lock() -> Result<(), String> {
     Ok(())
 }
 
-/// The performer: reconciles the compositor's lock with what [`LockState`] asks for. Registered once at startup with `platform_wayland::watch(lock::subscribe, lock::on_state)`, so it runs on the driver thread — the only one that may open a surface.
+/// Whether the compositor had confirmed a lock as of the last state the performer saw.
+static CONFIRMED: Edge<bool> = Edge::new();
+
+/// The performer: reconciles the compositor's lock with what [`LockState`] asks for, and announces each confirmed lock and its end. Registered once at startup with `platform_wayland::watch(lock::subscribe, lock::on_state)`, so it runs on the driver thread — the only one that may open a surface.
 pub fn on_state(state: LockState) {
+    if let Some(event) = session_event(&CONFIRMED, &state) {
+        events::emit(event);
+    }
     let held = HOLDING.with(|holding| holding.borrow().is_some());
     match (state.wanted, held) {
         (true, false) => {
@@ -266,6 +293,17 @@ pub fn on_state(state: LockState) {
         (false, true) => release(),
         _ => {}
     }
+}
+
+/// The event a state announces: a lock the compositor has just confirmed, or one that has just ended. Asking for a lock is not one; only the compositor's word is.
+fn session_event(confirmed: &Edge<bool>, state: &LockState) -> Option<ShellEvent> {
+    confirmed.observe(state.locked).map(|locked| {
+        if locked {
+            ShellEvent::SessionLocked
+        } else {
+            ShellEvent::SessionUnlocked
+        }
+    })
 }
 
 /// Asks the compositor for the lock, or refuses and says why. Returns whether it was asked — not whether it was granted, which only the confirmation poll learns.
@@ -775,6 +813,46 @@ mod tests {
             ..asked.clone()
         };
         assert!(granted.locked);
+    }
+
+    #[test]
+    fn the_session_is_announced_locked_once_confirmed_and_unlocked_once_it_ends() {
+        let confirmed = Edge::new();
+        let unlocked = LockState::default();
+        let asked = LockState {
+            wanted: true,
+            ..LockState::default()
+        };
+        let granted = LockState {
+            locked: true,
+            ..asked.clone()
+        };
+        let failed_attempt = LockState {
+            failures: 1,
+            ..granted.clone()
+        };
+        let announced: Vec<Option<ShellEvent>> = [
+            &unlocked,
+            &asked,
+            &granted,
+            &failed_attempt,
+            &unlocked,
+            &unlocked,
+        ]
+        .into_iter()
+        .map(|state| session_event(&confirmed, state))
+        .collect();
+        assert_eq!(
+            announced,
+            [
+                None,
+                None,
+                Some(ShellEvent::SessionLocked),
+                None,
+                Some(ShellEvent::SessionUnlocked),
+                None,
+            ]
+        );
     }
 
     #[test]

@@ -978,6 +978,7 @@ pub const CUSTOMIZED: &[Customized] = &[
         "texture",
         "texture.opacity",
     ),
+    customized(LayerKind::Desktop, "widget-visibility", "grid", "visible"),
     customized(LayerKind::Top, "bar-offset", "bar", "offset"),
     customized(LayerKind::Top, "bar-shape", "bar", "mode"),
     customized(LayerKind::Top, "bar-reserve", "bar", "reserve"),

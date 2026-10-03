@@ -14,6 +14,7 @@ services = { workspace = true }
 image = { workspace = true }
 telar = { workspace = true, features = ["async-assets", "previews", "svg"] }
 telar-dynamic = { workspace = true }
+telar-expression = { workspace = true }
 util = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

@@ -11,4 +11,6 @@ screenshot = "Captura"
 record = "Grabar"
 settings = "Ajustes"
 unknown = "Desconocido"
+
+[finding]
 unknown_toggle = "no hay ningún interruptor llamado '{id}'"

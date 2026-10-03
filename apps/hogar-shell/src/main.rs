@@ -99,7 +99,7 @@ fn main() -> ExitCode {
 
 /// Runs a command in this process rather than sending it to the shell, for the ones that are a function of the binary and the machine.
 fn answer_locally(args: &[String]) -> ExitCode {
-    match hogar_shell::dispatch_locally(&args.join(" ")) {
+    match hogar_shell::dispatch_locally(args) {
         Ok(text) => {
             print!("{text}");
             ExitCode::SUCCESS
@@ -111,14 +111,16 @@ fn answer_locally(args: &[String]) -> ExitCode {
     }
 }
 
-/// Forwards a command to the running shell and mirrors its verdict into the exit code, so a keybind or script can tell a refused command from one that worked without parsing the reply.
+/// Forwards a command, as its words, to the running shell and mirrors its verdict into the exit code, so a keybind or script can tell a refused command from one that worked without parsing the reply.
 fn send(args: &[String]) -> ExitCode {
     // `hogar-shell toggle x` is the one shorthand worth having: opening a panel is what a keybind almost always wants, and `panel toggle x` in every hyprland.conf line is noise.
-    let request = match args.first().map(String::as_str) {
-        Some("toggle") => format!("panel {}", args.join(" ")),
+    let request: Vec<String> = match args.first().map(String::as_str) {
+        Some("toggle") => std::iter::once("panel".to_string())
+            .chain(args.iter().cloned())
+            .collect(),
         // The launcher is the one surface people bind a key to before anything else.
-        Some("launcher") if args.len() == 1 => "launcher toggle".to_string(),
-        _ => args.join(" "),
+        Some("launcher") if args.len() == 1 => vec!["launcher".to_string(), "toggle".to_string()],
+        _ => args.to_vec(),
     };
     match hogar_shell::ipc_call(&request) {
         Ok(reply) => match reply.strip_prefix("ok") {

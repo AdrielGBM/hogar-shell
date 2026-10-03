@@ -1,15 +1,17 @@
-[config]
+[notice]
 error_title = "Configuración no aplicada"
 problems_title = "Problemas en la configuración"
 problems_more = "…y {count} más"
 problems_hint = "`hogar-shell config check` dice dónde está cada uno."
+
+[finding]
 global_only = "[{section}] solo se puede fijar en config.toml, así que la copia de un monitor se ignora"
 moved_to_layout = "`{key}` dice dónde se dibuja algo, y eso ahora lo dice el diseño: escríbelo en {layout} (`hogar-shell config schema layout` imprime uno del que partir)"
 moved_to_instance = "`{key}` es ahora una opción de cada módulo: escribe `{option}` en las `options` de la instancia del módulo en {layout}, o en [modules.<id>] para todas sus instancias"
 moved_to_module = "`{key}` es ahora una opción del módulo `{module}`: escribe `{option}` en las `options` de su instancia en {layout}, o en [{module}] para todas sus instancias"
 moved_to_bar = "`{key}` pertenece ahora a cada barra: escribe `{field}` en el `shape` de la barra en {layout}; lo que una barra deja sin fijar sigue al tema"
+moved_to_rule = "`{key}` ya no existe: una regla hace lo que hacía — escribe una entrada `[[rules]]` con `trigger = {{ event = \"{event}\" }}` y los comandos en su `run`, cada uno una línea como `shell run <comando>`"
+unknown_rule_key = "una regla no tiene `{key}`, así que se ignora: escribe uno de {known}"
 removed = "`{key}` ya no existe: nada lo leía, así que no cambiaba nada, y se puede borrar"
-
-[layout]
 scanout = "`{area}` se dibuja sobre las ventanas a pantalla completa, lo que deja a {output} sin escaneo directo"
 every_output = "todas las salidas"

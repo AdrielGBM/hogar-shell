@@ -18,8 +18,10 @@ use platform_wayland::LayerShellPlatform;
 use telar::{App, AppPathsProvider, run_multi_with_platform};
 
 use layout::{ActiveWorkspace, LayoutStore};
+use services::events::{Edge, ShellEvent};
 use surfaces::layer_window::Content;
 use surfaces::reconcile::Shell;
+use util::report::Report;
 
 /// How far into the user's machine a mode of the binary reaches. Until a mode opens its reach, every file resolves under a scratch root and every bus, daemon and compositor probe answers as if absent, which is what a test and a preview get.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,6 +183,10 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         applied,
         failed.as_ref(),
     )));
+    platform_wayland::app_watch(automation::failures::subscribe, {
+        let reloader = Rc::clone(&reloader);
+        move |failures: Report| reloader.borrow_mut().failures_changed(failures)
+    });
     if platform_wayland::outputs().is_empty() {
         eprintln!("hogar-shell: no Wayland outputs found (is a compositor running?)");
         std::process::exit(1);
@@ -196,7 +202,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         Layouts::OnDisk => LayoutStore::load(surfaces::layouts::dir()),
         Layouts::BuiltInOnly => (
             LayoutStore::safe(surfaces::layouts::dir()),
-            util::report::Report::default(),
+            Report::default(),
         ),
     };
     if layouts == Layouts::OnDisk {
@@ -219,7 +225,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         let config_path = config_path.clone();
         move |config: &Arc<Config>, content: Content| {
             let mut store = store.borrow_mut();
-            let (desktops, report) = surfaces::reconcile::plan(
+            let (desktops, mut report) = surfaces::reconcile::plan(
                 &config_path,
                 config,
                 store.active(),
@@ -227,6 +233,10 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
                 &platform_wayland::outputs(),
                 &active_workspace,
             );
+            let (sources, sourcing) =
+                automation::sources::of_layout(store.active(), store.all(), &config.automation);
+            automation::sources::declare(sources);
+            report.merge(sourcing);
             // The pass that proves a layout resolves is the one that keeps the copy to fall back to (TA-7). Nothing is written unless the copy would differ, since this runs on every reload and every monitor change.
             if report.is_clean() {
                 let active = store.active_id().clone();
@@ -234,16 +244,15 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
                     tracing::warn!("could not keep a copy of `{active}` that works: {why}");
                 }
             }
-            // Said with the rest but not counted against the layout: a cost the user chose is no reason to stop keeping the copy that works.
-            let mut notice = report;
+            // Said with the rest but merged after the copy is kept: a cost the user chose is no reason to stop keeping the copy that works.
             let file = format!("layouts/{}.toml", store.active_id());
             for desktop in &desktops {
-                notice.merge(crate::core::commands::layout::scanout(
+                report.merge(crate::core::commands::layout::scanout(
                     &desktop.resolved,
                     &file,
                 ));
             }
-            surfaces::layouts::report_problems(&notice);
+            surfaces::layouts::report_problems(&report);
             shell.borrow_mut().reconcile(&desktops, content);
             modules::stack::reconcile_config();
         }
@@ -298,6 +307,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         let config = reloader.borrow().live();
         apply(&config, Content::Changed);
     });
+    services::events::emit(ShellEvent::Started);
 }
 
 /// Whether `layer` is out of sight on `output`: the top layer is, under a fullscreen window (F-6.2), so what hangs off a bar there opens over it instead.
@@ -387,6 +397,10 @@ struct Reloader {
     applied: Stamp,
     /// Whether the problems notice is showing a file that did not load: set by every load that fails, and cleared by the first report made without one.
     failing: bool,
+    /// What the files said when the notice was last brought up to date with them.
+    files: Report,
+    /// What is failing as the shell runs, as [`automation::failures`] last published it.
+    failures: Report,
 }
 
 impl Reloader {
@@ -402,6 +416,8 @@ impl Reloader {
             live,
             applied,
             failing: false,
+            files: Report::default(),
+            failures: Report::default(),
         };
         reloader.report(failed);
         reloader
@@ -436,19 +452,32 @@ impl Reloader {
         self.report(None);
     }
 
+    /// Brings the problems notice up to date with what is failing as the shell runs, without reading the files again. A config that did not load is what the notice is about until it does, so that notice is left as it is.
+    fn failures_changed(&mut self, failures: Report) {
+        self.failures = failures;
+        if !self.failing {
+            self.announce();
+        }
+    }
+
     /// The config for the screens to be planned against when they change: the running one, without reading the files. A monitor arriving or leaving is not a reload — it changes which surfaces exist and nothing the files hold — so it neither loads a file the watcher has not delivered yet, which would draw it on the new screen alone, nor reports again a failure the notice already shows.
     fn live(&self) -> Arc<Config> {
         Arc::clone(&self.live)
     }
 
-    /// Brings the problems notice up to date with the files, the running config standing in for `config.toml` unless `failed` says it did not load — see [`crate::core::check::running`] for why the file and not the running config decides.
+    /// Brings the problems notice up to date with the files and, while they load, with what is failing as the shell runs; the running config stands in for `config.toml` unless `failed` says it did not load — see [`crate::core::check::running`] for why the file and not the running config decides.
     fn report(&mut self, failed: Option<&LoadError>) {
-        crate::core::check::announce(&crate::core::check::running(
-            &self.live,
-            &self.config_path,
-            failed,
-        ));
+        self.files = crate::core::check::running(&self.live, &self.config_path, failed);
         self.failing = failed.is_some();
+        self.announce();
+    }
+
+    fn announce(&self) {
+        let mut report = self.files.clone();
+        if !self.failing {
+            report.merge(self.failures.clone());
+        }
+        crate::core::check::announce(&report);
     }
 }
 
@@ -536,13 +565,22 @@ fn eager_subscriptions(
     ]
 }
 
-/// The three answers the layers below cannot reach on their own, handed to them once on the driver thread.
+/// The answers the layers below cannot reach on their own, handed to them once on the driver thread.
 ///
-/// Each is a case of something low in the stack needing something high in it: the config derives a palette from a wallpaper only the wallpaper *service* can name; a service that runs `[idle]` actions needs the command table, which lives with the socket above it; and the lock service owns *when* the session is locked, never what the covered screen draws. Installed before the first config is applied, since applying one derives a scheme and arms the idle stages.
+/// Each is a case of something low in the stack needing something high in it: the config derives a palette from a wallpaper only the wallpaper *service* can name, and announces a palette landing on an event stream only the services own; a service that runs `[idle]` actions needs the command table, which lives with the socket above it; and the lock service owns *when* the session is locked, never what the covered screen draws. Installed before the first config is applied, since applying one derives a scheme and arms the idle stages.
 fn install_hooks() {
     config::set_wallpaper_source(|config| {
         let focused = surfaces::transient::focused_output();
         services::wallpaper::current_image(config, focused.as_deref())
+    });
+    config::scheme::set_landed_hook(|| {
+        if let Some(config) = config::shared_config() {
+            palette_landed(
+                &PALETTE,
+                config.resolve_theme().colors(),
+                announce_colors_changed,
+            );
+        }
     });
     services::command::set_runner(
         crate::core::commands::dispatch,
@@ -612,12 +650,71 @@ fn apply_config(config: &Arc<Config>) {
     config::scheme::init(config);
     // The surfaces this reload is about to open will carry whatever `init` just resolved, so the watcher must not read the delivery that follows as a change and ask for a second, identical reload.
     config::scheme::mark_painted();
+    announce_theme_mode(config);
+    palette_applied(
+        &PALETTE,
+        config.resolve_theme().colors(),
+        config::scheme::derives_palette(config),
+        announce_colors_changed,
+    );
     // After `set_config`, so the stages are armed from the config that was just published rather than the one they were armed from last time.
     services::idle::reconcile();
     // The daemon outlives every reload, so an edited `[notifications]` reaches it this way rather than by restarting it — which would drop the bus name and the history with it.
     services::notifications::set_policy(notification_policy(config));
     // The toast watchers a switched-on event needs. Additive and idempotent: a subscription cannot be undone, so this installs what is missing and leaves the rest — an event switched *off* is silenced by the toaster's own gate rather than by tearing its watcher down.
     modules::toast::watch_events(config);
+    automation::rules::install(
+        config.rules.clone(),
+        crate::core::check::rules_environment(&config.lock),
+        config.automation,
+    );
+}
+
+/// The colours the shell last painted with, as far as `colors_changed` has been told.
+static PALETTE: Edge<Vec<telar::Color>> = Edge::new();
+
+/// Announces the shell's palette changing, whatever changed it: another built-in theme, a `[theme]` edit, or a derived palette landing.
+///
+/// A config that derives its palette from a wallpaper is not judged here: its colours are announced by [`palette_landed`] once the export files are on disk, which is after this reload, so announcing here would fire before whatever reads those files could see them. It only records where the palette stands, so a reload that changes nothing is not a change when the export lands. Every other way the palette moves reaches the shell as a reload through [`apply_config`], so this is the one place that sees them.
+fn palette_applied(
+    seen: &Edge<Vec<telar::Color>>,
+    palette: Vec<telar::Color>,
+    announced_on_landing: bool,
+    announce: impl FnOnce(),
+) {
+    if announced_on_landing {
+        seen.seed(palette);
+    } else if seen.observe(palette).is_some() {
+        announce();
+    }
+}
+
+/// Announces a derived palette once its export files are on disk, or its fallback once the derivation has failed, unless the shell already paints with it.
+fn palette_landed(
+    seen: &Edge<Vec<telar::Color>>,
+    palette: Vec<telar::Color>,
+    announce: impl FnOnce(),
+) {
+    if seen.observe(palette).is_some() {
+        announce();
+    }
+}
+
+fn announce_colors_changed() {
+    services::events::emit(ShellEvent::ColorsChanged);
+}
+
+/// Whether the palette the shell last applied was dark or light.
+static THEME_MODE: Edge<config::scheme::Mode> = Edge::new();
+
+/// Announces the shell's palette switching between dark and light.
+///
+/// Judged from the palette the surfaces are about to carry rather than from `[theme] mode`, which `auto` leaves to the palette: going from a dark theme to a light one is a mode change whatever the key says. Every way the palette moves — an edited `[theme]`, `scheme mode`, a derived palette landing — reaches the shell as a reload through [`apply_config`], so this is the one place that sees them all.
+fn announce_theme_mode(config: &Config) {
+    let painted = config::scheme::Mode::of(&config.resolve_theme());
+    if let Some(mode) = THEME_MODE.observe(painted) {
+        services::events::emit(ShellEvent::ThemeModeChanged { mode });
+    }
 }
 
 /// The daemon's slice of the config, resolved in one place so startup and reload agree on it. The timeout is the column's — a notification, a toast and an OSD all go after `[stack] timeout_ms` — while what is particular to a notification stays under `[notifications]`.
@@ -968,6 +1065,57 @@ mod reloader_tests {
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
+
+    /// What the registry publishes for `file` alone, since other tests in this process fail sites of their own.
+    fn published(file: &str) -> Report {
+        let mut report = Report::default();
+        for finding in automation::failures::report().errors {
+            if finding.file == Path::new(file) {
+                report.error(finding);
+            }
+        }
+        report
+    }
+
+    /// **What fails as the shell runs is on the notice as it happens, and leaves it as it recovers, with no reload either way.** The shell hands each report the registry publishes to [`Reloader::failures_changed`]; while a config that did not load is on the notice, it waits for the next report made without one.
+    #[test]
+    fn a_failure_while_running_reaches_the_notice_without_a_reload_and_leaves_as_it_recovers() {
+        use automation::failures::{self, Drawn, Site};
+
+        let (path, mut reloader) = started("running");
+        let at_start = check::showing();
+        let file = "layouts/reloader-running.toml";
+        let site = Site::Expression(Drawn {
+            file: file.to_string(),
+            key: "outputs.*.layers.top.areas.bar.visible".to_string(),
+            output: Some("DP-1".to_string()),
+            copy: None,
+        });
+
+        failures::fail(
+            site.clone(),
+            util::report::Message::verbatim("`$weather.temp` is not a number"),
+        );
+        reloader.failures_changed(published(file));
+        assert!(
+            check::showing().contains(&"`$weather.temp` is not a number".to_string()),
+            "{:?}",
+            check::showing()
+        );
+
+        std::fs::write(&path, BROKEN).unwrap();
+        reloader.reload(Reload::IfChanged);
+        failures::recover(&site);
+        reloader.failures_changed(published(file));
+        std::fs::write(&path, SAVED).unwrap();
+        reloader.reload(Reload::IfChanged);
+        assert_eq!(
+            check::showing(),
+            at_start,
+            "a recovery heard while the config did not load is on the notice once it loads"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
 }
 
 #[cfg(test)]
@@ -976,9 +1124,9 @@ mod i18n_tests {
     #[test]
     fn catalog_translates_and_switches() {
         telar::set_locale("en");
-        assert_eq!(telar::t!("config.error_title"), "Configuration not applied");
+        assert_eq!(telar::t!("notice.error_title"), "Configuration not applied");
         telar::set_locale("es");
-        assert_eq!(telar::t!("config.error_title"), "Configuración no aplicada");
+        assert_eq!(telar::t!("notice.error_title"), "Configuración no aplicada");
     }
 }
 
@@ -1120,5 +1268,127 @@ mod lock_layer_tests {
         };
         // Built rather than only resolved: what the acceptance asks is that the session ends up covered by something with a field in it.
         let _ = app.root();
+    }
+}
+
+#[cfg(test)]
+mod colors_changed_tests {
+    use std::cell::Cell;
+
+    use telar::Color;
+
+    use super::*;
+
+    fn palette(shade: u8) -> Vec<Color> {
+        vec![Color::from_rgb_u8(shade, 40, 40); 3]
+    }
+
+    struct Heard(Cell<usize>);
+
+    impl Heard {
+        fn applied(&self, seen: &Edge<Vec<Color>>, shade: u8, derived: bool) {
+            palette_applied(seen, palette(shade), derived, || self.bump());
+        }
+
+        fn landed(&self, seen: &Edge<Vec<Color>>, shade: u8) {
+            palette_landed(seen, palette(shade), || self.bump());
+        }
+
+        fn bump(&self) {
+            self.0.set(self.0.get() + 1);
+        }
+
+        fn count(&self) -> usize {
+            self.0.get()
+        }
+    }
+
+    fn heard() -> Heard {
+        Heard(Cell::new(0))
+    }
+
+    #[test]
+    fn switching_to_another_built_in_theme_announces_once() {
+        let (seen, heard) = (Edge::new(), heard());
+        heard.applied(&seen, 10, false);
+        assert_eq!(
+            heard.count(),
+            0,
+            "the palette the shell starts with is not news"
+        );
+        heard.applied(&seen, 200, false);
+        assert_eq!(heard.count(), 1);
+        heard.applied(&seen, 200, false);
+        assert_eq!(heard.count(), 1);
+    }
+
+    #[test]
+    fn a_reload_that_leaves_the_colours_alone_announces_nothing() {
+        let (seen, heard) = (Edge::new(), heard());
+        heard.applied(&seen, 10, false);
+        heard.applied(&seen, 10, false);
+        heard.applied(&seen, 10, false);
+        assert_eq!(heard.count(), 0);
+    }
+
+    #[test]
+    fn a_derived_palette_is_announced_once_when_it_lands() {
+        let (seen, heard) = (Edge::new(), heard());
+        heard.applied(&seen, 10, true);
+        assert_eq!(
+            heard.count(),
+            0,
+            "applying it says nothing before its files are written"
+        );
+        heard.landed(&seen, 90);
+        assert_eq!(heard.count(), 1);
+    }
+
+    #[test]
+    fn the_reload_a_landed_palette_causes_does_not_announce_it_again() {
+        let (seen, heard) = (Edge::new(), heard());
+        heard.applied(&seen, 10, true);
+        heard.landed(&seen, 90);
+        heard.applied(&seen, 90, true);
+        heard.landed(&seen, 90);
+        assert_eq!(heard.count(), 1);
+    }
+
+    #[test]
+    fn a_derived_palette_seen_before_is_announced_again_after_the_shell_left_it() {
+        let (seen, heard) = (Edge::new(), heard());
+        heard.applied(&seen, 10, true);
+        heard.landed(&seen, 90);
+        heard.applied(&seen, 200, false);
+        heard.applied(&seen, 90, true);
+        heard.landed(&seen, 90);
+        assert_eq!(heard.count(), 3);
+    }
+
+    #[test]
+    fn a_derivation_that_fails_announces_its_fallback_once_and_a_later_success_its_own_palette() {
+        let (seen, heard) = (Edge::new(), heard());
+        heard.applied(&seen, 10, true);
+        heard.landed(&seen, 50);
+        assert_eq!(heard.count(), 1, "the fallback is a real palette change");
+        heard.applied(&seen, 50, true);
+        heard.landed(&seen, 50);
+        assert_eq!(heard.count(), 1, "the same fallback is not announced twice");
+        heard.landed(&seen, 90);
+        assert_eq!(
+            heard.count(),
+            2,
+            "the palette derived later is its own change"
+        );
+        heard.landed(&seen, 90);
+        assert_eq!(heard.count(), 2);
+    }
+
+    #[test]
+    fn a_derived_palette_the_shell_started_with_is_not_news_when_its_files_land() {
+        let (seen, heard) = (Edge::new(), heard());
+        heard.applied(&seen, 90, true);
+        heard.landed(&seen, 90);
+        assert_eq!(heard.count(), 0);
     }
 }

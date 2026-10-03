@@ -206,7 +206,7 @@ pub fn check(config: &UtilitiesConfig, file: &Path) -> Report {
             report.error(Finding::new(
                 file,
                 format!("utilities.toggles[{index}]"),
-                telar::t!("utilities.unknown_toggle", id = id),
+                util::message!("finding.unknown_toggle", id = id),
             ));
         }
     }
@@ -632,18 +632,14 @@ mod tests {
             ]
         );
 
-        telar::set_locale("en");
         let report = check(&config, Path::new("config.toml"));
         assert_eq!(
             report
                 .errors
                 .iter()
-                .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+                .map(|finding| format!("{}: {}", finding.key, finding.message.english()))
                 .collect::<Vec<_>>(),
-            [(
-                "utilities.toggles[1]",
-                "there is no toggle called 'teleporter'"
-            )],
+            ["utilities.toggles[1]: there is no toggle called 'teleporter'"],
             "the report names the entry the grid draws a placeholder for, and only that one"
         );
 

@@ -110,6 +110,12 @@ pub(crate) const SHELL: Target = Target {
             },
         },
         Command {
+            name: "run",
+            args: "<command...>",
+            help: "run a command through sh, detached, without waiting for it",
+            run,
+        },
+        Command {
             name: "quit",
             args: "",
             help: "shut the shell down",
@@ -120,6 +126,15 @@ pub(crate) const SHELL: Target = Target {
         },
     ],
 };
+
+/// The rest goes to `sh` ([`Args::command`]): a line as written, quotes and spaces and all, or the client's words each kept whole.
+fn run(args: &Args<'_>) -> Result<String, String> {
+    if args.is_empty() {
+        return Err("missing argument <command>".to_string());
+    }
+    util::process::run_detached(args.command(0));
+    Ok(String::new())
+}
 
 pub(crate) const SESSION: Target = Target {
     name: "session",

@@ -10,6 +10,8 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use platform_wayland::EventSender;
 use serde::{Deserialize, Serialize};
@@ -516,10 +518,18 @@ fn store_cached(scheme: &Scheme) {
     );
 }
 
-/// Resolves the scheme for `source` and publishes it, returning whether the palette changed.
+/// What [`resolve`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Resolution {
+    Changed,
+    Unchanged,
+    Unreadable,
+}
+
+/// Resolves the scheme for `source` and publishes it, saying whether the palette changed or no palette could be read at all.
 ///
 /// Synchronous, and cheap when the cache hits — which is the startup path. The miss path decodes an image, so callers on the driver thread go through [`refresh`] instead.
-pub fn resolve(source: &Path, mode: Mode, variant: Variant) -> bool {
+fn resolve(source: &Path, mode: Mode, variant: Variant) -> Resolution {
     let scheme = match load_cached(source, mode, variant) {
         Some(cached) => Some(cached),
         None => {
@@ -532,13 +542,13 @@ pub fn resolve(source: &Path, mode: Mode, variant: Variant) -> bool {
     };
     let Some(scheme) = scheme else {
         tracing::warn!("scheme: cannot read a palette out of {}", source.display());
-        return false;
+        return Resolution::Unreadable;
     };
     if CURRENT.get().as_ref() == Some(&scheme) {
-        return false;
+        return Resolution::Unchanged;
     }
     CURRENT.update(|current| *current = Some(scheme));
-    true
+    Resolution::Changed
 }
 
 /// Whether a cached palette for this image is already on disk, i.e. whether [`resolve`] would decode anything.
@@ -580,12 +590,27 @@ pub fn refresh(config: &Config, settle: std::time::Duration) {
             if !settle.is_zero() {
                 std::thread::sleep(settle);
             }
-            if resolve(&source, mode, variant)
-                && let Some(scheme) = current()
-            {
-                export_scheme(&scheme, &export);
-            }
+            let resolution = resolve(&source, mode, variant);
+            conclude(resolution, &export, announce_once_written);
         });
+}
+
+/// What follows a derivation: a new palette is exported, and an unreadable one is announced as it is, since the shell is painting with the fallback and no export will land to say so.
+fn conclude(resolution: Resolution, export: &SchemeExportConfig, announce_fallback: impl FnOnce()) {
+    match resolution {
+        Resolution::Changed => {
+            if let Some(scheme) = current() {
+                export_scheme(&scheme, export);
+            }
+        }
+        Resolution::Unchanged => {}
+        Resolution::Unreadable => announce_fallback(),
+    }
+}
+
+/// Whether applying `config` derives its palette from a wallpaper, and so ends in an export the [landed hook](set_landed_hook) hears of.
+pub fn derives_palette(config: &Config) -> bool {
+    config.theme.is_dynamic() && source_image(config).is_some()
 }
 
 /// Loads the scheme for `config` synchronously when it is already cached, so a restart paints in the user's colours on its first frame; otherwise hands the work to [`refresh`].
@@ -597,8 +622,9 @@ pub fn init(config: &Config) {
         return;
     };
     let (mode, variant) = config.scheme_selection();
-    if is_cached(&source, mode, variant) {
-        resolve(&source, mode, variant);
+    if is_cached(&source, mode, variant)
+        && resolve(&source, mode, variant) != Resolution::Unreadable
+    {
         if let Some(scheme) = current() {
             export_scheme(&scheme, &config.theme.export);
         }
@@ -667,7 +693,14 @@ pub fn choices() -> Vec<(Choice, String)> {
 /// The point of a dynamic scheme is a desktop that agrees with itself, and nothing else on it reads `config.toml`. Each format is a flat list of the same tokens, so adding a consumer is a template here rather than a second place the palette is decided.
 ///
 /// Each file is handed to [`writer`] from the calling thread. They used to be written from a thread spawned per call, which is the race `state.json` had: two scheme changes a moment apart made two threads, and the older palette could rename last and stay in every file other programs read. Queuing in call order keeps the newer one on disk. Rendering the bodies is a few dozen `format!`s over the token list — cheap enough for the driver thread, which the cached-startup path calls this from — and the fsyncs happen on the writer's thread.
+///
+/// The [landed hook](set_landed_hook) runs once the files are written, whether or not exporting is switched on: with nothing to write the wait is only the wait for the scheme cache.
 pub fn export_scheme(scheme: &Scheme, config: &SchemeExportConfig) {
+    write_export(scheme, config);
+    announce_once_written();
+}
+
+fn write_export(scheme: &Scheme, config: &SchemeExportConfig) {
     if !config.enabled {
         return;
     }
@@ -686,30 +719,65 @@ pub fn export_scheme(scheme: &Scheme, config: &SchemeExportConfig) {
         write("scheme.sh", as_shell(scheme));
         write("sequences", as_sequences(scheme));
     }
-    run_hooks_once_written(&config.hooks);
 }
 
-/// Runs the export hooks after the files they exist to announce are on disk.
-///
-/// A hook is how another program learns to re-read those files, so firing it the moment the writes are queued would reload the old palette. The wait is on a thread of its own because the queue can be busy with the shell's other saves, and the driver thread must not hold a frame for it. Whichever call's hooks run last run after every export queued before them has landed, so however two calls interleave, the last reload sees the newest palette.
-fn run_hooks_once_written(hooks: &[String]) {
-    let hooks: Vec<String> = hooks
-        .iter()
-        .map(|hook| hook.trim())
-        .filter(|hook| !hook.is_empty())
-        .map(str::to_string)
-        .collect();
-    if hooks.is_empty() {
-        return;
+/// Who hears that a derived palette has landed. Installed by the startup path: judging whether the palette is news, and saying so on the services' event stream, are things the config sits below and cannot do.
+static LANDED_HOOK: Mutex<Option<fn()>> = Mutex::new(None);
+
+/// Registers what runs once a new palette's export files are on disk. Set once by the startup path.
+pub fn set_landed_hook(hook: fn()) {
+    *LANDED_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(hook);
+}
+
+fn landed_hook() -> Option<fn()> {
+    *LANDED_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+struct Landing {
+    queued: AtomicU64,
+}
+
+impl Landing {
+    const fn new() -> Self {
+        Self {
+            queued: AtomicU64::new(0),
+        }
     }
+
+    fn queue(&self) -> u64 {
+        self.queued.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Whether the export `ticket` names is the newest. An overtaken one stays silent: the newer palette speaks for itself once it lands.
+    fn is_latest(&self, ticket: u64) -> bool {
+        self.queued.load(Ordering::SeqCst) == ticket
+    }
+}
+
+static EXPORTS: Landing = Landing::new();
+
+/// Announces the palette just exported once every write queued before it — its export files and its cache entry — has landed, so whatever the announcement sets off reads the new palette rather than the old. Waits on a thread of its own: the queue can be busy with the shell's other saves, and the driver thread, which the cached-startup path exports from, must not hold a frame for it.
+///
+/// Whether the palette is news is the hook's to judge: a reload that re-exports the palette already on screen lands here too. So does a palette that could not be derived: nothing is exported for it, but the shell is now painting with its fallback, which is a palette change like any other.
+fn announce_once_written() {
+    let Some(hook) = landed_hook() else {
+        return;
+    };
+    let ticket = EXPORTS.queue();
     let _ = std::thread::Builder::new()
-        .name("hogar-shell-scheme-hooks".to_string())
-        .spawn(move || {
-            writer::flush();
-            for hook in hooks {
-                util::process::run_detached(hook);
-            }
-        });
+        .name("hogar-shell-scheme-landed".to_string())
+        .spawn(move || land(&EXPORTS, ticket, hook));
+}
+
+fn land(landing: &Landing, ticket: u64, hook: fn()) {
+    writer::flush();
+    if landing.is_latest(ticket) {
+        hook();
+    }
 }
 
 fn as_json(scheme: &Scheme) -> String {
@@ -1026,6 +1094,77 @@ mod tests {
         );
         let parsed: Scheme = serde_json::from_str(&as_json(&scheme)).expect("json round-trips");
         assert_eq!(parsed, scheme);
+    }
+
+    fn seeded(seed: Color) -> Scheme {
+        Scheme {
+            source: PathBuf::from("/tmp/wall.png"),
+            seed: hex(seed),
+            mode: Mode::Dark,
+            variant: Variant::Vibrant,
+            colors: palette(seed, Mode::Dark, Variant::Vibrant),
+        }
+    }
+
+    static WATCHED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    static ANNOUNCED: std::sync::Mutex<Vec<bool>> = std::sync::Mutex::new(Vec::new());
+
+    fn record_landing() {
+        let on_disk = WATCHED.get().is_some_and(|path| path.exists());
+        ANNOUNCED.lock().unwrap().push(on_disk);
+    }
+
+    /// **The hook `colors_changed` hangs off reads the files it announces.** Whatever it sets off — a rule reloading a terminal's colours — asks the files on disk, so announcing while they are still queued would hand it the old palette.
+    #[test]
+    fn a_palette_is_announced_once_its_files_are_on_disk() {
+        let path = std::env::temp_dir().join(format!(
+            "hogar-shell-scheme-landed-{}.json",
+            std::process::id()
+        ));
+        std::fs::remove_file(&path).ok();
+        WATCHED.set(path.clone()).unwrap();
+        let landing = Landing::new();
+        let first = seeded(Color::from_rgb_u8(200, 60, 40));
+
+        let ticket = landing.queue();
+        writer::queue(&path, as_json(&first).into_bytes());
+        land(&landing, ticket, record_landing);
+        assert_eq!(
+            *ANNOUNCED.lock().unwrap(),
+            [true],
+            "announced, with the file already there"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_unreadable_wallpaper_is_resolved_as_unreadable_and_announces_its_fallback() {
+        let missing = std::env::temp_dir().join("hogar-shell-no-such-wallpaper.png");
+        assert_eq!(
+            resolve(&missing, Mode::Dark, Variant::Vibrant),
+            Resolution::Unreadable
+        );
+
+        let announced = std::cell::Cell::new(0);
+        let export = SchemeExportConfig::default();
+        conclude(Resolution::Unreadable, &export, || {
+            announced.set(announced.get() + 1)
+        });
+        assert_eq!(announced.get(), 1);
+        conclude(Resolution::Unchanged, &export, || {
+            announced.set(announced.get() + 1)
+        });
+        assert_eq!(announced.get(), 1, "an unchanged palette is not news");
+    }
+
+    #[test]
+    fn an_export_overtaken_by_a_newer_one_leaves_the_announcing_to_it() {
+        let landing = Landing::new();
+        let overtaken = landing.queue();
+        let latest = landing.queue();
+        assert!(!landing.is_latest(overtaken));
+        assert!(landing.is_latest(latest));
     }
 
     /// **The race the per-call export thread had.** Two scheme changes a moment apart made two threads, and whichever renamed last decided what every other program on the desktop was coloured — as often as not the older palette. Queued in call order, the newer one is what stays, in every file.

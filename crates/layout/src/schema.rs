@@ -15,6 +15,9 @@ include!(concat!(env!("OUT_DIR"), "/layout_docs.rs"));
 /// Written out rather than taken from the table, because the table is in declaration order and a reference is not. [`every_documented_item_is_in_the_vocabulary`](tests::every_documented_item_is_in_the_vocabulary) is what keeps the list honest when the model grows.
 const ORDER: &[&str] = &[
     "Layout",
+    "Source::Poll",
+    "Source::Listen",
+    "Source::Http",
     "OutputRule",
     "WorkspaceRule",
     "Layers",
@@ -80,6 +83,17 @@ pub fn vocabulary() -> Vec<Item> {
 /// The shipped layout plus one area of every kind it does not use, so the file shows the whole vocabulary — and still parses back as a layout, which a reference written by hand would stop doing the first time a field was renamed. The extra areas hold no instances: what a module is called is the module table's business, and a reference that named one would be a reference that goes stale when a module is renamed.
 pub fn reference() -> Layout {
     let mut layout = crate::built_in::layout();
+    layout.sources.insert(
+        "load".to_string(),
+        Source::Poll {
+            cmd: Some("cut -d ' ' -f 1 /proc/loadavg".to_string()),
+            every: Some("5s".to_string()),
+            initial: Some(toml::Value::Float(0.0)),
+            parse: Some("text".to_string()),
+            while_: Some(While::Visible),
+            lock_safe: Some(false),
+        },
+    );
     let Some(rule) = layout.outputs.first_mut() else {
         return layout;
     };
@@ -256,22 +270,41 @@ fn header_of(line: &str) -> Option<String> {
 
 /// Which item the table at `path` is, by walking the field types from [`Layout`] down.
 ///
-/// The path a file writes is the path of *fields*, so `outputs.layers.top.areas.groups` walks `Layout.outputs` → `OutputRule.layers` → `Layers.top` → `Layer.areas` → `Area.groups`. A step through a field with no plain type behind it — an instance's `options`, which is a table of whatever the module reads — ends the walk, and the keys under it are the module's rather than the model's.
+/// The path a file writes is the path of *fields*, so `outputs.layers.top.areas.groups` walks `Layout.outputs` → `OutputRule.layers` → `Layers.top` → `Layer.areas` → `Area.groups`. A step through a field with no plain type behind it — an instance's `options`, which is a table of whatever the module reads — ends the walk, and the keys under it are the module's rather than the model's. A table keyed by name, such as `sources`, takes the name as its next step and lands on what each entry is.
 fn item_at(path: &str) -> Option<&'static str> {
     let mut item = "Layout";
     if path.is_empty() {
         return Some(item);
     }
-    for step in path.split('.') {
-        item = type_of(item, step)?;
+    let mut steps = path.split('.');
+    while let Some(step) = steps.next() {
+        item = match type_of(item, step) {
+            Some(next) => next,
+            None => {
+                let held = keyed_by_name(item, step)?;
+                steps.next()?;
+                held
+            }
+        };
     }
     Some(item)
+}
+
+/// What a field holding a table keyed by name holds in each entry, so the step after `sources` — a source's name — lands on a `Source`.
+fn keyed_by_name(item: &str, field: &str) -> Option<&'static str> {
+    LAYOUT_FIELD_RUST
+        .iter()
+        .find(|(owner, name, _)| *owner == item && *name == field)?
+        .2
+        .strip_prefix("BTreeMap<String, ")?
+        .strip_suffix('>')
 }
 
 /// The variant a `kind = "bar"` or `place = "zone"` line names, as the item its flattened keys are looked up under.
 fn variant_named(table: &str, key: &str, value: &str) -> Option<String> {
     let owner = match (item_at(table)?, key) {
         ("Area", "kind") => "AreaKind",
+        ("Source", "kind") => "Source",
         ("Group", "place") => "GroupKind",
         _ => return None,
     };
@@ -321,6 +354,7 @@ mod tests {
             ("AreaKind::Grid", "anchor"),
             ("Instance", "module"),
             ("GroupKind::Cell", "col"),
+            ("Source::Poll", "every"),
         ] {
             let doc = doc_for(item, field)
                 .unwrap_or_else(|| panic!("the scanner found no comment on `{item}.{field}`"));

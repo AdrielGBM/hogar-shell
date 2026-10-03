@@ -322,7 +322,7 @@ fn layout_section() -> String {
 
 /// One table and everything under it. Sub-tables become headings of their own rather than nesting, which is what the file itself does: `[theme.scale]` is a header a reader types, not an indent.
 fn render_table(table: &Table, out: &mut String) {
-    let _ = writeln!(out, ".SS [{}]", escape(&table.path));
+    let _ = writeln!(out, ".SS {}", escape(&table.header()));
     if let Some(doc) = table.doc {
         out.push_str(&prose(doc));
     }
@@ -436,9 +436,9 @@ mod tests {
         let page = config_page().expect("the page generates");
         for table in config::schema::outline(None).expect("the outline builds") {
             assert!(
-                page.contains(&format!(".SS [{}]\n", table.path)),
-                "'[{}]' is missing from the manual",
-                table.path
+                page.contains(&format!(".SS {}\n", escape(&table.header()))),
+                "'{}' is missing from the manual",
+                table.header()
             );
         }
         assert!(
@@ -483,6 +483,10 @@ mod tests {
                 "`layout {verb}` is missing from the manual"
             );
         }
+        assert!(
+            page.contains("area.group") && page.contains("repeat"),
+            "`layout set` says it reaches an area and a group"
+        );
     }
 
     /// Roff's live characters, in text that comes from doc comments nobody wrote for a manual.

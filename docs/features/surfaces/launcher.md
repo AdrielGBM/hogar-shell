@@ -73,7 +73,7 @@ dates; without it those queries simply do not resolve. `[launcher] calculator` a
 ## Actions
 
 `[launcher] actions` is a list of things to run — the extension surface of the shell, alongside
-`[theme.export] hooks`. `enable_dangerous_actions` gates the ones that can end a session.
+[rules](../../guides/scripting.md#rules). `enable_dangerous_actions` gates the ones that can end a session.
 
 ## Configuring
 

@@ -5,6 +5,7 @@
 //! Reactive: read inside an effect or a build, it runs again when an entry comes or goes, and when a rect it read moves.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 
 use telar::{NodeId, Rect, RwSignal, signal, track_layout};
 
@@ -69,6 +70,8 @@ enum Measure {
     Laid(RwSignal<Rect>),
     /// The smallest rect around several nodes: a bar's group, whose instances share their zone with other groups' and have no box of their own.
     Spanning(Vec<RwSignal<Rect>>),
+    /// The smallest rect around a repeated group's chips on a bar, which come and go with its list.
+    Copies(Copies),
 }
 
 impl Measure {
@@ -76,6 +79,7 @@ impl Measure {
         match self {
             Measure::Laid(rect) => rect.is_alive(),
             Measure::Spanning(rects) => rects.iter().any(RwSignal::is_alive),
+            Measure::Copies(copies) => copies.is_alive(),
         }
     }
 
@@ -88,6 +92,13 @@ impl Measure {
                 .map(|rect| rect.get())
                 .reduce(union)
                 .unwrap_or_default(),
+            Measure::Copies(copies) => copies
+                .with(|held| held.values().copied().collect::<Vec<_>>())
+                .into_iter()
+                .filter(|rect| rect.is_alive())
+                .map(|rect| rect.get())
+                .reduce(union)
+                .unwrap_or_default(),
         }
     }
 
@@ -96,6 +107,13 @@ impl Measure {
             Measure::Laid(rect) => rect.peek(),
             Measure::Spanning(rects) => rects
                 .iter()
+                .filter(|rect| rect.is_alive())
+                .map(|rect| rect.peek())
+                .reduce(union)
+                .unwrap_or_default(),
+            Measure::Copies(copies) => copies
+                .peek()
+                .values()
                 .filter(|rect| rect.is_alive())
                 .map(|rect| rect.peek())
                 .reduce(union)
@@ -134,6 +152,14 @@ pub fn track_spanning(node: Node, rects: Vec<RwSignal<Rect>>) {
     if !rects.is_empty() {
         enter(node, Measure::Spanning(rects), None);
     }
+}
+
+/// The rects of a repeated group's chips, by copy, as copies are built and dropped.
+pub type Copies = RwSignal<BTreeMap<InstanceId, RwSignal<Rect>>>;
+
+/// Records `node` as the smallest rect around the chips `copies` holds at the time it is read, for a repeated group on a bar.
+pub fn track_copies(node: Node, copies: Copies) {
+    enter(node, Measure::Copies(copies), None);
 }
 
 fn enter(node: Node, measure: Measure, chip: Option<Chip>) {

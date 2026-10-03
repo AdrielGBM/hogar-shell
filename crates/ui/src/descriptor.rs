@@ -2,6 +2,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use platform_wayland::KeyboardMode;
 use telar::{
@@ -11,9 +12,10 @@ use telar::{
 };
 
 use config::{LockConfig, ModuleOptions};
+use telar_expression::{Type, Value};
 
 use crate::card::{Card, Density};
-use crate::host::{Host, Representation, WidgetSize};
+use crate::host::{Audience, Host, Representation, WidgetSize};
 use crate::placeholder;
 
 pub type Built = Result<Box<dyn LayoutItem>, LayoutError>;
@@ -72,17 +74,85 @@ impl Privacy {
     }
 }
 
+/// What a field reads as in an expression: [`telar_expression::Type`] in a form a `const` declaration can hold, since a list type boxes its element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldType {
+    Number,
+    Text,
+    Bool,
+    Color,
+    List(&'static FieldType),
+}
+
+impl FieldType {
+    pub fn ty(self) -> Type {
+        match self {
+            FieldType::Number => Type::Number,
+            FieldType::Text => Type::Text,
+            FieldType::Bool => Type::Bool,
+            FieldType::Color => Type::Color,
+            FieldType::List(element) => Type::list(element.ty()),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FieldDef {
     pub name: &'static str,
     pub privacy: Privacy,
+    pub ty: FieldType,
 }
 
-/// A typed reading the module exposes. Declared only: nothing produces one yet.
-#[derive(Clone, Copy, Debug)]
+impl FieldDef {
+    /// Whether `audience` may read this field under `lock`: the owner every field, anyone else only one its privacy lets them see. The one redaction rule a drawn reading and an expression's reading both follow (TA-8).
+    pub fn shown_to(&self, audience: Audience, lock: &LockConfig) -> bool {
+        audience == Audience::Owner || self.privacy.allows_anyone(lock)
+    }
+}
+
+/// One reading of a source: a value for every field, in the order the source declares them.
+pub type Reading = Arc<[Value]>;
+
+/// Where a source's readings are delivered, on the UI thread, each time the owning service publishes one.
+pub type Sink = Box<dyn FnMut(Reading)>;
+
+/// Subscribes a [`Sink`] to the service that owns a source, through `platform_wayland::watch`, so the subscription belongs to the reactive owner that asked for it and is taken back with it (F-10.43). The first reading follows as soon as the service has one.
+pub type Feed = fn(Sink);
+
+/// A typed reading the module exposes to expressions as `$id.field`, fed by the service that owns it.
+#[derive(Clone, Copy)]
 pub struct SourceDef {
     pub id: &'static str,
     pub fields: &'static [FieldDef],
+    pub feed: Feed,
+}
+
+impl SourceDef {
+    /// The field called `name`, with its position in a [`Reading`].
+    pub fn field(&self, name: &str) -> Option<(usize, &'static FieldDef)> {
+        self.fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.name == name)
+    }
+}
+
+/// The [`Feed`] most sources are: the service's `subscribe` delivered through `platform_wayland::watch`, each value it publishes read into a [`Reading`].
+pub fn watch_feed<T: Send + 'static>(
+    subscribe: fn(platform_wayland::EventSender<T>),
+    mut sink: Sink,
+    read: impl Fn(&T) -> Reading + 'static,
+) {
+    platform_wayland::watch(subscribe, move |value: T| sink(read(&value)));
+}
+
+impl std::fmt::Debug for SourceDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceDef")
+            .field("id", &self.id)
+            .field("fields", &self.fields)
+            .finish_non_exhaustive()
+    }
 }
 
 /// How a bar places a chip.
@@ -409,7 +479,7 @@ impl ModuleDescriptor {
     }
 
     /// What is wrong with an instance of this module setting `options`, as `(key, why)`: a key [`ModuleDescriptor::option_fields`] does not list, or a value its control does not take.
-    pub fn option_problems(&self, options: &toml::Table) -> Vec<(String, String)> {
+    pub fn option_problems(&self, options: &toml::Table) -> Vec<(String, util::report::Message)> {
         config::fields::check(&self.option_fields(), options)
     }
 }

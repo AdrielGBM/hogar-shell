@@ -14,4 +14,12 @@ mod tests {
         assert_eq!(telar::t!("common.on"), "Sí");
         assert_eq!(telar::t!("battery.remaining", time = "5m"), "5m restante");
     }
+
+    #[test]
+    fn every_finding_has_words_in_every_language_the_shell_speaks() {
+        assert_eq!(
+            util::report::untranslated(&crate::__rsx_i18n::CATALOG, &["finding."]),
+            Vec::<String>::new()
+        );
+    }
 }

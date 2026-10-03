@@ -742,6 +742,11 @@ impl NordTheme {
         palette.slot(name).map_or(self.accent, |token| *token)
     }
 
+    /// Every token's colour in [`THEME_TOKENS`] order: what two palettes are compared by, since the metrics that travel with them are not colours.
+    pub fn colors(&self) -> Vec<Color> {
+        THEME_TOKENS.iter().map(|name| self.token(name)).collect()
+    }
+
     /// Whether `name` is a token `[theme.colors]` can set.
     pub fn is_token(name: &str) -> bool {
         Self::new().slot(name).is_some()
@@ -821,10 +826,10 @@ mod tests {
         theme
     }
 
-    fn keyed(findings: &[Finding]) -> Vec<(&str, &str)> {
+    fn keyed(findings: &[Finding]) -> Vec<String> {
         findings
             .iter()
-            .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+            .map(|finding| format!("{}: {}", finding.key, finding.message.english()))
             .collect()
     }
 
@@ -833,7 +838,6 @@ mod tests {
     /// **A substitution is a warning, and a drop is an error** — the report's own rule, that a warning is something the shell did instead of what was asked. Nord in place of a theme and the palette's accent in place of an accent are the shell doing something instead; a token nothing answers to is not applied at all, so `config check` fails on it and not on the other two.
     #[test]
     fn a_substituted_theme_or_accent_is_a_warning_and_a_dropped_token_an_error() {
-        telar::set_locale("en");
         let theme = theme_section(|theme| {
             theme.name = "gruvbx".to_string();
             theme.accent = "cyna".to_string();
@@ -850,23 +854,16 @@ mod tests {
         assert_eq!(
             keyed(&report.warnings),
             [
-                (
-                    "theme.name",
-                    "there is no theme called 'gruvbx', so the shell uses nord"
-                ),
-                (
-                    "theme.accent",
-                    "there is no accent called 'cyna', so the palette's own accent is used"
-                ),
+                "theme.name: there is no theme called 'gruvbx', so the shell uses nord",
+                "theme.accent: there is no accent called 'cyna', so the palette's own accent is used",
             ],
             "the two names the shell puts something of its own in place of"
         );
         assert_eq!(
             keyed(&report.errors),
-            [(
-                "theme.colors.bse",
-                "there is no colour token called 'bse', so this colour is not applied"
-            )],
+            [
+                "theme.colors.bse: there is no colour token called 'bse', so this colour is not applied"
+            ],
             "and the one it drops, with nothing for the token that exists"
         );
         assert_eq!(
@@ -919,16 +916,22 @@ mod tests {
     }
 
     #[test]
+    fn every_finding_has_words_in_every_language_the_shell_speaks() {
+        assert_eq!(
+            util::report::untranslated(&crate::__rsx_i18n::CATALOG, &["finding."]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
     fn the_theme_report_speaks_the_users_language() {
-        telar::set_locale("es");
         let theme = theme_section(|theme| theme.name = "gruvbx".to_string());
         let message = theme.check(Path::new("config.toml")).warnings[0]
             .message
             .clone();
-        telar::set_locale("en");
 
         assert_eq!(
-            message,
+            message.render_in("es"),
             "no hay ningún tema llamado 'gruvbx', así que se usa nord"
         );
     }

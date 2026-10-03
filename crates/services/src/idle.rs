@@ -167,11 +167,9 @@ fn arm(stage: &config::IdleStage, respect_inhibitors: bool) -> Option<IdleHandle
 
 /// Runs a stage's action through the shell's own command surface, so an idle timeout and a keybind reach the same code. Failures are logged rather than returned: there is nobody to report them to at 3 a.m.
 fn run(line: &str) {
-    let reply = crate::command::run(line);
-    if let Some(error) = reply.strip_prefix("err ") {
-        tracing::warn!("idle action '{line}': {error}");
-    } else {
-        tracing::info!("idle action '{line}'");
+    match crate::command::run_checked(line) {
+        Ok(_) => tracing::info!("idle action '{line}'"),
+        Err(why) => tracing::warn!("idle action '{line}': {why}"),
     }
 }
 

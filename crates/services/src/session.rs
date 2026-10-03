@@ -8,6 +8,8 @@ use platform_wayland::EventSender;
 use zbus::blocking::{Connection, MessageIterator};
 use zbus::message::Type as MessageType;
 
+use crate::events::{self, ShellEvent};
+
 const LOGIN1: &str = "org.freedesktop.login1";
 const MANAGER_PATH: &str = "/org/freedesktop/login1";
 const MANAGER_IFACE: &str = "org.freedesktop.login1.Manager";
@@ -63,6 +65,16 @@ impl Action {
         }
     }
 
+    /// What performing it announces. Lock has its own events from the lock service, raised once the compositor confirms rather than when one is asked for, and suspend and hibernate end nothing.
+    fn event(self) -> Option<ShellEvent> {
+        match self {
+            Action::Logout => Some(ShellEvent::LoggingOut),
+            Action::Reboot => Some(ShellEvent::Rebooting),
+            Action::Shutdown => Some(ShellEvent::ShuttingDown),
+            Action::Lock | Action::Suspend | Action::Hibernate => None,
+        }
+    }
+
     /// The logind manager method, and the `Can…` property that says whether it is available. `Lock` and `Logout` act on the session object instead, so they have no manager method here.
     fn manager_method(self) -> Option<(&'static str, &'static str)> {
         match self {
@@ -101,14 +113,36 @@ pub fn available() -> Vec<Action> {
         .collect()
 }
 
-/// Performs `action`. Runs off the UI thread — a D-Bus round-trip that suspends the machine must not happen inside a click handler — and reports failures rather than returning them, since a caller has nothing useful to do about a refused power action beyond what logind already told the user.
+/// Performs `action`, announcing it first. Runs off the UI thread — a D-Bus round-trip that suspends the machine must not happen inside a click handler — and reports failures rather than returning them, since a caller has nothing useful to do about a refused power action beyond what logind already told the user.
+///
+/// Logging out, rebooting and powering off hold for the rules their event triggers ([`announce_then`]). The wait is on the thread that then calls logind, never on the caller's, which may be the driver thread those rules run on.
 pub fn perform(action: Action) {
+    let grace = config::shared_config()
+        .map(|config| config.automation)
+        .unwrap_or_default()
+        .shutdown_grace();
+    announce_then(action, grace, move || {
+        if let Err(e) = call(action) {
+            tracing::warn!("session action '{}' failed: {e}", action.id());
+        }
+    });
+}
+
+/// Announces `action`'s event, then runs `act` on a thread of its own once every listener holding that event has finished with it, or after `grace`, whichever is first.
+fn announce_then(action: Action, grace: Duration, act: impl FnOnce() + Send + 'static) {
+    let held = action.event().map(events::emit_held);
     let _ = std::thread::Builder::new()
         .name("hogar-shell-session".to_string())
         .spawn(move || {
-            if let Err(e) = call(action) {
-                tracing::warn!("session action '{}' failed: {e}", action.id());
+            if let Some(held) = held
+                && !held.wait(grace)
+            {
+                tracing::warn!(
+                    "session action '{}': rules still running after {grace:?}; going ahead",
+                    action.id()
+                );
             }
+            act();
         });
 }
 
@@ -303,6 +337,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_actions_that_end_the_session_announce_themselves() {
+        let announced: Vec<(Action, Option<ShellEvent>)> = Action::ALL
+            .into_iter()
+            .map(|action| (action, action.event()))
+            .collect();
+        assert_eq!(
+            announced,
+            [
+                (Action::Lock, None),
+                (Action::Logout, Some(ShellEvent::LoggingOut)),
+                (Action::Suspend, None),
+                (Action::Hibernate, None),
+                (Action::Reboot, Some(ShellEvent::Rebooting)),
+                (Action::Shutdown, Some(ShellEvent::ShuttingDown)),
+            ]
+        );
+    }
+
+    #[test]
     fn ids_round_trip_and_cover_every_action() {
         for action in Action::ALL {
             assert_eq!(
@@ -331,5 +384,58 @@ mod tests {
         // These need no capability probe, so they must not be filtered out on a machine with no system bus.
         assert!(is_available(Action::Lock));
         assert!(is_available(Action::Logout));
+    }
+
+    fn acted(action: Action, grace: Duration) -> (std::sync::mpsc::Receiver<Instant>, Instant) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let started = Instant::now();
+        announce_then(action, grace, move || {
+            let _ = tx.send(Instant::now());
+        });
+        (rx, started)
+    }
+
+    #[test]
+    fn a_rule_on_the_event_finishes_before_the_action_runs() {
+        let events = events::listen_holding(&[events::EventKind::LoggingOut]);
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rule = {
+            let log = log.clone();
+            std::thread::spawn(move || {
+                let delivery = events.next_within(Duration::from_secs(2)).unwrap();
+                std::thread::sleep(Duration::from_millis(150));
+                log.lock().unwrap().push("rule");
+                drop(delivery);
+            })
+        };
+        let (acted, _) = acted(Action::Logout, Duration::from_secs(5));
+        acted.recv_timeout(Duration::from_secs(5)).unwrap();
+        log.lock().unwrap().push("action");
+        rule.join().unwrap();
+        assert_eq!(*log.lock().unwrap(), ["rule", "action"]);
+    }
+
+    #[test]
+    fn a_rule_that_hangs_holds_the_action_only_for_the_grace() {
+        let events = events::listen_holding(&[events::EventKind::Rebooting]);
+        let (acted, started) = acted(Action::Reboot, Duration::from_millis(200));
+        let ran = acted.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(ran.duration_since(started) >= Duration::from_millis(200));
+        assert!(ran.duration_since(started) < Duration::from_secs(3));
+        drop(events);
+    }
+
+    #[test]
+    fn without_a_rule_on_the_event_the_action_does_not_wait() {
+        let (acted, started) = acted(Action::Shutdown, Duration::from_secs(30));
+        let ran = acted.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(ran.duration_since(started) < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn an_action_that_announces_nothing_does_not_wait() {
+        let (acted, started) = acted(Action::Suspend, Duration::from_secs(30));
+        let ran = acted.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(ran.duration_since(started) < Duration::from_millis(500));
     }
 }

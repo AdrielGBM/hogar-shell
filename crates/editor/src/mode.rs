@@ -35,7 +35,7 @@ impl Compositor {
     fn now() -> Self {
         Self {
             restack: platform_wayland::layer_restack_supported(),
-            locked: platform_wayland::session_is_locked(),
+            locked: services::lock::locked(),
             lockable: services::lock::can_lock(),
         }
     }

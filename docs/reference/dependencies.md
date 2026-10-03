@@ -34,6 +34,7 @@ table *for this machine*, and `hogar-shell deps missing` narrows it to what is a
 | `networkmanager` | system bus name `org.freedesktop.NetworkManager` | the network state, the Wi-Fi list and the VPN connections | the network module reports no connection and the VPN list is empty |
 | `bluez` | system bus name `org.bluez` | Bluetooth adapters and devices | the Bluetooth module is hidden entirely |
 | `upower` | system bus name `org.freedesktop.UPower` | battery charge, health and time remaining | the battery falls back to sysfs, and is hidden if that is absent too |
+| `power-profiles-daemon` | system bus name `org.freedesktop.UPower.PowerProfiles` | the active power profile — performance, balanced or power saver — and the `power_profile_changed` event | the power profile reads as unavailable and `power_profile_changed` never fires |
 | `power-supply` | kernel interface `/sys/class/power_supply` | battery readings without UPower | nothing, as long as UPower is there |
 | `logind` | system bus name `org.freedesktop.login1` | suspend, hibernate, reboot, shut down, and setting a backlight without root | the session actions are unavailable and brightness cannot be written |
 | `backlight` | kernel interface `/sys/class/backlight` | the internal panel's brightness | internal brightness is unavailable; external monitors still work through ddcutil |

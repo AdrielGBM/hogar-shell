@@ -6,15 +6,20 @@ pub mod args;
 pub mod audio;
 pub mod display;
 pub mod layout;
+pub mod rule;
 pub mod shell;
 pub mod surfaces;
 pub mod system;
+pub mod var;
+
+use args::Args;
 
 pub(crate) struct Command {
     pub(crate) name: &'static str,
     pub(crate) args: &'static str,
     pub(crate) help: &'static str,
-    pub(crate) run: fn(&[&str]) -> Result<String, String>,
+    /// Runs the command on its arguments: words, and for a command that takes free text, the rest of the line as written ([`Args::rest`]).
+    pub(crate) run: fn(&Args<'_>) -> Result<String, String>,
 }
 
 pub(crate) struct Target {
@@ -52,6 +57,8 @@ pub(crate) static TARGETS: &[Target] = &[
     shell::SCHEME,
     shell::CONFIG,
     layout::LAYOUT,
+    var::VAR,
+    rule::RULE,
     shell::DEPS,
     shell::MAN,
 ];
@@ -66,13 +73,20 @@ pub fn resolves(line: &str) -> bool {
 /// Looks a request line up in the command table without running anything, yielding the command and its arguments, or the `err …` reply the caller should send back.
 ///
 /// Split out from [`dispatch`] so that "is this command wired up" can be answered *without executing it*. The listing test used to answer that by dispatching every advertised command with no arguments — which for any command that needs none is not a lookup, it is the command. `wifi disconnect` and `vpn toggle` both take no arguments, so running the test suite dropped the machine off the network; `volume up` and `brightness down` had been quietly moving the user's settings for far longer.
-fn resolve(line: &str) -> Result<(&'static Command, Vec<&str>), String> {
-    let mut words = line.split_whitespace();
-    let Some(target_name) = words.next() else {
+fn resolve(line: &str) -> Result<(&'static Command, Args<'_>), String> {
+    look_up(Args::of(line))
+}
+
+/// [`resolve`] for a request that came as words, a program's arguments, rather than as a line.
+fn resolve_words(words: &[String]) -> Result<(&'static Command, Args<'_>), String> {
+    look_up(Args::split(words))
+}
+
+fn look_up(words: Args<'_>) -> Result<(&'static Command, Args<'_>), String> {
+    let Some(target_name) = words.first().copied() else {
         return Err("empty request".to_string());
     };
-    let command_name = words.next().unwrap_or("");
-    let args: Vec<&str> = words.collect();
+    let command_name = words.get(1).copied().unwrap_or("");
 
     let Some(target) = TARGETS.iter().find(|t| t.name == target_name) else {
         return Err(format!("unknown target '{target_name}'"));
@@ -84,12 +98,21 @@ fn resolve(line: &str) -> Result<(&'static Command, Vec<&str>), String> {
             known.join(", ")
         ));
     };
-    Ok((command, args))
+    Ok((command, words.after(2)))
 }
 
 /// Runs one request line and renders the reply. `ok`/`err` prefixes let a caller branch on the outcome without parsing the message; the payload follows on the same line when there is one.
 pub fn dispatch(line: &str) -> String {
-    let (command, args) = match resolve(line) {
+    reply(resolve(line))
+}
+
+/// [`dispatch`] for a request that came as words — the `hogar-shell …` client's own arguments — so a word with spaces in it reaches the command as the one word it was.
+pub fn dispatch_words(words: &[String]) -> String {
+    reply(resolve_words(words))
+}
+
+fn reply(resolved: Result<(&'static Command, Args<'_>), String>) -> String {
+    let (command, args) = match resolved {
         Ok(found) => found,
         Err(message) => return format!("err {message}"),
     };
@@ -100,11 +123,11 @@ pub fn dispatch(line: &str) -> String {
     }
 }
 
-/// Runs one request line in *this* process rather than sending it to the shell, for the commands that are a function of the binary and the machine rather than of a running shell.
+/// Runs a request, the client's own arguments, in *this* process rather than sending it to the shell, for the commands that are a function of the binary and the machine rather than of a running shell.
 ///
 /// `deps` is the case that matters: what a dependency report is for is the machine where something is missing, and "nothing starts" is precisely when there is no shell to ask.
-pub fn dispatch_locally(line: &str) -> Result<String, String> {
-    let (command, args) = resolve(line)?;
+pub fn dispatch_locally(words: &[String]) -> Result<String, String> {
+    let (command, args) = resolve_words(words)?;
     (command.run)(&args)
 }
 
@@ -233,6 +256,97 @@ mod tests {
     }
 
     #[test]
+    fn a_variable_or_a_user_command_is_a_line_the_shell_answers_and_a_typo_is_not() {
+        assert!(resolves("var set accent_override #ff8800 --type color"));
+        assert!(resolves("var remove accent_override"));
+        assert!(resolves("shell run notify-send 'build done' --urgency low"));
+        assert!(!resolves("var toggle accent_override"));
+        assert!(!resolves("run notify-send hi"));
+    }
+
+    /// Resolved, never dispatched: `shell run` would start the command.
+    #[test]
+    fn a_command_that_takes_free_text_gets_the_rest_of_the_line_as_written() {
+        let (found, args) = resolve(r#"shell   run notify-send "a   b"  'c  d'"#).unwrap();
+        assert_eq!(found.name, "run");
+        assert_eq!(args.rest(0), r#"notify-send "a   b"  'c  d'"#);
+        let (_, args) = resolve("layout set clock options.format %H  :  %M").unwrap();
+        assert_eq!(args.rest(2), "%H  :  %M");
+        assert_eq!(&args[..2], ["clock", "options.format"]);
+    }
+
+    /// Resolved, never dispatched: the client's words, as `hogar-shell shell run notify-send "a  b"` hands them over.
+    #[test]
+    fn a_request_that_came_as_words_keeps_each_word_whole() {
+        let words = ["shell", "run", "notify-send", "a  b"].map(String::from);
+        let (found, args) = resolve_words(&words).unwrap();
+        assert_eq!(found.name, "run");
+        assert_eq!(&*args, ["notify-send", "a  b"]);
+        assert_eq!(args.command(0), "notify-send 'a  b'");
+
+        let words = ["toast", "show", "two  spaces"].map(String::from);
+        let (_, args) = resolve_words(&words).unwrap();
+        assert_eq!(args.rest(0), "two  spaces");
+
+        assert!(resolve_words(&["shell".to_string(), "nope".to_string()]).is_err());
+        assert!(resolve_words(&[]).is_err());
+    }
+
+    #[test]
+    fn a_value_set_as_words_keeps_its_spacing() {
+        let words = ["var", "set", "cmd_test_spaced", "a  b"].map(String::from);
+        assert_eq!(dispatch_words(&words), "ok cmd_test_spaced = a  b (text)");
+        assert_eq!(
+            dispatch("var remove cmd_test_spaced"),
+            "ok removed cmd_test_spaced"
+        );
+    }
+
+    #[test]
+    fn an_action_naming_a_command_the_shell_lacks_is_a_report_error_at_load() {
+        use ::layout::{Action, Trigger};
+
+        let mut mine = ::layout::built_in();
+        let bar = mine.outputs[0]
+            .layers
+            .top
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "bar-top")
+            .expect("the built-in bar");
+        bar.actions.insert(
+            Trigger::Press,
+            Action(vec![
+                "var set mood calm".to_string(),
+                "shell run notify-send hi".to_string(),
+            ]),
+        );
+        let clean = ::layout::validate(&mine, &layout::catalogue());
+        assert!(clean.is_clean(), "{}", clean.render());
+
+        let bar = mine.outputs[0]
+            .layers
+            .top
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "bar-top")
+            .expect("the built-in bar");
+        bar.actions.insert(
+            Trigger::LongPress,
+            Action(vec!["var tgle mood".to_string()]),
+        );
+        let report = ::layout::validate(&mine, &layout::catalogue());
+        assert!(
+            report
+                .findings()
+                .any(|finding| finding.key.ends_with("actions.long_press")
+                    && finding.message.english().contains("var tgle mood")),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
     fn a_command_that_changes_the_machine_is_never_run_by_the_suite() {
         // A standing guard on the test above: these take no arguments, so dispatching one "just to check it resolves" performs it. Listed by name so that adding another argumentless mutation is a decision someone makes here rather than something a green test run hides.
         const ARGUMENTLESS_MUTATIONS: &[(&str, &str)] = &[
@@ -266,6 +380,10 @@ mod tests {
             ("keyboard", "next"),
             ("layout", "undo"),
             ("layout", "redo"),
+            ("shell", "run"),
+            ("var", "set"),
+            ("var", "remove"),
+            ("rule", "run"),
         ];
         for (target, command) in ARGUMENTLESS_MUTATIONS {
             assert!(

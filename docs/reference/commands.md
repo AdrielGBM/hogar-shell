@@ -22,6 +22,7 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `screens` |  | the compositor's monitors with mode, scale and make |
 | `clients` |  | every open window: address, workspace, class and title |
 | `dpms` | `<on\|off>` | switch every monitor's output on or off |
+| `run` | `<command...>` | run a command through sh, detached, without waiting for it |
 | `quit` |  | shut the shell down |
 
 ## `lock`
@@ -285,9 +286,25 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `add` | `<module> <area> [group]` | place a module in an area of the layout being drawn |
 | `remove` | `<id>` | take a placed module, or a whole area, out of the layout |
 | `move` | `<id> <group> [index]` | put a placed module in another group, or elsewhere in its own |
-| `set` | `<instance> <key> <value>` | change one property of a placed module |
+| `set` | `<instance\|area\|area.group> <key> <value...>` | change one property of a placed module, or an area's visible or a group's repeat |
 | `reset` | `<id\|layer\|all>` | put a part of the layout back to what the layout it extends says, or the built-in one |
 | `edit` | `<background\|desktop\|top\|overlay\|lock\|off> [output]` | edit one layer on one screen (the focused one unless named), or stop |
+
+## `var`
+
+| Command | Arguments | What it does |
+| --- | --- | --- |
+| `get` | `<name>` | a variable's value |
+| `set` | `<name> <value...> [--type <t>]` | set a variable to the rest of the line, keeping its type; a new one is text unless --type says number, bool, colour, image, font or list:<type> |
+| `list` |  | every variable: name, type and value, tab-separated |
+| `remove` | `<name>` | forget a variable |
+
+## `rule`
+
+| Command | Arguments | What it does |
+| --- | --- | --- |
+| `list` |  | every rule: id, trigger, state (on, off, invalid or suspended) and when it last fired, tab-separated |
+| `run` | `<id>` | run a rule's commands now, ignoring its trigger, `when` and `enabled`, and print each with its reply; its `store` is not written |
 
 ## `deps`
 

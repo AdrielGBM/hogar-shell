@@ -75,7 +75,7 @@ pub fn check(config: &StatusIconsConfig, file: &Path) -> Report {
             report.error(Finding::new(
                 file,
                 format!("status_icons.icons[{index}]"),
-                telar::t!("statusicons.unknown_icon", id = id),
+                util::message!("finding.unknown_icon", id = id),
             ));
         }
     }
@@ -273,12 +273,9 @@ mod tests {
             report
                 .errors
                 .iter()
-                .map(|finding| (finding.key.as_str(), finding.message.as_str()))
+                .map(|finding| format!("{}: {}", finding.key, finding.message.english()))
                 .collect::<Vec<_>>(),
-            [(
-                "status_icons.icons[1]",
-                "there is no status icon called 'nonesuch'"
-            )]
+            ["status_icons.icons[1]: there is no status icon called 'nonesuch'"]
         );
         assert!(
             check(&StatusIconsConfig::default(), Path::new("config.toml")).is_clean(),

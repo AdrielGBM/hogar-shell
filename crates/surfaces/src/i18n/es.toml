@@ -1,0 +1,9 @@
+[finding]
+last_good = "este diseño no se pudo leer, así que se dibuja la última copia que funcionó; el archivo no se ha tocado"
+no_layout = "no hay ningún diseño llamado `{name}`; se dibuja el diseño integrado en su lugar"
+no_stack = "ninguna salida tiene un área de pila, así que las notificaciones, los avisos y los OSD no se muestran en ninguna parte"
+no_blur = "el compositor no ofrece desenfoque de fondo (ext-background-effect-v1), así que esta área se dibuja translúcida sin él"
+unknown_module = "no hay ningún módulo llamado `{module}`"
+of_module = "`{module}`: {why}"
+and_more = "{first}; {rest}"
+no_store = "ningún shell en marcha tiene un almacén de diseños"

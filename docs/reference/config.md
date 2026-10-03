@@ -52,6 +52,49 @@ Audio control (`[audio]`). `increment` is what one wheel notch over the volume o
 - **`increment`** · default `5`
 - **`max_volume`** · default `150`
 
+## `[automation]`
+
+What a command or an address a layout reads from may cost (`[automation]`): the `poll`, `listen` and `http` sources declared under a layout's `[sources]`.
+
+It also sets how long the session actions wait on rules for the events that announce them.
+
+Each source runs one command or request at a time, however many places read it. A run that fails is retried after a wait that doubles with each failure in a row, from `backoff_seconds` up to `max_backoff_seconds`, and is reported where `hogar-shell layout check` and the problems notice list what a layout could not do.
+
+- **`backoff_seconds`** · default `2`
+
+  How long a failing source waits before its first retry.
+  Range: 1 to 3600.
+
+- **`max_backoff_seconds`** · default `300`
+
+  The longest a failing source waits between retries, however many times in a row it has failed.
+  Range: 1 to 86400.
+
+- **`max_line_kib`** · default `64`
+
+  The longest line a source may print, in KiB. A longer one stops the command: a reading that size is not a reading.
+  Range: 1 to 1024.
+
+- **`max_run_kib`** · default `1024`
+
+  The most one run of a `poll` command, or one `http` response, may print, in KiB.
+  Range: 1 to 16384.
+
+- **`min_interval_seconds`** · default `1`
+
+  The shortest `every` a `poll` or `http` source may ask for. A layout asking for less is reported, and the source runs at this interval instead.
+  Range: 1 to 3600.
+
+- **`shutdown_grace_seconds`** · default `3`
+
+  How long logging out, rebooting or powering off waits for the rules that `logging_out`, `rebooting` or `shutting_down` triggers to finish their commands before it goes ahead anyway. 0 does not wait.
+  Range: 0 to 30.
+
+- **`timeout_seconds`** · default `5`
+
+  How long one run of a `poll` command, or one `http` request, may take before it is stopped and reported.
+  Range: 1 to 60.
+
 ## `[background]`
 
 Full-screen wallpaper behind everything, one surface per monitor. Off by default so the compositor's own background shows through; setting an `image` — or `enabled = true` for a plain themed background — turns it on. `[background.monitors]` maps output names to per-monitor images, each falling back to the global `image`, and `hogar-shell wallpaper set` overrides both at runtime. Paths may use `~`.
@@ -581,6 +624,56 @@ Screen recording (`[recorder]`).
 
 - **`notify`** · default `true`
 
+## `[[rules]]`
+
+A rule (`[[rules]]`): when something happens, run commands, and optionally keep a value in a variable.
+
+A rule is session automation rather than something drawn, so it lives here rather than in a layout, means the same thing whichever layout is on screen, and keeps running while the session is locked. Its expressions read what a layout binding reads — a module's readings (`$battery.level`), a variable (`$name`) and the last event of a kind (`$event.session_locked`) — but not a layout's own `[sources]`. `hogar-shell rule list` shows every rule and when it last fired; `hogar-shell rule run <id>` runs one's commands now.
+
+A rule that fires more than 10 times within one second is taken to be caught in a loop — two rules setting each other off through a variable, or one setting itself off — so it is suspended, and reported as failing, until the config is next loaded. A rule cannot run a rule: `rule run` in `run` is refused.
+
+For example, `id = "low-battery"`, `trigger = { edge = "$battery.level < 15 && !$battery.charging" }` and `run = ["toast show Battery low"]` says so once each time the charge drops under 15 %.
+
+- **`enabled`** · default `true`
+
+  Off keeps the rule written down without running it; `hogar-shell rule run` still runs its commands.
+
+- **`id`** · default `""`
+
+  The rule's name: what `hogar-shell rule run` takes and what a problem with it is reported under. Letters, digits, `-` and `_`, and no two rules share one.
+
+- **`run`** · default `[]`
+
+  The commands the rule runs, in order, each a line `hogar-shell --list` names (`toast show hi`, `var set mood calm`, `shell run notify-send hi`). Checked without being run when the config loads; the first one the shell refuses stops the rest.
+
+- **`when`** · unset by default
+
+  An expression checked each time the trigger fires, which has to give `true` for the rule to run. Unset, the rule runs every time it fires.
+
+- **`store`** · unset by default
+
+  A value kept in a variable after the commands have run: `{ var = "<name>", value = "<expression>" }`, the expression evaluated as the rule fires and the variable taking its type. A variable is readable on the lock screen, so `config check` warns about a value that reads something the lock screen hides.
+
+### `[rules.trigger]`
+
+What sets the rule off: exactly one of `event`, `edge`, `schedule` or `every`.
+
+- **`event`** · unset by default
+
+  An event, by name: `started`, `wallpaper_changed`, `colors_changed`, `theme_mode_changed`, `session_locked`, `session_unlocked`, `logging_out`, `rebooting`, `shutting_down`, `wifi_enabled`, `wifi_disabled`, `bluetooth_enabled`, `bluetooth_disabled`, `battery_state_changed`, `battery_under_threshold` or `power_profile_changed` (the scripting guide says when each is raised). Fires once for each such event after the rule is loaded.
+
+- **`edge`** · unset by default
+
+  An expression that gives `true` or `false`. Fires each time it turns from `false` to `true`, once per crossing however often its readings change. Its first answer only records: a rule loaded while the expression already holds waits for the next crossing.
+
+- **`schedule`** · unset by default
+
+  Times of day, local, as `HH:MM`, with the days they apply on: `07:30`, `07:30, 19:00`, `08:00 mon-fri`, `10:00 sat,sun`, `09:00 weekdays`, `11:00 weekends`. Every day when no day is named. A time the machine slept through is skipped, not run late.
+
+- **`every`** · unset by default
+
+  An interval: `30s`, `5m`, `1h`. Fires that long after the rule is loaded and every that long after; never more often than `[automation] min_interval_seconds`.
+
 ## `[screenshot]`
 
 Screenshots (`[screenshot]`).
@@ -714,7 +807,6 @@ Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dy
 
 - **`enabled`** · default `false`
 - **`gtk`** · default `true`
-- **`hooks`** · default `[]`
 - **`json`** · default `true`
 - **`qt`** · default `false`
 - **`terminal`** · default `false`

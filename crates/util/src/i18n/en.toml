@@ -1,0 +1,101 @@
+[expression]
+invalid_number = "`{written}` is not a number"
+number_too_large = "`{written}` is too large"
+reference_needs_name = "`$` must be followed by a name, as in `$battery.level`"
+unclosed_text = "this text is never closed with {quote}"
+unknown_escape = "unknown escape; write \\n, \\t, \\\\, \\\" or \\'"
+invalid_color = "`{written}` is not a colour; write #rgb, #rgba, #rrggbb or #rrggbbaa"
+lone_operator = "`{found}` is not an operator; {advice}"
+unexpected_character = "`{found}` has no meaning here"
+empty_expression = "the expression is empty"
+trailing_token = "{found} cannot follow a complete expression"
+expected_closing = "expected `{expected}` {closing}, but {found}"
+expected_value = "expected a value, but {found}"
+too_deep = "the expression nests too deeply"
+if_needs_call = "`if` is written if(condition, then, else)"
+if_arity = "`if` takes three arguments: if(condition, then, else)"
+expected_type = "expected {expected}, but this gives {found}"
+operand_type = "{context} needs {expected}, but this is {found}"
+branch_mismatch = "both branches of `if` must give the same type, but the first gives {first} and this one {second}"
+list_item_mismatch = "the items of a list must share one type, but this is {item} among {list}"
+name_is_function = "`{name}` is a function; call it as {name}(…)"
+unknown_name = "unknown name `{name}`"
+name_is_constant = "`{name}` is a constant; write it without brackets"
+unknown_function = "unknown function `{name}`"
+compare_mismatch = "`{operator}` cannot compare {left} with {right}"
+not_orderable = "`{operator}` compares numbers or texts, not {found}"
+no_matching_form = "no form of `{name}` takes ({given}); it takes {forms}"
+argument_type = "argument {number} of `{name}` must be {expected}, but this is {found}"
+argument_count = "`{name}` takes {takes}, but {given}"
+reference_type = "{reference} gave {found} where {declared} was declared"
+reference_not_finite = "{reference} gave a number that is not finite where {declared} was declared"
+result_type = "`{name}` gave {found} where {declared} was declared"
+no_finite_result = "`{name}` has no finite result for these arguments"
+division_by_zero = "division by zero"
+no_real_result = "this has no real-number result"
+result_too_large = "the result is too large"
+text_too_long = "the text would be longer than {limit} bytes"
+mistyped_value = "a value of the wrong type reached this point"
+missing_argument = "argument {number} is missing"
+expected_argument = "expected {expected}"
+malformed_format = "a placeholder in the format must be {{}}, {{N}} or {{{{, and a lone }} must be written }}}}"
+format_missing_value = "the format asks for value {index}, but {given}"
+decimals_not_whole = "the number of decimals must be whole"
+position_not_whole = "a position must be a whole number"
+position_outside = "position {position} is outside a list of {len}"
+found_clause = "found {found}"
+ended = "the expression ended"
+series = "{first}, {rest}"
+either = "{first} or {rest}"
+
+[expression.advice]
+compare = "compare with `{suggestion}`"
+write = "write `{suggestion}`"
+
+[expression.takes]
+one = "{count} argument"
+other = "{count} arguments"
+
+[expression.takes_at_least]
+one = "at least {count} argument"
+other = "at least {count} arguments"
+
+[expression.given]
+one = "{count} was given"
+other = "{count} were given"
+
+[expression.type]
+number = "number"
+text = "text"
+bool = "bool"
+colour = "colour"
+list = "list of {item}"
+empty_list = "empty list"
+nothing = "nothing"
+any = "any"
+
+[expression.found]
+number = "a number"
+text = "a text"
+colour = "a colour"
+name = "`{name}`"
+reference = "`${name}`"
+symbol = "`{symbol}`"
+end = "the end of the expression"
+
+[expression.closing]
+list = "to close the list"
+group = "to close the bracket"
+call = "to close the call"
+
+[expression.context]
+operator = "`{operator}`"
+add_after_text = "`+` after a text"
+if_condition = "the condition of `if`"
+
+[expression.kind]
+number = "a number"
+text = "a text"
+bool = "a bool"
+colour = "a colour"
+list = "a list"
