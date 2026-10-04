@@ -20,10 +20,8 @@ use crate::host::{self, HOTSPOT, passthrough, see_through, whole};
 use crate::mode::{Mode, said};
 use crate::session::{self, Edit, Selection};
 
-use super::desktop;
 use super::gesture::{self, held, pressable};
-use super::top::{self, ChipLanding, Detached, Drawn};
-use super::widgets;
+use super::top::{self, ChipLanding, Drawn};
 
 /// How deep the strip along a free stretch of an edge is, that a new bar is pulled out of.
 const HOT: f32 = 6.0;
@@ -37,8 +35,8 @@ const CATCH: f32 = 12.0;
 enum Aim {
     /// The line a carried chip would be put at, across the bar it lands on.
     Line(Rect),
-    /// A chip carried off every bar, with the pointer here, and what letting it go would make of it.
-    Off((f32, f32), Detached),
+    /// A chip carried off every bar, with the pointer here: letting it go takes it off the layout.
+    Off((f32, f32)),
 }
 
 thread_local! {
@@ -376,13 +374,10 @@ impl Seen {
     }
 }
 
-/// A chip being carried: what it is, and the bars and desktop grids as they were when it was taken hold of.
+/// A chip being carried: what it is, and the bars as they were when it was taken hold of.
 struct Carried {
     node: Node,
     bars: Vec<Seen>,
-    grids: widgets::Grids,
-    /// What it would be drawn as on the desktop, off every bar.
-    widget: Option<layout::Representation>,
 }
 
 impl Carried {
@@ -427,16 +422,10 @@ impl Carried {
                 })
             })
             .collect();
-        let widget = desktop.and_then(|desktop| top::widget_of(&desktop, &node));
-        Self {
-            node,
-            bars,
-            grids: widgets::grids(output, LayerKind::Desktop),
-            widget,
-        }
+        Self { node, bars }
     }
 
-    /// Previews where the chip lands with the pointer at `point`, and marks it: on the bar under the pointer at its insertion line, or off every bar onto the desktop.
+    /// Previews where the chip lands with the pointer at `point`, and marks it: on the bar under the pointer at its insertion line, or off every bar and so off the layout.
     fn preview(&self, edit: &Edit, point: (f32, f32)) {
         let (Some(before), Some(desktop)) = (
             edit.transaction().before(),
@@ -460,36 +449,14 @@ impl Carried {
                 top::chip_moved(&before, &desktop, &self.node, &landing)
                     .map(|ops| (ops, Aim::Line(bar.line_at(line))))
             }
-            None => {
-                let onto = self.cell_under(point);
-                top::detached(
-                    &before,
-                    &desktop,
-                    &self.node,
-                    onto.as_ref().map(|(grid, at)| (grid, *at)),
-                )
-                .map(|(ops, outcome)| (ops, Aim::Off(point, outcome)))
-            }
+            None => crate::context::removal(&before, &desktop, &self.node)
+                .map(|ops| (ops, Aim::Off(point))),
         };
         gesture::aimed(edit, planned.ok(), aim());
     }
-
-    /// The desktop grid under `point` and the cells there a widget of the carried chip's module would start at.
-    fn cell_under(&self, point: (f32, f32)) -> Option<(AreaId, (u32, u32))> {
-        let size = self.widget?;
-        let (geometry, _) = self
-            .grids
-            .iter()
-            .find(|(geometry, _)| geometry.region.contains(point.0, point.1))?;
-        let cells = desktop::footprint(size);
-        let corner = widgets::corner_for(geometry, cells, point);
-        let (col, row) = geometry.cell_at(corner);
-        let at = cells.at(col, row).within(geometry.room);
-        Some((geometry.area.clone(), (at.col, at.row)))
-    }
 }
 
-/// A box over one chip: a press selects, a secondary press opens its menu, a drag carries it to the insertion line under the pointer — another zone, another bar on any edge — or off every bar onto the desktop.
+/// A box over one chip: a press selects, a secondary press opens its menu, a drag carries it to the insertion line under the pointer — another zone, another bar on any edge — or off every bar, which takes it off the layout.
 fn chip_target(output: &str, layer: LayerKind, id: InstanceId, frozen: RwSignal<bool>) -> Built {
     let output = output.to_string();
     let name = rects::instance(Some(&output), &id)
@@ -712,11 +679,8 @@ fn marks() -> Built {
                     )?
                     .input_transparent(),
                 )),
-                Aim::Off((x, y), outcome) => {
-                    let said = move || match outcome {
-                        Detached::Widget => telar::t!("editor.top.becomes_widget"),
-                        Detached::Removed => telar::t!("editor.top.taken_away"),
-                    };
+                Aim::Off((x, y)) => {
+                    let said = || telar::t!("editor.top.taken_away");
                     Ok(Box::new(
                         StyledContainer::new(
                             LayoutStyle::new()

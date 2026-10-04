@@ -28,7 +28,7 @@ mod tests {
     use crate::mode::{self, Compositor};
     use crate::modes::desktop::{self, Landing};
     use crate::modes::grid::{self, Cells, Room};
-    use crate::modes::palette::{self, Line, Offer, Pick};
+    use crate::modes::palette::{self, Line, Pick};
     use crate::modes::widgets;
     use crate::rig::{Rig, SCREEN, rig_on, rig_with};
     use crate::session::{self, Selection};
@@ -426,43 +426,23 @@ mod tests {
                 .collect()
         };
         assert_eq!(
-            names(palette::lines(
-                &desktop,
-                LayerKind::Desktop,
-                "",
-                Offer::Every
-            )),
+            names(palette::lines(LayerKind::Desktop, "")),
             [
                 "# Time",
                 "Clock",
                 "# Media",
                 "Mixer",
                 "# Information",
-                "Weather",
-                "# From bars…",
-                "Clock on bar-top"
-            ]
+                "Weather"
+            ],
+            "what is on the bars is another layer's, and never offered here"
         );
         assert_eq!(
-            names(palette::lines(
-                &desktop,
-                LayerKind::Desktop,
-                "WEA",
-                Offer::Every
-            )),
+            names(palette::lines(LayerKind::Desktop, "WEA")),
             ["# Information", "Weather"]
         );
         assert_eq!(
-            names(palette::lines(
-                &desktop,
-                LayerKind::Desktop,
-                "",
-                Offer::FromBars
-            )),
-            ["# From bars…", "Clock on bar-top"]
-        );
-        assert_eq!(
-            names(palette::lines(&desktop, LayerKind::Lock, "", Offer::Every)),
+            names(palette::lines(LayerKind::Lock, "")),
             ["# Time", "Clock", "# Information", "Weather"],
             "the mixer answers the pointer, so the lock screen is not offered it"
         );
@@ -610,74 +590,6 @@ mod tests {
             "moved to the free cells nearest where it was"
         );
         session::undo().expect("one entry");
-        assert_eq!(stored(&rig), before);
-    }
-
-    /// TA-3 through the palette: a chip from a bar becomes a widget on the grid and, from its menu, a chip on the bar again — the same instance, id and options, each one undo entry.
-    #[test]
-    fn a_chip_from_a_bar_becomes_a_widget_and_back_keeping_its_id_and_options() {
-        let rig = rig_with("desktop-from-bars", |layout| {
-            for group in &mut layout.outputs[0].layers.top.areas[0].groups {
-                for child in &mut group.children {
-                    if child.id.as_str() == "clock" {
-                        child.options.insert("format".into(), "%H:%M".into());
-                    }
-                }
-            }
-        });
-        let _owner = Owner::new();
-        let _host = enter(LayerKind::Desktop);
-        let before = stored(&rig);
-        let chip = Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
-            .instance(&GroupId::new("center"), &InstanceId::new("clock"));
-        desktop::put(&Pick::FromBar(chip), None, LayerKind::Desktop).expect("moved onto the grid");
-        let widget = holding("clock").expect("the bar's clock is on the grid");
-        let placed = &widget.children[0];
-        assert_eq!(placed.representation, Representation::WidgetM);
-        assert_eq!(
-            placed.options.get("format").and_then(|it| it.as_str()),
-            Some("%H:%M")
-        );
-        assert_eq!(
-            cells_of("clock-2"),
-            Some(at(0, 0, 4, 2)),
-            "the desktop clock kept its cells"
-        );
-        assert!(
-            !shown_area(LayerKind::Top, &AreaId::new("bar-top"))
-                .expect("the bar")
-                .groups
-                .iter()
-                .any(|group| group
-                    .children
-                    .iter()
-                    .any(|child| child.id.as_str() == "clock")),
-            "and it left the bar"
-        );
-
-        context::open(Asked {
-            node: node_of("clock"),
-            window: LayerKind::Overlay,
-            at: None,
-        })
-        .expect("its menu opens");
-        context::pick("Move to bar as chip");
-        let bar = shown_area(LayerKind::Top, &AreaId::new("bar-top")).expect("the bar");
-        let back = bar
-            .groups
-            .iter()
-            .flat_map(|group| group.children.iter())
-            .find(|child| child.id.as_str() == "clock")
-            .expect("the clock is a chip again");
-        assert_eq!(back.representation, Representation::Chip);
-        assert_eq!(
-            back.options.get("format").and_then(|it| it.as_str()),
-            Some("%H:%M")
-        );
-        assert!(holding("clock").is_none(), "and gone from the grid");
-
-        session::undo().expect("the move back is undone");
-        session::undo().expect("the move onto the grid is undone");
         assert_eq!(stored(&rig), before);
     }
 
@@ -940,8 +852,8 @@ mod tests {
         let _host = enter(LayerKind::Desktop);
         let mode = mode::current().expect("the mode is up");
         widgets::tool(&mode).expect("the desktop tool builds");
-        palette::tree(SCREEN, LayerKind::Desktop, Offer::Every).expect("the palette builds");
-        palette::open(Offer::FromBars).expect("the palette opens");
+        palette::tree(SCREEN, LayerKind::Desktop).expect("the palette builds");
+        palette::open().expect("the palette opens");
         assert!(transient::is_open(palette::ID));
         transient::close(palette::ID);
         popover::open_instance(node_of("clock-2")).expect("the widget's popover opens");
@@ -1069,7 +981,7 @@ mod tests {
         let needs = Err(crate::session::EditError::Refused(
             "Only an edit mode can do this".to_string(),
         ));
-        assert_eq!(palette::open(Offer::Every), needs);
+        assert_eq!(palette::open(), needs);
         assert_eq!(desktop::create_grid(), needs);
         assert_eq!(crate::modes::top::create_on(config::Edge::Bottom), needs);
         assert_eq!(crate::modes::overlay::add_stack(), needs);
@@ -1124,8 +1036,7 @@ mod tests {
     }
 
     fn listed(layer: LayerKind) -> Vec<String> {
-        let desktop = surfaces::reconcile::desktops()[0].clone();
-        palette::lines(&desktop, layer, "", Offer::Every)
+        palette::lines(layer, "")
             .into_iter()
             .map(|line| match line {
                 Line::Heading(heading) => format!("# {heading}"),
@@ -1187,9 +1098,8 @@ mod tests {
             "the mixer answers the pointer: {on_lock:?}"
         );
 
-        let desktop = surfaces::reconcile::desktops()[0].clone();
         let narrowed: Vec<Line> =
-            palette::lines(&desktop, LayerKind::Desktop, "WEATHER-P", Offer::Every);
+            palette::lines(LayerKind::Desktop, "WEATHER-P");
         assert_eq!(narrowed.len(), 2, "its heading and the one entry");
     }
 
@@ -1204,7 +1114,7 @@ mod tests {
 
         assert!(tap(Key::Char('a'), NONE));
         assert!(transient::is_open(palette::ID));
-        let (mut card, _) = page(palette::tree(SCREEN, LayerKind::Desktop, Offer::Every));
+        let (mut card, _) = page(palette::tree(SCREEN, LayerKind::Desktop));
         let press = |card: &mut ComponentList, key: Key| {
             let event = Event::KeyPressed {
                 key,
@@ -1326,8 +1236,8 @@ mod tests {
 
     /// The palette open and as its window builds it, narrowed by typing `typed` into it, and where the entry `name` is drawn there.
     fn palette_showing(typed: &str, name: &str) -> (ComponentList, (f32, f32)) {
-        palette::open(Offer::Every).expect("the palette opens");
-        let (mut card, _) = page(palette::tree(SCREEN, LayerKind::Desktop, Offer::Every));
+        palette::open().expect("the palette opens");
+        let (mut card, _) = page(palette::tree(SCREEN, LayerKind::Desktop));
         for _ in 0..3 {
             telar::relayout_if_dirty();
         }
@@ -1339,8 +1249,7 @@ mod tests {
     }
 
     fn entries(layer: LayerKind) -> Vec<(Pick, String)> {
-        let desktop = surfaces::reconcile::desktops()[0].clone();
-        palette::lines(&desktop, layer, "", Offer::Every)
+        palette::lines(layer, "")
             .into_iter()
             .filter_map(|line| match line {
                 Line::Entry { pick, name, .. } => Some((pick, name)),

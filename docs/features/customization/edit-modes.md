@@ -107,8 +107,8 @@ drag to 45°), and a handle per stop, at most eight. See [Wallpaper](../surfaces
 
 ### Desktop
 
-Grids of widgets placed by explicit cells. `a` opens the **palette** of every module that draws as a widget, the
-komponents you have saved, and "From bars…", which moves a chip off a bar onto the grid as the same instance. A widget
+Grids of widgets placed by explicit cells. `a` opens
+the **palette** of every module that draws as a widget and the komponents you have saved. A widget
 dropped where another is never deletes it: the one in the way moves to the free cells nearest, and nothing else moves.
 Drop a widget on the middle of another to stack the two into a **Smart Stack**, and drag it out to make it a widget again;
 the corner handle steps its size through S, M and L, or use Ctrl+arrows. Shift+N makes a grid; Ctrl+Shift+arrows stack a
@@ -118,8 +118,8 @@ widget onto the one that way. See [Desktop widgets](../surfaces/widgets.md).
 
 Bars: Ctrl+Shift+arrows make one on the edge the arrow points at, `s` splits one in half (or just before the selected chip),
 Alt+Shift+arrows join it with the bar beside it along its edge, and handles set its thickness, length and offset. Several bars
-can share an edge. Drag a chip between zones and between bars — a live line shows where it will land — or off every bar onto
-the desktop to make it a widget (`d`). `o` and "Move to <screen>" in a bar's menu send it to another screen. A bar's popover
+can share an edge. Drag a chip between zones and between bars — a live line shows where it will land — or off every bar to
+take it off the layout, which one undo brings back. Nothing moves between layers: a chip stays a chip. `o` and "Move to <screen>" in a bar's menu send it to another screen. A bar's popover
 holds its shape, `reserve`, auto-hide and `above_fullscreen`, with the cost of that last one written beside it. Reservation
 re-tiles your windows once, when you let go, not during the drag. See [Bars](../surfaces/bars.md).
 

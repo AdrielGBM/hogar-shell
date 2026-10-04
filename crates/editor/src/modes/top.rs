@@ -4,11 +4,11 @@
 //!
 //! **Distinct hotspots (F-7).** A bar's split button sits over the middle of its inner side and the join button over the seam between two bars, never in one place; a split button pressed cuts in half, dragged it cuts where it is let go.
 //!
-//! **Chips go where the insertion line is.** A chip dragged over a bar shows the line it would be put at, between two chips of the zone under the pointer, on any bar of any edge ([`ChipLanding`]). Carried off every bar and let go over the desktop it leaves its bar (F-7's drag out to detach): onto the desktop grid under the pointer as a widget where its module draws one there — the same instance, id, options and state (TA-3) — and otherwise it is taken away, which one undo brings back ([`Detached`]).
+//! **Chips go where the insertion line is.** A chip dragged over a bar shows the line it would be put at, between two chips of the zone under the pointer, on any bar of any edge ([`ChipLanding`]). Carried off every bar and let go it is taken off the layout (F-7's drag out to detach), which one undo brings back: a chip stays an element of its own layer and never becomes one of another's.
 //!
 //! **Reservation re-tiles on commit only.** Every drag previews through [`crate::session::Edit`], which the windows draw without re-reserving (`surfaces::reconcile::preview`), so the user's windows re-tile once, when the drag is let go (F-6.7).
 //!
-//! **Every drag has a key (WCAG 2.5.7).** Ctrl+Shift+arrows make a bar on the edge the arrow points at, `s` splits the selected bar in half (or just before the selected chip), Alt+Shift+arrows join it with the bar that way along its edge, `d` takes the selected chip off its bar onto the desktop, and `o` sends the bar to the next screen; the generic Shift+arrows and Ctrl+arrows move and resize bars and chips. A bar's menu has the same rows, and "Move to <screen>" for each other screen: moving a bar between screens is the menu's and the keyboard's until a drag across outputs is checked live on two (F-6.8).
+//! **Every drag has a key (WCAG 2.5.7).** Ctrl+Shift+arrows make a bar on the edge the arrow points at, `s` splits the selected bar in half (or just before the selected chip), Alt+Shift+arrows join it with the bar that way along its edge, and `o` sends the bar to the next screen; the generic Shift+arrows and Ctrl+arrows move and resize bars and chips. A bar's menu has the same rows, and "Move to <screen>" for each other screen: moving a bar between screens is the menu's and the keyboard's until a drag across outputs is checked live on two (F-6.8).
 //!
 //! **One undo entry each.** A new bar, a move, a split, a join, a chip carried and a bar sent to another screen are each one edit.
 
@@ -20,7 +20,7 @@ use telar::RwSignal;
 use config::Edge;
 use layout::{
     Action, Area, AreaId, AreaKind, AutoHide, Corners, Extent, Group, GroupId, GroupKind,
-    InstanceId, LayerKind, Layout, LayoutOp, Library, OutputMatch, OutputRule, Representation,
+    InstanceId, LayerKind, Layout, LayoutOp, Library, OutputMatch, OutputRule,
     ResolvedArea, ResolvedAreaKind, ResolvedGroup, Site, Spot, Trigger, Zone,
 };
 use surfaces::bar::Span;
@@ -36,10 +36,9 @@ use crate::popover::handles::{self, SHORTEST};
 use crate::popover::rows::{self, Range, label};
 use crate::popover::{AreaDraft, Inspector, help, kind_field};
 use crate::session::{self, EditError, Selection};
-use crate::written::{Work, known};
+use crate::written::Work;
 
-use super::desktop::{self, placed_as};
-use super::palette::Pick;
+use super::desktop::placed_as;
 
 /// How far apart two positions along an edge may be and still count as the same place, in pixels.
 const TOUCH: f32 = 0.5;
@@ -98,15 +97,7 @@ pub(crate) fn install() {
             run: Run::Toward(join_toward),
         },
     );
-    keys::add_key_op(
-        "bar",
-        KeyOp {
-            name: "chip-detach",
-            keys: vec![Chord::char('d')],
-            label: || telar::t!("editor.keys.op.chip-detach"),
-            run: Run::Act(detach_selected),
-        },
-    );
+
     keys::add_key_op(
         "bar",
         KeyOp {
@@ -810,39 +801,6 @@ fn zone_name(zone: Zone) -> &'static str {
     }
 }
 
-/// What a chip carried off every bar turned into when it was let go.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Detached {
-    /// A widget on the desktop grid it was let go over.
-    Widget,
-    /// Nothing took it: it is off the layout, and one undo puts it back.
-    Removed,
-}
-
-/// The chip `node` names taken off its bar: onto the grid `onto` of the desktop at its cells, as the first widget size its module draws there, where it was let go over one; otherwise off the layout.
-pub(crate) fn detached(
-    layout: &Layout,
-    desktop: &Desktop,
-    node: &Node,
-    onto: Option<(&AreaId, (u32, u32))>,
-) -> Result<(Vec<LayoutOp>, Detached), EditError> {
-    let module = desktop::shown_instance(&desktop.resolving(layout, &known()), node)
-        .ok_or_else(EditError::nothing)?
-        .module;
-    let widget = desktop::first_size(&module, LayerKind::Desktop);
-    if let (Some((grid, at)), Some(size)) = (onto, widget) {
-        let ops = desktop::moved_onto(
-            layout,
-            desktop,
-            node,
-            (LayerKind::Desktop, grid),
-            size,
-            Some(at),
-        )?;
-        return Ok((ops, Detached::Widget));
-    }
-    Ok((context::removal(layout, desktop, node)?, Detached::Removed))
-}
 
 /// Whether `layout` places the area `id` on `layer` of `desktop`'s screen.
 fn places(
@@ -1095,13 +1053,6 @@ fn join_toward(
     joined(layout, &desktop, node.layer, &node.area, &other)
 }
 
-/// `d`: the selected chip taken off its bar onto the desktop as a widget, as one undo entry.
-fn detach_selected(selection: &Selection) -> Result<(), EditError> {
-    let Selection::Instance(node) = selection else {
-        return Err(EditError::nothing());
-    };
-    desktop::put(&Pick::FromBar(node.clone()), None, LayerKind::Desktop)
-}
 
 /// `o`: the selected bar sent to the screen after its own, round to the first after the last.
 fn output_step(selection: &Selection, layout: &Layout) -> Result<Vec<LayoutOp>, EditError> {
@@ -1331,11 +1282,6 @@ pub(crate) fn keep_clear(draft: &AreaDraft, along: Along) {
     });
 }
 
-/// What the carried chip's module draws on the desktop, for what a drag off every bar would make of it.
-pub(crate) fn widget_of(desktop: &Desktop, node: &Node) -> Option<Representation> {
-    let module = desktop::shown_instance(desktop, node)?.module;
-    desktop::first_size(&module, LayerKind::Desktop)
-}
 
 /// A bar's popover rows: its edge, thickness, length and offset along the edge, kept clear of the bars beside it ([`keep_clear`]); its shape, gap, spacing and corners; and how it hides — with handles on the bar for its geometry.
 fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {

@@ -585,8 +585,7 @@ mod tests {
         assert!(
             desktop::added(&layout, &desktop, LayerKind::Lock, &grid, &adding("mixer")).is_err()
         );
-        let offered: Vec<String> =
-            palette::lines(&desktop, LayerKind::Lock, "", palette::Offer::Every)
+        let offered: Vec<String> = palette::lines(LayerKind::Lock, "")
                 .into_iter()
                 .filter_map(|line| match line {
                     palette::Line::Entry { name, .. } => Some(name),

@@ -27,7 +27,7 @@ mod tests {
     use crate::keys::{self, Direction, Press};
     use crate::mode::{self, Compositor};
     use crate::modes::bars::{Seen, measured, nearest_edge};
-    use crate::modes::top::{self, ChipLanding, Detached, Drawn};
+    use crate::modes::top::{self, ChipLanding, Drawn};
     use crate::rig::{Rig, SCREEN, rig_on, rig_prepared, rig_screens, rig_with};
     use crate::session::{self, Edit, EditError, Selection};
     use crate::{context, host, popover, variant};
@@ -809,54 +809,6 @@ mod tests {
         );
     }
 
-    /// Carried off every bar a chip leaves it: onto the desktop grid it was let go over as a widget — the same instance — or, over nothing that takes it, off the layout, which one undo puts back.
-    #[test]
-    fn a_chip_carried_off_every_bar_becomes_a_widget_or_is_taken_away_until_undone() {
-        let _owner = Owner::new();
-        let rig = rig_with("top-detach", |_| {});
-        let _mode = enter();
-        let (ops, outcome) = top::detached(
-            &session::draft().peek(),
-            &screen(),
-            &chip("clock"),
-            Some((&AreaId::new("widgets"), (2, 0))),
-        )
-        .expect("the clock detaches");
-        assert_eq!(outcome, Detached::Widget);
-        commit(ops);
-        assert!(zone(&bar_top(), Zone::Center).is_empty());
-        let desktop = screen();
-        let on_desktop = desktop
-            .resolved
-            .layer(LayerKind::Desktop)
-            .expect("a desktop layer")
-            .areas
-            .iter()
-            .flat_map(|area| area.groups.iter())
-            .flat_map(|group| group.children.iter())
-            .find(|child| child.id.as_str() == "clock")
-            .expect("the same instance is on the desktop");
-        assert_ne!(
-            on_desktop.representation,
-            layout::Representation::Chip,
-            "drawn as a widget now"
-        );
-
-        let before = stored(&rig);
-        let (ops, outcome) =
-            top::detached(&session::draft().peek(), &screen(), &chip("notes"), None)
-                .expect("notes detaches");
-        assert_eq!(
-            outcome,
-            Detached::Removed,
-            "notes draws no widget, so nothing takes it"
-        );
-        commit(ops);
-        assert!(zone(&bar_top(), Zone::End).is_empty(), "off the layout");
-        session::undo().expect("undo");
-        assert_eq!(stored(&rig), before, "one undo puts it back");
-    }
-
     /// "Move to <screen>": a bar every screen shares leaves this one alone and stays on the other; a bar only this screen writes is written for the other screen instead — and one undo takes either back.
     #[test]
     fn a_bar_moves_to_another_screen_by_its_rule_and_leaves_its_own() {
@@ -1066,9 +1018,9 @@ mod tests {
         assert!(rig.undo_label().is_some());
     }
 
-    /// Every drag has a key: Ctrl+Shift+arrows make a bar on that edge, `s` splits the selected bar, Alt+Shift+arrows join it with the bar that way, `d` takes the selected chip onto the desktop — each one entry in the history.
+    /// Every drag has a key: Ctrl+Shift+arrows make a bar on that edge, `s` splits the selected bar, Alt+Shift+arrows join it with the bar that way — each one entry in the history.
     #[test]
-    fn the_keys_make_split_join_and_detach_bars_and_chips() {
+    fn the_keys_make_split_and_join_bars() {
         let _owner = Owner::new();
         let rig = rig_with("top-keys", |_| {});
         let _mode = enter();
@@ -1107,13 +1059,6 @@ mod tests {
             edge_of(&AreaId::new("bar-bottom")),
             Some(Edge::Bottom),
             "a bar at the bottom"
-        );
-
-        assert!(session::select(Selection::Instance(chip("clock"))));
-        assert!(tap(Key::Char('d'), NONE), "`d` detaches");
-        assert!(
-            zone(&bar_top(), Zone::Center).is_empty(),
-            "the clock left its bar"
         );
         let history = rig.store.borrow().undo_label().map(str::to_string);
         assert!(history.is_some());

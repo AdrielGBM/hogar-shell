@@ -509,7 +509,7 @@ mod tests {
     /// The instance menu offers the module's own actions, customizing it, moving it where it is drawn the other way, removing it and editing its layer; the bar's offers what acts on the bar itself, outside its mode too.
     #[test]
     fn an_instances_menu_offers_its_actions_and_the_layout_rows() {
-        let _rig = rig_with("menu-rows", with_desktop_grid);
+        let _rig = rig_with("menu-rows", with_top_grid);
         let _scope = Scope::new();
         opened(clock(), (900.0, 17.0));
         assert_eq!(
@@ -519,7 +519,7 @@ mod tests {
                 "Next",
                 "Previous",
                 "Customize Clock…",
-                "Move to desktop as widget",
+                "Move to the top layer as widget",
                 "Save group as komponent…",
                 "Remove",
                 "Edit Top…",
@@ -533,6 +533,13 @@ mod tests {
     }
 
     /// A grid on the desktop in place of the shipped one, its first cells taken by an empty group.
+    fn with_top_grid(layout: &mut Layout) {
+        with_desktop_grid(layout);
+        let layers = &mut layout.outputs[0].layers;
+        let grid = layers.desktop.areas.remove(0);
+        layers.top.areas.push(grid);
+    }
+
     fn with_desktop_grid(layout: &mut Layout) {
         let rule = &mut layout.outputs[0];
         rule.layers.desktop.areas = vec![layout::Area {
@@ -569,20 +576,6 @@ mod tests {
         }
     }
 
-    /// The group `group` of the desktop area `area` as the screen shows it.
-    fn shown_group(area: &AreaId, group: &GroupId) -> Option<layout::ResolvedGroup> {
-        reconcile::desktops()[0]
-            .resolved
-            .layer(LayerKind::Desktop)?
-            .areas
-            .iter()
-            .find(|held| held.id == *area)?
-            .groups
-            .iter()
-            .find(|held| held.id == *group)
-            .cloned()
-    }
-
     /// Where the instance `id` is written, and as what, in the active layout.
     fn written(rig: &Rig, id: &str) -> Option<(AreaId, GroupId, Instance)> {
         let store = rig.store.borrow();
@@ -601,47 +594,15 @@ mod tests {
         })
     }
 
-    /// TA-3: a chip moved to the desktop becomes a widget there and a widget moved to a bar becomes a chip, keeping its id and options, each as one undo entry.
+    /// A chip on a bar is never offered a move onto another layer: the desktop grid is not a place its menu names.
     #[test]
-    fn converting_a_chip_to_a_widget_and_back_keeps_its_id_and_options() {
-        let rig = rig_with("menu-convert", with_desktop_grid);
+    fn a_chip_is_offered_no_move_to_another_layer() {
+        let _rig = rig_with("menu-own-layer", with_desktop_grid);
         let _scope = Scope::new();
-        let (_, _, before) = written(&rig, "clock").expect("the clock is on the bar");
-
         opened(clock(), (900.0, 17.0));
-        context::pick("Move to desktop as widget");
-        let (area, group, widget) = written(&rig, "clock").expect("the clock is still placed");
-        assert_eq!(
-            (area.as_str(), group.as_str()),
-            ("widgets", "clock"),
-            "a widget of its own on the grid, on the free cells nearest its first"
-        );
-        let placed = shown_group(&area, &group).expect("its group is on the grid");
-        assert!(
-            matches!(placed.kind, GroupKind::Cell { col: 0, row: 2, .. }),
-            "{:?}",
-            placed.kind
-        );
-        assert_eq!(widget.representation, Some(Representation::WidgetM));
-        assert_eq!(widget.options, before.options, "it keeps its options");
-        assert_eq!(rig.undo_label().as_deref(), Some("Move Clock to desktop"));
-
-        let on_desktop =
-            Node::area(Some(SCREEN), LayerKind::Desktop, &area).instance(&group, &widget.id);
-        opened(on_desktop, (100.0, 200.0));
-        context::pick("Move to bar as chip");
-        let (area, _, chip) = written(&rig, "clock").expect("the clock is back");
-        assert_eq!(area.as_str(), "bar-top");
-        assert_eq!(chip.representation, Some(Representation::Chip));
-        assert_eq!((chip.id, chip.options), (before.id, before.options));
-
-        assert_eq!(session::undo().as_deref(), Ok("Move Clock to bar"));
-        assert_eq!(
-            written(&rig, "clock")
-                .map(|(area, ..)| area.to_string())
-                .as_deref(),
-            Some("widgets")
-        );
+        let rows = context::rows();
+        assert!(rows.iter().any(|row| row == "Remove"), "{rows:?}");
+        assert!(!rows.iter().any(|row| row.starts_with("Move ")), "{rows:?}");
     }
 
     /// "Remove" takes the instance out as one undo entry, and undo puts it back where it was.
@@ -1283,7 +1244,7 @@ mod tests {
 
     /// [`with_desktop_grid`], the bar's clock running [`HELD`] when pressed.
     fn with_held_clock(layout: &mut Layout) {
-        with_desktop_grid(layout);
+        with_top_grid(layout);
         for group in &mut layout.outputs[0].layers.top.areas[0].groups {
             for child in &mut group.children {
                 if child.id.as_str() == "clock" {
@@ -1310,7 +1271,7 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// Trust decides what runs, not what a file says (DEC-30): a bundle's chip moved to its desktop grid, inside the bundle's own file, is written there with its held line — still held where it lands, and still listed for the user to trust — rather than the move erasing it.
+    /// Trust decides what runs, not what a file says (DEC-30): a bundle's chip moved to a grid of its layer, inside the bundle's own file, is written there with its held line — still held where it lands, and still listed for the user to trust — rather than the move erasing it.
     #[test]
     fn moving_a_bundles_instance_inside_its_file_keeps_its_held_line() {
         let rig = rig_prepared("held-move", with_held_clock, |store| {
@@ -1318,7 +1279,7 @@ mod tests {
         });
         let _scope = Scope::new();
         opened(clock(), (900.0, 17.0));
-        context::pick("Move to desktop as widget");
+        context::pick("Move to the top layer as widget");
 
         let (area, _, widget) = written(&rig, "clock").expect("the clock is still placed");
         assert_eq!(area.as_str(), "widgets");
@@ -1368,7 +1329,7 @@ mod tests {
         let _scope = Scope::new();
         let before = rig.store.borrow().active().clone();
         opened(clock(), (900.0, 17.0));
-        context::pick("Move to desktop as widget");
+        context::pick("Move to the top layer as widget");
 
         let refused = mode::refusal()
             .get()

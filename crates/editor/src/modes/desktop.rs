@@ -48,7 +48,7 @@ const GRID_BUTTONS: [crate::host::ToolbarButton; 2] = [
     ),
     (
         || telar::t!("editor.desktop.add_widget"),
-        || said(palette::open(palette::Offer::Every)),
+        || said(palette::open()),
     ),
 ];
 
@@ -82,7 +82,7 @@ pub(crate) fn add_grid_tools(layer: LayerKind) {
             name: "widget-add",
             keys: vec![Chord::char('a')],
             label: || telar::t!("editor.keys.op.widget-add"),
-            run: Run::Act(|_| palette::open(palette::Offer::Every)),
+            run: Run::Act(|_| palette::open()),
         },
     );
     keys::add_mode_key_op(
@@ -616,7 +616,7 @@ pub(crate) fn target_near(desktop: &Desktop, layer: LayerKind) -> Option<(AreaId
     grids.first().map(|area| (area.id.clone(), (0, 0)))
 }
 
-/// Puts what `pick` names on a grid of `layer` on the screen being edited, as one undo entry, and selects it: on the cells `at` of the grid there where the pointer put it, else on the free cells nearest the selection — on a grid made for it where the layer has none. A chip from a bar keeps its id, options and state (TA-3), and lands on the first free cells of its grid.
+/// Puts what `pick` names on a grid of `layer` on the screen being edited, as one undo entry, and selects it: on the cells `at` of the grid there where the pointer put it, else on the free cells nearest the selection — on a grid made for it where the layer has none.
 pub(crate) fn put(
     pick: &Pick,
     at: Option<(AreaId, (u32, u32))>,
@@ -657,28 +657,15 @@ pub(crate) fn put(
         ))
     })?;
     let name = ui::descriptor::find(&module).map_or(module.as_str(), |found| found.name);
-    let (placed, id, label) = match pick {
-        Pick::FromBar(node) => {
-            let Part::Instance(_, id) = &node.part else {
-                return Err(EditError::nothing());
-            };
-            let placed = moved_onto(&after, &desktop, node, (layer, &area), representation, cell)?;
-            let label = telar::t!("editor.desktop.moved_from_bar", name = name);
-            (placed, id.template(), label)
-        }
-        _ => {
-            let adding = Adding {
-                module: &module,
-                representation,
-                at: cell,
-                near,
-            };
-            let (placed, id) = added(&after, &desktop, layer, &area, &adding)?;
-            (placed, id, telar::t!("editor.desktop.added", name = name))
-        }
+    let adding = Adding {
+        module: &module,
+        representation,
+        at: cell,
+        near,
     };
+    let (placed, id) = added(&after, &desktop, layer, &area, &adding)?;
     ops.extend(placed);
-    context::commit(label, ops)?;
+    context::commit(telar::t!("editor.desktop.added", name = name), ops)?;
     if let Some((node, _)) = surfaces::rects::instance(Some(&mode.output), &id) {
         session::select(Selection::Instance(node));
     }
@@ -734,12 +721,9 @@ fn grid_rows(_: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
             keys::spell(&[Chord::char('a')]),
             move || {
                 session::select(Selection::Area(selected.clone()));
-                said(palette::open(palette::Offer::Every));
+                said(palette::open());
             },
         ),
-        telar::MenuEntry::row(telar::t!("editor.desktop.from_bars"), "", || {
-            said(palette::open(palette::Offer::FromBars))
-        }),
         telar::MenuEntry::row(
             telar::t!("editor.desktop.new_grid"),
             keys::spell(&[Chord::char('n').shift()]),

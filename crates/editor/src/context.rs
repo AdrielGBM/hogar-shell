@@ -511,7 +511,7 @@ struct Destination {
     place: String,
 }
 
-/// Where the instance `node` names can go to be drawn the other way: a chip to every grid and free area on its screen as a widget, a widget or a card to every bar and dock as a chip — as far as its module can be drawn that way, and never onto the lock layer.
+/// Where the instance `node` names can go to be drawn the other way: a chip to every grid and free area of its own layer as a widget, a widget or a card to every bar and dock of its own layer as a chip — as far as its module can be drawn that way. Never onto another layer: what is on one layer has nothing to do with what is on another.
 fn destinations(
     desktop: &Desktop,
     node: &Node,
@@ -524,12 +524,10 @@ fn destinations(
         .is_some();
     let (layout, known) = (session::draft().peek(), known());
     let mut found: Vec<Destination> = Vec::new();
-    for layer in LayerKind::SESSION {
-        let Some(areas) = desktop.resolved.layer(layer) else {
-            continue;
-        };
+    let layer = node.layer;
+    if let Some(areas) = desktop.resolved.layer(layer) {
         for area in &areas.areas {
-            if layer == node.layer && area.id == node.area {
+            if area.id == node.area {
                 continue;
             }
             let (representation, place) = match &area.kind {

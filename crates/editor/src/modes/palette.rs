@@ -1,4 +1,4 @@
-//! The add-widget palette (TA-5): every module that draws as a widget, grouped by what it is about and narrowed by what is typed, the komponents saved in `components/` with the number of parameters each takes, and — "From bars…" — the chips on this screen's bars that could be widgets instead.
+//! The add-widget palette (TA-5): every module that draws as a widget, grouped by what it is about and narrowed by what is typed, the komponents saved in `components/` with the number of parameters each takes.
 //!
 //! **Three ways to place (WCAG 2.5.7).** An entry dragged onto a grid lands where it is let go, the cells it would cover outlined as it goes; an entry pressed is picked, and the next press on a grid puts it on the cells there; Enter puts the entry the arrows point at on the free cells nearest the selection. Typing narrows the list whether or not the search field has the focus.
 //!
@@ -14,10 +14,9 @@ use telar::{
 };
 
 use config::theme::{FontRole, NordTheme};
-use layout::{KomponentId, LayerKind, Representation, ResolvedAreaKind};
+use layout::{KomponentId, LayerKind, Representation};
 use platform_wayland::KeyboardMode;
-use surfaces::reconcile::{self, Desktop};
-use surfaces::rects::Node;
+use surfaces::reconcile::{self};
 use surfaces::transient::{self, Place, Spec};
 use ui::chrome::Chrome;
 use ui::descriptor::{Built, Category, ModuleDescriptor};
@@ -37,15 +36,6 @@ pub const ID: &str = "editor:palette";
 /// How wide the palette's card is.
 const WIDTH: f32 = 320.0;
 
-/// Which of its sections the palette opens with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Offer {
-    /// Every module that draws as a widget, then the chips on the bars.
-    Every,
-    /// The chips on the bars alone.
-    FromBars,
-}
-
 /// What an entry of the palette puts on a grid.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Pick {
@@ -53,20 +43,13 @@ pub enum Pick {
     Module(String),
     /// A new group that draws this komponent.
     Komponent(KomponentId),
-    /// The chip instance this node names, moved off its bar.
-    FromBar(Node),
 }
 
 impl Pick {
-    /// The module it puts on a grid: a chip's as its screen shows it now.
     pub(crate) fn module(&self) -> Option<String> {
         match self {
             Pick::Module(module) => Some(module.clone()),
             Pick::Komponent(_) => None,
-            Pick::FromBar(node) => {
-                let desktop = reconcile::desktop_now(node.output.as_deref())?;
-                desktop::shown_instance(&desktop, node).map(|chip| chip.module)
-            }
         }
     }
 }
@@ -150,40 +133,28 @@ fn matches(query: &str, words: &[&str]) -> bool {
             .any(|word| word.to_lowercase().contains(&query))
 }
 
-/// What the palette lists for `layer` of `desktop`'s screen when `query` is typed: each category's modules under its heading, then the chips on the screen's bars that could be widgets — the first or the second alone, as `offer` asks. The lock screen has no bars to take chips from.
-pub fn lines(desktop: &Desktop, layer: LayerKind, query: &str, offer: Offer) -> Vec<Line> {
+/// What the palette lists for `layer` when `query` is typed: each category's modules under its heading, then the komponents.
+pub fn lines(layer: LayerKind, query: &str) -> Vec<Line> {
     let mut lines = Vec::new();
-    if offer == Offer::Every {
-        for category in Category::ALL {
-            let mut modules: Vec<&ModuleDescriptor> = ui::descriptor::installed()
-                .iter()
-                .filter(|module| module.category == category)
-                .filter(|module| offered(module, layer).is_some())
-                .filter(|module| matches(query, &[module.name, module.id]))
-                .collect();
-            if modules.is_empty() {
-                continue;
-            }
-            modules.sort_by_key(|module| module.name);
-            lines.push(Line::Heading(category_name(category)));
-            lines.extend(modules.into_iter().map(|module| Line::Entry {
-                pick: Pick::Module(module.id.to_string()),
-                name: module.name.to_string(),
-                icon: module.icon,
-            }));
+    for category in Category::ALL {
+        let mut modules: Vec<&ModuleDescriptor> = ui::descriptor::installed()
+            .iter()
+            .filter(|module| module.category == category)
+            .filter(|module| offered(module, layer).is_some())
+            .filter(|module| matches(query, &[module.name, module.id]))
+            .collect();
+        if modules.is_empty() {
+            continue;
         }
+        modules.sort_by_key(|module| module.name);
+        lines.push(Line::Heading(category_name(category)));
+        lines.extend(modules.into_iter().map(|module| Line::Entry {
+            pick: Pick::Module(module.id.to_string()),
+            name: module.name.to_string(),
+            icon: module.icon,
+        }));
     }
-    if offer == Offer::Every {
-        lines.extend(komponents(layer, query));
-    }
-    if layer == LayerKind::Lock {
-        return lines;
-    }
-    let chips = chips(desktop, layer, query);
-    if !chips.is_empty() {
-        lines.push(Line::Heading(telar::t!("editor.desktop.from_bars")));
-        lines.extend(chips);
-    }
+    lines.extend(komponents(layer, query));
     lines
 }
 
@@ -215,48 +186,8 @@ fn komponents(layer: LayerKind, query: &str) -> Vec<Line> {
     lines
 }
 
-/// Every chip on a bar of `desktop`'s screen whose module draws as a widget on `layer`.
-fn chips(desktop: &Desktop, layer: LayerKind, query: &str) -> Vec<Line> {
-    let mut found = Vec::new();
-    for on in LayerKind::SESSION {
-        let Some(held) = desktop.resolved.layer(on) else {
-            continue;
-        };
-        for area in &held.areas {
-            if !matches!(area.kind, ResolvedAreaKind::Bar { .. }) {
-                continue;
-            }
-            for group in &area.groups {
-                for child in &group.children {
-                    let Some(module) = ui::descriptor::find(&child.module) else {
-                        continue;
-                    };
-                    let wanted = child.representation == Representation::Chip
-                        && offered(module, layer).is_some()
-                        && matches(query, &[module.name, module.id, area.id.as_str()]);
-                    if !wanted {
-                        continue;
-                    }
-                    let node = Node::area(desktop.output.as_deref(), on, &area.id)
-                        .instance(&group.id, &child.id);
-                    found.push(Line::Entry {
-                        pick: Pick::FromBar(node),
-                        name: telar::t!(
-                            "editor.palette.on_bar",
-                            name = module.name,
-                            bar = area.id.to_string()
-                        ),
-                        icon: module.icon,
-                    });
-                }
-            }
-        }
-    }
-    found
-}
-
 /// Opens the palette on the screen being edited, closing (and so keeping what it changed) whichever popover or menu was open.
-pub(crate) fn open(offer: Offer) -> Result<(), EditError> {
+pub(crate) fn open() -> Result<(), EditError> {
     let mode = crate::mode::required()?;
     crate::host::close_transients();
     let (output, layer) = (mode.output.clone(), mode.layer);
@@ -264,7 +195,7 @@ pub(crate) fn open(offer: Offer) -> Result<(), EditError> {
         Spec::new(
             ID,
             Place::Whole,
-            Rc::new(move |_: &Chrome| tree(&output, layer, offer)),
+            Rc::new(move |_: &Chrome| tree(&output, layer)),
         )
         .output(Some(mode.output.clone()))
         .keyboard(KeyboardMode::Exclusive)
@@ -274,21 +205,15 @@ pub(crate) fn open(offer: Offer) -> Result<(), EditError> {
 }
 
 /// The palette's card: a title, the search field and the lines it lists, at the left of what the reserving areas leave. The card is capped to the screen, and the lines fill what the title and the search field leave of it, scrolling past it ([`crate::popover::capped_rows`]); the entry the arrows point at is kept in view.
-pub(crate) fn tree(output: &str, layer: LayerKind, offer: Offer) -> Built {
+pub(crate) fn tree(output: &str, layer: LayerKind) -> Built {
     let theme = use_theme::<NordTheme>();
     let pad = ui::scale::space::lg();
     let gap = ui::scale::space::md();
     let query = signal(String::new());
     let pointed = signal(0usize);
     let pointed_row: RwSignal<Option<NodeId>> = signal(None);
-    let listing = output.to_string();
-    let listed = move || {
-        reconcile::desktop_now(Some(&listing))
-            .map(|desktop| lines(&desktop, layer, &query.get(), offer))
-            .unwrap_or_default()
-    };
+    let listed = move || lines(layer, &query.get());
     let entries = {
-        let listed = listed.clone();
         move || -> Vec<Pick> {
             listed()
                 .into_iter()
@@ -307,10 +232,7 @@ pub(crate) fn tree(output: &str, layer: LayerKind, offer: Offer) -> Built {
             .width(SizeDimension::Percent(1.0)),
         move || vec![(query.get(), pointed.get())],
         |shown: &(String, usize)| shown.clone(),
-        {
-            let listed = listed.clone();
-            move |(_, at): (String, usize)| lines_of(&building, layer, listed(), at, pointed_row)
-        },
+        move |(_, at): (String, usize)| lines_of(&building, layer, listed(), at, pointed_row),
     )?;
     let title = Text::new(
         || telar::t!("editor.palette.title"),
@@ -540,11 +462,6 @@ fn carry(
                     desktop::added(&before, &desktop, layer, &onto, &adding)
                         .ok()?
                         .0
-                }
-                Pick::FromBar(node) => {
-                    let representation = desktop::first_size(&carried.module()?, layer)?;
-                    desktop::moved_onto(&before, &desktop, node, (layer, &onto), representation, at)
-                        .ok()?
                 }
                 Pick::Komponent(id) => {
                     desktop::planned_use(&before, &desktop, layer, &onto, id, (at, (0, 0)))

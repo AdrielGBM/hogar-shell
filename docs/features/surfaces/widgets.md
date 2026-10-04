@@ -41,8 +41,8 @@ widget again. A widget dropped where another one is never removes it: the one in
 cells nearest where it was, and nothing else moves. The corner handle on the selected widget steps it through
 its sizes (S 2×2, M 4×2, L 4×4 cells, which are 80 px and 16 px apart unless the grid says otherwise).
 
-`a` opens the palette of every module that draws as a widget, and "From bars…" in it moves a chip off a bar
-onto the grid as the same instance. Every drag has a key: Shift+arrows move a widget one cell, Ctrl+arrows step
+`a` opens the palette of every module that draws as a widget. What is on a bar is another layer's and has
+nothing to do with the desktop: a chip never becomes a widget, nor a widget a chip. Every drag has a key: Shift+arrows move a widget one cell, Ctrl+arrows step
 its size, Ctrl+Shift+arrows stack it onto the widget that way, Shift+N makes a grid, and `w` edits the
 workspace that is up alone. `?` lists them all.
 
