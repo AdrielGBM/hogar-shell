@@ -38,7 +38,7 @@ hogar-shell mic step -5
 `[audio]` — `increment`, `max_volume`. Shared with [volume](volume.md), because the step you want on a
 function key is the same step either way.
 
-`[toasts.events] audio_input` raises a toast on a mute change; `[osd]` decides where the overlay appears.
+`[toasts.events] audio_input` raises a toast on a mute change; where the overlay appears is the layout's [stack area](../surfaces/osd.md#configuring).
 
 ## What it needs
 

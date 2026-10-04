@@ -53,6 +53,10 @@ for what happens while a window is fullscreen.
 
 Actions, swipe-to-dismiss and click-through-to-the-application all work from the popup and from the history.
 
+## Replacing and closing
+
+A notification can be replaced in place by naming its id, as `notify-send -r <id>` does, from any process — the spec lets any client name any live id, and `notify-send` runs as a new process every time. An id that names nothing live is treated as 0 and gets a fresh id, so a client never picks one in advance. `CloseNotification` likewise closes any notification. The one exception is the shell's own notices: a client naming one gets a fresh id instead, and cannot close it, since their buttons run the shell's own commands. The shell's notices are plain text, never read as markup.
+
 ## What it needs
 
 Nothing. The daemon is part of the shell, and the popup host is always mapped — a notification can arrive at any

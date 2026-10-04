@@ -1680,6 +1680,7 @@ mod tests {
             kind,
             stacked: false,
             repeat: None,
+            komponent: None,
             children,
         }
     }

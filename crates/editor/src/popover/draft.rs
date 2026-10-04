@@ -588,7 +588,7 @@ fn laid_over(edit: &Edit, site: &Site, node: &Node, writer: &Origin) -> bool {
     let Some(layout) = edit.transaction().before() else {
         return false;
     };
-    let level = Origin {
+    let level = layout::Level {
         layout: layout.id.clone(),
         output: site.output.clone(),
         workspace: site.workspace.clone(),

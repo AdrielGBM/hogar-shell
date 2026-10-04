@@ -2,14 +2,14 @@
 //!
 //! Each of these is a *surface*, so each declares the size the compositor would give it and is rendered under the same root the runner mounts — see [`telar::PreviewSurface`]. What is still the surface host's alone is the clear colour behind the tree and the window's own transparency.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use telar::{LayoutError, LayoutItem, PreviewEntry, PreviewSurface, Rect};
 
 use config::Config;
 use layout::{
-    LayerKind, LayoutStore, NOMINAL_OUTPUT, Resolved, ResolvedArea, ResolvedAreaKind, resolve,
+    LayerKind, LayoutStore, Library, NOMINAL_OUTPUT, Resolved, ResolvedArea, ResolvedAreaKind,
+    Trust, resolve,
 };
 
 use crate::area::Surround;
@@ -85,18 +85,19 @@ fn area_preview(
 /// The arrangement a preview of `layer` is taken from, and the area in it: the running layout first, and the shipped one where that layout has no such area.
 ///
 /// A preview is a picture of what this shell draws, so the user's own layout wins. Falling back to the shipped one is what keeps a picture of a wallpaper available on a machine that has not set one — the alternative is a preview that shows an error where a feature the shell has is simply switched off.
-fn previewed(
+pub(crate) fn previewed(
     layer: LayerKind,
     wanted: &impl Fn(&ResolvedArea) -> bool,
 ) -> Option<(Resolved, ResolvedArea)> {
     let shipped = LayoutStore::safe(std::env::temp_dir());
     let running = layout::running();
+    let library = known();
     let candidates = running
         .as_deref()
         .into_iter()
         .chain(std::iter::once(shipped.active()));
     for candidate in candidates {
-        let (resolved, _) = resolve(candidate, &BTreeMap::new(), NOMINAL_OUTPUT, None);
+        let (resolved, _) = resolve(candidate, &library, NOMINAL_OUTPUT, None);
         let found = resolved
             .layer(layer)
             .and_then(|layer| layer.areas.iter().find(|area| wanted(area)).cloned());
@@ -105,6 +106,14 @@ fn previewed(
         }
     }
     None
+}
+
+/// What a previewed layout is resolved against: the running shell's store, held back exactly as the screen is, or — with no store on this thread — every bundle record machine state holds, under which every action line of a bundle's file waits for trust. Never a library without trust, which would draw a bundle's held lines as the user's own.
+fn known() -> Library {
+    crate::layouts::read(|store| store.all().clone()).unwrap_or_else(|| Library {
+        trust: crate::bundles::trust_of(&services::state::get(), Trust::default().rule()),
+        ..Library::default()
+    })
 }
 
 /// Where on [`SCREEN`] the previewed bar lands.

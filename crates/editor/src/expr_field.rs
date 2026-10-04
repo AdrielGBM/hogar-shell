@@ -44,7 +44,7 @@ pub(crate) struct Field {
     /// What it reads: the shell's names on its layer, and `$item` and `$index` in a child of a repeated group.
     pub(crate) env: Environment,
     /// What an empty field means where it is: shown always, not bound.
-    pub(crate) empty: fn() -> String,
+    pub(crate) empty: Rc<dyn Fn() -> String>,
     /// Told each time the text is checked again.
     pub(crate) checked: Rc<Checks>,
 }
@@ -613,7 +613,7 @@ fn live_line(
     text: RwSignal<String>,
     expected: Rc<dyn Fn() -> Wanted>,
     gate: Gate,
-    empty: fn() -> String,
+    empty: Rc<dyn Fn() -> String>,
     evaluation_error: RwSignal<Option<Error>>,
 ) -> Built {
     let (env, checking) = (env.clone(), env.clone());

@@ -54,8 +54,8 @@ Started with arguments the same binary is a *client*: it sends the request to th
 reply. That is what makes every action bindable — see [Keybinds](../guides/keybinds.md).
 
 ```sh
-hogar-shell ping            # is it up
-hogar-shell version         # what build
+hogar-shell shell ping       # is it up
+hogar-shell shell version    # what build
 ```
 
 ## Non-Hyprland compositors

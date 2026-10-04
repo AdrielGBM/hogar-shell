@@ -6,6 +6,8 @@
 //!
 //! **Copies.** A group with `repeat` draws its children once per item of a list ([`Repeat`]): copy `<id>#<index>` reads its item as `$item` and its place as `$index`, keyed by index, so a list that grows or shrinks adds or drops copies at its end and leaves the others and the group's siblings as they were. An item that changes in place moves only what reads it. What a drawn copy reads is there for the editor too ([`drawn_item`]).
 //!
+//! **Komponents.** What a komponent holds reads the parameters of the use it is drawn in before any of the shell's names ([`layout::ResolvedExpr::within`]): each parameter's value — what the use sets it to, else the komponent's default — is bound where the group is drawn, on the same gate, and read as a local the way a copy reads `$item`. One that does not check reads as its type's empty value, so what the komponent holds still draws, and is reported where its value is written.
+//!
 //! **Variables.** An expression is checked against the variables there are, and checked again — its old binding taken down, a new one made — as one it names appears, goes or changes type, so a binding to a variable the user sets later comes alive then, without a reload ([`automation::vars::declared`]).
 //!
 //! **What an error means.** An expression that does not check here — a layout `layout check` would have refused, or warned of for a variable not set yet — is left out until it does: an area with no `visible` it can read is shown, an instance draws its written options. One that compiles keeps its last good value through an evaluation error, and a `visible` that has never answered is shown, since hiding what the user placed over a reading that has not arrived yet is the worse mistake. A `repeat` is different, since there is nothing to draw a copy of but an item: one that cannot be read, or has not answered yet, draws no copies. Every failure is an [`automation::failures`] site for as long as it lasts, in the file and under the key `layout check` names the expression by — the level that wrote it, as resolution recorded ([`layout::Origin`], [`site`]). A reading that has not arrived yet and a variable not set yet are waits, not failures.
@@ -20,7 +22,7 @@ use automation::env::{awaits_reading, describe};
 use automation::failures::{self, Drawn, Site};
 use automation::{Environment, Gate, Local};
 use config::fields::OptionField;
-use layout::{Origin, ResolvedExpr, ResolvedInstance};
+use layout::{KomponentUse, Origin, ResolvedExpr, ResolvedInstance, ResolvedParameter};
 use telar::{Color, LayoutStyle, Memo, OwnerId, ReactiveList, ReadSignal, RwSignal};
 use telar_expression::{Compiled, Errors, Held, Type, Value};
 use ui::descriptor::Built;
@@ -67,9 +69,45 @@ impl Expressions {
 
     /// The names as they are now, with the copy's own `$item` and `$index` before them inside a copy.
     fn env(&self) -> Environment {
-        match &self.copy {
-            Some(CopyOf { repeat, index }) => self.env.clone().with_locals(repeat.locals(*index)),
-            None => self.env.clone(),
+        self.env_within(None, None)
+    }
+
+    /// [`Expressions::env`] for an expression drawn `within` a komponent use, which reads the use's parameters before the shell's names too; `output` is the screen it is drawn on.
+    fn env_within(&self, within: Option<&KomponentUse>, output: Option<&str>) -> Environment {
+        let mut locals = match &self.copy {
+            Some(CopyOf { repeat, index }) => repeat.locals(*index),
+            None => Vec::new(),
+        };
+        if let Some(used) = within {
+            locals.extend(
+                used.parameters
+                    .iter()
+                    .map(|parameter| self.parameter(used, parameter, output)),
+            );
+        }
+        self.env.clone().with_locals(locals)
+    }
+
+    /// One parameter of the komponent use `used` as a local: what it reads at the use, bound while this is on screen, waited for until it first answers. One that does not check reads as its type's empty value, so what the komponent holds still draws, and its failure is reported where its value is written.
+    fn parameter(
+        &self,
+        used: &KomponentUse,
+        parameter: &ResolvedParameter,
+        output: Option<&str>,
+    ) -> Local {
+        let site = parameter_site(used, parameter, output);
+        let (name, ty) = (parameter.name.as_str(), parameter.ty.clone());
+        let empty = Value::empty(&ty);
+        match checked(&self.env, &parameter.expr().0, &ty) {
+            Ok(compiled) => {
+                let held = self.env.bind(compiled, self.gate.clone());
+                report(held, site);
+                Local::live(name, ty, move || held.get().value)
+            }
+            Err(unready) => {
+                unready.report(&site);
+                Local::live(name, ty, move || empty.clone())
+            }
         }
     }
 
@@ -101,9 +139,9 @@ impl Expressions {
 
     /// The list the group `node` names repeats its children over, as it changes; no items while it cannot be read here. Through an evaluation error it keeps its last list. The copies drawn from it are what [`drawn_item`] reads for as long as the current owner lives.
     pub fn repeat(&self, node: &Node, expr: &ResolvedExpr) -> Repeat {
-        let this = self.clone();
+        let (this, within, output) = (self.clone(), expr.within.clone(), node.output.clone());
         let repeat = Repeat::made(
-            move || this.env(),
+            move || this.env_within(within.as_deref(), output.as_deref()),
             expr.expr.0.clone(),
             self.gate.clone(),
             site(node, Slot::Repeat, &expr.origin),
@@ -173,7 +211,8 @@ impl Expressions {
         bindings: &BTreeMap<String, ResolvedExpr>,
         node: &Node,
     ) -> Vec<(String, Memo<Option<Written>>)> {
-        let env = self.env();
+        let within = bindings.values().find_map(|bound| bound.within.clone());
+        let env = self.env_within(within.as_deref(), node.output.as_deref());
         let mut drives = Vec::new();
         let mut compiled = Vec::new();
         for (path, expr) in bindings {
@@ -285,6 +324,9 @@ impl<T: Clone + 'static> Remade<T> {
     }
 }
 
+/// The most copies of its children a group with `repeat` draws: far more than any bar, dock or free area has room to show, and few enough that building them stays inside a frame. A longer list draws its first `MAX_COPIES` items and is reported, so a source that answers with a hundred thousand lines cannot stall the shell.
+pub const MAX_COPIES: usize = 256;
+
 /// What a group with `repeat` is drawn from: the list, as it changes, and the type of its items.
 #[derive(Clone)]
 pub struct Repeat {
@@ -313,7 +355,7 @@ impl Repeat {
             match ready {
                 Ok((compiled, item)) => {
                     let held = env.bind(compiled, gate.clone());
-                    report(held, site.clone());
+                    report_repeat(held, site.clone());
                     Some((held, item))
                 }
                 Err(unready) => {
@@ -334,9 +376,9 @@ impl Repeat {
         }
     }
 
-    /// `children` drawn once per item now, in order: each copy `<id>#<index>`, the children of one item together.
+    /// `children` drawn once per item now, up to [`MAX_COPIES`] items, in order: each copy `<id>#<index>`, the children of one item together.
     pub fn copies(&self, children: &[ResolvedInstance]) -> Vec<ResolvedInstance> {
-        let count = self.items.with(|items| items.len());
+        let count = self.items.with(|items| items.len().min(MAX_COPIES));
         (0..count)
             .flat_map(|index| {
                 children.iter().map(move |child| ResolvedInstance {
@@ -476,6 +518,29 @@ fn report(held: Memo<Held>, site: Site) {
     telar::on_cleanup(move || failures::recover(&gone));
 }
 
+/// [`report`] for a `repeat`, which also reports a list longer than the copies drawn of it ([`MAX_COPIES`]).
+fn report_repeat(held: Memo<Held>, site: Site) {
+    let gone = site.clone();
+    telar::effect(move || {
+        let held = held.get();
+        let longer = match &held.value {
+            Some(Value::List(items)) if items.len() > MAX_COPIES => Some(items.len()),
+            _ => None,
+        };
+        match (held.error, longer) {
+            (Some(error), _) if !awaits_reading(&error) => {
+                failures::fail(site.clone(), describe(&error.code))
+            }
+            (_, Some(count)) => failures::fail(
+                site.clone(),
+                util::message!("finding.repeat_truncated", count = count, max = MAX_COPIES),
+            ),
+            _ => failures::recover(&site),
+        }
+    });
+    telar::on_cleanup(move || failures::recover(&gone));
+}
+
 /// Which expression of a placed thing: an area's `visible`, a group's `repeat`, or an instance's binding at a path.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Slot<'a> {
@@ -509,8 +574,24 @@ fn site(node: &Node, slot: Slot, origin: &Origin) -> Site {
     })
 }
 
-/// The file and key validation names `slot` of `node` by, where `origin` is the level that wrote it.
+/// The file and key validation names `slot` of `node` by, where `origin` wrote it: a level of the layout, or the komponent the group uses, whose file names a child by the id it has there.
 pub(crate) fn expression_key(origin: &Origin, node: &Node, slot: Slot) -> (String, String) {
+    let level = match origin {
+        Origin::Level(level) => level,
+        Origin::Komponent(_) => {
+            let key = match &node.part {
+                Part::Instance(_, instance) => format!(
+                    "children.{}.{}",
+                    instance
+                        .komponent_child()
+                        .unwrap_or_else(|| instance.template()),
+                    slot.key()
+                ),
+                _ => slot.key(),
+            };
+            return (origin.file(), key);
+        }
+    };
     let area = format!("layers.{}.areas.{}", node.layer, node.area);
     let below = match &node.part {
         Part::Area => format!("{area}.{}", slot.key()),
@@ -521,7 +602,38 @@ pub(crate) fn expression_key(origin: &Origin, node: &Node, slot: Slot) -> (Strin
             slot.key()
         ),
     };
-    (origin.file(), format!("{}.{below}", origin.rule()))
+    (level.file(), format!("{}.{below}", level.rule()))
+}
+
+/// Where a failure of `parameter` of the komponent use `used`, drawn on `output`, is reported: where the use sets it, or the komponent's own default.
+fn parameter_site(
+    used: &KomponentUse,
+    parameter: &ResolvedParameter,
+    output: Option<&str>,
+) -> Site {
+    let (file, key) = match parameter.value.as_ref().map(|value| &value.origin) {
+        Some(Origin::Level(level)) => (
+            level.file(),
+            format!(
+                "{}.layers.{}.areas.{}.groups.{}.parameters.{}",
+                level.rule(),
+                used.layer,
+                used.area,
+                used.group,
+                parameter.name
+            ),
+        ),
+        _ => (
+            layout::komponent_path(&used.id),
+            format!("parameters.{}.default", parameter.name),
+        ),
+    };
+    Site::Expression(Drawn {
+        file,
+        key,
+        output: output.map(str::to_string),
+        copy: None,
+    })
 }
 
 /// `build` under what `bound` says now, laid out by `style`, and built again — this alone — each time `bound` says something else.

@@ -6,10 +6,8 @@
 //!
 //! Taking an area away works the same way round: it is deleted from the narrowest rule that writes it, and where a broader level still places it, the narrowest level covering the screen names it in its layer's `remove` ([`area_removal`]).
 
-use std::collections::BTreeMap;
-
 use layout::{
-    Area, AreaId, Group, GroupId, Instance, InstanceId, LayerKind, Layout, LayoutId, LayoutOp,
+    Area, AreaId, Group, GroupId, Instance, InstanceId, LayerKind, Layout, LayoutOp, Library,
     OpError, OutputRule, PromptEdit, Resolved, ResolvedArea, ResolvedAreaKind, Site, Spot,
     WorkspaceMatch, WorkspaceRule,
 };
@@ -219,7 +217,7 @@ impl Written {
 /// What takes the area `id` off the layer `layer` of the screen `screen` shows, for every workspace or `workspace` alone: out of the narrowest rule that writes it, and — while a broader rule or a layout this one extends still places it there — named in the `remove` of the narrowest level covering the screen, so it goes from this screen and no other. The lock screen's prompt is refused, since a lock with nothing to type a password into is a lockout (TA-8).
 pub fn area_removal(
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     screen: &Resolved,
     layer: LayerKind,
     id: &AreaId,
@@ -307,7 +305,7 @@ fn hiding(
 /// One edit being planned on one screen: the layout as far as it has got, and the operations that got it there. Every step is written where the layout as it stands then decides what it changes, for the workspace the mode edits ([`crate::variant::editing`]).
 pub(crate) struct Work<'a> {
     pub(crate) layout: Layout,
-    pub(crate) known: BTreeMap<LayoutId, Layout>,
+    pub(crate) known: Library,
     pub(crate) desktop: &'a Desktop,
     /// The layer the edit is about, which the modes' planners read their areas on.
     pub(crate) layer: LayerKind,
@@ -425,9 +423,18 @@ impl<'a> Work<'a> {
     }
 }
 
-/// Every layout the running shell's store holds, which is what an extended layout is looked up in.
-pub(crate) fn known() -> BTreeMap<LayoutId, Layout> {
-    surfaces::layouts::read(|store| store.all().clone()).unwrap_or_default()
+/// Every layout and komponent the running shell's store holds, as their files write them ([`as_written`]): what an edit plans from, and what an extended layout is looked up in.
+pub(crate) fn known() -> Library {
+    surfaces::layouts::read(|store| as_written(store.all())).unwrap_or_default()
+}
+
+/// `library` with nothing held back: resolved against it, a layout keeps every line its files write, the ones a bundle's file runs only once trusted included.
+///
+/// Trust decides what runs, not what a file says. An edit that copies what the screen shows — an instance moved, a bar split or moved to another screen, a group saved as a komponent — reads it from here, so a held line goes with what holds it rather than being erased by an unrelated change; where that would make it a file of the user's own, the store refuses the write ([`layout::trust::carried`]).
+pub fn as_written(library: &Library) -> Library {
+    let mut written = library.clone();
+    written.trust = layout::Trust::default();
+    written
 }
 
 /// Where a new entry goes in `layer`: after everything, so it overrides without restacking — except under the lock's prompt where the same layer writes it, since nothing may be stacked over the prompt (TA-8).

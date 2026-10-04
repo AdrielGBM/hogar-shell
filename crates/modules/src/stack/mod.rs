@@ -772,7 +772,7 @@ mod tests {
             std::path::Path::new("/nonexistent/config.toml"),
             &Arc::new(Config::default()),
             &layout::built_in(),
-            &std::collections::BTreeMap::new(),
+            &layout::Library::default(),
             &outputs,
             &|_| None,
         );

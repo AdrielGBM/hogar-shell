@@ -19,6 +19,7 @@ use config::theme::NordTheme;
 use telar_expression::{Compiled, ErrorCode, ErrorKind, Errors, HostError, Type, is_identifier};
 use util::report::{Finding, Message, Report, Span};
 
+use crate::library::{Library, komponent_path};
 use crate::merge::{At, merge_layers, merge_session_layers};
 use crate::model::*;
 use crate::resolve::{Resolved, ResolvedAreaKind};
@@ -97,6 +98,7 @@ impl Mistake {
 pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
     let mut report = Report::default();
     let file = format!("layouts/{}.toml", layout.id);
+    crate::names::unreadable_in_layout(layout, &file, &mut report);
 
     let mut instances = BTreeMap::new();
     for rule in &layout.outputs {
@@ -278,62 +280,21 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
     report
 }
 
-/// The keys every area has, whatever kind it is.
-const AREA_KEYS: &[&str] = &[
-    "id",
-    "kind",
-    "reserve",
-    "above_fullscreen",
-    "within",
-    "style",
-    "visible",
-    "groups",
-    "remove",
-    "actions",
-    "unset",
-];
-
-/// The keys every group has, wherever it sits.
-const GROUP_KEYS: &[&str] = &[
-    "id", "place", "stacked", "repeat", "children", "remove", "unset",
-];
-
-fn keys_of_kind(kind: &str) -> &'static [&'static str] {
-    match kind {
-        "bar" => &["edge", "thickness", "length", "offset", "shape", "autohide"],
-        "grid" => &["rect", "cell", "gap", "anchor"],
-        "stack" => &[
-            "anchor",
-            "offset",
-            "width",
-            "output_policy",
-            "routes",
-            "launcher",
-        ],
-        "wallpaper_region" => &["rect", "source", "fit", "transition"],
-        "texture" => &["rect", "image", "gradient", "tile", "blend", "opacity"],
-        "dock" => &["edge", "thickness"],
-        "free" => &["rect"],
-        "prompt" => &["rect"],
-        _ => &[],
-    }
-}
-
-fn keys_of_source(kind: &str) -> &'static [&'static str] {
-    match kind {
-        "poll" => &["cmd", "every", "initial", "parse", "while", "lock_safe"],
-        "listen" => &["cmd", "initial", "parse", "while", "lock_safe"],
-        "http" => &["url", "every", "initial", "parse", "while", "lock_safe"],
-        _ => &[],
-    }
-}
-
-fn keys_of_place(place: &str) -> &'static [&'static str] {
-    match place {
-        "zone" => &["zone"],
-        "cell" => &["col", "row", "col_span", "row_span"],
-        _ => &[],
-    }
+/// What a table of `item` may hold: every key `item` has and the tag of `owner`, the enum the table names a variant of — an area's `kind`, a group's `place`, a source's `kind` — and beside them the keys of the variant it names, whose name as written comes third. Read off the model's own tables ([`crate::schema::keys_of`]), so what the reference lists and what this accepts are one list.
+fn keys_in<'a>(
+    table: &'a dyn toml_edit::TableLike,
+    item: &str,
+    owner: &str,
+) -> (Vec<&'static str>, Vec<&'static str>, &'a str) {
+    let tag = crate::schema::tag_of(owner);
+    let named = tag
+        .and_then(|tag| table.get(tag))
+        .and_then(|it| it.as_str())
+        .unwrap_or("");
+    let mut common = crate::schema::keys_of(item);
+    common.extend(tag);
+    let variant = crate::schema::keys_of(&crate::schema::variant_of(owner, named));
+    (common, variant, named)
 }
 
 /// Reports keys an area or a group does not have.
@@ -351,11 +312,11 @@ pub fn check_unknown_keys(text: &str, id: &LayoutId) -> Report {
             let Some(source) = source.as_table_like() else {
                 continue;
             };
-            let kind = source.get("kind").and_then(|it| it.as_str()).unwrap_or("");
+            let (common, allowed, kind) = keys_in(source, "Source", "Source");
             report_strays(
                 source,
-                &["kind"],
-                keys_of_source(kind),
+                &common,
+                &allowed,
                 &format!("sources.{name}"),
                 Holding::Source,
                 kind,
@@ -410,13 +371,12 @@ fn check_rule_keys(rule: &toml_edit::Table, at: &str, text: &str, file: &str, re
         };
         for area in areas {
             let area_id = area.get("id").and_then(|it| it.as_str()).unwrap_or("");
-            let kind = area.get("kind").and_then(|it| it.as_str()).unwrap_or("");
-            let allowed = keys_of_kind(kind);
+            let (common, allowed, kind) = keys_in(area, "Area", "AreaKind");
             let at = format!("outputs.{at}.layers.{layer}.areas.{area_id}");
             report_strays(
                 area,
-                AREA_KEYS,
-                allowed,
+                &common,
+                &allowed,
                 &at,
                 Holding::Area,
                 kind,
@@ -430,12 +390,12 @@ fn check_rule_keys(rule: &toml_edit::Table, at: &str, text: &str, file: &str, re
             };
             for group in groups {
                 let group_id = group.get("id").and_then(|it| it.as_str()).unwrap_or("");
-                let place = group.get("place").and_then(|it| it.as_str()).unwrap_or("");
+                let (common, allowed, place) = keys_in(group, "Group", "GroupKind");
                 let at = format!("{at}.groups.{group_id}");
                 report_strays(
                     group,
-                    GROUP_KEYS,
-                    keys_of_place(place),
+                    &common,
+                    &allowed,
                     &at,
                     Holding::Group,
                     place,
@@ -575,7 +535,35 @@ fn check_layer_ids(
                         util::message!("finding.shared_group_id"),
                     ));
                 }
+                if group.komponent.is_some() {
+                    let address =
+                        InstanceId::new(format!("{}.{}{KOMPONENT_MARK}", area.id, group.id));
+                    let place = (kind, area.id.clone(), group.id.clone());
+                    if *instances.entry(address).or_insert_with(|| place.clone()) != place {
+                        report.error(Finding::new(
+                            file,
+                            format!(
+                                "{at}.layers.{kind}.areas.{}.groups.{}.komponent",
+                                area.id, group.id
+                            ),
+                            util::message!(
+                                "finding.shared_komponent_address",
+                                address = format!("{}.{}", area.id, group.id)
+                            ),
+                        ));
+                    }
+                }
                 for instance in &group.children {
+                    if instance.id.as_str().contains(KOMPONENT_MARK) {
+                        report.error(Finding::new(
+                            file,
+                            format!(
+                                "{at}.layers.{kind}.areas.{}.groups.{}.children.{}",
+                                area.id, group.id, instance.id
+                            ),
+                            util::message!("finding.komponent_mark", mark = KOMPONENT_MARK),
+                        ));
+                    }
                     if instance.id.as_str().contains(COPY_MARK) {
                         report.error(Finding::new(
                             file,
@@ -690,11 +678,18 @@ fn check_chains(
 ) {
     for (trigger, action) in actions {
         for line in &action.0 {
+            let key = || format!("{at}.actions.{}", trigger.as_str());
             if !catalogue.command_resolves(line) {
                 report.error(Finding::new(
                     file,
-                    format!("{at}.actions.{}", trigger.as_str()),
+                    key(),
                     util::message!("finding.unknown_command", line = line),
+                ));
+            } else if crate::trust::grants_trust(line) {
+                report.error(Finding::new(
+                    file,
+                    key(),
+                    util::message!("finding.trust_in_action", line = line),
                 ));
             }
         }
@@ -706,25 +701,45 @@ pub const ITEM: &str = "item";
 /// What a copy of a repeated group's children reads as `$index`: its place in the list, from 0.
 pub const INDEX: &str = "index";
 
-/// The names an expression reads besides the shell's own, by type: `$item` and `$index` in a copy of a repeated group's children, and nothing anywhere else.
+/// The names an expression reads besides the shell's own, by type: `$item` and `$index` in a copy of a repeated group's children, a komponent's parameters in what the komponent holds, and nothing anywhere else.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Locals(Vec<(&'static str, Type)>);
+pub struct Locals(Vec<(String, Type)>);
 
 impl Locals {
     /// What a copy of a repeated group's children reads: `$item`, an element of the list, and `$index`, a number.
     pub fn of_copy(item: Type) -> Self {
-        Self(vec![(ITEM, item), (INDEX, Type::Number)])
+        Self(vec![
+            (ITEM.to_string(), item),
+            (INDEX.to_string(), Type::Number),
+        ])
+    }
+
+    /// What the expressions a komponent holds read: each of its parameters, as the type it declares.
+    pub fn of_parameters(komponent: &Komponent) -> Self {
+        Self(
+            komponent
+                .parameters
+                .iter()
+                .map(|(name, parameter)| (name.clone(), parameter.ty.0.clone()))
+                .collect(),
+        )
+    }
+
+    /// These names and `more` besides.
+    pub fn and(mut self, more: Locals) -> Self {
+        self.0.extend(more.0);
+        self
     }
 
     pub fn get(&self, name: &str) -> Option<&Type> {
         self.0
             .iter()
-            .find(|(held, _)| *held == name)
+            .find(|(held, _)| held == name)
             .map(|(_, ty)| ty)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &Type)> {
-        self.0.iter().map(|(name, ty)| (*name, ty))
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Type)> {
+        self.0.iter().map(|(name, ty)| (name.as_str(), ty))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -820,10 +835,19 @@ pub fn repeat_errors(catalogue: &dyn Catalogue, expr: &Expr, on_lock: bool) -> V
 }
 
 fn repeat_problems(catalogue: &dyn Catalogue, expr: &Expr, on_lock: bool) -> Problems {
+    repeat_problems_with(catalogue, expr, on_lock, &Locals::default())
+}
+
+fn repeat_problems_with(
+    catalogue: &dyn Catalogue,
+    expr: &Expr,
+    on_lock: bool,
+    locals: &Locals,
+) -> Problems {
     Problems::of(
         catalogue,
         expr,
-        catalogue.compile(&expr.0, on_lock),
+        catalogue.compile_with(&expr.0, on_lock, locals),
         |compiled| {
             repeat_item(compiled.ty())
                 .map(drop)
@@ -846,9 +870,19 @@ pub fn repeat_item(ty: &Type) -> Result<Type, Message> {
 
 /// What the copies of a group repeated over `repeat` read: `$item` of the type of the list's elements. A `repeat` that gives no list leaves `$item` fitting anything, so its mistake is reported once, at `repeat`, rather than again by every binding that reads an item.
 pub fn repeat_locals(catalogue: &dyn Catalogue, repeat: &Expr, on_lock: bool) -> Locals {
+    repeat_locals_with(catalogue, repeat, on_lock, &Locals::default())
+}
+
+/// [`repeat_locals`] for a `repeat` that reads `locals` itself: a komponent's, which reads its parameters.
+fn repeat_locals_with(
+    catalogue: &dyn Catalogue,
+    repeat: &Expr,
+    on_lock: bool,
+    locals: &Locals,
+) -> Locals {
     Locals::of_copy(
         catalogue
-            .compile(&repeat.0, on_lock)
+            .compile_with(&repeat.0, on_lock, locals)
             .ok()
             .and_then(|compiled| repeat_item(compiled.ty()).ok())
             .unwrap_or(Type::Never),
@@ -933,21 +967,7 @@ fn check_expressions(
         file,
     } = level;
     let found = |report: &mut Report, key: String, expr: &Expr, problems: Problems| {
-        let said = problems
-            .errors
-            .into_iter()
-            .map(|mistake| (severity, mistake))
-            .chain(
-                problems
-                    .awaiting
-                    .into_iter()
-                    .map(|mistake| (Severity::Warning, mistake)),
-            );
-        for (severity, mistake) in said {
-            let mut finding = Finding::new(file, key.clone(), mistake.message);
-            finding.span = Some(Span::locate(&expr.0, mistake.span.range()));
-            severity.say(report, finding);
-        }
+        say_problems(report, (file, key), expr, problems, severity)
     };
     for (kind, layer) in layers.each() {
         let on_lock = kind == LayerKind::Lock;
@@ -1093,7 +1113,7 @@ impl Holder {
         matches!(
             (self, unset),
             (Holder::Area, Unset::Visible)
-                | (Holder::Group, Unset::Repeat)
+                | (Holder::Group, Unset::Repeat | Unset::Parameter(_))
                 | (Holder::Instance, Unset::Binding(_))
         )
     }
@@ -1137,9 +1157,13 @@ fn check_unsets(
                 let at = format!("{at}.groups.{}", group.id);
                 for (index, unset) in group.unset.iter().enumerate() {
                     let key = format!("{at}.unset[{index}]");
+                    let written = match unset {
+                        Unset::Parameter(name) => group.parameters.contains_key(name),
+                        _ => group.repeat.is_some(),
+                    };
                     if !Holder::Group.takes(unset) {
                         say(key, Holder::Group.refusal(unset));
-                    } else if group.repeat.is_some() {
+                    } else if written {
                         say(key, both(unset));
                     }
                 }
@@ -1190,7 +1214,7 @@ fn both(unset: &Unset) -> Message {
 /// What `layout` takes back that nothing under it writes: every `unset` of its own rules, against its `extends` chain and the rules of its own applied before each one.
 ///
 /// A warning rather than an error, because taking back nothing changes nothing. It needs the layouts `layout` extends, which [`validate`] does not see. A rule counts as under another when both could speak for one output, so a pattern that could be the same monitor is never said to have nothing under it; a path that names no expression at all is [`validate`]'s to report.
-pub fn validate_unsets(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Report {
+pub fn validate_unsets(layout: &Layout, known: &Library) -> Report {
     let mut report = Report::default();
     let file = format!("layouts/{}.toml", layout.id);
     let chain = crate::resolve::chain_of(layout, known, &mut Report::default());
@@ -1264,6 +1288,15 @@ fn written_in<'a>(
                 let held = Some(group.id.clone());
                 if group.repeat.is_some() {
                     into.insert((kind, area.id.clone(), held.clone(), None, Unset::Repeat));
+                }
+                for name in group.parameters.keys() {
+                    into.insert((
+                        kind,
+                        area.id.clone(),
+                        held.clone(),
+                        None,
+                        Unset::parameter(name),
+                    ));
                 }
                 for instance in &group.children {
                     for path in instance.bindings.keys() {
@@ -1344,7 +1377,20 @@ pub fn locate_expressions(text: &str, report: &mut Report) {
             Holder::Area => spanned("visible", table.get("visible"))
                 .into_iter()
                 .collect(),
-            Holder::Group => spanned("repeat", table.get("repeat")).into_iter().collect(),
+            Holder::Group => spanned("repeat", table.get("repeat"))
+                .into_iter()
+                .chain(
+                    table
+                        .get("parameters")
+                        .and_then(|it| it.as_table_like())
+                        .into_iter()
+                        .flat_map(|parameters| parameters.iter())
+                        .filter_map(|(name, expr)| {
+                            expr.span()
+                                .map(|span| (format!("{at}.parameters.{name}"), span))
+                        }),
+                )
+                .collect(),
             Holder::Instance => table
                 .get("bindings")
                 .and_then(|it| it.as_table_like())
@@ -1464,6 +1510,456 @@ fn holders_of(
                 }
             }
         }
+    }
+}
+
+/// Everything wrong with `expr` as a value of a komponent parameter of type `ty`, read where the group using it is drawn — on the lock layer when `on_lock`.
+pub fn parameter_errors(
+    catalogue: &dyn Catalogue,
+    ty: &Type,
+    expr: &Expr,
+    on_lock: bool,
+) -> Vec<Mistake> {
+    typed_problems(catalogue, expr, Some(ty), on_lock, &Locals::default()).errors
+}
+
+/// Reports what `problems` finds in `expr`, written at `key` of `file`: what keeps it from being drawn as `severity` says, and a variable not set yet as a warning.
+fn say_problems(
+    report: &mut Report,
+    (file, key): (&str, String),
+    expr: &Expr,
+    problems: Problems,
+    severity: Severity,
+) {
+    let said = problems
+        .errors
+        .into_iter()
+        .map(|mistake| (severity, mistake))
+        .chain(
+            problems
+                .awaiting
+                .into_iter()
+                .map(|mistake| (Severity::Warning, mistake)),
+        );
+    for (severity, mistake) in said {
+        let mut finding = Finding::new(file, key.clone(), mistake.message);
+        finding.span = Some(Span::locate(&expr.0, mistake.span.range()));
+        severity.say(report, finding);
+    }
+}
+
+/// Everything wrong with the komponent `id` as its own file says it, wherever it is used: a parameter's name and its default, a child's id, module, options and actions, and each expression it holds, checked with its parameters — and, in a copy of what it repeats, `$item` and `$index` — in scope. What depends on where it is used — the lock layer's rules, what a use sets — is [`validate_komponents`]'s.
+pub fn validate_komponent(
+    id: &KomponentId,
+    komponent: &Komponent,
+    catalogue: &dyn Catalogue,
+) -> Report {
+    let mut report = Report::default();
+    let file = komponent_path(id);
+    crate::names::unreadable_in_komponent(komponent, &file, &mut report);
+    for (name, parameter) in &komponent.parameters {
+        let at = format!("parameters.{name}");
+        if !is_identifier(name) {
+            report.error(Finding::new(
+                &file,
+                at.clone(),
+                util::message!("finding.parameter_name", name = name),
+            ));
+        } else if name == ITEM || name == INDEX {
+            report.error(Finding::new(
+                &file,
+                at.clone(),
+                util::message!("finding.parameter_local", name = name),
+            ));
+        } else if catalogue.is_service_source(name) {
+            report.error(Finding::new(
+                &file,
+                at.clone(),
+                util::message!("finding.parameter_shadows", name = name),
+            ));
+        }
+        let problems = typed_problems(
+            catalogue,
+            &parameter.default,
+            Some(&parameter.ty.0),
+            false,
+            &Locals::default(),
+        );
+        say_problems(
+            &mut report,
+            (&file, format!("{at}.default")),
+            &parameter.default,
+            problems,
+            Severity::Error,
+        );
+    }
+    let parameters = Locals::of_parameters(komponent);
+    let locals = match &komponent.repeat {
+        Some(repeat) => {
+            let problems = repeat_problems_with(catalogue, repeat, false, &parameters);
+            say_problems(
+                &mut report,
+                (&file, "repeat".to_string()),
+                repeat,
+                problems,
+                Severity::Error,
+            );
+            parameters
+                .clone()
+                .and(repeat_locals_with(catalogue, repeat, false, &parameters))
+        }
+        None => parameters,
+    };
+    let mut ids = BTreeSet::new();
+    for child in &komponent.children {
+        let at = format!("children.{}", child.id);
+        for (mark, message) in [
+            (
+                COPY_MARK,
+                util::message!(
+                    "finding.copy_mark",
+                    mark = COPY_MARK,
+                    example = format!("{}{COPY_MARK}0", child.id.template())
+                ),
+            ),
+            (
+                KOMPONENT_MARK,
+                util::message!("finding.komponent_mark", mark = KOMPONENT_MARK),
+            ),
+        ] {
+            if child.id.as_str().contains(mark) {
+                report.error(Finding::new(&file, at.clone(), message));
+            }
+        }
+        if !child.id.is_empty() && !ids.insert(child.id.clone()) {
+            report.error(Finding::new(
+                &file,
+                at.clone(),
+                util::message!("finding.shared_child_id"),
+            ));
+        }
+        check_instance(child, &at, &file, catalogue, &mut report);
+        check_chains(&child.actions, &at, &file, catalogue, &mut report);
+        for (path, expr) in &child.bindings {
+            let problems = binding_problems(
+                catalogue,
+                child.module.as_deref(),
+                path,
+                expr,
+                false,
+                &locals,
+            );
+            say_problems(
+                &mut report,
+                (&file, format!("{at}.bindings.{path}")),
+                expr,
+                problems,
+                Severity::Error,
+            );
+        }
+    }
+    report
+}
+
+/// What a module the instance shows, the size it is drawn at and the options it sets get wrong, reported under `at`.
+fn check_instance(
+    instance: &Instance,
+    at: &str,
+    file: &str,
+    catalogue: &dyn Catalogue,
+    report: &mut Report,
+) {
+    let Some(module) = &instance.module else {
+        return;
+    };
+    if !catalogue.knows_module(module) {
+        report.error(Finding::new(
+            file,
+            format!("{at}.module"),
+            util::message!("finding.unknown_module", module = module),
+        ));
+        return;
+    }
+    let representation = instance.representation.unwrap_or(Representation::Chip);
+    if !catalogue.has_representation(module, representation) {
+        report.error(Finding::new(
+            file,
+            format!("{at}.representation"),
+            util::message!(
+                "finding.no_representation",
+                module = module,
+                representation = representation.as_str()
+            ),
+        ));
+    }
+    for (key, why) in catalogue.option_problems(module, &instance.options) {
+        report.error(Finding::new(
+            file,
+            format!("{at}.options.{key}"),
+            util::message!("finding.option", module = module, key = key, why = why),
+        ));
+    }
+}
+
+/// Everything wrong with how `layout` uses komponents that only the komponents in `library` can say: a parameter a use sets, checked as the type the komponent declares; and on the lock layer, a komponent holding a control or an action, or an expression the lock screen cannot read (TA-8). A komponent the library does not hold, and a parameter it does not declare, are resolution's to report, where they are drawn as placeholders.
+pub fn validate_komponents(
+    layout: &Layout,
+    library: &Library,
+    catalogue: &dyn Catalogue,
+) -> Report {
+    komponent_uses(layout, library, catalogue, LayerKind::ALL.as_slice())
+}
+
+/// [`validate_komponents`] for the lock layer alone, for the session opener, which decides between the layout's lock screen and the minimal one: a control or an action is still an error, while an expression the lock screen cannot read is a warning, since it is left out where it is drawn.
+pub fn validate_komponents_lock(
+    layout: &Layout,
+    library: &Library,
+    catalogue: &dyn Catalogue,
+) -> Report {
+    komponent_uses(layout, library, catalogue, &[LayerKind::Lock])
+}
+
+fn komponent_uses(
+    layout: &Layout,
+    library: &Library,
+    catalogue: &dyn Catalogue,
+    layers: &[LayerKind],
+) -> Report {
+    let mut report = Report::default();
+    let file = format!("layouts/{}.toml", layout.id);
+    let lock_only = layers == [LayerKind::Lock];
+    let severity = match lock_only {
+        true => Severity::Warning,
+        false => Severity::Error,
+    };
+    for rule in &layout.outputs {
+        let at = format!("outputs.{}", rule.matches.0);
+        let scope = output_level(layout, &rule.matches);
+        let levels = std::iter::once((at.clone(), rule.layers.each().to_vec())).chain(
+            rule.workspaces.iter().map(|workspace| {
+                (
+                    format!("{at}.workspaces.{}", workspace.matches.0),
+                    workspace.layers.each().to_vec(),
+                )
+            }),
+        );
+        for (at, written) in levels {
+            for (kind, layer) in written
+                .into_iter()
+                .filter(|(kind, _)| layers.contains(kind))
+            {
+                let on_lock = kind == LayerKind::Lock;
+                for area in &layer.areas {
+                    for group in &area.groups {
+                        let at =
+                            format!("{at}.layers.{kind}.areas.{}.groups.{}", area.id, group.id);
+                        let used = group.komponent.clone().or_else(|| {
+                            merged_group(&scope, kind, &area.id, &group.id)?
+                                .komponent
+                                .clone()
+                        });
+                        let Some(komponent) = used.as_ref().and_then(|id| library.komponent(id))
+                        else {
+                            continue;
+                        };
+                        let placed = group
+                            .kind
+                            .or_else(|| merged_group(&scope, kind, &area.id, &group.id)?.kind);
+                        if group.komponent.is_some()
+                            && komponent.repeat.is_some()
+                            && matches!(placed, Some(GroupKind::Cell { .. }))
+                        {
+                            severity.say(
+                                &mut report,
+                                Finding::new(
+                                    &file,
+                                    format!("{at}.komponent"),
+                                    util::message!("finding.cell_repeats"),
+                                ),
+                            );
+                        }
+                        for (name, expr) in &group.parameters {
+                            let Some(declared) = komponent.parameters.get(name) else {
+                                continue;
+                            };
+                            let problems = typed_problems(
+                                catalogue,
+                                expr,
+                                Some(&declared.ty.0),
+                                on_lock,
+                                &Locals::default(),
+                            );
+                            say_problems(
+                                &mut report,
+                                (&file, format!("{at}.parameters.{name}")),
+                                expr,
+                                problems,
+                                severity,
+                            );
+                        }
+                        if on_lock && group.komponent.is_some() {
+                            let id = used.as_ref().expect("a komponent was found");
+                            lock_komponent(
+                                (id, komponent),
+                                (&file, &format!("{at}.komponent")),
+                                catalogue,
+                                severity,
+                                &mut report,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    report
+}
+
+/// What the lock layer refuses in the komponent `id`, wherever a group there would use it: everything [`validate_komponents`] reports for a use on the lock layer, as errors.
+pub(crate) fn lock_problems(
+    id: &KomponentId,
+    komponent: &Komponent,
+    catalogue: &dyn Catalogue,
+) -> Report {
+    let mut report = Report::default();
+    lock_komponent(
+        (id, komponent),
+        ("", ""),
+        catalogue,
+        Severity::Error,
+        &mut report,
+    );
+    report
+}
+
+/// What the lock layer refuses in the komponent `id` a group there uses, reported at the use's `komponent` key: a child drawn as a control, an action, and an expression the lock screen cannot read — the last as `severity` says.
+fn lock_komponent(
+    (id, komponent): (&KomponentId, &Komponent),
+    (file, at): (&str, &str),
+    catalogue: &dyn Catalogue,
+    severity: Severity,
+    report: &mut Report,
+) {
+    let parameters = Locals::of_parameters(komponent);
+    let locals = match &komponent.repeat {
+        Some(repeat) => {
+            parameters
+                .clone()
+                .and(repeat_locals_with(catalogue, repeat, true, &parameters))
+        }
+        None => parameters.clone(),
+    };
+    let unreadable = |what: String, problems: Problems, report: &mut Report| {
+        for mistake in problems.errors {
+            let message = util::message!(
+                "finding.komponent_lock_expression",
+                komponent = id,
+                what = &what,
+                why = mistake.message
+            );
+            severity.say(report, Finding::new(file, at, message));
+        }
+    };
+    for (name, parameter) in &komponent.parameters {
+        let problems = typed_problems(
+            catalogue,
+            &parameter.default,
+            Some(&parameter.ty.0),
+            true,
+            &Locals::default(),
+        );
+        unreadable(format!("parameters.{name}.default"), problems, report);
+    }
+    if let Some(repeat) = &komponent.repeat {
+        let problems = repeat_problems_with(catalogue, repeat, true, &parameters);
+        unreadable("repeat".to_string(), problems, report);
+    }
+    for child in &komponent.children {
+        if !child.actions.is_empty() {
+            report.error(Finding::new(
+                file,
+                at,
+                util::message!(
+                    "finding.komponent_lock_action",
+                    komponent = id,
+                    child = &child.id
+                ),
+            ));
+        }
+        if let Some(module) = &child.module {
+            let representation = child.representation.unwrap_or(Representation::Chip);
+            if catalogue.knows_module(module) && !catalogue.is_read_only(module, representation) {
+                report.error(Finding::new(
+                    file,
+                    at,
+                    util::message!(
+                        "finding.komponent_lock_interactive",
+                        komponent = id,
+                        child = &child.id,
+                        module = module,
+                        representation = representation.as_str()
+                    ),
+                ));
+            }
+        }
+        for (path, expr) in &child.bindings {
+            let problems = binding_problems(
+                catalogue,
+                child.module.as_deref(),
+                path,
+                expr,
+                true,
+                &locals,
+            );
+            unreadable(
+                format!("children.{}.bindings.{path}", child.id),
+                problems,
+                report,
+            );
+        }
+    }
+}
+
+/// Moves the span of every expression finding about the komponent file `text` into it, as [`locate_expressions`] does for a layout file: a parameter's default, the komponent's `repeat` and each child's bindings.
+pub fn locate_komponent_expressions(text: &str, report: &mut Report) {
+    let Ok(parsed) = toml_edit::Document::parse(text) else {
+        return;
+    };
+    let mut written: BTreeMap<String, Range<usize>> = BTreeMap::new();
+    if let Some(span) = parsed.get("repeat").and_then(toml_edit::Item::span) {
+        written.insert("repeat".to_string(), span);
+    }
+    let parameters = parsed.get("parameters").and_then(|it| it.as_table_like());
+    for (name, parameter) in parameters.into_iter().flat_map(|it| it.iter()) {
+        if let Some(span) = parameter
+            .as_table_like()
+            .and_then(|it| it.get("default"))
+            .and_then(toml_edit::Item::span)
+        {
+            written.insert(format!("parameters.{name}.default"), span);
+        }
+    }
+    let children = parsed
+        .get("children")
+        .and_then(|it| it.as_array_of_tables());
+    for child in children.into_iter().flatten() {
+        let id = child.get("id").and_then(|it| it.as_str()).unwrap_or("");
+        let bindings = child.get("bindings").and_then(|it| it.as_table_like());
+        for (path, expr) in bindings.into_iter().flat_map(|it| it.iter()) {
+            if let Some(span) = expr.span() {
+                written.insert(format!("children.{id}.bindings.{path}"), span);
+            }
+        }
+    }
+    for finding in report.findings_mut() {
+        let (Some(value), Some(span)) = (written.get(&finding.key), &finding.span) else {
+            continue;
+        };
+        finding.span = Some(Span::within_toml_string(
+            text,
+            value.clone(),
+            span.bytes.clone(),
+        ));
     }
 }
 

@@ -202,6 +202,29 @@ fn put_on(
     at: Option<(u32, u32)>,
     near: (u32, u32),
 ) -> Result<(), EditError> {
+    let id = layout::ops::free_group_id(
+        &work.layout,
+        &work.known,
+        work.layer,
+        area,
+        instance.id.as_str(),
+    );
+    let size = instance.representation.map_or(Cells::ONE, footprint);
+    put_group(work, area, (id, size), (at, near), |kind| Group {
+        kind: Some(kind),
+        children: vec![instance],
+        ..Group::default()
+    })
+}
+
+/// A new group `id` of the grid `area`, covering `size` cells and holding what `fill` makes of the cell it is placed at: its first cell at `at` where that is given, what it covers moved out of its way, else on the free cells nearest `near`.
+pub(crate) fn put_group(
+    work: &mut Work,
+    area: &AreaId,
+    (id, size): (GroupId, Cells),
+    (at, near): (Option<(u32, u32)>, (u32, u32)),
+    fill: impl FnOnce(GroupKind) -> Group,
+) -> Result<(), EditError> {
     let at = match at {
         Some(at) => at,
         None => {
@@ -210,28 +233,19 @@ fn put_on(
                 .into_iter()
                 .map(|(_, cells)| cells)
                 .collect();
-            let size = instance.representation.map_or(Cells::ONE, footprint);
             let free = grid::nearest_free(&taken, size, near, room_of(work.desktop, &grid));
             (free.col, free.row)
         }
     };
-    let id = layout::ops::free_group_id(
-        &work.layout,
-        &work.known,
-        work.layer,
-        area,
-        instance.id.as_str(),
-    );
+    let kind = GroupKind::Cell {
+        col: at.0,
+        row: at.1,
+        col_span: 1,
+        row_span: 1,
+    };
     let group = Group {
         id: id.clone(),
-        kind: Some(GroupKind::Cell {
-            col: at.0,
-            row: at.1,
-            col_span: 1,
-            row_span: 1,
-        }),
-        children: vec![instance],
-        ..Group::default()
+        ..fill(kind)
     };
     work.rewrite(work.layer, area, |written| written.groups.push(group))?;
     settle_group(work, area, &id)
@@ -611,13 +625,6 @@ pub(crate) fn put(
     let mode = crate::mode::required()?;
     let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
     let layout = session::draft().peek();
-    let module = pick.module().ok_or_else(EditError::nothing)?;
-    let representation = first_size(&module, layer).ok_or_else(|| {
-        EditError::refused(telar::t!(
-            "editor.desktop.no_widget",
-            module = module.clone()
-        ))
-    })?;
     let (mut ops, area, cell, near) = match at {
         Some((area, cell)) => (Vec::new(), area, Some(cell), (0, 0)),
         None => match target_near(&desktop, layer) {
@@ -630,9 +637,36 @@ pub(crate) fn put(
     };
     let mut after = layout.clone();
     layout::ops::apply_all(&mut after, &ops)?;
+    if let Pick::Komponent(id) = pick {
+        let (placed, group) = planned_use(&after, &desktop, layer, &area, id, (cell, near))?;
+        ops.extend(placed);
+        context::commit(
+            telar::t!("editor.komponent.used", komponent = id.to_string()),
+            ops,
+        )?;
+        session::select(Selection::Group(
+            Node::area(Some(&mode.output), layer, &area).group(&group),
+        ));
+        return Ok(());
+    }
+    let module = pick.module().ok_or_else(EditError::nothing)?;
+    let representation = first_size(&module, layer).ok_or_else(|| {
+        EditError::refused(telar::t!(
+            "editor.desktop.no_widget",
+            module = module.clone()
+        ))
+    })?;
     let name = ui::descriptor::find(&module).map_or(module.as_str(), |found| found.name);
     let (placed, id, label) = match pick {
-        Pick::Module(_) => {
+        Pick::FromBar(node) => {
+            let Part::Instance(_, id) = &node.part else {
+                return Err(EditError::nothing());
+            };
+            let placed = moved_onto(&after, &desktop, node, (layer, &area), representation, cell)?;
+            let label = telar::t!("editor.desktop.moved_from_bar", name = name);
+            (placed, id.template(), label)
+        }
+        _ => {
             let adding = Adding {
                 module: &module,
                 representation,
@@ -642,14 +676,6 @@ pub(crate) fn put(
             let (placed, id) = added(&after, &desktop, layer, &area, &adding)?;
             (placed, id, telar::t!("editor.desktop.added", name = name))
         }
-        Pick::FromBar(node) => {
-            let Part::Instance(_, id) = &node.part else {
-                return Err(EditError::nothing());
-            };
-            let placed = moved_onto(&after, &desktop, node, (layer, &area), representation, cell)?;
-            let label = telar::t!("editor.desktop.moved_from_bar", name = name);
-            (placed, id.template(), label)
-        }
     };
     ops.extend(placed);
     context::commit(label, ops)?;
@@ -657,6 +683,38 @@ pub(crate) fn put(
         session::select(Selection::Instance(node));
     }
     Ok(())
+}
+
+/// The operations that make a new group of the grid `area` of `layer` draw the komponent `id` with its parameters at their defaults, and its id: on the cells `at` where the pointer put it, else on the free cells nearest `near` ([`crate::komponent::plan_use`]).
+pub(crate) fn planned_use(
+    layout: &Layout,
+    desktop: &Desktop,
+    layer: LayerKind,
+    area: &AreaId,
+    id: &layout::KomponentId,
+    (at, near): (Option<(u32, u32)>, (u32, u32)),
+) -> Result<(Vec<LayoutOp>, GroupId), EditError> {
+    let library = crate::written::known();
+    let workspace = crate::variant::editing();
+    let screen = desktop.resolving(layout, &library);
+    crate::komponent::plan_use(
+        layout,
+        &library,
+        &surfaces::catalogue::Descriptors::installed(),
+        (&screen.resolved, Some(desktop)),
+        &crate::komponent::Placing {
+            layer,
+            area,
+            group: None,
+            output: desktop.output.as_deref(),
+            workspace: workspace.as_ref(),
+            cell: at,
+            near,
+            zone: None,
+        },
+        &crate::komponent::Use::of(id.clone()),
+    )
+    .map_err(crate::komponent::Refusal::into_edit)
 }
 
 /// The size `module` starts at when the palette puts it on `layer` ([`palette::offered`]).

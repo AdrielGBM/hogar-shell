@@ -274,6 +274,8 @@ fn toml_value(value: &toml::Value) -> Result<Value, Message> {
 pub struct UserSources {
     file: String,
     by_name: BTreeMap<String, UserSource>,
+    /// The sources the layout declares that wait for the user's trust, each with the type it reads as once trusted. None of them is declared to a producer.
+    held: BTreeMap<String, Type>,
 }
 
 impl UserSources {
@@ -307,7 +309,36 @@ impl UserSources {
                 }
             }
         }
-        (Self { file, by_name }, report)
+        (
+            Self {
+                file,
+                by_name,
+                held: BTreeMap::new(),
+            },
+            report,
+        )
+    }
+
+    /// The same sources, knowing that `held` wait for the user's trust ([`layout::held_sources`]): an expression naming one checks as the type it will read and waits rather than reading a variable of that name. One whose declaration is wrong checks as anything, and is reported once it is trusted.
+    pub fn holding(
+        mut self,
+        held: &BTreeMap<String, layout::Source>,
+        config: &AutomationConfig,
+    ) -> Self {
+        self.held = held
+            .iter()
+            .map(|(name, source)| {
+                let ty =
+                    UserSource::from_layout(source, config).map_or(Type::Never, |source| source.ty);
+                (name.clone(), ty)
+            })
+            .collect();
+        self
+    }
+
+    /// The type the source `name` will read as, where it waits for the user's trust.
+    pub fn held(&self, name: &str) -> Option<&Type> {
+        self.held.get(name)
     }
 
     pub fn get(&self, name: &str) -> Option<&UserSource> {
@@ -330,14 +361,15 @@ impl UserSources {
 /// The sources `layout` declares once every level of its `extends` chain is laid over the others, ready to read, with what is wrong with any it leaves out.
 pub fn of_layout(
     layout: &layout::Layout,
-    known: &BTreeMap<layout::LayoutId, layout::Layout>,
+    known: &layout::Library,
     config: &AutomationConfig,
 ) -> (UserSources, Report) {
     let (merged, mut report) = layout::sources(layout, known);
     let (sources, problems) =
         UserSources::of(format!("layouts/{}.toml", layout.id), &merged, config);
     report.merge(problems);
-    (sources, report)
+    let held = layout::held_sources(layout, known);
+    (sources.holding(&held, config), report)
 }
 
 /// Producers for every command, address and event source, by spec, each spec with the pace its producers keep.
@@ -507,6 +539,7 @@ mod tests {
         );
         declare(UserSources {
             file: file.to_string(),
+            held: BTreeMap::new(),
             by_name,
         });
     }
@@ -565,6 +598,73 @@ mod tests {
         std::fs::remove_file(&flag).unwrap();
         says_flaky(false);
         assert!(reported(file).is_empty());
+        declare(UserSources::default());
+    }
+
+    /// T-8.6's acceptance at the producers: a `poll` an imported layout declares is left out of what is declared until its command is accepted, so nothing ever subscribes to it and its command never runs; once accepted, it runs.
+    #[test]
+    fn a_source_an_imported_layout_declares_runs_only_once_it_is_accepted() {
+        let _declaring = declaring();
+        let file = tally("imported");
+        let cmd = format!("echo run >> '{}'; echo ok", file.display());
+        let mut shared: layout::Layout = toml::from_str(&format!(
+            "[sources.imported]\nkind = 'poll'\ncmd = \"{cmd}\"\nevery = '1s'\n"
+        ))
+        .expect("the layout parses");
+        shared.id = layout::LayoutId::new("trust-imported");
+        let mut library = layout::Library::of_layouts([shared.clone()]);
+        library.trust.import("layouts/trust-imported.toml", "nord");
+        let config = AutomationConfig::default();
+        let spec = SourceSpec::poll(&cmd, Duration::from_secs(1), Parse::Text);
+
+        let (held, report) = of_layout(&shared, &library, &config);
+        assert!(
+            report.is_clean(),
+            "waiting is not a failure: {}",
+            report.render()
+        );
+        assert!(held.get("imported").is_none());
+        assert_eq!(held.held("imported"), Some(&Type::Text));
+        declare(held);
+        {
+            let _scope = telar::owner_scope();
+            let env = crate::Environment::new([], declared_sources());
+            let compiled = env
+                .compile("$imported")
+                .expect("an expression naming it checks as what it will read");
+            assert_eq!(compiled.ty(), &Type::Text);
+            let read = env.bind(compiled, crate::env::Gate::always()).get();
+            let error = read.error.expect("it reads nothing yet");
+            assert!(
+                crate::env::awaits_reading(&error),
+                "held is a wait, not a failure: {error:?}"
+            );
+            assert_eq!(
+                crate::env::describe(&error.code).english(),
+                "`$imported` came with a bundle and is held until you trust what it runs"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(runs(&file), 0, "the command never ran");
+        assert_eq!(producing(&spec), 0, "and no producer exists for it");
+
+        for item in layout::layout_items(&shared, &library.trust.clone()) {
+            library.trust.decide(&item, true);
+        }
+        let (accepted, _) = of_layout(&shared, &library, &config);
+        let source = accepted
+            .get("imported")
+            .expect("declared once accepted")
+            .clone();
+        assert_eq!(source.spec, spec);
+        declare(accepted);
+        let (tx, _subscription) = platform_wayland::detached::<Value>();
+        subscribe_with(source.spec, tx, policy(2000, (50, 100)));
+        eventually(
+            "the accepted command to run",
+            Duration::from_secs(5),
+            || runs(&file) > 0,
+        );
         declare(UserSources::default());
     }
 
@@ -741,6 +841,7 @@ mod tests {
         let dropped = poll("echo dropped", 100);
         let declared_only = |spec: &SourceSpec| UserSources {
             file: "layouts/test.toml".to_string(),
+            held: BTreeMap::new(),
             by_name: BTreeMap::from([(
                 "kept".to_string(),
                 UserSource {
@@ -839,6 +940,7 @@ mod tests {
     fn declare_only(specs: &[&SourceSpec]) {
         declare(UserSources {
             file: "layouts/test.toml".to_string(),
+            held: BTreeMap::new(),
             by_name: specs
                 .iter()
                 .enumerate()

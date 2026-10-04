@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::rc::Rc;
 
     use telar::{
@@ -687,7 +687,7 @@ mod tests {
             id: None,
             special: None,
         });
-        layout::resolve(layout, &BTreeMap::new(), SCREEN, active.as_ref()).0
+        layout::resolve(layout, &layout::Library::default(), SCREEN, active.as_ref()).0
     }
 
     fn instance_on<'a>(
@@ -1073,5 +1073,456 @@ mod tests {
         assert_eq!(desktop::create_grid(), needs);
         assert_eq!(crate::modes::top::create_on(config::Edge::Bottom), needs);
         assert_eq!(crate::modes::overlay::add_stack(), needs);
+    }
+
+    fn pill(
+        module: &str,
+        representation: Representation,
+        repeat: Option<&str>,
+    ) -> layout::Komponent {
+        layout::Komponent {
+            parameters: [(
+                "label".to_string(),
+                layout::Parameter {
+                    ty: layout::ParameterType::parse("text").expect("a type"),
+                    default: layout::Expr("'Home'".into()),
+                },
+            )]
+            .into(),
+            repeat: repeat.map(|text| layout::Expr(text.into())),
+            children: vec![layout::Instance {
+                id: InstanceId::new("face"),
+                module: Some(module.to_string()),
+                representation: Some(representation),
+                ..layout::Instance::default()
+            }],
+            ..layout::Komponent::default()
+        }
+    }
+
+    /// A rig whose library holds a komponent of the clock, the weather, the mixer (which answers the pointer) and a repeating clock.
+    fn with_komponents(test: &str) -> Rig {
+        let rig = rig_with(test, |_| {});
+        for (name, komponent) in [
+            ("clock-pill", pill("clock", Representation::WidgetM, None)),
+            (
+                "weather-pill",
+                pill("weather", Representation::WidgetS, None),
+            ),
+            ("mixer-pill", pill("mixer", Representation::WidgetM, None)),
+            (
+                "loop",
+                pill("clock", Representation::WidgetM, Some("{1, 2}")),
+            ),
+        ] {
+            rig.store
+                .borrow_mut()
+                .add_komponent(layout::KomponentId::new(name), komponent)
+                .expect("a komponent");
+        }
+        rig
+    }
+
+    fn listed(layer: LayerKind) -> Vec<String> {
+        let desktop = surfaces::reconcile::desktops()[0].clone();
+        palette::lines(&desktop, layer, "", Offer::Every)
+            .into_iter()
+            .map(|line| match line {
+                Line::Heading(heading) => format!("# {heading}"),
+                Line::Entry { name, .. } => name,
+            })
+            .collect()
+    }
+
+    fn komponent_group(id: &str) -> Option<ResolvedGroup> {
+        grid_now().groups.into_iter().find(|group| {
+            group
+                .komponent
+                .as_ref()
+                .is_some_and(|used| used.id.as_str() == id)
+        })
+    }
+
+    /// The palette lists the library's komponents after the modules, each with how many parameters it takes and narrowed by what is typed; a repeating one is left out of the grid, and on the lock screen so is one holding a control.
+    #[test]
+    fn the_palette_lists_komponents_with_their_parameters_and_the_lock_leaves_out_controls() {
+        let _rig = with_komponents("palette-komponents");
+        let _owner = Owner::new();
+        let on_desktop = listed(LayerKind::Desktop);
+        let at = on_desktop
+            .iter()
+            .position(|line| line == "# Komponents")
+            .expect("a section for them");
+        assert_eq!(
+            on_desktop[at + 1..at + 4],
+            [
+                "clock-pill · 1 parameter",
+                "mixer-pill · 1 parameter",
+                "weather-pill · 1 parameter"
+            ],
+            "{on_desktop:?}"
+        );
+        assert!(
+            on_desktop[at..]
+                .iter()
+                .all(|line| !line.starts_with("loop")),
+            "a grid cell cannot repeat: {on_desktop:?}"
+        );
+        assert!(
+            on_desktop[..at].iter().any(|line| line == "Weather"),
+            "after the modules"
+        );
+
+        let on_lock = listed(LayerKind::Lock);
+        assert!(
+            on_lock.contains(&"clock-pill · 1 parameter".to_string()),
+            "{on_lock:?}"
+        );
+        assert!(
+            on_lock.contains(&"weather-pill · 1 parameter".to_string()),
+            "{on_lock:?}"
+        );
+        assert!(
+            !on_lock.iter().any(|line| line.starts_with("mixer-pill")),
+            "the mixer answers the pointer: {on_lock:?}"
+        );
+
+        let desktop = surfaces::reconcile::desktops()[0].clone();
+        let narrowed: Vec<Line> =
+            palette::lines(&desktop, LayerKind::Desktop, "WEATHER-P", Offer::Every);
+        assert_eq!(narrowed.len(), 2, "its heading and the one entry");
+    }
+
+    /// Enter in the palette adds the komponent as a group of its own on the free cells nearest the selection, its parameters at their defaults, selected once there and taken back by one undo.
+    #[test]
+    fn a_komponent_chosen_from_the_keyboard_is_added_as_a_group_of_its_own() {
+        let rig = with_komponents("palette-komponent-keys");
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        assert!(session::select(Selection::Instance(node_of("clock-2"))));
+        let before = stored(&rig);
+
+        assert!(tap(Key::Char('a'), NONE));
+        assert!(transient::is_open(palette::ID));
+        let (mut card, _) = page(palette::tree(SCREEN, LayerKind::Desktop, Offer::Every));
+        let press = |card: &mut ComponentList, key: Key| {
+            let event = Event::KeyPressed {
+                key,
+                modifiers: NONE,
+            };
+            telar::observe_keyboard(&event);
+            card.on_event(&event)
+        };
+        for ch in "weather-p".chars() {
+            press(&mut card, Key::Char(ch));
+        }
+        press(&mut card, Key::Named(NamedKey::Enter));
+        assert!(
+            !transient::is_open(palette::ID),
+            "choosing closes the palette"
+        );
+
+        let used = komponent_group("weather-pill").expect("the group draws the komponent");
+        assert_eq!(used.id.as_str(), "weather-pill");
+        assert!(
+            stored(&rig).outputs[0].layers.desktop.areas[0]
+                .groups
+                .iter()
+                .any(|group| group.id.as_str() == "weather-pill" && group.parameters.is_empty()),
+            "the parameters are the komponent's own defaults"
+        );
+        assert_eq!(used.children[0].id.as_str(), "widgets.weather-pill/face");
+        assert_eq!(
+            grid::cells_of(&used).map(|cells| (cells.cols, cells.rows)),
+            Some((2, 2)),
+            "the footprint of its small widget"
+        );
+        assert!(matches!(session::selected(), Selection::Group(_)));
+        assert_eq!(rig.undo_label().as_deref(), Some("Add weather-pill"));
+        session::undo().expect("one undo takes it back");
+        assert_eq!(stored(&rig), before);
+        assert!(komponent_group("weather-pill").is_none());
+    }
+
+    fn page(built: Built) -> (ComponentList, telar::NodeId) {
+        let root = Pointed::new(Box::new(
+            Container::new(
+                LayoutStyle::new().width(1920.0).height(1080.0),
+                vec![built.expect("it builds")],
+            )
+            .expect("a page"),
+        ));
+        let node = root.layout_node();
+        let tree = ComponentList::new(root);
+        compute_layout(
+            node,
+            AvailableSpace::Definite(1920.0),
+            AvailableSpace::Definite(1080.0),
+        )
+        .expect("it lays out");
+        (tree, node)
+    }
+
+    fn where_drawn(tree: &ComponentList, wanted: &str) -> (f32, f32) {
+        let mut found = None;
+        telar::for_each_with_matrix(&tree.commands(), |command, [a, b, c, d, e, f]| {
+            if let telar::DrawCommand::Text { text, rect, .. } = command
+                && text.to_string() == wanted
+            {
+                found = Some((
+                    a * (rect.x + 4.0) + c * (rect.y + rect.height / 2.0) + e,
+                    b * (rect.x + 4.0) + d * (rect.y + rect.height / 2.0) + f,
+                ));
+            }
+        });
+        found.unwrap_or_else(|| panic!("{wanted:?} is drawn"))
+    }
+
+    fn pointer(event: fn(f64, f64) -> Event, tree: &mut ComponentList, (x, y): (f32, f32)) {
+        let event = event(f64::from(x), f64::from(y));
+        telar::observe_keyboard(&event);
+        if !telar::dispatch_overlays(&event) {
+            tree.on_event(&event);
+        }
+    }
+
+    fn pressed(x: f64, y: f64) -> Event {
+        Event::PointerPressed {
+            x,
+            y,
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        }
+    }
+
+    fn released(x: f64, y: f64) -> Event {
+        Event::PointerReleased {
+            x,
+            y,
+            button: PointerButton::Primary,
+            source: PointerSource::Mouse,
+        }
+    }
+
+    fn moved(x: f64, y: f64) -> Event {
+        Event::PointerMoved {
+            x,
+            y,
+            source: PointerSource::Mouse,
+        }
+    }
+
+    fn typed_into(card: &mut ComponentList, key: Key) {
+        let event = Event::KeyPressed {
+            key,
+            modifiers: NONE,
+        };
+        telar::observe_keyboard(&event);
+        card.on_event(&event);
+        for _ in 0..3 {
+            telar::relayout_if_dirty();
+        }
+    }
+
+    /// The palette open and as its window builds it, narrowed by typing `typed` into it, and where the entry `name` is drawn there.
+    fn palette_showing(typed: &str, name: &str) -> (ComponentList, (f32, f32)) {
+        palette::open(Offer::Every).expect("the palette opens");
+        let (mut card, _) = page(palette::tree(SCREEN, LayerKind::Desktop, Offer::Every));
+        for _ in 0..3 {
+            telar::relayout_if_dirty();
+        }
+        for ch in typed.chars() {
+            typed_into(&mut card, Key::Char(ch));
+        }
+        let entry = where_drawn(&card, name);
+        (card, entry)
+    }
+
+    fn entries(layer: LayerKind) -> Vec<(Pick, String)> {
+        let desktop = surfaces::reconcile::desktops()[0].clone();
+        palette::lines(&desktop, layer, "", Offer::Every)
+            .into_iter()
+            .filter_map(|line| match line {
+                Line::Entry { pick, name, .. } => Some((pick, name)),
+                Line::Heading(_) => None,
+            })
+            .collect()
+    }
+
+    /// The palette's lines fill what its capped card leaves them, so the pointer reaches them where they are drawn: the first entry pressed is picked, and the last, which the arrows scroll into view, is drawn on screen and picked by a press too.
+    #[test]
+    fn the_palettes_lines_are_inside_its_card_where_a_press_reaches_them() {
+        let _rig = with_komponents("palette-lines-pressed");
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let listed = entries(LayerKind::Desktop);
+        let (first, first_name) = listed.first().cloned().expect("an entry");
+        let (last, last_name) = listed.last().cloned().expect("an entry");
+
+        let (mut card, at) = palette_showing("", &first_name);
+        let title = where_drawn(&card, "Add a widget");
+        assert!(at.1 > title.1, "the lines are under the title: {at:?}");
+        pointer(moved, &mut card, at);
+        pointer(pressed, &mut card, at);
+        pointer(released, &mut card, at);
+        assert_eq!(palette::picked().peek(), Some(first));
+        palette::unpick();
+
+        let (mut card, _) = palette_showing("", &first_name);
+        for _ in 1..listed.len() {
+            typed_into(&mut card, Key::Named(NamedKey::ArrowDown));
+        }
+        let at = where_drawn(&card, &last_name);
+        assert!(
+            at.1 > title.1 && at.1 < 1080.0,
+            "the entry pointed at is scrolled into view: {at:?}"
+        );
+        pointer(moved, &mut card, at);
+        pointer(pressed, &mut card, at);
+        pointer(released, &mut card, at);
+        assert_eq!(palette::picked().peek(), Some(last));
+        palette::unpick();
+    }
+
+    /// Through the pointer, a komponent pressed in the palette is picked, and the next press on a grid's cells puts it there as a group of its own: one entry, the cells under the pointer.
+    #[test]
+    fn a_komponent_pressed_in_the_palette_is_put_on_the_cells_pressed() {
+        let rig = with_komponents("palette-komponent-press");
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        let (mut palette_tree, entry) = palette_showing("clock-p", "clock-pill · 1 parameter");
+        pointer(moved, &mut palette_tree, entry);
+        pointer(pressed, &mut palette_tree, entry);
+        pointer(released, &mut palette_tree, entry);
+        assert_eq!(
+            palette::picked().peek(),
+            Some(Pick::Komponent(layout::KomponentId::new("clock-pill")))
+        );
+
+        let mode = mode::current().expect("the mode is up");
+        let (mut tool, _) = page(widgets::tool(&mode));
+        for _ in 0..2 {
+            telar::relayout_if_dirty();
+        }
+        let geometry = widgets::grids(SCREEN, LayerKind::Desktop)[0].0.clone();
+        let target = geometry.rect_of(at(0, 6, 1, 1));
+        let point = (
+            target.x + target.width / 2.0,
+            target.y + target.height / 2.0,
+        );
+        pointer(moved, &mut tool, point);
+        pointer(pressed, &mut tool, point);
+        pointer(released, &mut tool, point);
+
+        let used = komponent_group("clock-pill").expect("put on the grid");
+        assert!(
+            matches!(used.kind, GroupKind::Cell { row: 6, .. }),
+            "{:?}",
+            used.kind
+        );
+        assert!(palette::picked().peek().is_none(), "the pick is spent");
+        assert_eq!(rig.undo_label().as_deref(), Some("Add clock-pill"));
+        session::undo().expect("one undo takes it back");
+        assert_eq!(stored(&rig), before);
+    }
+
+    /// Dragged out of the palette and let go over the grid, a komponent lands where it is let go, previewed on the way and one undo entry once let go.
+    #[test]
+    fn a_komponent_dragged_from_the_palette_lands_where_it_is_let_go() {
+        let rig = with_komponents("palette-komponent-drag");
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        let (mut palette_tree, entry) = palette_showing("clock-p", "clock-pill · 1 parameter");
+        let geometry = widgets::grids(SCREEN, LayerKind::Desktop)[0].0.clone();
+        let target = geometry.rect_of(at(0, 4, 4, 2));
+        let point = (
+            target.x + target.width / 2.0,
+            target.y + target.height / 2.0,
+        );
+
+        pointer(moved, &mut palette_tree, entry);
+        pointer(pressed, &mut palette_tree, entry);
+        pointer(moved, &mut palette_tree, (entry.0 + 8.0, entry.1));
+        pointer(moved, &mut palette_tree, point);
+        assert!(
+            komponent_group("clock-pill").is_some(),
+            "the drop is previewed under the pointer"
+        );
+        assert_eq!(stored(&rig), before, "and nothing is written yet");
+        pointer(released, &mut palette_tree, point);
+
+        let used = komponent_group("clock-pill").expect("let go on the grid");
+        assert!(
+            matches!(used.kind, GroupKind::Cell { col: 0, row: 4, .. }),
+            "{:?}",
+            used.kind
+        );
+        assert_eq!(rig.undo_label().as_deref(), Some("Place a widget"));
+        session::undo().expect("one undo takes it back");
+        assert_eq!(stored(&rig), before);
+    }
+
+    /// The layout's own rules hold where a komponent is put from the editor: the lock layer takes only readings, a grid cell cannot repeat, a bar takes a repeating one in its end zone, and what is put validates as written.
+    #[test]
+    fn a_komponent_is_put_where_the_layout_would_accept_it_and_nowhere_else() {
+        let rig = with_komponents("komponent-plan");
+        let _owner = Owner::new();
+        let desktop = surfaces::reconcile::desktops()[0].clone();
+        let layout = stored(&rig);
+        let library = rig.store.borrow().all().clone();
+        let catalogue = surfaces::catalogue::Descriptors::installed();
+        let plan = |layer, area: &str, name: &str| {
+            crate::komponent::plan_use(
+                &layout,
+                &library,
+                &catalogue,
+                (&desktop.resolved, Some(&desktop)),
+                &crate::komponent::Placing {
+                    layer,
+                    area: &AreaId::new(area),
+                    group: None,
+                    output: Some(SCREEN),
+                    workspace: None,
+                    cell: None,
+                    near: (0, 0),
+                    zone: None,
+                },
+                &crate::komponent::Use::of(layout::KomponentId::new(name)),
+            )
+        };
+
+        assert!(matches!(
+            plan(LayerKind::Lock, "lock-readings", "mixer-pill"),
+            Err(crate::komponent::Refusal::Use(layout::UseError::Lock(..)))
+        ));
+        assert!(plan(LayerKind::Lock, "lock-readings", "weather-pill").is_ok());
+        assert!(matches!(
+            plan(LayerKind::Desktop, "widgets", "loop"),
+            Err(crate::komponent::Refusal::Use(
+                layout::UseError::CellRepeats
+            ))
+        ));
+        let (ops, group) = plan(LayerKind::Top, "bar-top", "loop").expect("a bar repeats");
+        let mut after = layout.clone();
+        layout::ops::apply_all(&mut after, &ops).expect("the operations apply");
+        let (resolved, _) = layout::resolve(&after, &library, SCREEN, None);
+        let placed = resolved
+            .area(LayerKind::Top, &AreaId::new("bar-top"))
+            .and_then(|bar| bar.groups.iter().find(|held| held.id == group))
+            .expect("the group is drawn");
+        assert_eq!(placed.id.as_str(), "loop");
+        assert!(matches!(
+            placed.kind,
+            GroupKind::Zone {
+                zone: layout::Zone::End
+            }
+        ));
+        assert!(
+            layout::validate_komponents(&after, &library, &catalogue).is_clean(),
+            "{}",
+            layout::validate_komponents(&after, &library, &catalogue).render()
+        );
     }
 }

@@ -455,6 +455,7 @@ impl Notices for Daemon {
             body,
             "dialog-warning",
             urgency,
+            &[],
         )
     }
 

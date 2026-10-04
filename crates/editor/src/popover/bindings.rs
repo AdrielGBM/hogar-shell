@@ -242,7 +242,7 @@ fn binding_row(
             .unwrap_or_default(),
         expected,
         env: expr_field::instance_environment(&draft.node, &draft.locals()),
-        empty: || telar::t!("editor.expr.unbound"),
+        empty: Rc::new(|| telar::t!("editor.expr.unbound")),
         checked,
     })?;
 

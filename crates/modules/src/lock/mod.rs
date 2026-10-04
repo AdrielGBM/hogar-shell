@@ -6,7 +6,6 @@
 //!
 //! **The layer is frozen when the lock is taken** ([`LockLayout`]). A layout edit made while the screen is covered applies at the next lock, so the tree a user is typing a password into cannot change under them, and a monitor plugged in mid-lock is covered with what the others show.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ui::scale::space;
@@ -20,7 +19,7 @@ use telar::{
 use config::Config;
 use config::theme::{FontRole, NordTheme};
 use layout::{
-    AreaId, AreaStyle, Catalogue, LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, Rect, Resolved,
+    AreaId, AreaStyle, Catalogue, LayerKind, Layout, Library, NOMINAL_OUTPUT, Rect, Resolved,
     ResolvedArea, ResolvedAreaKind, prompt_card,
 };
 use services::lock::{self, LockState, Method, Screen};
@@ -37,11 +36,11 @@ const CARD_WIDTH: f32 = 380.0;
 /// The layout is carried rather than a resolved arrangement per output, because an output that arrives while the screen is locked has to be covered with the same content as the rest, and only the layout can answer for a monitor nobody had seen yet. Carrying it is also what freezes it: resolution is pure, so resolving the same snapshot again gives the same answer however long the session has been locked and whatever has been edited since.
 pub struct LockLayout {
     layout: Layout,
-    known: BTreeMap<LayoutId, Layout>,
+    known: Library,
 }
 
 impl LockLayout {
-    pub fn of(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Self {
+    pub fn of(layout: &Layout, known: &Library) -> Self {
         Self {
             layout: layout.clone(),
             known: known.clone(),
@@ -50,10 +49,10 @@ impl LockLayout {
 
     /// The lock layer of `layout` when a locked screen may be drawn from it, or everything that rules it out — which is the minimal lock (TA-8).
     ///
-    /// Every rule has to hold on each of `outputs` (every screen there is, or the nominal one where none is known): every instance a reading, no action bound, a prompt that cannot be hidden, covered, faded or left unreadable, and a layer that resolves. Only the lock layer is judged, so a mistyped bar never costs the user the lock screen they configured. `file` is where the findings say the layout lives.
+    /// Every rule has to hold on each of `outputs` (every screen there is, or the nominal one where none is known): every instance a reading — a komponent's children included — no action bound, a prompt that cannot be hidden, covered, faded or left unreadable, and a layer that resolves. Only the lock layer is judged, so a mistyped bar never costs the user the lock screen they configured. `file` is where the findings say the layout lives.
     pub fn checked(
         layout: &Layout,
-        known: &BTreeMap<LayoutId, Layout>,
+        known: &Library,
         catalogue: &dyn Catalogue,
         theme: &NordTheme,
         outputs: &[Option<&str>],
@@ -69,13 +68,14 @@ impl LockLayout {
     /// Everything [`checked`](Self::checked) finds wrong with the lock layer of `layout`, without keeping a copy of it.
     pub fn problems(
         layout: &Layout,
-        known: &BTreeMap<LayoutId, Layout>,
+        known: &Library,
         catalogue: &dyn Catalogue,
         theme: &NordTheme,
         outputs: &[Option<&str>],
         file: &str,
     ) -> Report {
         let mut report = layout::validate_lock(layout, catalogue);
+        report.merge(layout::validate_komponents_lock(layout, known, catalogue));
         let nominal = [None];
         let outputs = match outputs.is_empty() {
             true => &nominal[..],
@@ -153,7 +153,7 @@ pub(crate) const PREVIEW_SCREEN: (f32, f32) = (960.0, 600.0);
 
 /// The lock screen as the session opener mounts it, for [`crate::preview`] — over the starter config and the layout the shell ships, since a preview has no session to read either from.
 pub(crate) fn screen_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let lock = LockLayout::of(&layout::built_in(), &BTreeMap::new());
+    let lock = LockLayout::of(&layout::built_in(), &Library::default());
     screen(
         &Arc::new(Config::starter()),
         &lock,
@@ -671,7 +671,7 @@ mod tests {
     use config::{LockConfig, NotificationDetail};
     use layout::{
         Anchor, Area, AreaId, AreaKind, Group, GroupId, GroupKind, Instance, InstanceId, Layer,
-        Layers, OutputMatch, OutputRule, Representation,
+        Layers, LayoutId, OutputMatch, OutputRule, Representation,
     };
     use ui::descriptor::{
         FieldDef, Input, ModuleDescriptor, Privacy, Representations, SourceDef, WidgetDef,
@@ -829,7 +829,7 @@ mod tests {
                 workspaces: Vec::new(),
             }],
         };
-        LockLayout::of(&layout, &BTreeMap::new())
+        LockLayout::of(&layout, &Library::default())
     }
 
     fn prompt_area_of() -> Area {

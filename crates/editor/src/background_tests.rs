@@ -3,7 +3,6 @@
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
-    use std::collections::BTreeMap;
     use std::rc::Rc;
 
     use telar::{
@@ -473,7 +472,12 @@ mod tests {
                 id: None,
                 special: None,
             });
-            let (resolved, _) = layout::resolve(&layout, &BTreeMap::new(), SCREEN, active.as_ref());
+            let (resolved, _) = layout::resolve(
+                &layout,
+                &layout::Library::default(),
+                SCREEN,
+                active.as_ref(),
+            );
             regions::tiles_of(&resolved, LayerKind::Background)
         };
         let on_two = resolved(Some("2"));

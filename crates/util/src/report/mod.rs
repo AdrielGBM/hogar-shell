@@ -74,21 +74,24 @@ impl Finding {
     }
 
     /// `file:line:column`, or the file alone without a span — the prefix compilers print, which is what lets a terminal or an editor that knows it turn the line into a jump to the spot.
+    ///
+    /// The path is written out where it could disguise the line ([`crate::text::shown`]).
     pub fn location(&self) -> String {
+        let file = crate::text::shown(&self.file.display().to_string());
         match &self.span {
-            Some(span) => format!("{}:{}:{}", self.file.display(), span.line, span.column),
-            None => self.file.display().to_string(),
+            Some(span) => format!("{file}:{}:{}", span.line, span.column),
+            None => file,
         }
     }
 }
 
-/// In English, as the command line and the log say it.
+/// In English, as the command line and the log say it. The key holds ids a file chose, so it is written out where it could disguise the line ([`crate::text::shown`]); the message does the same for every value it quotes ([`Message::render_in`]).
 impl fmt::Display for Finding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.key.is_empty() {
-            write!(f, "{}", self.message.english())
-        } else {
-            write!(f, "{}: {}", self.key, self.message.english())
+        let message = self.message.english();
+        match self.key.is_empty() {
+            true => write!(f, "{message}"),
+            false => write!(f, "{}: {message}", crate::text::shown(&self.key)),
         }
     }
 }
@@ -221,6 +224,34 @@ mod tests {
         let span = Span::within_toml_string(text, 4..8, 1..40);
 
         assert_eq!(span.bytes, 6..7);
+    }
+
+    /// Somebody else's text reaches a terminal written out: a key holding an id a file chose, a value a message quotes and words shown as they are, each with its escapes and bidirectional controls spelled, while a parser's report keeps its lines.
+    #[test]
+    fn what_a_finding_quotes_is_written_out_when_it_is_rendered() {
+        let mut report = Report::default();
+        report.warn(Finding::new(
+            "layouts/x\u{1b}[2J.toml",
+            "outputs.*.layers.top.areas.\u{1b}]0;owned\u{7}",
+            message!("expression.unknown_name", name = "\u{202e}hs.lruc"),
+        ));
+        report.error(Finding::new(
+            "layouts/x.toml",
+            "",
+            Message::verbatim("line 1\n  | a = \"\u{1b}[31m\"\n  ^"),
+        ));
+
+        let rendered = report.render();
+
+        assert!(
+            !rendered.contains('\u{1b}') && !rendered.contains('\u{202e}'),
+            "{rendered}"
+        );
+        assert!(rendered.contains("layouts/x\\u{1b}[2J.toml: warning: outputs.*.layers.top.areas.\\u{1b}]0;owned\\u{7}: unknown name `\\u{202e}hs.lruc`"), "{rendered}");
+        assert!(
+            rendered.contains("line 1\n  | a = \"\\u{1b}[31m\"\n  ^"),
+            "{rendered}"
+        );
     }
 
     #[test]

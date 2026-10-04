@@ -3,7 +3,6 @@
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -119,7 +118,7 @@ mod tests {
             &config_path(),
             &config,
             layout,
-            &BTreeMap::new(),
+            &layout::Library::default(),
             outputs,
             &|_| workspace.clone(),
         )

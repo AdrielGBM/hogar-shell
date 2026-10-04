@@ -166,7 +166,7 @@ fn drawn_bar() -> (Arc<Config>, Edge, f32, config::ResolvedShape) {
     let running = layout::running().expect("the sweep published a layout");
     let (resolved, _) = layout::resolve(
         &running,
-        &std::collections::BTreeMap::new(),
+        &layout::Library::default(),
         layout::NOMINAL_OUTPUT,
         None,
     );
@@ -692,6 +692,7 @@ fn group(
         kind,
         stacked: false,
         repeat: None,
+        komponent: None,
         children,
     }
 }

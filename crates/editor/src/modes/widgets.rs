@@ -440,8 +440,15 @@ pub(crate) fn corner_for(geometry: &Geometry, cells: Cells, point: (f32, f32)) -
 
 /// The cells a widget picked in the palette covers once it is placed.
 pub(crate) fn picked_footprint(pick: &Pick, layer: LayerKind) -> Cells {
-    let module = pick.module().unwrap_or_default();
-    desktop::first_size(&module, layer).map_or(Cells::ONE, desktop::footprint)
+    match pick {
+        Pick::Komponent(id) => crate::written::known()
+            .komponent(id)
+            .map_or(Cells::ONE, crate::komponent::footprint),
+        _ => {
+            let module = pick.module().unwrap_or_default();
+            desktop::first_size(&module, layer).map_or(Cells::ONE, desktop::footprint)
+        }
+    }
 }
 
 /// The instance `node` names, on its screen as it shows now.

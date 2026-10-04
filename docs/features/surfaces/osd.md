@@ -26,8 +26,8 @@ text, an OSD carries a bar.
 
 An OSD is a card in the shell's one column: a `Stack` area in the layout, by default an area in the overlay
 layer, pinned to the top right. Where it is, how wide it is and which outputs it appears on are that area's
-`anchor`, `offset`, `width` and `output_policy` — a layout edit, not a config key — and `hogar-shell layout show`
-prints where the running layout put it.
+`anchor`, `offset`, `width` and `output_policy` — a layout edit, not a config key — and `hogar-shell layout show <name>`
+prints where a layout put it (`layout list` marks the one being drawn).
 
 With several stacks on a screen, an OSD goes where a route of kind `osd` sends it: a card goes to the first stack
 of its screen with a route that takes it, and a stack with no routes takes every card no route takes. In the
@@ -41,8 +41,8 @@ would make it take nothing else. How the column behaves — `[stack]` — `max_v
 ## Showing one without changing anything
 
 Clicking the [brightness](../modules/brightness.md) chip shows the OSD without moving the level, which is the
-gesture for "what is it at". There is **no IPC command** that does the same thing — `volume osd` / `mic osd` /
-`brightness osd` do not exist yet, so a keybind that reports a level without changing it is not available.
+gesture for "what is it at". There is **no IPC command** that does the same thing, so a keybind that reports a level
+without changing it is not available.
 
 ## What it needs
 

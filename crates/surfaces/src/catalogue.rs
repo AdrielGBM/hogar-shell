@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use automation::bindings::Target;
 use automation::{Environment, UserSources};
-use layout::Representation;
+use layout::{Layout, Library, NOMINAL_OUTPUT, Representation, Resolved};
 use telar_expression::{Compiled, ErrorCode, Errors, Type};
 use ui::descriptor::{Input, ModuleDescriptor};
-use util::report::Message;
+use util::report::{Message, Report};
 
 /// The module table and the command table validation asks, carried rather than read from what is installed: the CLI answers `layout check` in a process where nothing installed either, and an installed-table lookup there would call every module unknown.
 #[derive(Clone)]
@@ -22,7 +22,35 @@ pub struct Descriptors {
     environment: OnceCell<Environment>,
 }
 
+/// [`Descriptors`] as another thread can hold them: the tables and the sources, without the expression environment, which is made again on the thread that checks.
+#[derive(Clone)]
+pub struct Tables {
+    modules: &'static [ModuleDescriptor],
+    resolves: fn(&str) -> bool,
+    sources: Arc<UserSources>,
+}
+
+impl From<Tables> for Descriptors {
+    fn from(tables: Tables) -> Self {
+        Self {
+            modules: tables.modules,
+            resolves: tables.resolves,
+            sources: tables.sources,
+            environment: OnceCell::new(),
+        }
+    }
+}
+
 impl Descriptors {
+    /// What a check on another thread needs of these tables. `resolves` must answer from the command table itself, as the command line's does, not from a hook only the driver thread holds.
+    pub fn tables(&self) -> Tables {
+        Tables {
+            modules: self.modules,
+            resolves: self.resolves,
+            sources: Arc::clone(&self.sources),
+        }
+    }
+
     /// The tables to ask, reading expressions against the sources the running layout declares.
     pub fn new(modules: &'static [ModuleDescriptor], resolves: fn(&str) -> bool) -> Self {
         Self {
@@ -55,6 +83,48 @@ impl Descriptors {
             .get_or_init(|| Environment::of_modules(self.modules, Arc::clone(&self.sources)))
             .clone()
             .on_layer(on_lock)
+    }
+
+    /// Everything wrong with `layout`, resolved against `library`, that a check made without a compositor can find, with the arrangement it resolves to on one nominal output: what it says, what its sources say, each komponent it draws, and what of it waits for the user's trust. `text` answers what a file holds, by the name a finding gives it (`layouts/<name>.toml`, `components/<name>.toml`), so a finding can be pointed at where it is written.
+    ///
+    /// Which outputs exist is a question only a running compositor answers, so what depends on a monitor's name is left to the running shell's own notice.
+    pub fn check(
+        self,
+        layout: &Layout,
+        library: &Library,
+        text: &dyn Fn(&str) -> Option<String>,
+        automation: &config::AutomationConfig,
+    ) -> (Report, Resolved) {
+        let mut report = Report::default();
+        let written = text(&format!("layouts/{}.toml", layout.id));
+        if let Some(written) = &written {
+            report.merge(layout::check_unknown_keys(written, &layout.id));
+        }
+        let (sources, sourcing) = automation::sources::of_layout(layout, library, automation);
+        let checking = self.with_sources(sources);
+        let mut checked = layout::validate(layout, &checking);
+        checked.merge(layout::validate_unsets(layout, library));
+        checked.merge(layout::validate_komponents(layout, library, &checking));
+        if let Some(written) = &written {
+            layout::locate_expressions(written, &mut checked);
+            layout::locate_unsets(written, &mut checked);
+        }
+        report.merge(checked);
+        for id in layout::komponents_of(layout, library) {
+            let Some(komponent) = library.komponent(&id) else {
+                continue;
+            };
+            let mut drawn = layout::validate_komponent(&id, komponent, &checking);
+            if let Some(written) = text(&layout::komponent_path(&id)) {
+                layout::locate_komponent_expressions(&written, &mut drawn);
+            }
+            report.merge(drawn);
+        }
+        report.merge(sourcing);
+        report.merge(layout::held(layout, library));
+        let (resolved, resolving) = layout::resolve(layout, library, NOMINAL_OUTPUT, None);
+        report.merge(resolving);
+        (report, resolved)
     }
 
     /// What a binding at `path` on an instance of `module` drives.
@@ -251,9 +321,12 @@ mod tests {
     }
 
     #[test]
-    fn every_finding_has_words_in_every_language_the_shell_speaks() {
+    fn every_message_has_words_in_every_language_the_shell_speaks() {
         assert_eq!(
-            util::report::untranslated(&crate::__rsx_i18n::CATALOG, &["finding."]),
+            util::report::untranslated(
+                &crate::__rsx_i18n::CATALOG,
+                &["finding.", "notice.", "trust."]
+            ),
             Vec::<String>::new()
         );
     }

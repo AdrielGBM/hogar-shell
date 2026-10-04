@@ -1,12 +1,11 @@
 //! Where taking an expression back is written: at a level laid over every level that writes it on the screens the edit is for (DEC-26, TA-2), so the `unset` it writes takes back what is drawn there rather than something under it.
 
-use std::collections::BTreeMap;
-
 use util::report::Message;
 
+use crate::library::Library;
 use crate::model::*;
 use crate::ops::Site;
-use crate::resolve::{Origin, Resolved, resolve};
+use crate::resolve::{Level, Resolved, resolve};
 
 /// The expression taken back, and the area it is written under.
 #[derive(Clone, Copy, Debug)]
@@ -23,6 +22,8 @@ pub enum Held<'a> {
     Visible,
     /// The `repeat` of one of its groups.
     Repeat(&'a GroupId),
+    /// What one of its groups sets the parameter `name` of the komponent it uses to.
+    Parameter { group: &'a GroupId, name: &'a str },
     /// The binding at `path` of an instance in one of its groups.
     Binding {
         group: &'a GroupId,
@@ -32,12 +33,20 @@ pub enum Held<'a> {
 }
 
 impl Taken<'_> {
-    fn origin_in(&self, resolved: &Resolved) -> Option<Origin> {
+    fn origin_in(&self, resolved: &Resolved) -> Option<Level> {
         let area = resolved.area(self.layer, self.area)?;
         let group = |id: &GroupId| area.groups.iter().find(|held| held.id == *id);
         let expr = match self.held {
             Held::Visible => area.visible.as_ref(),
             Held::Repeat(id) => group(id)?.repeat.as_ref(),
+            Held::Parameter { group: id, name } => group(id)?
+                .komponent
+                .as_ref()?
+                .parameters
+                .iter()
+                .find(|held| held.name == name)?
+                .value
+                .as_ref(),
             Held::Binding {
                 group: id,
                 instance,
@@ -49,7 +58,7 @@ impl Taken<'_> {
                 .bindings
                 .get(path),
         };
-        expr.map(|expr| expr.origin.clone())
+        expr.and_then(|expr| expr.origin.level().cloned())
     }
 
     /// Whether `layer` writes the expression itself.
@@ -61,6 +70,9 @@ impl Taken<'_> {
         match self.held {
             Held::Visible => area.visible.is_some(),
             Held::Repeat(id) => group(id).is_some_and(|group| group.repeat.is_some()),
+            Held::Parameter { group: id, name } => {
+                group(id).is_some_and(|group| group.parameters.contains_key(name))
+            }
             Held::Binding {
                 group: id,
                 instance,
@@ -94,6 +106,13 @@ impl Taken<'_> {
                 }
                 return;
             }
+            Held::Parameter { group: id, name } => {
+                if let Some(group) = group_entry(area, id, unset) {
+                    group.parameters.remove(name);
+                    mark(&mut group.unset, Unset::parameter(name), unset);
+                }
+                return;
+            }
             Held::Binding {
                 group,
                 instance,
@@ -119,6 +138,12 @@ impl Taken<'_> {
             Held::Repeat(group) => {
                 util::message!("finding.held.repeat", area = self.area, group = group)
             }
+            Held::Parameter { group, name } => util::message!(
+                "finding.held.parameter",
+                area = self.area,
+                group = group,
+                name = name
+            ),
             Held::Binding { instance, path, .. } => {
                 util::message!("finding.held.binding", path = path, instance = instance)
             }
@@ -199,7 +224,7 @@ pub struct TakeBack {
 /// Refused when nothing gives the expression on any of the screens, when no rule of the layout speaks for all of them, and when a level that rule is not laid over would still give it there — a narrower rule, or one of the layout's workspace rules, which come after every output rule. The refusal names that level, which is where it can be deleted instead.
 pub fn taking_back(
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     screens: &[String],
     taken: Taken<'_>,
 ) -> Result<TakeBack, Message> {
@@ -222,7 +247,7 @@ pub fn taking_back(
                         .get(taken.layer)
                         .is_some_and(|layer| taken.written_in(layer))
                 })?;
-                Some(Origin {
+                Some(Level {
                     layout: layout.id.clone(),
                     output: rule.matches.clone(),
                     workspace: Some(workspace.matches.clone()),

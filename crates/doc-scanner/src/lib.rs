@@ -40,7 +40,7 @@ pub fn rust_files(paths: &[&Path]) -> Vec<PathBuf> {
 
 /// Scans `sources` and writes `<OUT_DIR>/<file>` with the tables named after `prefix`.
 ///
-/// The statics are `<PREFIX>_DOCS`, `<PREFIX>_FIELDS`, `<PREFIX>_FIELD_TYPES`, `<PREFIX>_FIELD_RUST` and `<PREFIX>_VARIANTS`, which is what lets one crate `include!` the config's tables and another the layout's without either knowing the other exists.
+/// The statics are `<PREFIX>_DOCS`, `<PREFIX>_FIELDS`, `<PREFIX>_FIELD_TYPES`, `<PREFIX>_FIELD_RUST`, `<PREFIX>_VARIANTS` and `<PREFIX>_TAGS`, which is what lets one crate `include!` the config's tables and another the layout's without either knowing the other exists.
 pub fn emit(sources: &[PathBuf], prefix: &str, file: &str) {
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     std::fs::write(out.join(file), scan(sources).render(prefix))
@@ -60,6 +60,10 @@ pub struct Tables {
     rust: Vec<(String, String, String)>,
     /// `(enum, variant)` for every unit variant, spelled the way serde writes it in a file.
     variants: Vec<(String, String)>,
+    /// `(enum, tag)` for every internally tagged enum: the key a file names its variant under.
+    tags: Vec<(String, String)>,
+    /// `(item, field)` for every `#[serde(flatten)]` field, whose own name is no key of the file.
+    flattened: Vec<(String, String)>,
 }
 
 /// Lifts the doc comments off `sources`.
@@ -81,6 +85,9 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
     let mut rename: Option<String> = None;
     let mut rename_all: Option<String> = None;
     let mut variant_case: Option<String> = None;
+    let mut tag: Option<String> = None;
+    let mut flatten = false;
+    let mut skipped = false;
 
     for line in text.lines() {
         let trimmed = line.trim();
@@ -99,6 +106,11 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
             if let Some(case) = renamed_all(trimmed) {
                 rename_all = Some(case);
             }
+            if let Some(name) = tagged(trimmed) {
+                tag = Some(name);
+            }
+            flatten |= serde_says(trimmed, "flatten");
+            skipped |= serde_says(trimmed, "skip") || serde_says(trimmed, "skip_deserializing");
             continue;
         }
         // A closing brace at the left margin ends the item it closes, which is what keeps a field of the next thing from being recorded against this one.
@@ -118,6 +130,9 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
         } else if let Some(name) = enum_name(trimmed) {
             inside_enum = Some(name.clone());
             variant_case = rename_all.take();
+            if let Some(tag) = tag.take() {
+                tables.tags.push((name.clone(), tag));
+            }
             item = name;
             tables.push_doc(&item, "", &pending);
         } else if let Some((owner, variant)) = inside_enum
@@ -152,9 +167,13 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
             }
             item = variant;
         } else if let Some(field) = field_name(trimmed, inside_enum.is_some())
+            && !skipped
             && !item.is_empty()
         {
             let field = rename.take().unwrap_or(field);
+            if flatten {
+                tables.flattened.push((item.clone(), field.clone()));
+            }
             tables.push_doc(&item, &field, &pending);
             tables.fields.push((item.clone(), field.clone()));
             if let Some(declared) = declared_type(trimmed) {
@@ -167,11 +186,83 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
         pending.clear();
         rename = None;
         rename_all = None;
+        tag = None;
+        flatten = false;
+        skipped = false;
     }
+    tables.unflatten();
     tables
 }
 
 impl Tables {
+    /// Names each flattened field's keys the way a file writes them: an internally tagged enum's under its tag (`place = "zone"` beside the group's own keys, not a `kind` no file has), and a struct's as its own fields, each one beside the keys of the item that flattens it.
+    fn unflatten(&mut self) {
+        for (item, field) in std::mem::take(&mut self.flattened) {
+            let Some(held) = self
+                .types
+                .iter()
+                .find(|(i, f, _)| *i == item && *f == field)
+                .map(|(_, _, kind)| kind.clone())
+            else {
+                continue;
+            };
+            match self.tags.iter().find(|(owner, _)| *owner == held) {
+                Some((_, tag)) => {
+                    let tag = tag.clone();
+                    self.rename(&item, &field, &tag);
+                }
+                None => self.splice(&item, &field, &held),
+            }
+        }
+    }
+
+    fn rename(&mut self, item: &str, field: &str, to: &str) {
+        let named = |i: &String, f: &String| i == item && f == field;
+        for (i, f, _) in &mut self.docs {
+            if named(i, f) {
+                *f = to.to_string();
+            }
+        }
+        for (i, f) in &mut self.fields {
+            if named(i, f) {
+                *f = to.to_string();
+            }
+        }
+        for (i, f, _) in self.types.iter_mut().chain(self.rust.iter_mut()) {
+            if named(i, f) {
+                *f = to.to_string();
+            }
+        }
+    }
+
+    /// Puts the fields of the struct `held` in place of `item`'s flattened `field`, with their comments and types.
+    fn splice(&mut self, item: &str, field: &str, held: &str) {
+        let named = |i: &String, f: &String| i == item && f == field;
+        let Some(at) = self.fields.iter().position(|(i, f)| named(i, f)) else {
+            return;
+        };
+        let inner: Vec<(String, String)> = self
+            .fields
+            .iter()
+            .filter(|(i, _)| i == held)
+            .map(|(_, f)| (item.to_string(), f.clone()))
+            .collect();
+        self.fields.splice(at..=at, inner);
+        let moved = |rows: &[(String, String, String)]| -> Vec<(String, String, String)> {
+            rows.iter()
+                .filter(|(i, f, _)| i == held && !f.is_empty())
+                .map(|(_, f, value)| (item.to_string(), f.clone(), value.clone()))
+                .collect()
+        };
+        let (docs, types, rust) = (moved(&self.docs), moved(&self.types), moved(&self.rust));
+        self.docs.retain(|(i, f, _)| !named(i, f));
+        self.types.retain(|(i, f, _)| !named(i, f));
+        self.rust.retain(|(i, f, _)| !named(i, f));
+        self.docs.extend(docs);
+        self.types.extend(types);
+        self.rust.extend(rust);
+    }
+
     fn push_doc(&mut self, item: &str, field: &str, docs: &[String]) {
         if docs.is_empty() {
             return;
@@ -202,6 +293,10 @@ impl Tables {
         for (owner, variant) in &self.variants {
             let _ = writeln!(variants, "    ({owner:?}, {variant:?}),");
         }
+        let mut tags = String::new();
+        for (owner, tag) in &self.tags {
+            let _ = writeln!(tags, "    ({owner:?}, {tag:?}),");
+        }
         format!(
             "/// `(item, field, doc)`; an empty field is the item's own comment. A struct variant is `Enum::Variant`.\n\
              /// Generated by `build.rs` through `hogar-shell-doc-scanner`.\n\
@@ -217,7 +312,9 @@ impl Tables {
              /// read off, so a `bool` is a switch and an `Option<f32>` a number that may be left unset.\n\
              pub static {prefix}_FIELD_RUST: &[(&str, &str, &str)] = &[\n{rust}];\n\n\
              /// `(enum, variant)` for every unit variant, spelled as serde writes it in a file.\n\
-             pub static {prefix}_VARIANTS: &[(&str, &str)] = &[\n{variants}];\n"
+             pub static {prefix}_VARIANTS: &[(&str, &str)] = &[\n{variants}];\n\n\
+             /// `(enum, tag)` for every internally tagged enum: the key a file names its variant under.\n\
+             pub static {prefix}_TAGS: &[(&str, &str)] = &[\n{tags}];\n"
         )
     }
 }
@@ -293,6 +390,20 @@ fn spelled(variant: &str, case: Option<&str>) -> String {
         }
         _ => variant.to_string(),
     }
+}
+
+/// `#[serde(tag = "kind", …)]` → `kind`: the key an internally tagged enum names its variant under, which is where a flattened field of it sits in a file.
+fn tagged(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once("tag = \"")?;
+    let (name, _) = rest.split_once('"')?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Whether a `#[serde(…)]` line says the bare `word`: `flatten` (the field below has no key of its own, its keys sitting beside its owner's) or `skip` (it is no key at all).
+fn serde_says(line: &str, word: &str) -> bool {
+    line.strip_prefix("#[serde(")
+        .and_then(|rest| rest.strip_suffix(")]"))
+        .is_some_and(|inner| inner.split(',').any(|part| part.trim() == word))
 }
 
 /// `pub struct Name {` → `Name`. Tuple and unit structs carry no fields worth documenting, so they are skipped.
@@ -514,6 +625,68 @@ mod tests {
                 ),
                 ("Thing".into(), "on".into(), "bool".into()),
             ]
+        );
+    }
+
+    /// A flattened field has no key of its own: a file names an internally tagged enum's variant under the enum's tag, and writes a struct's fields beside the keys of whatever flattens it. A group's placement was listed as `kind`, which no file writes, while every file writes `place`. A skipped field is no key at all.
+    #[test]
+    fn a_flattened_field_is_listed_as_the_keys_a_file_writes_for_it() {
+        let tables = scanned(
+            "flattened",
+            "pub struct Group {\n\
+             \x20   pub id: String,\n\
+             \x20   /// Where the group sits.\n\
+             \x20   #[serde(flatten)]\n\
+             \x20   pub kind: Option<GroupKind>,\n\
+             \x20   #[serde(flatten)]\n\
+             \x20   pub look: Look,\n\
+             \x20   pub stacked: Option<bool>,\n\
+             \x20   /// Read from somewhere else.\n\
+             \x20   #[serde(skip)]\n\
+             \x20   pub tokens: Tokens,\n\
+             }\n\
+             \n\
+             #[serde(tag = \"place\", rename_all = \"snake_case\")]\n\
+             pub enum GroupKind {\n\
+             \x20   Zone { zone: Zone },\n\
+             }\n\
+             \n\
+             pub struct Look {\n\
+             \x20   /// How round.\n\
+             \x20   pub radius: f32,\n\
+             \x20   pub fill: Option<Fill>,\n\
+             }\n",
+        );
+        let of_group: Vec<&str> = tables
+            .fields
+            .iter()
+            .filter(|(item, _)| item == "Group")
+            .map(|(_, field)| field.as_str())
+            .collect();
+        assert_eq!(of_group, ["id", "place", "radius", "fill", "stacked"]);
+        assert_eq!(
+            doc_of(&tables, "Group", "place").as_deref(),
+            Some("Where the group sits.")
+        );
+        assert_eq!(doc_of(&tables, "Group", "kind"), None);
+        assert_eq!(
+            doc_of(&tables, "Group", "radius").as_deref(),
+            Some("How round.")
+        );
+        assert!(
+            tables
+                .types
+                .contains(&("Group".into(), "place".into(), "GroupKind".into()))
+        );
+        assert!(
+            tables
+                .types
+                .contains(&("Group".into(), "fill".into(), "Fill".into()))
+        );
+        assert_eq!(tables.tags, [("GroupKind".into(), "place".into())]);
+        assert!(
+            tables.render("LAYOUT").contains("pub static LAYOUT_TAGS"),
+            "the tags are printed for a schema to find a variant by"
         );
     }
 

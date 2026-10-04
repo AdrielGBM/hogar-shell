@@ -212,6 +212,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         list.push(visible_row(draft)?);
     }
     list.extend(repeat_rows(draft)?);
+    list.extend(parameter_rows(draft)?);
     list.push(rows::heading(|| telar::t!("editor.area.style"))?);
     let fill = draft.value(
         "style.fill",
@@ -389,7 +390,7 @@ struct ExprRow {
     help: Option<String>,
     layer: LayerKind,
     expected: Rc<dyn Fn() -> Wanted>,
-    empty: fn() -> String,
+    empty: Rc<dyn Fn() -> String>,
     /// Whether the level takes the expression back, read reactively.
     taken: Rc<dyn Fn() -> bool>,
     peek: Rc<dyn Fn() -> Held>,
@@ -431,7 +432,7 @@ fn expr_row(row: ExprRow) -> Built {
                 seed,
                 expected: Rc::clone(&expected),
                 env: expr_field::environment(layer),
-                empty,
+                empty: Rc::clone(&empty),
                 checked: Rc::new(move |checked: Option<&str>| {
                     let next = checked.map_or_else(|| restored.clone(), str::to_string);
                     let now = reading();
@@ -523,7 +524,7 @@ pub(crate) fn visible_row(draft: &AreaDraft) -> Built {
         help: help("Area", "visible"),
         layer: draft.node.layer,
         expected: Rc::new(|| Wanted::Exactly(Type::Bool)),
-        empty: || telar::t!("editor.expr.always"),
+        empty: Rc::new(|| telar::t!("editor.expr.always")),
         taken: Rc::new(move || value.with(|now| now.taken_back)),
         peek: Rc::new(move || value.peek()),
         write: Rc::new(move |next| value.set(next)),
@@ -539,7 +540,7 @@ pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
         .resolved
         .groups
         .iter()
-        .filter(|group| !matches!(group.kind, GroupKind::Cell { .. }))
+        .filter(|group| !matches!(group.kind, GroupKind::Cell { .. }) && group.komponent.is_none())
         .map(|group| {
             let own = written.groups.iter().find(|held| held.id == group.id);
             let held = Held {
@@ -595,7 +596,7 @@ pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
             help: help("Group", "repeat"),
             layer: draft.node.layer,
             expected: Rc::new(|| Wanted::AnyList),
-            empty: || telar::t!("editor.expr.once"),
+            empty: Rc::new(|| telar::t!("editor.expr.once")),
             taken: Rc::new(move || {
                 repeats.with(|now| now.get(&watched).is_some_and(|held| held.taken_back))
             }),
@@ -609,6 +610,117 @@ pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
             }),
             write: Rc::new(move |next| {
                 repeats.update(|now| {
+                    now.insert(writing.clone(), next);
+                });
+            }),
+            inherited,
+            takes_back: taking_back(draft, writer.as_ref()),
+        })?);
+    }
+    Ok(list)
+}
+
+/// What each group drawing a komponent sets its parameters to: an expression per parameter, of the type the komponent declares, read where the group is drawn — empty for the komponent's default. A value only a level under the popover's sets has a Remove that takes it back there, as an inherited `repeat` has.
+pub(crate) fn parameter_rows(draft: &AreaDraft) -> Rows {
+    type Key = (GroupId, String);
+    let written = draft.area().peek();
+    let mut parameters: Vec<(Key, String, layout::ResolvedParameter, Held, bool)> = Vec::new();
+    for group in &draft.resolved.groups {
+        let Some(used) = &group.komponent else {
+            continue;
+        };
+        let own = written.groups.iter().find(|held| held.id == group.id);
+        for parameter in &used.parameters {
+            let name = parameter.name.clone();
+            let unset = Unset::parameter(&name);
+            let held = Held {
+                text: parameter
+                    .value
+                    .as_ref()
+                    .map(|value| value.expr.0.clone())
+                    .unwrap_or_default(),
+                taken_back: own.is_some_and(|own| own.unset.contains(&unset)),
+            };
+            let inherited = parameter.value.is_some()
+                && own.is_none_or(|own| !own.parameters.contains_key(&name));
+            let key = (group.id.clone(), name);
+            parameters.push((key, used.id.to_string(), parameter.clone(), held, inherited));
+        }
+    }
+    if parameters.is_empty() {
+        return Ok(Vec::new());
+    }
+    let seeds: BTreeMap<Key, Held> = parameters
+        .iter()
+        .map(|(key, _, _, held, _)| (key.clone(), held.clone()))
+        .collect();
+    let started = seeds.clone();
+    let values = draft.value(
+        "parameters",
+        move || seeds.clone(),
+        move |area, now: &BTreeMap<Key, Held>| {
+            for ((id, name), held) in now {
+                if started.get(&(id.clone(), name.clone())) == Some(held) {
+                    continue;
+                }
+                let group = match area.groups.iter().position(|group| group.id == *id) {
+                    Some(at) => &mut area.groups[at],
+                    None => {
+                        area.groups.push(Group {
+                            id: id.clone(),
+                            ..Group::default()
+                        });
+                        area.groups.last_mut().expect("a group was just pushed")
+                    }
+                };
+                match held.expr() {
+                    Some(expr) => group.parameters.insert(name.clone(), expr),
+                    None => group.parameters.remove(name),
+                };
+                held.write_unset(&mut group.unset, Unset::parameter(name));
+            }
+        },
+    );
+    let mut list = Vec::new();
+    let mut headed: Option<GroupId> = None;
+    for ((group, name), komponent, parameter, _, inherited) in parameters {
+        if headed.as_ref() != Some(&group) {
+            let (shown, used) = (group.to_string(), komponent.clone());
+            list.push(rows::heading(move || {
+                telar::t!(
+                    "editor.komponent.heading",
+                    group = shown.clone(),
+                    komponent = used.clone()
+                )
+            })?);
+            headed = Some(group.clone());
+        }
+        let key: Key = (group, name.clone());
+        let (watched, reading, writing) = (key.clone(), key.clone(), key);
+        let ty = parameter.ty.clone();
+        let default = parameter.default.0.clone();
+        let writer = parameter.value.as_ref().map(|value| value.origin.clone());
+        list.push(expr_row(ExprRow {
+            label: Reactive::of(move || name.clone()),
+            help: help("Group", "parameters"),
+            layer: draft.node.layer,
+            expected: Rc::new(move || Wanted::Exactly(ty.clone())),
+            empty: Rc::new(move || {
+                telar::t!("editor.komponent.default", default = default.clone())
+            }),
+            taken: Rc::new(move || {
+                values.with(|now| now.get(&watched).is_some_and(|held| held.taken_back))
+            }),
+            peek: Rc::new(move || {
+                values.peek_with(|now| {
+                    now.get(&reading).cloned().unwrap_or(Held {
+                        text: String::new(),
+                        taken_back: false,
+                    })
+                })
+            }),
+            write: Rc::new(move |next| {
+                values.update(|now| {
                     now.insert(writing.clone(), next);
                 });
             }),

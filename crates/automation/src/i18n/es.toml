@@ -12,6 +12,7 @@ goes_too_deep = "`{reference}` va más allá de los campos de una lectura: escri
 not_set_yet = "nada se llama `{reference}` todavía: ninguna fuente, ninguna lectura de módulo y ninguna variable — una variable fijada más tarde se lee desde entonces"
 no_reading_yet = "`{reference}` todavía no tiene lectura"
 no_copy_drawn = "`{reference}` no tiene lectura: no se dibuja ninguna copia de su grupo"
+held_until_trusted = "`{reference}` llegó con un paquete y queda en espera hasta que confíes en lo que ejecuta"
 local_not_drawn = "`{reference}` solo se lee donde se dibuja una copia de su grupo"
 reading_not_number = "`{reference}`: `{text}` no es un número"
 reading_not_truth = "`{reference}`: `{text}` no es verdadero ni falso"

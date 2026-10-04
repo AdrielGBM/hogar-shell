@@ -5,7 +5,6 @@
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
-    use std::collections::BTreeMap;
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -36,7 +35,7 @@ mod tests {
             &util::paths::config_dir().join("config.toml"),
             &Arc::new(Config::default()),
             &layout::built_in(),
-            &BTreeMap::new(),
+            &layout::Library::default(),
             &outputs,
             &|_| None,
         )

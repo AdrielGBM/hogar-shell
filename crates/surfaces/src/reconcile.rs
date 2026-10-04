@@ -7,7 +7,7 @@
 //! **Reservation is an output-level fact, never a workspace one.** A strip's thickness is the deepest reserving area on its edge across every layer of the output's own rules, so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7).
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use telar::{RwSignal, signal};
 
 use config::{Config, Edge};
 use layout::{
-    ActiveWorkspace, AreaId, LayerKind, Layout, LayoutId, NOMINAL_OUTPUT, Resolved,
+    ActiveWorkspace, AreaId, LayerKind, Layout, Library, NOMINAL_OUTPUT, Resolved,
     ResolvedAreaKind, Route, StackOutputPolicy, resolve,
 };
 use util::report::Report;
@@ -47,7 +47,7 @@ impl Desktop {
     }
 
     /// This screen with `layout` resolved in place of what it was resolved from: the same config, size, reservation and workspace.
-    pub fn resolving(&self, layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Self {
+    pub fn resolving(&self, layout: &Layout, known: &Library) -> Self {
         let output = self.output.as_deref().unwrap_or(NOMINAL_OUTPUT);
         let (resolved, _) = resolve(layout, known, output, self.resolved.workspace.as_ref());
         Self {
@@ -193,7 +193,7 @@ pub fn plan(
     path: &Path,
     config: &Arc<Config>,
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     outputs: &[OutputDescriptor],
     workspace: &dyn Fn(Option<&str>) -> Option<ActiveWorkspace>,
 ) -> (Vec<Desktop>, Report) {
@@ -344,7 +344,7 @@ pub fn previewing() -> Option<Rc<[Desktop]>> {
 /// Draws `layout` in the windows in place of what they were reconciled from, resolved for the same screens and workspaces, until [`end_preview`] or the next preview: an edit's live preview, never written and never recorded.
 ///
 /// Only what the windows draw follows it, and only in the windows whose areas it changes. What each edge reserves, which windows are mapped and where a card is routed stay as reconciled until the layout is committed, so a drag never re-tiles the user's windows on the way (T-7.3). Read inside an effect, this follows every reconcile too, so a screen plugged in mid-gesture shows the preview as well.
-pub fn preview(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) {
+pub fn preview(layout: &Layout, known: &Library) {
     let planned = planned();
     let replanned: Rc<[Desktop]> = planned
         .iter()

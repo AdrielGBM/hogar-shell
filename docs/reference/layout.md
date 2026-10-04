@@ -317,12 +317,14 @@ A run of instances inside an area, and how the area places it.
 | Key | What it is |
 | --- | --- |
 | `id` | What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`. |
-| `kind` | Where in its area the group sits. `place` says which way, and the keys that way needs follow it. |
+| `place` | Where in its area the group sits: `zone` in one of a bar's runs, or `cell` on a grid, with the keys that way needs beside it. |
 | `stacked` | Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set. |
 | `repeat` | An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a stacked group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn. |
 | `children` | One placed module. |
 | `remove` | Ids of instances an earlier level placed that this one takes away. |
-| `unset` | Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them. A group takes back `repeat`, the way an area takes back `visible`. |
+| `komponent` | The komponent this group draws, by the name of its file: `komponent = "battery-pill"` draws what `components/battery-pill.toml` holds — its children, and whether they repeat or stack — so the group holds nothing else, and a level that names another komponent, or names one where the group held its own children, replaces what the group held. Each child is drawn as `<area>.<group>/<child>`, so two groups using one komponent never share an id or what an instance keeps. A komponent that is missing or cannot be read is drawn as one placeholder that says which. |
+| `parameters` | What the komponent's parameters read here, by name: an expression of the type the parameter declares (`threshold = "15"`, `label = "'Home'"`, `level = "$battery.level"`), read where the group is drawn. A parameter left out reads its default. A name the komponent does not declare is an error. |
+| `unset` | Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them, and `unset = ["parameters.label"]` puts back a komponent parameter's default. A group takes back `repeat` and `parameters.<name>`, the way an area takes back `visible`. |
 
 ## `GroupKind::Zone`
 
@@ -356,4 +358,26 @@ One placed module.
 | `bindings` | Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), or `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`). Each value is laid over `options` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value. |
 | `actions` | What each gesture on this instance runs. |
 | `unset` | Bindings a level under this one gave the instance that this level takes back, each as `bindings.<path>`: `unset = ["bindings.accent"]` puts back the accent its options give it where a broader rule drives it by an expression. A path has to be one `bindings` could hold, the way an area takes back `visible`. |
+
+## `Komponent`
+
+A group saved to be used again: what it holds, and the values a group using it can set — `components/<name>.toml`, used by a group's `komponent = "<name>"`.
+
+Its children are written as a group's are, with ids of their own that only have to be unique within this file, and their bindings and its `repeat` read its parameters as `$<name>` before any of the shell's names. A use sets a parameter with an expression of its own, read where the group is drawn; one it leaves out reads its default. "Detach" turns a use back into the group it stands for, its parameters written into the expressions that read them.
+
+| Key | What it is |
+| --- | --- |
+| `parameters` | The values a use can set, by the name its expressions read each as (`$label`): letters, digits and `_`, and neither `item` nor `index`, which a copy of a repeated group reads. |
+| `stacked` | Shows the children one at a time, as a group's `stacked` does. |
+| `repeat` | An expression giving a list the children are drawn once per item of, as a group's `repeat` is; it may read the parameters. Not allowed where the komponent is used in a grid cell, whose footprint is fixed. |
+| `children` | The instances it holds, written as a group's are. What each one may do is what the layer it is used on allows: on the lock layer only readings, and no actions. |
+
+## `Parameter`
+
+One value a komponent's use can set.
+
+| Key | What it is |
+| --- | --- |
+| `type` | What it holds: `text`, `number`, `bool`, `colour` (or `color`), or `list:<one of those>`. A picture's path and a font's family are text. |
+| `default` | What it reads where a use does not set it: an expression of that type, read where the group is drawn — `'Battery'`, `20`, `#88c0d0`, or a reading such as `$battery.level`. |
 

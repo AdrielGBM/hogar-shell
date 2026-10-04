@@ -512,13 +512,38 @@ take a placed module, or a whole area, out of the layout
 put a placed module in another group, or elsewhere in its own
 .TP
 \fBset\fR \fI<instance|area|area.group> <key> <value...>\fR
-change one property of a placed module, or an area's visible or a group's repeat
+change one property of a placed module, an area's visible, or a group's repeat or parameters.<name>
 .TP
 \fBreset\fR \fI<id|layer|all>\fR
 put a part of the layout back to what the layout it extends says, or the built\-in one
 .TP
 \fBedit\fR \fI<background|desktop|top|overlay|lock|off> [output]\fR
 edit one layer on one screen (the focused one unless named), or stop
+.TP
+\fBexport\fR \fI<bundle\-path> [layout]\fR
+write a layout (the one being drawn unless named), the layouts it extends, the komponents it draws and the pictures it shows to a new bundle directory
+.TP
+\fBimport\fR \fI<bundle\-path>\fR
+add a bundle's layouts, komponents and pictures, read in the background; every command and address it brings, and every action that does more than show a panel or move a control, stays off until `layout trust`
+.TP
+\fBtrust\fR \fI[bundle] [item|\-\-all <set>] [\-\-decline] | \-\-dialog\fR
+list what imported bundles run, or accept one item of a bundle by its id or everything listed by the set id the listing prints (refuse with \-\-decline), or open the dialog that answers for what waits
+.SS komponent
+.TP
+\fBlist\fR
+every komponent, its parameters and the layouts that draw it
+.TP
+\fBshow\fR \fI<name>\fR
+print a komponent as it is stored
+.TP
+\fBsave\fR \fI<area.group> <name> [parameter...]\fR
+save a group of the layout being drawn as a komponent and draw it from there, making the options and bindings named into parameters
+.TP
+\fBuse\fR \fI<area>[.<group>] <name> [\-\-zone start|center|end] [parameter=<expr>...]\fR
+draw a komponent in a new group of an area, or in a group that holds nothing, setting the parameters named; on a bar the new group goes at the end of the zone named, the end zone by default
+.TP
+\fBdetach\fR \fI<area.group>\fR
+turn the komponent a group draws back into instances of its own
 .SS var
 .TP
 \fBget\fR \fI<name>\fR

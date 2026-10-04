@@ -4,7 +4,6 @@
 
 #![cfg(test)]
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -105,7 +104,7 @@ fn a_preview_frame_costs_a_resolve_and_one_window_where_a_commit_rebuilds_every_
     ui::descriptor::install(crate::core::modules::MODULES);
 
     let stored = layout::built_in();
-    let known = BTreeMap::new();
+    let known = layout::Library::default();
     let path = util::paths::config_dir().join("config.toml");
     let planning = || reconcile::plan(&path, &config, &stored, &known, &[screen()], &|_| None).0;
     let desktops = planning();

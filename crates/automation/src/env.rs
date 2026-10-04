@@ -1,6 +1,6 @@
 //! The shell's expression environment: what `$name` and `$source.field` mean, of which type, and how a binding reads them live.
 //!
-//! **Names.** `$name` is a source the layout declares, else a variable; `$source.field` is a module's reading (`$battery.level`); `$event.<kind>` is the last event of a kind. A layout source may not take a module source's name (validation says so), and shadows a variable of the same name. In a copy of a repeated group, `$item` and `$index` are read before any of them ([`Local`]). A `$name` nothing answers to yet is a variable not set yet: it does not check until one is ([`Environment::awaits_variable`]), and whatever checked it then checks it again ([`vars::declared`]).
+//! **Names.** `$name` is a source the layout declares, else a variable; `$source.field` is a module's reading (`$battery.level`); `$event.<kind>` is the last event of a kind. A layout source may not take a module source's name (validation says so), and shadows a variable of the same name. In a copy of a repeated group, `$item` and `$index` are read before any of them ([`Local`]). A source the layout declares that waits for the user's trust (DEC-30) checks as the type it will read and reads as a wait until it is trusted, never as a variable. A `$name` nothing answers to yet is a variable not set yet: it does not check until one is ([`Environment::awaits_variable`]), and whatever checked it then checks it again ([`vars::declared`]).
 //!
 //! **Lock views.** An [`Environment`] is shown to an [`Audience`]. For [`Audience::Anyone`] — the lock screen — a field whose `Privacy` does not allow anyone reads as its type's empty value without its service ever being asked, an `OnLock` field asks `[lock]`, and a source that runs a command is refused unless it says `lock_safe = true` (TA-8). Variables are readable.
 //!
@@ -42,28 +42,32 @@ pub struct Environment {
     locals: Rc<[Local]>,
 }
 
-/// A name a binding reads besides the shell's own — `$item` or `$index` in a copy of a repeated group — with its type and, where the copy is drawn, its value as it changes. It is read before any source, module reading or variable of the same name.
+/// A name a binding reads besides the shell's own — `$item` or `$index` in a copy of a repeated group, a parameter in what a komponent holds — with its type and, where the copy is drawn, its value as it changes. It is read before any source, module reading or variable of the same name.
 #[derive(Clone)]
 pub struct Local {
-    name: &'static str,
+    name: Rc<str>,
     ty: Type,
     value: Option<Rc<dyn Fn() -> Option<Value>>>,
 }
 
 impl Local {
     /// A local known only by its type: enough to compile against, not to read.
-    pub fn typed(name: &'static str, ty: Type) -> Self {
+    pub fn typed(name: impl Into<Rc<str>>, ty: Type) -> Self {
         Self {
-            name,
+            name: name.into(),
             ty,
             value: None,
         }
     }
 
     /// A local read as `value` answers, reactively. `None` is a value the copy does not have yet, or no longer has.
-    pub fn live(name: &'static str, ty: Type, value: impl Fn() -> Option<Value> + 'static) -> Self {
+    pub fn live(
+        name: impl Into<Rc<str>>,
+        ty: Type,
+        value: impl Fn() -> Option<Value> + 'static,
+    ) -> Self {
         Self {
-            name,
+            name: name.into(),
             ty,
             value: Some(Rc::new(value)),
         }
@@ -99,6 +103,8 @@ enum Target<'a> {
     Field(&'static SourceDef, usize),
     Var,
     Event(EventKind),
+    /// A source the layout declares that waits for the user's trust, with the type it will read as.
+    Held(&'a Type),
     /// A bare `$name` nothing answers to: a variable not set yet.
     Unset,
 }
@@ -112,6 +118,7 @@ impl Target<'_> {
             Target::Field(..) => ReferenceKind::Field,
             Target::Var => ReferenceKind::Var,
             Target::Event(_) => ReferenceKind::Event,
+            Target::Held(_) => ReferenceKind::Source,
             Target::Unset => return None,
         })
     }
@@ -247,7 +254,7 @@ impl Environment {
         let named = self
             .locals
             .iter()
-            .map(|local| bare(local.name))
+            .map(|local| bare(&local.name))
             .chain(self.user.iter().map(|(name, _)| bare(name)))
             .chain(self.services.values().flat_map(|def| {
                 def.fields
@@ -313,7 +320,7 @@ impl Environment {
         is_var: &dyn Fn(&str) -> bool,
     ) -> Result<Target<'_>, HostError> {
         let name = reference.name.as_str();
-        if let Some(local) = self.locals.iter().find(|local| local.name == name) {
+        if let Some(local) = self.locals.iter().find(|local| &*local.name == name) {
             return match reference.path.is_empty() {
                 true => Ok(Target::Local(local)),
                 false => Err(refusal(util::message!(
@@ -335,6 +342,9 @@ impl Environment {
                         )));
                     }
                     return Ok(Target::User(source));
+                }
+                if let Some(ty) = self.user.held(name) {
+                    return Ok(Target::Held(ty));
                 }
                 if is_var(name) {
                     return Ok(Target::Var);
@@ -383,7 +393,7 @@ impl Environment {
                             ))
                         });
                 }
-                if self.user.get(name).is_some() || is_var(name) {
+                if self.user.get(name).is_some() || self.user.held(name).is_some() || is_var(name) {
                     return Err(refusal(util::message!(
                         "expression.reading_has_no_fields",
                         name = name
@@ -410,6 +420,7 @@ impl Environment {
                 .map(|ty| vars::type_of(&ty))
                 .ok_or_else(|| unset(reference)),
             Target::Event(_) => Ok(Type::Text),
+            Target::Held(ty) => Ok((*ty).clone()),
             Target::Unset => Err(unset(reference)),
         }
     }
@@ -440,10 +451,22 @@ fn no_copy_drawn(reference: &Reference) -> HostError {
     ))
 }
 
-/// The failures that are a wait rather than a failure, by their keys.
-const WAITS: [&str; 2] = ["expression.no_reading_yet", "expression.no_copy_drawn"];
+/// What a source held for the user's trust reads: a wait, which ends when the user trusts what it runs (DEC-30).
+fn held_until_trusted(reference: &Reference) -> HostError {
+    refusal(util::message!(
+        "expression.held_until_trusted",
+        reference = reference
+    ))
+}
 
-/// Whether `error` is only that a reading has not arrived yet: a source that has not answered, an event that has not happened, a copy not drawn yet. That is a wait rather than a failure; when the source itself cannot answer, that is its own failure.
+/// The failures that are a wait rather than a failure, by their keys.
+const WAITS: [&str; 3] = [
+    "expression.no_reading_yet",
+    "expression.no_copy_drawn",
+    "expression.held_until_trusted",
+];
+
+/// Whether `error` is only that a reading has not arrived yet: a source that has not answered, an event that has not happened, a copy not drawn yet, a source held until the user trusts it. That is a wait rather than a failure; when the source itself cannot answer, that is its own failure.
 pub fn awaits_reading(error: &Error) -> bool {
     error.kind == ErrorKind::Evaluation
         && matches!(&error.code, ErrorCode::Host(host) if WAITS.contains(&host.key.as_str()))
@@ -582,6 +605,7 @@ impl telar_expression::Resolver for Readings {
                 .produced(&SourceSpec::event(kind), While::Visible)
                 .get()
                 .ok_or_else(|| no_reading_yet(reference)),
+            Target::Held(_) => Err(held_until_trusted(reference)),
             Target::Unset => Err(unset(reference)),
         }
     }

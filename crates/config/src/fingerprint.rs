@@ -9,7 +9,7 @@
 //! - `config.toml`, read by `Config::load` — which writes the starter config in its place when it is missing.
 //! - `tokens.toml` beside it, read by `Config::load` through `TokenOverrides::load`. A missing or unreadable one is the same as none.
 //! - `monitors/<output>/config.toml`, read by `Config::for_output` for each screen the reconcile plans, and merged over `config.toml` for that screen.
-//! - `layouts/*.toml`, read by `layout::LayoutStore::load` — where everything the shell draws is written down. They are not config, and the reload path treats them apart: what a layout edit needs is the store read again, not the config. They are fingerprinted here all the same, because there is one watcher and a second one polling a second set of files would be two answers to "did anything change".
+//! - `layouts/*.toml`, read by `layout::LayoutStore::load` — where everything the shell draws is written down — and `components/*.toml` beside them, the komponents their groups draw. They are not config, and the reload path treats them apart: what a layout edit needs is the store read again, not the config. They are fingerprinted here all the same, because there is one watcher and a second one polling a second set of files would be two answers to "did anything change".
 //!
 //! Nothing else a load produces comes from a file: no section deserializes from one or defaults to one, and what the config names — the `[paths]` directories, the palette cache — is read by whatever uses it, after the load. A wallpaper-derived palette is not a config input at all; it reaches the shell as a reload somebody asked for, [`Reload::Always`].
 
@@ -57,9 +57,12 @@ impl Fingerprint {
                 files.push((file, held));
             }
         }
-        for file in layouts_beside(config_path) {
-            if let held @ Held::Bytes(_) = held(&file) {
-                files.push((file, held));
+        for file in layouts_beside(config_path)
+            .into_iter()
+            .chain(komponents_beside(config_path))
+        {
+            if let Ok(bytes) = read_regular(&file, LAYOUT_FILE_LIMIT, Links::Follow) {
+                files.push((file, hashed(&bytes)));
             }
         }
         Self(files)
@@ -81,7 +84,20 @@ fn layouts_beside(config_path: &Path) -> Vec<PathBuf> {
     layout_files(&dir)
 }
 
-/// Every layout file in `dir`, sorted so two reads of an unchanged directory answer alike.
+/// The komponents directory beside `config_path`, which the layouts' groups draw from.
+fn komponents_beside(config_path: &Path) -> Vec<PathBuf> {
+    let Some(dir) = config_path.parent().map(|dir| dir.join("components")) else {
+        return Vec::new();
+    };
+    layout_files(&dir)
+}
+
+/// The most a layout or a komponent file may hold. The built-in layout is about ten kilobytes, so this is a hundred times the largest file a person writes by hand, and small enough that reading one never stalls whoever asked.
+pub const LAYOUT_FILE_LIMIT: u64 = 1024 * 1024;
+
+/// Every `.toml` file in `dir` that is a regular file once its links are followed — a layout, or a komponent where `dir` is `components/` — sorted so two reads of an unchanged directory answer alike. A FIFO, a socket or a device under that name is no layout, and opening one would wait on whoever holds its other end, so it is left out.
+///
+/// Links are followed because this is the user's own directory, which a dotfiles manager may fill with links into a store of its own; a bundle, which is somebody else's, is read with links refused (`layout::bundle`).
 ///
 /// Here rather than in `crates/layout`, which owns the directory, because the dependency runs the other way. One answer all the same: the fingerprint that decides whether a reload has anything to deliver and the store that reads the files must not disagree about which files those are.
 pub fn layout_files(dir: &Path) -> Vec<PathBuf> {
@@ -92,9 +108,44 @@ pub fn layout_files(dir: &Path) -> Vec<PathBuf> {
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|it| it.to_str()) == Some("toml"))
+        .filter(|path| std::fs::metadata(path).is_ok_and(|it| it.is_file()))
         .collect();
     files.sort();
     files
+}
+
+/// Whether [`read_regular`] follows a symbolic link at the path it is given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Links {
+    Follow,
+    Refuse,
+}
+
+/// Reads the regular file at `path`, refusing anything else and anything over `limit` bytes.
+///
+/// The file is opened without blocking and checked through the descriptor it was opened as, so a FIFO or a device swapped in after the directory was listed is refused rather than waited on, and a file that grows past `limit` while it is read is refused rather than read to its end. With [`Links::Refuse`] a link at `path` itself is refused by the open, never followed — the last component only, so a directory that is somebody else's is read with `util::beneath::PlainDir` instead, which refuses a link at every component.
+pub fn read_regular(path: &Path, limit: u64, links: Links) -> std::io::Result<Vec<u8>> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut flags = libc::O_NONBLOCK | libc::O_CLOEXEC;
+    if links == Links::Refuse {
+        flags |= libc::O_NOFOLLOW;
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(flags)
+        .open(path)
+        .map_err(|why| match why.raw_os_error() {
+            Some(libc::ELOOP) => std::io::Error::other("it is a symbolic link"),
+            _ => why,
+        })?;
+    util::beneath::read_open(file, limit)
+}
+
+/// [`read_regular`] for a layout or a komponent file of the user's own, as text.
+pub fn read_layout_text(path: &Path) -> std::io::Result<String> {
+    let bytes = read_regular(path, LAYOUT_FILE_LIMIT, Links::Follow)?;
+    String::from_utf8(bytes).map_err(|_| std::io::Error::other("it is not UTF-8 text"))
 }
 
 fn held(path: &Path) -> Held {
@@ -299,6 +350,39 @@ mod tests {
         cleanup(&path);
     }
 
+    /// A komponent file is what the groups that use it draw, so writing or editing one is a change the watcher delivers, as an edit to a layout is.
+    #[test]
+    fn a_komponent_file_is_part_of_the_fingerprint() {
+        let path = scratch("komponents");
+        std::fs::write(&path, CLOCK).unwrap();
+        let bare = Fingerprint::read(&path);
+        let komponent = path.with_file_name("components").join("pill.toml");
+        std::fs::create_dir_all(komponent.parent().unwrap()).unwrap();
+
+        std::fs::write(
+            &komponent,
+            "[[children]]\nid = \"clock\"\nmodule = \"clock\"\n",
+        )
+        .unwrap();
+        let written = Fingerprint::read(&path);
+        assert_ne!(
+            written, bare,
+            "a new komponent changes what a group can draw"
+        );
+
+        std::fs::write(
+            &komponent,
+            "[[children]]\nid = \"clock\"\nmodule = \"battery\"\n",
+        )
+        .unwrap();
+        assert_ne!(
+            Fingerprint::read(&path),
+            written,
+            "and so does an edit to one"
+        );
+        cleanup(&path);
+    }
+
     /// **`tokens.toml` is an input of the load, so an edit to it is a change.** `Config::load` reads it beside `config.toml`, and a fingerprint that left it out would make a token edit invisible — the very bug a content fingerprint exists to remove, which the modification-time watcher had too.
     #[test]
     fn an_edit_to_tokens_toml_is_a_change() {
@@ -363,6 +447,58 @@ mod tests {
             Fingerprint::read(&path),
             "and what it wrote is the file it left"
         );
+        cleanup(&path);
+    }
+
+    fn fifo(path: &Path) {
+        let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0, "mkfifo");
+    }
+
+    /// Runs `work` on a thread of its own and fails the test if it does not answer within seconds, which is what a read that waits on a FIFO's writer would do.
+    fn answers_in_time<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(work());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("it answered rather than waiting on the other end")
+    }
+
+    /// A FIFO or a device named like a layout is never opened by a listing, a reload or a read, and a file over the limit is refused rather than read whole; a link is followed in the user's own directory and refused where the caller says so.
+    #[test]
+    fn a_fifo_a_link_or_an_oversized_file_never_stalls_a_read() {
+        let path = scratch("fifo");
+        std::fs::write(&path, CLOCK).unwrap();
+        let layouts = path.parent().unwrap().join("layouts");
+        std::fs::create_dir_all(&layouts).unwrap();
+        std::fs::write(layouts.join("ok.toml"), "name = \"ok\"\n").unwrap();
+        std::os::unix::fs::symlink(layouts.join("ok.toml"), layouts.join("link.toml")).unwrap();
+        fifo(&layouts.join("pipe.toml"));
+        let big = vec![b'#'; LAYOUT_FILE_LIMIT as usize + 1];
+        std::fs::write(layouts.join("big.toml"), &big).unwrap();
+
+        let listed: Vec<String> = layout_files(&layouts)
+            .iter()
+            .map(|it| it.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(listed, ["big.toml", "link.toml", "ok.toml"]);
+        let config = path.clone();
+        answers_in_time(move || Fingerprint::read(&config));
+
+        let pipe = layouts.join("pipe.toml");
+        let refused = answers_in_time(move || read_regular(&pipe, 64, Links::Follow));
+        assert!(
+            refused
+                .unwrap_err()
+                .to_string()
+                .contains("not a regular file")
+        );
+        let oversized = read_layout_text(&layouts.join("big.toml")).unwrap_err();
+        assert!(oversized.to_string().contains("more than"), "{oversized}");
+        assert!(read_layout_text(&layouts.join("link.toml")).is_ok());
+        let link = read_regular(&layouts.join("link.toml"), 64, Links::Refuse).unwrap_err();
+        assert!(link.to_string().contains("symbolic link"), "{link}");
         cleanup(&path);
     }
 }

@@ -286,9 +286,22 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `add` | `<module> <area> [group]` | place a module in an area of the layout being drawn |
 | `remove` | `<id>` | take a placed module, or a whole area, out of the layout |
 | `move` | `<id> <group> [index]` | put a placed module in another group, or elsewhere in its own |
-| `set` | `<instance\|area\|area.group> <key> <value...>` | change one property of a placed module, or an area's visible or a group's repeat |
+| `set` | `<instance\|area\|area.group> <key> <value...>` | change one property of a placed module, an area's visible, or a group's repeat or parameters.<name> |
 | `reset` | `<id\|layer\|all>` | put a part of the layout back to what the layout it extends says, or the built-in one |
 | `edit` | `<background\|desktop\|top\|overlay\|lock\|off> [output]` | edit one layer on one screen (the focused one unless named), or stop |
+| `export` | `<bundle-path> [layout]` | write a layout (the one being drawn unless named), the layouts it extends, the komponents it draws and the pictures it shows to a new bundle directory |
+| `import` | `<bundle-path>` | add a bundle's layouts, komponents and pictures, read in the background; every command and address it brings, and every action that does more than show a panel or move a control, stays off until `layout trust` |
+| `trust` | `[bundle] [item\|--all <set>] [--decline] \| --dialog` | list what imported bundles run, or accept one item of a bundle by its id or everything listed by the set id the listing prints (refuse with --decline), or open the dialog that answers for what waits |
+
+## `komponent`
+
+| Command | Arguments | What it does |
+| --- | --- | --- |
+| `list` |  | every komponent, its parameters and the layouts that draw it |
+| `show` | `<name>` | print a komponent as it is stored |
+| `save` | `<area.group> <name> [parameter...]` | save a group of the layout being drawn as a komponent and draw it from there, making the options and bindings named into parameters |
+| `use` | `<area>[.<group>] <name> [--zone start\|center\|end] [parameter=<expr>...]` | draw a komponent in a new group of an area, or in a group that holds nothing, setting the parameters named; on a bar the new group goes at the end of the zone named, the end zone by default |
+| `detach` | `<area.group>` | turn the komponent a group draws back into instances of its own |
 
 ## `var`
 

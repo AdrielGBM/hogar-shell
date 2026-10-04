@@ -39,7 +39,7 @@ hogar-shell volume mute
 
 `[audio]` — `increment`, `max_volume` (default 150 %, clamped to 100–300).
 
-`[osd]` places the overlay; `[toasts.events] audio_output` decides whether a change also raises a toast.
+Where the overlay appears is the layout's [stack area](../surfaces/osd.md#configuring); `[toasts.events] audio_output` decides whether a change also raises a toast.
 
 ## What it needs
 

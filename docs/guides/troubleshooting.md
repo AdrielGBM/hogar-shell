@@ -30,7 +30,7 @@ nothing started.
 Three causes, in order of likelihood:
 
 1. **It is not in a zone.** A bar area's `start`/`center`/`end` group in the active layout — an id not placed
-   there is not shown. `hogar-shell layout show` prints the layout as it is stored.
+   there is not shown. `hogar-shell layout show <name>` prints a layout as it is stored (`layout list` marks the one being drawn).
 2. **Its id is misspelt.** Then something else is there instead: an id no module answers to is drawn where it
    was declared as a placeholder in the error colour — the id written on it along a horizontal bar, a warning
    glyph alone down a vertical one — and pressing it opens the settings window. `hogar-shell config check` names

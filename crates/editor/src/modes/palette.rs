@@ -1,19 +1,20 @@
-//! The add-widget palette (TA-5): every module that draws as a widget, grouped by what it is about and narrowed by what is typed, and — "From bars…" — the chips on this screen's bars that could be widgets instead.
+//! The add-widget palette (TA-5): every module that draws as a widget, grouped by what it is about and narrowed by what is typed, the komponents saved in `components/` with the number of parameters each takes, and — "From bars…" — the chips on this screen's bars that could be widgets instead.
 //!
 //! **Three ways to place (WCAG 2.5.7).** An entry dragged onto a grid lands where it is let go, the cells it would cover outlined as it goes; an entry pressed is picked, and the next press on a grid puts it on the cells there; Enter puts the entry the arrows point at on the free cells nearest the selection. Typing narrows the list whether or not the search field has the focus.
 //!
-//! **On the lock screen** only representations that read and never answer the pointer are offered (TA-8): the palette asks [`offered`] for every module, and that is what filters it.
+//! **On the lock screen** only representations that read and never answer the pointer are offered (TA-8): the palette asks [`offered`] for every module and [`crate::komponent::offered`] for every komponent, and that is what filters them. A komponent put on a grid is a group of its own that draws it, its parameters at their defaults, placed like a widget group.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use telar::{
-    DismissRegistration, Key, LayoutItem, LayoutStyle, NamedKey, ReactiveList, RectStyle, RwSignal,
-    SizeDimension, StyledContainer, Text, box_item, detached, effect, signal, use_theme,
+    DismissRegistration, Key, LayoutError, LayoutItem, LayoutStyle, NamedKey, NodeId, ReactiveList,
+    RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, detached, effect, signal,
+    use_theme,
 };
 
 use config::theme::{FontRole, NordTheme};
-use layout::{LayerKind, Representation, ResolvedAreaKind};
+use layout::{KomponentId, LayerKind, Representation, ResolvedAreaKind};
 use platform_wayland::KeyboardMode;
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::Node;
@@ -50,6 +51,8 @@ pub enum Offer {
 pub enum Pick {
     /// A new instance of this module.
     Module(String),
+    /// A new group that draws this komponent.
+    Komponent(KomponentId),
     /// The chip instance this node names, moved off its bar.
     FromBar(Node),
 }
@@ -59,6 +62,7 @@ impl Pick {
     pub(crate) fn module(&self) -> Option<String> {
         match self {
             Pick::Module(module) => Some(module.clone()),
+            Pick::Komponent(_) => None,
             Pick::FromBar(node) => {
                 let desktop = reconcile::desktop_now(node.output.as_deref())?;
                 desktop::shown_instance(&desktop, node).map(|chip| chip.module)
@@ -169,6 +173,9 @@ pub fn lines(desktop: &Desktop, layer: LayerKind, query: &str, offer: Offer) -> 
             }));
         }
     }
+    if offer == Offer::Every {
+        lines.extend(komponents(layer, query));
+    }
     if layer == LayerKind::Lock {
         return lines;
     }
@@ -176,6 +183,34 @@ pub fn lines(desktop: &Desktop, layer: LayerKind, query: &str, offer: Offer) -> 
     if !chips.is_empty() {
         lines.push(Line::Heading(telar::t!("editor.desktop.from_bars")));
         lines.extend(chips);
+    }
+    lines
+}
+
+/// The komponents of the library the palette puts on a grid of `layer` that `query` matches, under their heading.
+fn komponents(layer: LayerKind, query: &str) -> Vec<Line> {
+    let library = crate::written::known();
+    let offered = crate::komponent::offered(
+        &library,
+        &surfaces::catalogue::Descriptors::installed(),
+        layer,
+        true,
+    );
+    let mut lines: Vec<Line> = offered
+        .into_iter()
+        .filter(|found| matches(query, &[found.id.as_str()]))
+        .map(|found| Line::Entry {
+            name: telar::t!(
+                "editor.palette.komponent",
+                name = found.id.to_string(),
+                count = found.parameters
+            ),
+            pick: Pick::Komponent(found.id),
+            icon: "puzzle",
+        })
+        .collect();
+    if !lines.is_empty() {
+        lines.insert(0, Line::Heading(telar::t!("editor.palette.komponents")));
     }
     lines
 }
@@ -238,14 +273,17 @@ pub(crate) fn open(offer: Offer) -> Result<(), EditError> {
     Ok(())
 }
 
-/// The palette's card: a title, the search field and the lines it lists, at the left of what the reserving areas leave.
+/// The palette's card: a title, the search field and the lines it lists, at the left of what the reserving areas leave. The card is capped to the screen, and the lines fill what the title and the search field leave of it, scrolling past it ([`crate::popover::capped_rows`]); the entry the arrows point at is kept in view.
 pub(crate) fn tree(output: &str, layer: LayerKind, offer: Offer) -> Built {
     let theme = use_theme::<NordTheme>();
+    let pad = ui::scale::space::lg();
+    let gap = ui::scale::space::md();
     let query = signal(String::new());
     let pointed = signal(0usize);
+    let pointed_row: RwSignal<Option<NodeId>> = signal(None);
     let listing = output.to_string();
     let listed = move || {
-        reconcile::desktop(Some(&listing))
+        reconcile::desktop_now(Some(&listing))
             .map(|desktop| lines(&desktop, layer, &query.get(), offer))
             .unwrap_or_default()
     };
@@ -271,7 +309,7 @@ pub(crate) fn tree(output: &str, layer: LayerKind, offer: Offer) -> Built {
         |shown: &(String, usize)| shown.clone(),
         {
             let listed = listed.clone();
-            move |(_, at): (String, usize)| lines_of(&building, layer, listed(), at)
+            move |(_, at): (String, usize)| lines_of(&building, layer, listed(), at, pointed_row)
         },
     )?;
     let title = Text::new(
@@ -284,37 +322,42 @@ pub(crate) fn tree(output: &str, layer: LayerKind, offer: Offer) -> Built {
         },
     )?;
     let search = rows::text(label!("editor.palette.search"), None, query)?;
-    let scroll = telar::LayoutScrollArea::new(
-        LayoutStyle::new()
-            .width(WIDTH - 2.0 * ui::scale::space::lg())
-            .flex_grow(1.0)
-            .flex_shrink(1.0),
-        box_item(list),
-    )?;
+    let tracked = |item: &dyn LayoutItem, what: &str| {
+        telar::track_layout(item.layout_node())
+            .ok_or_else(|| LayoutError::Engine(format!("the palette's {what} has no layout node")))
+    };
+    let (title_height, search_height) = (tracked(&title, "title")?, tracked(&*search, "search")?);
+    let capped = output.to_string();
+    let room = move || {
+        let usable = crate::host::usable(Some(&capped));
+        let card = (usable.height - 8.0 * pad).max(120.0);
+        (card - title_height.get().height - search_height.get().height - 2.0 * gap - 2.0 * pad)
+            .max(0.0)
+    };
+    let (lines, viewport) = crate::popover::capped_rows(box_item(list), WIDTH - 2.0 * pad, room)?;
+    effect(move || {
+        if let Some(row) = pointed_row.get() {
+            viewport.reveal(row, gap);
+        }
+    });
     let placed = output.to_string();
-    let card = StyledContainer::new(
-        LayoutStyle::new()
-            .absolute()
-            .width(WIDTH)
-            .flex_column()
-            .gap(ui::scale::space::md())
-            .padding_all(ui::scale::space::lg()),
-        move |_| RectStyle::filled(theme.surface, ui::scale::corner::xl()),
-        vec![box_item(title), search, Box::new(scroll)],
-    )?
-    .styled_by(move || {
+    let style = move || {
         let usable = crate::host::usable(Some(&placed));
-        let margin = ui::scale::space::lg();
         LayoutStyle::new()
             .absolute()
-            .inset_start(usable.x + margin)
-            .inset_top(usable.y + 4.0 * margin)
+            .inset_start(usable.x + pad)
+            .inset_top(usable.y + 4.0 * pad)
             .width(WIDTH)
-            .max_height((usable.height - 8.0 * margin).max(120.0))
             .flex_column()
-            .gap(ui::scale::space::md())
-            .padding_all(ui::scale::space::lg())
-    })
+            .gap(gap)
+            .padding_all(pad)
+    };
+    let card = StyledContainer::new(
+        style(),
+        move |_| RectStyle::filled(theme.surface, ui::scale::corner::xl()),
+        vec![box_item(title), search, lines],
+    )?
+    .styled_by(style)
     .input_opaque()
     .on_key(move |key: &Key| answer(key, query, pointed, &entries, layer));
     Ok(Box::new(passthrough(whole(), vec![Box::new(card)])?))
@@ -360,21 +403,35 @@ fn answer(
     true
 }
 
-/// The palette's lines as rows, the entry `at` counts to highlighted.
-fn lines_of(output: &str, layer: LayerKind, lines: Vec<Line>, at: usize) -> Built {
+/// The palette's lines as rows, the entry `at` counts to highlighted and its row's node told to `pointed_row`, which keeps it in view.
+fn lines_of(
+    output: &str,
+    layer: LayerKind,
+    lines: Vec<Line>,
+    at: usize,
+    pointed_row: RwSignal<Option<NodeId>>,
+) -> Built {
     let mut rows: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(lines.len());
     let mut entry = 0;
+    let mut pointed = None;
     for line in lines {
         match line {
             Line::Heading(said) => rows.push(rows::heading(move || said.clone())?),
             Line::Entry { pick, name, icon } => {
-                rows.push(entry_row(output, layer, pick, name, icon, entry == at)?);
+                let row = entry_row(output, layer, pick, name, icon, entry == at)?;
+                if entry == at {
+                    pointed = Some(row.layout_node());
+                }
+                rows.push(row);
                 entry += 1;
             }
         }
     }
     if rows.is_empty() {
         rows.push(rows::note(|| telar::t!("editor.palette.nothing"))?);
+    }
+    if pointed_row.peek() != pointed {
+        pointed_row.set(pointed);
     }
     Ok(box_item(telar::Container::new(
         LayoutStyle::new()
@@ -470,13 +527,12 @@ fn carry(
             };
             let before = edit.transaction().before()?;
             let desktop = reconcile::desktop_now(Some(&crate::mode::current()?.output))?;
-            let module = carried.module()?;
-            let representation = desktop::first_size(&module, layer)?;
             let at = Some((col, row));
             let ops = match carried {
-                Pick::Module(_) => {
+                Pick::Module(module) => {
+                    let representation = desktop::first_size(module, layer)?;
                     let adding = Adding {
-                        module: &module,
+                        module,
                         representation,
                         at,
                         near: (0, 0),
@@ -486,8 +542,14 @@ fn carry(
                         .0
                 }
                 Pick::FromBar(node) => {
+                    let representation = desktop::first_size(&carried.module()?, layer)?;
                     desktop::moved_onto(&before, &desktop, node, (layer, &onto), representation, at)
                         .ok()?
+                }
+                Pick::Komponent(id) => {
+                    desktop::planned_use(&before, &desktop, layer, &onto, id, (at, (0, 0)))
+                        .ok()?
+                        .0
                 }
             };
             Some((ops, aimed))

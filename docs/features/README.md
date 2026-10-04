@@ -86,3 +86,13 @@ not repeated here.
 | [Shape and motion](theming/shape.md) | Bar shape, screen corners, and how much the shell animates. | — |
 | [Design tokens](theming/tokens.md) | The unstable surface underneath `[theme]`, for when a key does not exist yet. | — |
 
+## Customization — arranging the shell, and extending it
+
+| Page | What it is | Needs |
+| --- | --- | --- |
+| [Komponents and bundles](customization/bundles.md) | Save a group to use again, share a whole layout as a directory, and decide item by item what an imported one is allowed to run. | `wlr-layer-shell` |
+| [Data and rules](customization/data-and-rules.md) | Bind what the shell draws to live readings with typed expressions, declare your own sources, keep variables, and run commands when something happens. | `power-profiles-daemon` |
+| [Edit modes](customization/edit-modes.md) | One mode per layer — background, desktop, top, overlay, lock — each with the tools that layer needs, all reachable from the keyboard. | `wlr-layer-shell`, `ext-session-lock` |
+| [Layouts](customization/layouts.md) | Everything the shell draws, as one file of areas, groups and modules — merged by id, checked before it is applied, and recoverable. | `wlr-layer-shell`, `ext-session-lock`, `ext-workspace` |
+| [Context menus and popovers](customization/popovers.md) | Right-click anything to customize it with handles and scrub fields on the item itself, one undoable edit at a time. | `wlr-layer-shell` |
+

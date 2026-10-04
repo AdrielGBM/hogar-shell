@@ -28,7 +28,7 @@ An area written `within = "usable"` is measured against **the space the bars lef
 `anchor = "center"` is the centre of the application area. On a screen with bars down one side only, that is
 deliberately not the centre of the glass.
 
-`hogar-shell layout show` prints the areas the running layout has; `hogar-shell layout check` says what is
+`hogar-shell layout show <name>` prints the areas a layout has (`layout list` marks the one being drawn); `hogar-shell layout check` says what is
 wrong with one.
 
 The built-in layout places one: a medium clock face in the middle of the screen, 48 px off its edges.

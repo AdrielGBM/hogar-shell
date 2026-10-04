@@ -5,7 +5,6 @@
 //! **The privacy keys are config, not layout.** `[lock] notification_detail` and `media_detail` live in `config.toml`, which has one owner apart from the layout's (TA-7): their popover previews a choice live on the readings, Esc puts it back, and any other way of closing it writes it through the same format-preserving save the settings window uses. They are outside the layout's undo history.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,7 +17,7 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use config::{Config, MediaDetail, NotificationDetail};
 use layout::{
-    AreaStyle, LayerKind, Layout, LayoutId, LayoutOp, OutputMatch, ResolvedAreaKind,
+    AreaStyle, LayerKind, Layout, LayoutId, LayoutOp, Library, OutputMatch, ResolvedAreaKind,
     SMALLEST_PROMPT,
 };
 use modules::lock::LockLayout;
@@ -86,7 +85,7 @@ fn lock_config() -> Arc<Config> {
 
 /// What the lock's own check is asked with, read as a lock taken now would read it: every layout the store holds, every screen there is, the module table installed and the lock's theme.
 struct Judged {
-    known: BTreeMap<LayoutId, Layout>,
+    known: Library,
     outputs: Vec<String>,
     file: String,
     theme: NordTheme,

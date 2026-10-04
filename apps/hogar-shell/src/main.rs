@@ -88,9 +88,22 @@ fn main() -> ExitCode {
         Some("layout")
             if matches!(
                 args.get(1).map(String::as_str),
-                Some("list" | "show" | "check")
+                Some("list" | "show" | "check" | "export")
             ) =>
         {
+            answer_locally(&args)
+        }
+        // The shell reads the bundle, from wherever it was started: a path the user typed means where they typed it.
+        Some("layout") if args.get(1).map(String::as_str) == Some("import") => {
+            let mut request = args.clone();
+            if let Some(path) = request.get_mut(2)
+                && let Ok(absolute) = std::path::absolute(path.as_str())
+            {
+                *path = absolute.display().to_string();
+            }
+            send(&request)
+        }
+        Some("komponent") if matches!(args.get(1).map(String::as_str), Some("list" | "show")) => {
             answer_locally(&args)
         }
         _ => send(&args),
@@ -101,14 +114,19 @@ fn main() -> ExitCode {
 fn answer_locally(args: &[String]) -> ExitCode {
     match hogar_shell::dispatch_locally(args) {
         Ok(text) => {
-            print!("{text}");
+            print!("{}", terminal(&text));
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("hogar-shell: {e}");
+            eprintln!("hogar-shell: {}", terminal(&e));
             ExitCode::FAILURE
         }
     }
+}
+
+/// What this process prints of what it was answered, written out where it could rewrite the terminal: a reply quotes ids, commands and words from files that may be somebody else's — an imported bundle's — and a terminal escape or a bidirectional control in one would repaint the screen or reorder the line. One place for every answer, the shell's and this process's own; lines, tabs and padding stay ([`util::text::shown_lines`]).
+fn terminal(text: &str) -> String {
+    util::text::shown_lines(text)
 }
 
 /// Forwards a command, as its words, to the running shell and mirrors its verdict into the exit code, so a keybind or script can tell a refused command from one that worked without parsing the reply.
@@ -127,14 +145,14 @@ fn send(args: &[String]) -> ExitCode {
             Some(payload) => {
                 let payload = payload.trim();
                 if !payload.is_empty() {
-                    println!("{payload}");
+                    println!("{}", terminal(payload));
                 }
                 ExitCode::SUCCESS
             }
             None => {
                 eprintln!(
                     "hogar-shell: {}",
-                    reply.strip_prefix("err ").unwrap_or(&reply)
+                    terminal(reply.strip_prefix("err ").unwrap_or(&reply))
                 );
                 ExitCode::FAILURE
             }
@@ -161,4 +179,19 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         .with_writer(writer)
         .init();
     guard
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the client prints keeps the lines, tabs and padding of a table and writes out whatever would rewrite the terminal, an answer the shell already wrote out included, which is not written out twice.
+    #[test]
+    fn what_the_client_prints_cannot_rewrite_the_terminal() {
+        assert_eq!(
+            terminal("nord\t2 pending    \n\u{1b}]0;owned\u{7}\u{202e}x"),
+            "nord\t2 pending    \n\\u{1b}]0;owned\\u{7}\\u{202e}x"
+        );
+        assert_eq!(terminal("ls\\u{1b}"), "ls\\u{1b}");
+    }
 }

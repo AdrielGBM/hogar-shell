@@ -147,10 +147,13 @@ pub fn open_area(node: Node) -> Result<(), EditError> {
     )
 }
 
-/// Opens the popover of the instance `node` names.
+/// Opens the popover of the instance `node` names — or, for a child of a komponent a group draws, which only the komponent's file writes, its area's, where the use's parameters are set.
 pub fn open_instance(node: Node) -> Result<(), EditError> {
-    if !matches!(node.part, Part::Instance(..)) {
+    let Part::Instance(_, id) = &node.part else {
         return Err(EditError::nothing());
+    };
+    if id.komponent_child().is_some() {
+        return open_area(node);
     }
     open(node, true)
 }
@@ -496,11 +499,8 @@ fn card(
     let output = node.output.clone();
     let inner = WIDTH - 2.0 * pad;
     let gap = ui::scale::space::md();
-    let tracked = |item: &dyn LayoutItem, what: &str| {
-        telar::track_layout(item.layout_node())
-            .ok_or_else(|| LayoutError::Engine(format!("a popover's {what} has no layout node")))
-    };
-    let header_height = tracked(&header, "header")?;
+    let header_height = telar::track_layout(header.layout_node())
+        .ok_or_else(|| LayoutError::Engine("a popover's header has no layout node".to_string()))?;
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
@@ -508,23 +508,6 @@ fn card(
             .width(inner),
         rows,
     )?;
-    let content = tracked(&column, "rows")?;
-    let viewport = Rc::new(RefCell::new(None));
-    let scroll = {
-        let captured = Rc::clone(&viewport);
-        LayoutScrollArea::new_with(
-            LayoutStyle::new()
-                .width(inner)
-                .height(SizeDimension::Percent(1.0)),
-            move |scrolling| {
-                *captured.borrow_mut() = Some(scrolling);
-                Ok(box_item(column))
-            },
-        )?
-    };
-    if let Some(viewport) = viewport.take() {
-        keep_focus_in_view(viewport);
-    }
     let rows_room = {
         let output = output.clone();
         move || {
@@ -533,14 +516,8 @@ fn card(
             (card - header_height.get().height - gap - 2.0 * pad).max(0.0)
         }
     };
-    let fitted = move || {
-        LayoutStyle::new()
-            .width(inner)
-            .height(content.get().height.min(rows_room()))
-    };
-    let rows_box =
-        StyledContainer::new(fitted(), |_| RectStyle::default(), vec![Box::new(scroll)])?
-            .styled_by(fitted);
+    let (rows_box, viewport) = capped_rows(box_item(column), inner, rows_room)?;
+    keep_focus_in_view(viewport);
     let body = StyledContainer::new(
         LayoutStyle::new()
             .absolute()
@@ -551,7 +528,7 @@ fn card(
             .gap(gap)
             .padding_all(pad),
         move |_| RectStyle::filled(theme.surface, radius),
-        vec![box_item(header), box_item(rows_box)],
+        vec![box_item(header), rows_box],
     )?
     .input_opaque()
     .with_transform(move |laid| {
@@ -565,6 +542,40 @@ fn card(
         Some([1.0, 0.0, 0.0, 1.0, x - laid.x, y - laid.y])
     });
     Ok(Box::new(body))
+}
+
+/// `content` in a scroll area `width` wide, in a box as tall as `content` up to what `room` answers: the rows of a card whose height is capped, filling what the cap leaves them and scrolling past it. A scroll area has no height of its own to give a column, so a card that left its rows to flex inside an auto-height column would lay them out below itself, out of reach of the pointer.
+pub(crate) fn capped_rows(
+    content: Box<dyn LayoutItem>,
+    width: f32,
+    room: impl Fn() -> f32 + 'static,
+) -> Result<(Box<dyn LayoutItem>, telar::ScrollViewport), LayoutError> {
+    let tall = telar::track_layout(content.layout_node())
+        .ok_or_else(|| LayoutError::Engine("a card's rows have no layout node".to_string()))?;
+    let viewport = Rc::new(RefCell::new(None));
+    let scroll = {
+        let captured = Rc::clone(&viewport);
+        LayoutScrollArea::new_with(
+            LayoutStyle::new()
+                .width(width)
+                .height(SizeDimension::Percent(1.0)),
+            move |scrolling| {
+                *captured.borrow_mut() = Some(scrolling);
+                Ok(content)
+            },
+        )?
+    };
+    let viewport = viewport
+        .take()
+        .ok_or_else(|| LayoutError::Engine("a scroll area handed out no viewport".to_string()))?;
+    let fitted = move || {
+        LayoutStyle::new()
+            .width(width)
+            .height(tall.get().height.min(room()))
+    };
+    let rows = StyledContainer::new(fitted(), |_| RectStyle::default(), vec![Box::new(scroll)])?
+        .styled_by(fitted);
+    Ok((Box::new(rows), viewport))
 }
 
 /// Scrolls the card's rows so the one holding keyboard focus is on screen, which moving focus by Tab or arrows would otherwise leave behind the clip.
@@ -620,11 +631,16 @@ pub(crate) fn instance_draft() -> Option<InstanceDraft> {
     })
 }
 
-/// Why Remove does not take back an expression `writer` wrote: the level the popover writes comes before it, so taking it back there would change nothing on screen.
+/// Why Remove does not take back an expression `writer` wrote: the level the popover writes comes before it, or it is a komponent's own, so taking it back there would change nothing on screen.
 pub(crate) fn beyond(writer: &layout::Origin) -> String {
-    telar::t!(
-        "editor.expr.beyond",
-        rule = writer.rule(),
-        file = writer.file()
-    )
+    match writer {
+        layout::Origin::Level(level) => telar::t!(
+            "editor.expr.beyond",
+            rule = level.rule(),
+            file = level.file()
+        ),
+        layout::Origin::Komponent(_) => {
+            telar::t!("editor.expr.beyond_komponent", file = writer.file())
+        }
+    }
 }

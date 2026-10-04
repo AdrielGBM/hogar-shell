@@ -41,6 +41,14 @@ impl Arg {
             Arg::Message(message) => message.render_in(locale),
         }
     }
+
+    /// As it fills a placeholder: a value is often somebody else's text — an id a bundle chose, a command it runs — so it is written out where it could disguise the sentence around it ([`crate::text::shown`]).
+    fn shown_in(&self, locale: &str) -> String {
+        match self {
+            Arg::Text(text) => crate::text::shown(text),
+            Arg::Message(message) => message.render_in(locale),
+        }
+    }
 }
 
 /// What a message's argument can be made from: anything that prints, or another message.
@@ -127,13 +135,15 @@ impl Message {
     }
 
     /// In `locale`, or the catalogue's own language where it has no text for this entry in it. An entry the catalogue lacks is shown as its key, which is visible rather than silent.
+    ///
+    /// What no catalogue wrote is written out where it could disguise what is around it: a value filling a placeholder as [`crate::text::shown`] does, words shown as they are as [`crate::text::shown_lines`] does, which keeps a parser's report on its lines.
     pub fn render_in(&self, locale: &str) -> String {
         match &self.0 {
-            Body::Verbatim(text) => text.clone(),
+            Body::Verbatim(text) => crate::text::shown_lines(text),
             Body::Keyed { catalog, key, args } => {
                 let rendered: Vec<(&str, String)> = args
                     .iter()
-                    .map(|(name, arg)| (name.as_ref(), arg.render_in(locale)))
+                    .map(|(name, arg)| (name.as_ref(), arg.shown_in(locale)))
                     .collect();
                 let pairs: Vec<(&str, &str)> = rendered
                     .iter()

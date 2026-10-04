@@ -6,10 +6,9 @@
 //!
 //! **The lock screen's prompt is put back, never taken away** (TA-8): it is replaced by the base's where it stands, and one the base has no counterpart for is left as it is.
 
-use std::collections::BTreeMap;
-
 use util::report::Report;
 
+use crate::library::Library;
 use crate::merge::merge_layer;
 use crate::model::*;
 use crate::ops::{LayoutOp, Placement, Site, areas_at, placement_of, site_of_area, sites, spot_of};
@@ -25,8 +24,8 @@ pub enum Target<'a> {
 }
 
 /// What `layout` is reset to: the layouts it extends, laid over each other root first, or the built-in layout when it extends none (or one that is not there).
-pub fn base_of(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Layout {
-    let Some(parent) = layout.extends.as_ref().and_then(|id| known.get(id)) else {
+pub fn base_of(layout: &Layout, known: &Library) -> Layout {
+    let Some(parent) = layout.extends.as_ref().and_then(|id| known.layout(id)) else {
         return crate::built_in();
     };
     let mut flat = Layout {

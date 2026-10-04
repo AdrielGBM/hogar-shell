@@ -206,6 +206,10 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         ),
     };
     if layouts == Layouts::OnDisk {
+        store.set_trust(surfaces::bundles::trust_of(
+            &services::state::get(),
+            crate::core::commands::runs_unasked,
+        ));
         surfaces::layouts::select_active(&mut store, &mut problems);
     }
     let store = Rc::new(RefCell::new(store));
@@ -244,7 +248,8 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
                     tracing::warn!("could not keep a copy of `{active}` that works: {why}");
                 }
             }
-            // Said with the rest but merged after the copy is kept: a cost the user chose is no reason to stop keeping the copy that works.
+            // Said with the rest but merged after the copy is kept: a cost the user chose, or what waits for their trust, is no reason to stop keeping the copy that works.
+            report.merge(layout::held(store.active(), store.all()));
             let file = format!("layouts/{}.toml", store.active_id());
             for desktop in &desktops {
                 report.merge(crate::core::commands::layout::scanout(
@@ -268,6 +273,7 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         let reloader = Rc::clone(&reloader);
         Rc::new(move || apply(&reloader.borrow().live(), Content::Changed))
     });
+    surfaces::trust_dialog::install();
 
     // The config having changed, whoever noticed: the file watcher, `hogar-shell shell reload`, a keybind. The toast belongs here rather than in the surface pass, which also runs at startup — a toast saying the config was reloaded is only true of a reload, and only of one that applied something.
     let on_config_change: Rc<dyn Fn(Reload)> = {

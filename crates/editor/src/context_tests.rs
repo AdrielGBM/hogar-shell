@@ -33,7 +33,7 @@ mod tests {
     use crate::mode::{self, Compositor};
     use crate::popover;
     use crate::popover::handles::Corner;
-    use crate::rig::{Rig, SCREEN, rig, rig_with};
+    use crate::rig::{Rig, SCREEN, rig, rig_prepared, rig_with};
     use crate::session::{self, Selection};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
@@ -520,6 +520,7 @@ mod tests {
                 "Previous",
                 "Customize Clock…",
                 "Move to desktop as widget",
+                "Save group as komponent…",
                 "Remove",
                 "Edit Top…",
             ]
@@ -851,5 +852,568 @@ mod tests {
                 mode::leave();
             }
         }
+    }
+
+    /// Every text `tree` draws, where it is on screen.
+    fn texts(tree: &ComponentList) -> Vec<(String, Rect)> {
+        let mut found = Vec::new();
+        telar::for_each_with_matrix(&tree.commands(), |command, [a, b, c, d, e, f]| {
+            if let DrawCommand::Text { text, rect, .. } = command {
+                found.push((
+                    text.to_string(),
+                    Rect::new(
+                        a * rect.x + c * rect.y + e,
+                        b * rect.x + d * rect.y + f,
+                        rect.width,
+                        rect.height,
+                    ),
+                ));
+            }
+        });
+        found
+    }
+
+    /// Where `tree` draws the text `wanted`, to press on it.
+    fn text_at(tree: &ComponentList, wanted: &str) -> (f32, f32) {
+        let found = texts(tree);
+        let rect = found
+            .iter()
+            .find(|(text, _)| text == wanted)
+            .map(|(_, rect)| *rect)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{wanted:?} is drawn: {:?}",
+                    found.iter().map(|(text, _)| text).collect::<Vec<_>>()
+                )
+            });
+        (
+            rect.x + rect.width.min(20.0) / 2.0,
+            rect.y + rect.height / 2.0,
+        )
+    }
+
+    /// The open save card, laid out over the screen.
+    fn save_card() -> ComponentList {
+        let tree = screen(crate::komponent::built().expect("the save card is open"));
+        for _ in 0..2 {
+            telar::relayout_if_dirty();
+        }
+        tree
+    }
+
+    fn picked(menu: &mut Menu, label: &str) {
+        let at = row(menu, label);
+        click(menu, at, PointerButton::Primary);
+    }
+
+    /// The bar's `center` group as the screen draws it.
+    fn center() -> layout::ResolvedGroup {
+        resolved(LayerKind::Top, "bar-top")
+            .groups
+            .into_iter()
+            .find(|group| group.id.as_str() == "center")
+            .expect("the centre group is drawn")
+    }
+
+    /// T-8.6 through the pointer: a secondary press on a chip offers to save its group as a komponent; the card takes a name and which values become parameters, and Save writes the komponent and makes the group draw it, as one undo entry. The komponent's child's menu then offers its parameters — rows in its area's popover — and Detach, which draws it as plain instances again, as one undo entry too.
+    #[test]
+    fn a_group_is_saved_as_a_komponent_and_detached_again_through_the_pointer() {
+        let rig = rig_with("komponent-save", |layout| {
+            for group in &mut layout.outputs[0].layers.top.areas[0].groups {
+                for child in &mut group.children {
+                    if child.id.as_str() == "clock" {
+                        child.options.insert("accent".into(), "#88c0d0".into());
+                    }
+                }
+            }
+        });
+        let _scope = Scope::new();
+        let window = Window::new();
+        let mut bar_tree = built(&resolved(LayerKind::Top, "bar-top"), Audience::Owner);
+        let chip = rects::rect(&clock()).expect("the clock is laid out");
+        click(&mut bar_tree, centre(chip), PointerButton::Secondary);
+        let mut menu = window.menu();
+        picked(&mut menu, "Save group as komponent…");
+        drop(menu);
+        assert!(
+            transient::is_open(crate::komponent::ID),
+            "the save card opened"
+        );
+
+        let mut card = save_card();
+        let at = text_at(&card, "center");
+        click(&mut card, at, PointerButton::Primary);
+        route(
+            &mut card,
+            &key(
+                Key::Char('a'),
+                ModifiersState {
+                    is_ctrl: true,
+                    ..ModifiersState::default()
+                },
+            ),
+        );
+        for c in "clock-pill".chars() {
+            route(&mut card, &key(Key::Char(c), ModifiersState::default()));
+        }
+        let mut card = save_card();
+        let label = texts(&card)
+            .into_iter()
+            .find(|(text, _)| text == "accent — clock.accent")
+            .map(|(_, rect)| rect)
+            .expect("the switch is labelled");
+        let switch = (label.x + label.width + 32.0, label.y + label.height / 2.0);
+        click(&mut card, switch, PointerButton::Primary);
+        let mut card = save_card();
+        let at = text_at(&card, "Save");
+        click(&mut card, at, PointerButton::Primary);
+        assert!(
+            !transient::is_open(crate::komponent::ID),
+            "saving closed the card"
+        );
+
+        let id = layout::KomponentId::new("clock-pill");
+        let saved = rig
+            .store
+            .borrow()
+            .komponent(&id)
+            .cloned()
+            .expect("the komponent is saved");
+        assert_eq!(
+            saved.parameters["accent"].default,
+            layout::Expr("#88c0d0".into())
+        );
+        assert_eq!(saved.children.len(), 1);
+        assert_eq!(
+            saved.children[0].bindings["accent"],
+            layout::Expr("$accent".into())
+        );
+        assert_eq!(
+            rig.undo_label().as_deref(),
+            Some("Save center as clock-pill")
+        );
+        let drawn = center();
+        assert_eq!(
+            drawn.komponent.as_ref().map(|used| used.id.clone()),
+            Some(id.clone())
+        );
+        assert_eq!(
+            drawn.children[0].id,
+            InstanceId::new("bar-top.center/clock")
+        );
+
+        let mut bar_tree = built(&resolved(LayerKind::Top, "bar-top"), Audience::Owner);
+        let used = bar().instance(
+            &GroupId::new("center"),
+            &InstanceId::new("bar-top.center/clock"),
+        );
+        let chip = rects::rect(&used).expect("the komponent's clock is laid out");
+        click(&mut bar_tree, centre(chip), PointerButton::Secondary);
+        assert_eq!(
+            context::rows(),
+            [
+                "Open or close",
+                "Next",
+                "Previous",
+                "Parameters of clock-pill…",
+                "Detach clock-pill",
+                "Edit Top…"
+            ]
+        );
+        let mut menu = window.menu();
+        picked(&mut menu, "Parameters of clock-pill…");
+        drop(menu);
+        assert_eq!(
+            popover::current(),
+            Some(bar()),
+            "the use's popover is its area's"
+        );
+        let shown: Vec<String> = texts(&popover_tree())
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect();
+        assert!(
+            shown.iter().any(|text| text == "center draws clock-pill"),
+            "{shown:?}"
+        );
+        assert!(shown.iter().any(|text| text == "accent"), "{shown:?}");
+        popover::close();
+
+        click(&mut bar_tree, centre(chip), PointerButton::Secondary);
+        let mut menu = window.menu();
+        picked(&mut menu, "Detach clock-pill");
+        drop(menu);
+        let drawn = center();
+        assert_eq!(drawn.komponent, None);
+        assert_eq!(drawn.children[0].id, InstanceId::new("clock"));
+        assert_eq!(
+            drawn.children[0].bindings["accent"].expr,
+            layout::Expr("(#88c0d0)".into())
+        );
+        assert_eq!(rig.undo_label().as_deref(), Some("Detach clock-pill"));
+        assert_eq!(session::undo().as_deref(), Ok("Detach clock-pill"));
+        assert_eq!(
+            center().komponent.map(|used| used.id.clone()),
+            Some(id),
+            "one undo puts the use back"
+        );
+    }
+
+    /// A rig whose library holds `pill`, a komponent of one clock chip.
+    fn with_pill(test: &str) -> Rig {
+        let rig = rig(test);
+        let pill = layout::Komponent {
+            children: vec![Instance {
+                id: InstanceId::new("face"),
+                module: Some("clock".to_string()),
+                representation: Some(Representation::Chip),
+                ..Instance::default()
+            }],
+            ..layout::Komponent::default()
+        };
+        rig.store
+            .borrow_mut()
+            .add_komponent(layout::KomponentId::new("pill"), pill)
+            .expect("a komponent");
+        rig
+    }
+
+    /// The bar's groups that draw `pill`, each with its zone.
+    fn pills() -> Vec<(GroupId, GroupKind)> {
+        resolved(LayerKind::Top, "bar-top")
+            .groups
+            .into_iter()
+            .filter(|group| {
+                group
+                    .komponent
+                    .as_ref()
+                    .is_some_and(|used| used.id.as_str() == "pill")
+            })
+            .map(|group| (group.id, group.kind))
+            .collect()
+    }
+
+    fn top_mode() {
+        mode::enter_as(
+            LayerKind::Top,
+            Some(SCREEN),
+            &Compositor {
+                restack: true,
+                locked: false,
+                lockable: Ok(()),
+            },
+        )
+        .expect("top mode");
+    }
+
+    /// Through the pointer: the bar's menu has "Add komponent", whose submenu names the bar's zones, each naming the komponents a bar takes; picking one puts it in a new group at the end of that zone, selected, as one undo entry.
+    #[test]
+    fn a_komponent_is_added_to_the_zone_of_a_bar_picked_from_its_menu() {
+        let rig = with_pill("bar-komponent-pointer");
+        let _scope = Scope::new();
+        let window = Window::new();
+        top_mode();
+        let before = rig.store.borrow().active().clone();
+        opened(bar(), (400.0, 17.0));
+        assert_eq!(context::rows()[0], "Customize bar…");
+        assert!(
+            context::rows().contains(&"Add komponent".to_string()),
+            "{:?}",
+            context::rows()
+        );
+
+        let mut menu = window.menu();
+        picked(&mut menu, "Add komponent");
+        window.lay_out();
+        let at = text_at(&menu, "In the middle");
+        click(&mut menu, at, PointerButton::Primary);
+        window.lay_out();
+        let at = text_at(&menu, "pill");
+        click(&mut menu, at, PointerButton::Primary);
+        drop(menu);
+
+        assert!(!transient::is_open(context::ID), "picking closes the menu");
+        let added = pills();
+        assert_eq!(
+            added,
+            [(
+                GroupId::new("pill"),
+                GroupKind::Zone {
+                    zone: layout::Zone::Center
+                }
+            )]
+        );
+        assert_eq!(
+            session::selected(),
+            Selection::Group(bar().group(&GroupId::new("pill")))
+        );
+        assert_eq!(rig.undo_label().as_deref(), Some("Add pill"));
+        session::undo().expect("one undo takes it back");
+        assert_eq!(rig.store.borrow().active(), &before);
+        mode::leave();
+    }
+
+    /// The same from the keyboard: the menu key opens the selected bar's menu, and the arrows, Right and Enter go down "Add komponent" to a zone and a komponent.
+    #[test]
+    fn a_komponent_is_added_to_a_bar_from_the_keyboard() {
+        let rig = with_pill("bar-komponent-keys");
+        let _scope = Scope::new();
+        let window = Window::new();
+        top_mode();
+        assert!(session::select(Selection::Area(bar())));
+        assert!(keys::press_as(
+            &Key::Named(NamedKey::ContextMenu),
+            ModifiersState::default(),
+            Press::First
+        ));
+        let at = context::rows()
+            .iter()
+            .position(|row| row == "Add komponent")
+            .expect("the bar's menu offers it");
+        let mut menu = window.menu();
+        for _ in 0..=at {
+            route(&mut menu, &named(NamedKey::ArrowDown));
+        }
+        route(&mut menu, &named(NamedKey::ArrowRight));
+        route(&mut menu, &named(NamedKey::ArrowDown));
+        route(&mut menu, &named(NamedKey::ArrowRight));
+        route(&mut menu, &named(NamedKey::ArrowDown));
+        route(&mut menu, &named(NamedKey::Enter));
+        drop(menu);
+
+        assert_eq!(
+            pills(),
+            [(
+                GroupId::new("pill"),
+                GroupKind::Zone {
+                    zone: layout::Zone::Start
+                }
+            )],
+            "the first zone, at the start"
+        );
+        assert_eq!(rig.undo_label().as_deref(), Some("Add pill"));
+        mode::leave();
+    }
+
+    /// With nothing in the library a bar takes, its menu has no row for it.
+    #[test]
+    fn a_bar_offers_no_komponent_where_the_library_has_none() {
+        let _rig = rig("bar-komponent-none");
+        let _scope = Scope::new();
+        opened(bar(), (400.0, 17.0));
+        assert!(!context::rows().contains(&"Add komponent".to_string()));
+    }
+
+    /// Trust follows the text (DEC-30): detaching a komponent a bundle brought writes its children into the user's own layout, so a `shell run` line of theirs nobody trusted would become the user's. Through the pointer the row is refused, saying why, with nothing changed and nothing to undo — until the line is trusted, when the same row detaches.
+    #[test]
+    fn detaching_a_bundles_komponent_never_makes_its_held_line_the_users() {
+        let pill = layout::Komponent {
+            children: vec![Instance {
+                id: InstanceId::new("face"),
+                module: Some("clock".to_string()),
+                representation: Some(Representation::Chip),
+                actions: [(
+                    layout::Trigger::Press,
+                    layout::Action(vec!["shell run date".to_string()]),
+                )]
+                .into(),
+                ..Instance::default()
+            }],
+            ..layout::Komponent::default()
+        };
+        let rig = rig_prepared(
+            "detach-held",
+            |layout| {
+                let center = layout.outputs[0].layers.top.areas[0]
+                    .groups
+                    .iter_mut()
+                    .find(|group| group.id.as_str() == "center")
+                    .expect("the centre group");
+                center.children.clear();
+                center.komponent = Some(layout::KomponentId::new("pill"));
+            },
+            |store| {
+                store
+                    .add_komponent(layout::KomponentId::new("pill"), pill)
+                    .expect("the bundle's komponent");
+                let mut trust = layout::Trust::default();
+                trust.import("components/pill.toml", "nord");
+                store.set_trust(trust);
+            },
+        );
+        let _scope = Scope::new();
+        let window = Window::new();
+        let before = rig.store.borrow().active().clone();
+        let face = bar().instance(
+            &GroupId::new("center"),
+            &InstanceId::new("bar-top.center/face"),
+        );
+        let detach = |window: &Window| {
+            let mut bar_tree = built(&resolved(LayerKind::Top, "bar-top"), Audience::Owner);
+            let chip = rects::rect(&face).expect("the komponent's chip is laid out");
+            click(&mut bar_tree, centre(chip), PointerButton::Secondary);
+            let mut menu = window.menu();
+            picked(&mut menu, "Detach pill");
+        };
+
+        detach(&window);
+        let refused = mode::refusal()
+            .get()
+            .expect("the row says why it did nothing");
+        assert!(
+            refused.contains("shell run date") && refused.contains("layout trust nord"),
+            "{refused}"
+        );
+        assert_eq!(rig.store.borrow().active(), &before, "nothing changed");
+        assert_eq!(rig.undo_label(), None, "and there is nothing to undo");
+
+        let item = layout::library_items(rig.store.borrow().all())
+            .into_iter()
+            .find(|item| item.text == "shell run date")
+            .expect("the bundle's line");
+        let mut trust = rig.store.borrow().all().trust.clone();
+        trust.decide(&item, true);
+        rig.store.borrow_mut().set_trust(trust);
+        detach(&window);
+        assert_eq!(center().komponent, None, "trusted, it detaches");
+        assert_eq!(rig.undo_label().as_deref(), Some("Detach pill"));
+    }
+
+    const HELD: &str = "shell run date";
+
+    /// [`with_desktop_grid`], the bar's clock running [`HELD`] when pressed.
+    fn with_held_clock(layout: &mut Layout) {
+        with_desktop_grid(layout);
+        for group in &mut layout.outputs[0].layers.top.areas[0].groups {
+            for child in &mut group.children {
+                if child.id.as_str() == "clock" {
+                    child.actions.insert(
+                        layout::Trigger::Press,
+                        layout::Action(vec![HELD.to_string()]),
+                    );
+                }
+            }
+        }
+    }
+
+    fn imported(store: &mut layout::LayoutStore, file: &str) {
+        let mut trust = layout::Trust::default();
+        trust.import(file, "nord");
+        store.set_trust(trust);
+    }
+
+    fn pressed(instance: &Instance) -> Vec<String> {
+        instance
+            .actions
+            .get(&layout::Trigger::Press)
+            .map(|action| action.0.clone())
+            .unwrap_or_default()
+    }
+
+    /// Trust decides what runs, not what a file says (DEC-30): a bundle's chip moved to its desktop grid, inside the bundle's own file, is written there with its held line — still held where it lands, and still listed for the user to trust — rather than the move erasing it.
+    #[test]
+    fn moving_a_bundles_instance_inside_its_file_keeps_its_held_line() {
+        let rig = rig_prepared("held-move", with_held_clock, |store| {
+            imported(store, "layouts/mine.toml")
+        });
+        let _scope = Scope::new();
+        opened(clock(), (900.0, 17.0));
+        context::pick("Move to desktop as widget");
+
+        let (area, _, widget) = written(&rig, "clock").expect("the clock is still placed");
+        assert_eq!(area.as_str(), "widgets");
+        assert_eq!(pressed(&widget), [HELD], "the line moved with the clock");
+        let shown = reconcile::desktops()[0]
+            .resolved
+            .instances()
+            .find(|instance| instance.id.as_str() == "clock")
+            .cloned()
+            .expect("the clock is drawn");
+        assert!(
+            shown.actions.values().all(|action| action.0.is_empty()),
+            "and it is still held: {:?}",
+            shown.actions
+        );
+        let store = rig.store.borrow();
+        let held = layout::trust::held(store.active(), store.all());
+        assert!(
+            held.findings()
+                .any(|finding| finding.message.english().contains(HELD)),
+            "{}",
+            held.render()
+        );
+    }
+
+    /// A move that would copy a held line into a file of the user's own — a bundle's chip their layout only inherits, written into it as a widget — is refused, saying how to trust the line, with nothing changed and nothing to undo; the move never strips the line to get past the refusal.
+    #[test]
+    fn moving_a_bundles_instance_into_the_users_file_is_refused_not_stripped() {
+        let rig = rig_prepared("held-move-out", with_held_clock, |store| {
+            let mut shared = store.active().clone();
+            shared.id = layout::LayoutId::new("shared");
+            store.put_layout(shared).expect("the bundle's layout");
+            store
+                .put_layout(Layout {
+                    id: layout::LayoutId::new("mine"),
+                    name: String::new(),
+                    extends: Some(layout::LayoutId::new("shared")),
+                    sources: Default::default(),
+                    outputs: vec![layout::OutputRule {
+                        matches: layout::OutputMatch("*".to_string()),
+                        ..layout::OutputRule::default()
+                    }],
+                })
+                .expect("the user's layout over it");
+            imported(store, "layouts/shared.toml");
+        });
+        let _scope = Scope::new();
+        let before = rig.store.borrow().active().clone();
+        opened(clock(), (900.0, 17.0));
+        context::pick("Move to desktop as widget");
+
+        let refused = mode::refusal()
+            .get()
+            .expect("the row says why it did nothing");
+        assert!(
+            refused.contains(HELD) && refused.contains("layout trust nord"),
+            "{refused}"
+        );
+        assert_eq!(rig.store.borrow().active(), &before, "nothing changed");
+        assert_eq!(rig.undo_label(), None, "and there is nothing to undo");
+    }
+
+    /// Saving a group with a held line as a komponent would make the line the user's, in a file of their own: the card says so and stays open, and nothing is saved or changed — the save never leaves the line behind.
+    #[test]
+    fn saving_a_group_with_a_held_line_as_a_komponent_is_refused() {
+        let rig = rig_prepared("held-save", with_held_clock, |store| {
+            imported(store, "layouts/mine.toml")
+        });
+        let _scope = Scope::new();
+        let window = Window::new();
+        let before = rig.store.borrow().active().clone();
+        let mut bar_tree = built(&resolved(LayerKind::Top, "bar-top"), Audience::Owner);
+        let chip = rects::rect(&clock()).expect("the clock is laid out");
+        click(&mut bar_tree, centre(chip), PointerButton::Secondary);
+        let mut menu = window.menu();
+        picked(&mut menu, "Save group as komponent…");
+        drop(menu);
+        let mut card = save_card();
+        let at = text_at(&card, "Save");
+        click(&mut card, at, PointerButton::Primary);
+
+        assert!(
+            transient::is_open(crate::komponent::ID),
+            "the card stays open"
+        );
+        let card = save_card();
+        assert!(
+            texts(&card)
+                .iter()
+                .any(|(text, _)| text.contains(HELD) && text.contains("layout trust nord")),
+            "the card says why: {:?}",
+            texts(&card)
+        );
+        let store = rig.store.borrow();
+        assert!(store.all().komponents.is_empty(), "nothing saved");
+        assert_eq!(store.active(), &before, "nothing changed");
     }
 }

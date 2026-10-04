@@ -18,27 +18,19 @@ mod tests {
         telar::set_locale("en");
     }
 
-    fn keys_of(table: &toml::Table, prefix: &str, into: &mut Vec<String>) {
-        for (name, value) in table {
-            let key = match prefix.is_empty() {
-                true => name.clone(),
-                false => format!("{prefix}.{name}"),
-            };
-            match value {
-                toml::Value::Table(inner) => keys_of(inner, &key, into),
-                _ => into.push(key),
-            }
-        }
-    }
-
-    fn catalogue(language: &str) -> Vec<String> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/i18n/{language}.toml"));
-        let text = std::fs::read_to_string(path).expect("the catalogue");
-        let table: toml::Table = toml::from_str(&text).expect("it parses");
-        let mut keys = Vec::new();
-        keys_of(&table, "", &mut keys);
-        keys.sort();
-        keys
+    /// A count is said in the plural its language gives it.
+    #[test]
+    fn a_count_takes_its_languages_plural() {
+        let said =
+            |count: usize| telar::t!("editor.palette.komponent", name = "pill", count = count);
+        telar::set_locale("en");
+        assert_eq!(said(1), "pill · 1 parameter");
+        assert_eq!(said(2), "pill · 2 parameters");
+        assert_eq!(said(0), "pill · 0 parameters");
+        telar::set_locale("es");
+        assert_eq!(said(1), "pill · 1 parámetro");
+        assert_eq!(said(3), "pill · 3 parámetros");
+        telar::set_locale("en");
     }
 
     fn sources(dir: &Path, into: &mut String) {
@@ -58,18 +50,34 @@ mod tests {
         }
     }
 
-    /// Every message is in every language, and every one is asked for by name — but an action's, which is asked for by the action's id ([`crate::context::action_label`]): a message nothing reads is a label left behind by a row that went.
+    /// Every message is in every language, and every one is asked for by name — but an action's, which is asked for by the action's id ([`crate::context::action_label`]): a message nothing reads is a label left behind by a row that went. The messages are the catalogue as telar bakes it, where a plural (`one`, `other`, … under one key) is one message asked for by that key, its categories each language's own.
     #[test]
     fn the_catalogue_holds_what_the_editor_asks_for_in_every_language() {
-        let english = catalogue("en");
-        assert_eq!(catalogue("es"), english, "the same messages in Spanish");
+        let catalog = &crate::__rsx_i18n::CATALOG;
+        let untranslated: Vec<(&str, &str)> = catalog
+            .entries
+            .iter()
+            .flat_map(|entry| {
+                catalog
+                    .locales
+                    .iter()
+                    .filter(|locale| !entry.messages.iter().any(|(held, _)| held == *locale))
+                    .map(|locale| (entry.key, *locale))
+            })
+            .collect();
+        assert!(
+            untranslated.is_empty(),
+            "not in every language: {untranslated:?}"
+        );
         let mut said = String::new();
         sources(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
             &mut said,
         );
-        let unread: Vec<&String> = english
+        let unread: Vec<&str> = catalog
+            .entries
             .iter()
+            .map(|entry| entry.key)
             .filter(|key| !key.starts_with("editor.action."))
             .filter(|key| !said.contains(&format!("\"{key}\"")))
             .collect();

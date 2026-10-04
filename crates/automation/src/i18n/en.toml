@@ -12,6 +12,7 @@ goes_too_deep = "`{reference}` goes deeper than a reading's fields: write `$sour
 not_set_yet = "nothing is called `{reference}` yet: no source, no module reading and no variable — a variable set later is read from then on"
 no_reading_yet = "`{reference}` has no reading yet"
 no_copy_drawn = "`{reference}` has no reading: no copy of its group is drawn"
+held_until_trusted = "`{reference}` came with a bundle and is held until you trust what it runs"
 local_not_drawn = "`{reference}` is read only where a copy of its group is drawn"
 reading_not_number = "`{reference}`: `{text}` is not a number"
 reading_not_truth = "`{reference}`: `{text}` is not true or false"

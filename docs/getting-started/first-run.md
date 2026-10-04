@@ -32,17 +32,21 @@ hogar-shell layout add clock top-bar center
 hogar-shell layout remove statusicons
 ```
 
-or hand-edit `~/.config/hogar-shell/layouts/default.toml` directly — the first edit forks a copy of the built-in
-layout, which stays read-only so there is always one that works. `hogar-shell layout show` prints it as it is
-stored, and `hogar-shell layout check` says what is wrong with one before it applies. See
-[Bars](../features/surfaces/bars.md) and the [Layout reference](../reference/layout.md) for the full shape.
+The built-in layout, `default`, is read-only so there is always one that works: the first of those edits forks
+it into `~/.config/hogar-shell/layouts/custom.toml` and draws that from then on, and that is the file to
+hand-edit. To start a file by hand instead, `hogar-shell layout show > ~/.config/hogar-shell/layouts/mine.toml`
+copies the built-in one and `hogar-shell layout use mine` draws it. A file called `default.toml` is never read —
+the built-in layout keeps that name — and `hogar-shell layout check` says so. `hogar-shell layout show <name>`
+prints a layout as it is stored, and `hogar-shell layout check <name>` says what is wrong with one before it
+applies. See [Bars](../features/surfaces/bars.md) and the [Layout reference](../reference/layout.md) for the
+full shape.
 
 Every module id is a page under [features/modules](../features/modules/). An id the build does not know is
 drawn as a placeholder where you placed it rather than failing the bar, and `hogar-shell layout check` says
 which one.
 
 **2. Pick a shape.** A bar's `shape.mode` in the layout is `bar`, `sections` or `chips` — one solid bar,
-grouped zones, or a chip per module (`hogar-shell layout show` prints the layout to edit). Every module works
+grouped zones, or a chip per module (`hogar-shell layout show <name>` prints a layout as it is stored). Every module works
 in all three; see [Bars](../features/surfaces/bars.md).
 
 **3. Pick a palette.**

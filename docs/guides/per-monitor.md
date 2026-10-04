@@ -28,7 +28,7 @@ Everything below matches on the connector name — `DP-2`, `HDMI-A-1`, `eDP-1`.
 config file:
 
 ```toml
-# ~/.config/hogar-shell/layouts/default.toml
+# ~/.config/hogar-shell/layouts/custom.toml, or whichever layout `hogar-shell layout list` marks as drawing
 [[outputs]]
 match = "*"
 # the base every output starts from

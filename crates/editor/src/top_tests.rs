@@ -28,7 +28,7 @@ mod tests {
     use crate::mode::{self, Compositor};
     use crate::modes::bars::{Seen, measured, nearest_edge};
     use crate::modes::top::{self, ChipLanding, Detached, Drawn};
-    use crate::rig::{Rig, SCREEN, rig_on, rig_screens, rig_with};
+    use crate::rig::{Rig, SCREEN, rig_on, rig_prepared, rig_screens, rig_with};
     use crate::session::{self, Edit, EditError, Selection};
     use crate::{context, host, popover, variant};
 
@@ -548,6 +548,65 @@ mod tests {
         );
     }
 
+    /// Trust decides what runs, not what a file says (DEC-30): splitting a bar of a bundle's file gives the new half the bar's own actions as the file writes them, its held `shell run` line included, and the chips moved onto it keep theirs — still held, rather than erased by the split.
+    #[test]
+    fn a_split_keeps_the_lines_a_bundle_holds_back() {
+        const HELD: &str = "shell run date";
+        let held = || layout::Action(vec![HELD.to_string()]);
+        let _owner = Owner::new();
+        let rig = rig_prepared(
+            "top-split-held",
+            |layout| {
+                let bar = &mut layout.outputs[0].layers.top.areas[0];
+                bar.actions.insert(layout::Trigger::Press, held());
+                for group in &mut bar.groups {
+                    for child in &mut group.children {
+                        if child.id.as_str() == "clock" {
+                            child.actions.insert(layout::Trigger::Press, held());
+                        }
+                    }
+                }
+            },
+            |store| {
+                let mut trust = layout::Trust::default();
+                trust.import("layouts/mine.toml", "nord");
+                store.set_trust(trust);
+            },
+        );
+        let _mode = enter();
+        draw();
+        let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
+        let (ops, second) = top::split(
+            &session::draft().peek(),
+            &screen(),
+            LayerKind::Top,
+            &bar_top(),
+            700.0,
+            &drawn,
+        )
+        .expect("it splits");
+        commit(ops);
+
+        let written = stored(&rig);
+        let areas = &written.outputs[0].layers.top.areas;
+        let rest = areas
+            .iter()
+            .find(|area| area.id == second)
+            .expect("the new half is written");
+        assert_eq!(rest.actions.get(&layout::Trigger::Press), Some(&held()));
+        let clock = rest
+            .groups
+            .iter()
+            .flat_map(|group| group.children.iter())
+            .find(|child| child.id.as_str() == "clock")
+            .expect("the clock moved onto the new half");
+        assert_eq!(clock.actions.get(&layout::Trigger::Press), Some(&held()));
+        assert!(
+            bar(&second).is_some_and(|area| area.actions.values().all(|it| it.0.is_empty())),
+            "still held on screen"
+        );
+    }
+
     /// A split and a join are each other's undoing: the bar cut in two, its chips past the cut on the second half in the zones they were in, and joined back it is the layout it was.
     #[test]
     fn a_split_bar_joined_again_is_the_bar_it_was() {
@@ -603,6 +662,93 @@ mod tests {
             stored(&rig),
             original,
             "joined again, the layout is what it was"
+        );
+    }
+
+    /// A join keeps what each bar runs on its own background: a gesture only the second bar binds goes with it onto the joined bar and one both bind alike stays, while one they bind to different chains refuses the join, naming the gesture, rather than dropping either.
+    #[test]
+    fn a_join_keeps_both_bars_own_actions_or_names_the_gesture_they_disagree_on() {
+        let chain = |line: &str| layout::Action(vec![line.to_string()]);
+        let _owner = Owner::new();
+        let rig = rig_with("top-join-actions", |layout| {
+            layout.outputs[0].layers.top.areas[0].actions.insert(
+                layout::Trigger::Press,
+                layout::Action(vec!["panel toggle clock".to_string()]),
+            );
+        });
+        let _mode = enter();
+        draw();
+        let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
+        let (ops, second) = top::split(
+            &session::draft().peek(),
+            &screen(),
+            LayerKind::Top,
+            &bar_top(),
+            700.0,
+            &drawn,
+        )
+        .expect("it splits");
+        commit(ops);
+        let site = layout::Site {
+            output: stored(&rig).outputs[0].matches.clone(),
+            workspace: None,
+            layer: LayerKind::Top,
+        };
+        let bind = |actions: &[(layout::Trigger, &str)]| {
+            commit(vec![layout::LayoutOp::SetAreaActions {
+                site: site.clone(),
+                id: second.clone(),
+                actions: actions
+                    .iter()
+                    .map(|(trigger, line)| (*trigger, chain(line)))
+                    .collect(),
+            }]);
+        };
+        let join = || {
+            top::joined(
+                &session::draft().peek(),
+                &screen(),
+                LayerKind::Top,
+                &bar_top(),
+                &second,
+            )
+        };
+
+        bind(&[(layout::Trigger::Press, "launcher toggle")]);
+        match join() {
+            Err(EditError::Refused(why)) => assert!(why.contains("press"), "{why}"),
+            other => panic!("the two presses disagree, so the join is refused: {other:?}"),
+        }
+        assert!(
+            stored(&rig).outputs[0]
+                .layers
+                .top
+                .areas
+                .iter()
+                .any(|area| area.id == second)
+        );
+
+        bind(&[
+            (layout::Trigger::Press, "panel toggle clock"),
+            (layout::Trigger::ScrollUp, "volume up"),
+        ]);
+        commit(join().expect("nothing they bind disagrees"));
+        let joined = stored(&rig);
+        let areas = &joined.outputs[0].layers.top.areas;
+        assert!(areas.iter().all(|area| area.id != second));
+        let kept = &areas
+            .iter()
+            .find(|area| area.id == bar_top())
+            .expect("the joined bar")
+            .actions;
+        assert_eq!(
+            kept.get(&layout::Trigger::Press),
+            Some(&chain("panel toggle clock"))
+        );
+        assert_eq!(
+            kept.get(&layout::Trigger::ScrollUp),
+            Some(&chain("volume up")),
+            "the second bar's own gesture goes with it"
         );
     }
 

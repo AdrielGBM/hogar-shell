@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use crate::model::*;
-use crate::resolve::Origin;
+use crate::resolve::Level;
 
 /// Lays `over` on top of `base`, in place.
 pub fn merge_layers(base: &mut Layers, over: &Layers) {
@@ -70,13 +70,31 @@ fn merge_group(base: &mut Group, over: &Group) {
     if over.kind.is_some() {
         base.kind = over.kind;
     }
+    if over.komponent.is_some() && over.komponent != base.komponent {
+        *base = Group {
+            id: base.id.clone(),
+            kind: base.kind,
+            komponent: over.komponent.clone(),
+            ..Group::default()
+        };
+    }
     replace_if_set(&mut base.stacked, &over.stacked);
     if over.unset.contains(&Unset::Repeat) {
         base.repeat = None;
     }
     replace_if_set(&mut base.repeat, &over.repeat);
-    carry_unset(&mut base.unset, &over.unset, |unset| {
-        *unset == Unset::Repeat && base.repeat.is_some()
+    for unset in &over.unset {
+        if let Unset::Parameter(name) = unset {
+            base.parameters.remove(name);
+        }
+    }
+    for (name, expr) in &over.parameters {
+        base.parameters.insert(name.clone(), expr.clone());
+    }
+    carry_unset(&mut base.unset, &over.unset, |unset| match unset {
+        Unset::Repeat => base.repeat.is_some(),
+        Unset::Parameter(name) => base.parameters.contains_key(name),
+        _ => false,
     });
     for id in &over.remove {
         base.children.retain(|instance| &instance.id != id);
@@ -418,10 +436,10 @@ pub(crate) type At = (
 
 /// Which level wrote each expression of a merge: laid level by level beside the merge itself, with the same three verbs — a removed item takes its expressions with it, an `unset` takes one back, a written key is the level's own.
 #[derive(Debug, Default)]
-pub(crate) struct Origins(BTreeMap<At, Origin>);
+pub(crate) struct Origins(BTreeMap<At, Level>);
 
 impl Origins {
-    pub(crate) fn of(&self, at: &At) -> Option<&Origin> {
+    pub(crate) fn of(&self, at: &At) -> Option<&Level> {
         self.0.get(at)
     }
 
@@ -429,7 +447,7 @@ impl Origins {
     pub(crate) fn lay<'a>(
         &mut self,
         layers: impl IntoIterator<Item = (LayerKind, &'a Layer)>,
-        level: &Origin,
+        level: &Level,
     ) {
         for (kind, layer) in layers {
             for id in &layer.remove {
@@ -457,6 +475,22 @@ impl Origins {
                         group.repeat.is_some(),
                         level,
                     );
+                    let parameters = group
+                        .unset
+                        .iter()
+                        .filter_map(|unset| match unset {
+                            Unset::Parameter(name) => Some(name),
+                            _ => None,
+                        })
+                        .chain(group.parameters.keys());
+                    for name in parameters {
+                        self.write(
+                            (kind, id.clone(), held.clone(), None, Unset::parameter(name)),
+                            &group.unset,
+                            group.parameters.contains_key(name),
+                            level,
+                        );
+                    }
                     for instance in &group.remove {
                         self.0.retain(|(on, area, of, child, _), _| {
                             !(*on == kind
@@ -496,7 +530,7 @@ impl Origins {
     }
 
     /// One expression of one level: taken back where its holder's `unset` names it, then the level's own where it writes it.
-    fn write(&mut self, at: At, unset: &[Unset], written: bool, level: &Origin) {
+    fn write(&mut self, at: At, unset: &[Unset], written: bool, level: &Level) {
         if unset.contains(&at.4) {
             self.0.remove(&at);
         }

@@ -23,7 +23,7 @@ pub enum ShellEvent {
         /// The image that screen now shows, or `None` for the theme's base colour.
         path: Option<PathBuf>,
     },
-    /// A wallpaper-derived palette was published, and the files `[theme.export]` writes for it are on disk.
+    /// The palette the shell paints with changed, whatever changed it (DEC-24): a built-in theme switched, colours edited, or a wallpaper-derived palette published — in which case the files `[theme.export]` writes for it are on disk by now.
     ColorsChanged,
     /// The palette the shell paints with switched between dark and light.
     ThemeModeChanged {

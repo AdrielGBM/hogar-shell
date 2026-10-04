@@ -19,9 +19,9 @@ use telar::RwSignal;
 
 use config::Edge;
 use layout::{
-    Area, AreaId, AreaKind, AutoHide, Corners, Extent, Group, GroupId, GroupKind, InstanceId,
-    LayerKind, Layout, LayoutId, LayoutOp, OutputMatch, OutputRule, Representation, ResolvedArea,
-    ResolvedAreaKind, ResolvedGroup, Site, Spot, Zone,
+    Action, Area, AreaId, AreaKind, AutoHide, Corners, Extent, Group, GroupId, GroupKind,
+    InstanceId, LayerKind, Layout, LayoutOp, Library, OutputMatch, OutputRule, Representation,
+    ResolvedArea, ResolvedAreaKind, ResolvedGroup, Site, Spot, Trigger, Zone,
 };
 use surfaces::bar::Span;
 use surfaces::reconcile::{self, Desktop};
@@ -590,6 +590,7 @@ pub(crate) fn joined(
     if between || trail_span.at < lead_span.end() - TOUCH {
         return Err(apart());
     }
+    let carried = carried_actions(&lead, &trail)?;
     let lead_written = work.written(layer, &lead.id)?;
     let trail_written = work.written(layer, &trail.id)?;
     let mut landing: Vec<(ResolvedGroup, Option<GroupId>)> = Vec::new();
@@ -613,6 +614,9 @@ pub(crate) fn joined(
         lead_span.at,
         trail_span.end() - lead_span.at,
     )?;
+    if !carried.is_empty() {
+        work.rewrite(layer, &lead.id, |written| written.actions.extend(carried))?;
+    }
     let mut moving: Vec<(ResolvedGroup, GroupId)> = Vec::new();
     for (group, into) in landing {
         let into = match into {
@@ -666,6 +670,31 @@ pub(crate) fn joined(
     }
     work.remove(layer, &trail.id)?;
     Ok(work.done())
+}
+
+/// What the bar `trail` runs on its own background that the bar `lead` it is joined into has to take on, so a join keeps every gesture either bar answered: each one `lead` does not bind, and nothing for one both bind alike. A gesture both bind to different chains is refused rather than one of them dropped, naming it, so the user decides which stays before joining.
+fn carried_actions(
+    lead: &ResolvedArea,
+    trail: &ResolvedArea,
+) -> Result<BTreeMap<Trigger, Action>, EditError> {
+    let mut carried = BTreeMap::new();
+    for (trigger, chain) in &trail.actions {
+        match lead.actions.get(trigger) {
+            None => {
+                carried.insert(*trigger, chain.clone());
+            }
+            Some(held) if held == chain => {}
+            Some(_) => {
+                return Err(EditError::refused(telar::t!(
+                    "editor.top.join_actions_clash",
+                    name = lead.id.to_string(),
+                    other = trail.id.to_string(),
+                    gesture = trigger.as_str()
+                )));
+            }
+        }
+    }
+    Ok(carried)
 }
 
 /// Where a carried chip is put on a bar: into `zone` of the bar `area`, before the chip that is `index`th in that zone once the carried one is out of it.
@@ -818,7 +847,7 @@ pub(crate) fn detached(
 /// Whether `layout` places the area `id` on `layer` of `desktop`'s screen.
 fn places(
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     desktop: &Desktop,
     layer: LayerKind,
     id: &AreaId,
@@ -1102,12 +1131,12 @@ pub(crate) fn create_on(edge: Edge) -> Result<(), EditError> {
     )
 }
 
-/// A bar's menu rows: splitting it, joining it with the bar before or after it and sending it to each other screen, and, in its own mode, a new bar on each edge.
+/// A bar's menu rows: adding a komponent to one of its zones, splitting it, joining it with the bar before or after it and sending it to each other screen, and, in its own mode, a new bar on each edge.
 fn bar_rows(area: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
     let Some(desktop) = reconcile::desktop(node.output.as_deref()) else {
         return Vec::new();
     };
-    let mut rows = Vec::new();
+    let mut rows: Vec<telar::MenuEntry> = crate::komponent::bar_entry(node).into_iter().collect();
     if let (Some(span), Some(edge)) = (span_of(&desktop, area), area.kind.edge()) {
         let cut = node.clone();
         rows.push(telar::MenuEntry::row(

@@ -14,7 +14,8 @@ use std::time::Instant;
 use telar::{ReadSignal, RwSignal, signal};
 
 use layout::{
-    BUILT_IN, Layout, LayoutId, LayoutOp, LayoutStore, Placed, SETTLE, StoreError, Transaction,
+    BUILT_IN, Komponent, KomponentId, Layout, LayoutId, LayoutOp, LayoutStore, Placed, SETTLE,
+    StoreError, Transaction,
 };
 use util::report::{Finding, Message, Report};
 
@@ -107,6 +108,32 @@ pub fn commit(transaction: Transaction) -> Result<(), Message> {
             })
             .map_err(|why| why.message())
     })
+}
+
+/// Saves `komponent` as `id`, then makes the edit `then` that uses it — a group turned into a use of the komponent it was saved as — keeping the komponent only where that edit is made. The komponent is written with the layout once the edits settle; it is not in the undo history, which takes back the edit alone.
+pub fn with_komponent<R, E>(
+    id: KomponentId,
+    komponent: Komponent,
+    refused: impl FnOnce(Message) -> E,
+    then: impl FnOnce() -> Result<R, E>,
+) -> Result<R, E> {
+    if let Err(why) = change(|store| {
+        store
+            .add_komponent(id.clone(), komponent)
+            .map_err(|why| why.message())
+    }) {
+        return Err(refused(why));
+    }
+    then().inspect_err(|_| {
+        if let Some(store) = store() {
+            store.borrow_mut().discard_komponent(&id);
+        }
+    })
+}
+
+/// Where the komponents live: `components/` beside [`dir`].
+pub fn komponents_dir() -> PathBuf {
+    layout::components_beside(&dir())
 }
 
 /// Takes back the last committed transaction, whatever made it, and answers with what it was called.
@@ -206,19 +233,32 @@ pub fn no_store() -> Message {
 
 fn bump() {
     REVISION.with(|revision| revision.update(|n| *n = n.wrapping_add(1)));
+    if let Some(store) = store() {
+        crate::bundles::note(&store.borrow());
+    }
 }
 
 /// Runs one change against the store, then brings the screen in line with it and asks for the write.
 ///
 /// A change that failed after the built-in layout forked still changed the store — the copy is the active layout now, and `state.json` says so — so it is redrawn and written like one that went through. Whatever the change stopped placing is forgotten before the redraw, wherever state is kept by id ([`forget_gone`]).
-fn change<R>(f: impl FnOnce(&mut LayoutStore) -> Result<R, Message>) -> Result<R, Message> {
+pub(crate) fn change<R>(
+    f: impl FnOnce(&mut LayoutStore) -> Result<R, Message>,
+) -> Result<R, Message> {
+    change_or(f, |missing| missing)
+}
+
+/// [`change`] for a change that refuses with something other than one message: `missing` says, in that shape, that no running shell owns a store.
+pub(crate) fn change_or<R, E>(
+    f: impl FnOnce(&mut LayoutStore) -> Result<R, E>,
+    missing: impl FnOnce(Message) -> E,
+) -> Result<R, E> {
     let live = LIVE.with(|live| {
         live.borrow()
             .as_ref()
             .map(|it| (Rc::clone(&it.store), Rc::clone(&it.redraw)))
     });
     let Some((store, redraw)) = live else {
-        return Err(no_store());
+        return Err(missing(no_store()));
     };
     // The borrow ends with the block, so the redraw below — which reads the store to plan the screen — is not inside it.
     let (done, changed, gone) = {

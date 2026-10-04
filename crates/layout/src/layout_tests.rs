@@ -109,7 +109,7 @@ mod tests {
     }
 
     fn alone(layout: &Layout, output: &str) -> Resolved {
-        resolve(layout, &BTreeMap::new(), output, None).0
+        resolve(layout, &Library::default(), output, None).0
     }
 
     fn area_ids(resolved: &Resolved, layer: LayerKind) -> Vec<String> {
@@ -290,7 +290,7 @@ mod tests {
         )
         .expect("parses");
 
-        let known = BTreeMap::from([(base.id.clone(), base)]);
+        let known = Library::of_layouts([base]);
         let (resolved, report) = resolve(&child, &known, "DP-1", None);
         assert!(report.is_clean(), "{}", report.render());
 
@@ -314,9 +314,46 @@ mod tests {
             "#,
         )
         .expect("parses");
-        let known = BTreeMap::from([(parsed.id.clone(), parsed.clone())]);
+        let known = Library::of_layouts([parsed.clone()]);
         let (_, report) = resolve(&parsed, &known, "DP-1", None);
         assert!(!report.is_clean(), "the cycle is reported");
+    }
+
+    /// A chain of layouts each extending the next is followed no deeper than `EXTENDS_DEPTH`, and the layout past it is a finding at `extends`: a bundle of hundreds of layouts in a line costs no more to resolve than a short chain.
+    #[test]
+    fn a_chain_deeper_than_the_limit_is_reported_at_extends() {
+        let chain: Vec<Layout> = (0..40)
+            .map(|n| Layout {
+                id: LayoutId::new(format!("l{n}")),
+                extends: (n < 39).then(|| LayoutId::new(format!("l{}", n + 1))),
+                ..Layout::default()
+            })
+            .collect();
+        let known = Library::of_layouts(chain.clone());
+        let (_, report) = resolve(&chain[0], &known, "DP-1", None);
+        let deep: Vec<_> = report
+            .errors
+            .iter()
+            .filter(|finding| finding.message.key() == Some("finding.extends_too_deep"))
+            .collect();
+        assert_eq!(deep.len(), 1, "{}", report.render());
+        assert_eq!(deep[0].key, "extends");
+        assert_eq!(deep[0].file, std::path::Path::new("layouts/l0.toml"));
+        let shallow = Library::of_layouts(chain[40 - crate::resolve::EXTENDS_DEPTH..].to_vec());
+        let (_, report) = resolve(
+            &chain[40 - crate::resolve::EXTENDS_DEPTH],
+            &shallow,
+            "DP-1",
+            None,
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|finding| finding.message.key() != Some("finding.extends_too_deep")),
+            "a chain of exactly the limit is followed whole: {}",
+            report.render()
+        );
     }
 
     #[test]
@@ -363,7 +400,7 @@ mod tests {
             id = "nameless"
             "#,
         );
-        let (resolved, report) = resolve(&parsed, &BTreeMap::new(), "DP-1", None);
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
         assert!(area_ids(&resolved, LayerKind::Top).is_empty());
         assert!(
             report.findings().any(|f| f.key.ends_with("nameless.kind")),
@@ -382,7 +419,7 @@ mod tests {
             edge = "bottom"
             "#
         ));
-        let (resolved, report) = resolve(&parsed, &BTreeMap::new(), "DP-1", None);
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
         assert_eq!(
             area_ids(&resolved, LayerKind::Top),
             ["bar-top"],
@@ -478,7 +515,7 @@ mod tests {
             name: "web".into(),
             ..ActiveWorkspace::default()
         };
-        let (resolved, report) = resolve(&parsed, &BTreeMap::new(), "DP-1", Some(&web));
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", Some(&web));
         assert!(report.is_clean(), "{}", report.render());
         assert_eq!(instance_ids(&resolved), ["clock-1", "battery-1"]);
     }
@@ -499,7 +536,7 @@ mod tests {
             name: "3".into(),
             ..ActiveWorkspace::default()
         };
-        let (resolved, report) = resolve(&parsed, &BTreeMap::new(), "DP-1", Some(&nameless));
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", Some(&nameless));
         assert!(
             area_ids(&resolved, LayerKind::Desktop).is_empty(),
             "the rule did not apply"
@@ -530,7 +567,7 @@ mod tests {
             id: Some(3),
             special: Some(false),
         };
-        let (resolved, report) = resolve(&parsed, &BTreeMap::new(), "DP-1", Some(&third));
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", Some(&third));
         assert!(report.is_clean(), "{}", report.render());
         assert_eq!(area_ids(&resolved, LayerKind::Desktop), ["grid"]);
     }
@@ -1669,7 +1706,7 @@ mod tests {
             "#,
         )
         .expect("parses");
-        let known = BTreeMap::from([(base.id.clone(), base)]);
+        let known = Library::of_layouts([base]);
         let (merged, report) = crate::sources(&child, &known);
         assert!(report.is_clean(), "{}", report.render());
 
@@ -1729,7 +1766,7 @@ mod tests {
             "#,
         )
         .expect("parses");
-        let known = BTreeMap::from([(base.id.clone(), base)]);
+        let known = Library::of_layouts([base]);
         let (merged, report) = crate::sources(&child, &known);
         assert!(report.is_clean(), "{}", report.render());
 
@@ -1753,7 +1790,7 @@ mod tests {
         let lone: Layout =
             toml::from_str("id = \"mine\"\n[sources.load]\nkind = \"poll\"\nevery = \"10s\"\n")
                 .expect("parses");
-        let (merged, report) = crate::sources(&lone, &BTreeMap::new());
+        let (merged, report) = crate::sources(&lone, &Library::default());
         assert!(merged.is_empty());
         assert_eq!(report.errors[0].key, "sources.load.cmd");
     }
@@ -1985,7 +2022,7 @@ mod tests {
     #[test]
     fn the_built_in_layout_resolves_and_validates_on_its_own() {
         let built_in = built_in::layout();
-        let (resolved, report) = resolve(&built_in, &BTreeMap::new(), "DP-1", None);
+        let (resolved, report) = resolve(&built_in, &Library::default(), "DP-1", None);
         assert!(report.is_clean(), "{}", report.render());
         assert_eq!(area_ids(&resolved, LayerKind::Top), ["bar-top"]);
         assert_eq!(
@@ -2011,6 +2048,48 @@ mod tests {
             validate_resolved(&resolved, "built-in", &theme()).is_clean(),
             "including a lock layer with its prompt"
         );
+    }
+
+    /// F-10.2: the built-in layout is read-only, so a file named after it does not stand in for it — at load or at a reload — and says so, naming itself, while everything that names `default` still means the layout that ships.
+    #[test]
+    fn a_file_named_after_the_built_in_layout_is_reported_and_never_read() {
+        let dir = scratch("shadow");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut shadow = built_in::layout();
+        shadow.name = "shadow".to_string();
+        shadow.outputs.clear();
+        std::fs::write(
+            dir.join("default.toml"),
+            toml::to_string_pretty(&shadow).unwrap(),
+        )
+        .unwrap();
+
+        let (mut store, report) = LayoutStore::load(&dir);
+        let finding = report
+            .warnings
+            .iter()
+            .find(|finding| finding.message.key() == Some("finding.built_in_file"))
+            .unwrap_or_else(|| panic!("{}", report.render()));
+        assert_eq!(finding.file, dir.join("default.toml"));
+        assert_eq!(
+            store.get(&LayoutId::new(BUILT_IN)),
+            Some(&built_in::layout())
+        );
+
+        let report = store.reload();
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|finding| finding.message.key() == Some("finding.built_in_file")),
+            "{}",
+            report.render()
+        );
+        assert_eq!(
+            store.get(&LayoutId::new(BUILT_IN)),
+            Some(&built_in::layout())
+        );
+        assert_eq!(store.names().count(), 1);
     }
 
     #[test]
@@ -3504,7 +3583,7 @@ mod tests {
         assert!(validate_resolved(&resolved, "layouts/test.toml", &theme()).is_clean());
     }
 
-    fn thickness_of(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Option<f32> {
+    fn thickness_of(layout: &Layout, known: &Library) -> Option<f32> {
         let (resolved, _) = resolve(layout, known, "DP-1", None);
         resolved
             .layer(LayerKind::Top)?
@@ -3540,10 +3619,7 @@ mod tests {
         mine.id = LayoutId::new("mine");
         mine.extends = Some(LayoutId::new("parent"));
         thicken(&mut mine, 50.0);
-        let known = BTreeMap::from([
-            (parent.id.clone(), parent.clone()),
-            (mine.id.clone(), mine.clone()),
-        ]);
+        let known = Library::of_layouts([parent.clone(), mine.clone()]);
         let bar = AreaId::new("bar-top");
 
         let base = reset::base_of(&mine, &known);
@@ -3587,7 +3663,7 @@ mod tests {
             .background
             .remove
             .push(AreaId::new("background-2"));
-        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let known = Library::of_layouts([built_in()]);
         let free = |stem: &str| ops::free_area_id(&mine, &known, LayerKind::Background, stem);
         assert_eq!(free("background"), AreaId::new("background-3"));
         assert_eq!(free("background-3"), AreaId::new("background-3"));
@@ -3616,7 +3692,7 @@ mod tests {
             }],
             ..bare_area("widgets")
         });
-        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let known = Library::of_layouts([built_in()]);
         let free = |stem: &str| ops::free_instance_id(&mine, &known, stem);
         assert_eq!(
             free("clock"),
@@ -3656,7 +3732,7 @@ mod tests {
                 ..SessionLayers::default()
             },
         });
-        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let known = Library::of_layouts([built_in()]);
         let bar = AreaId::new("bar-top");
         let free = |stem: &str| ops::free_group_id(&mine, &known, LayerKind::Top, &bar, stem);
         assert_eq!(
@@ -3688,7 +3764,7 @@ mod tests {
             outputs: vec![OutputRule::default()],
             ..Layout::default()
         };
-        let known = BTreeMap::from([(LayoutId::new(BUILT_IN), built_in())]);
+        let known = Library::of_layouts([built_in()]);
         let hide = LayoutOp::SetLayerRemove {
             site: Site::everywhere(LayerKind::Overlay),
             remove: vec![AreaId::new("stack")],
@@ -3975,14 +4051,14 @@ mod tests {
             "{}",
             validate(&parsed, &Modules).render()
         );
-        assert!(validate_unsets(&parsed, &BTreeMap::new()).is_clean());
+        assert!(validate_unsets(&parsed, &Library::default()).is_clean());
     }
 
     /// DEC-26 across `extends`: a layout takes back what the layout it extends drives, and a level above it can drive it again, since a level's own keys are laid over after what it takes back.
     #[test]
     fn a_layout_takes_back_what_the_layout_it_extends_drives_by_an_expression() {
         let base = layout(EXPRESSIVE);
-        let known = BTreeMap::from([(base.id.clone(), base.clone())]);
+        let known = Library::of_layouts([base.clone()]);
         let mut mine = layout(&format!(
             "id = \"mine\"\nextends = \"base\"\n{}",
             taking_back("*")
@@ -4021,10 +4097,7 @@ mod tests {
             "id = \"middle\"\nextends = \"base\"\n{}",
             taking_back("*")
         ));
-        let known = BTreeMap::from([
-            (base.id.clone(), base.clone()),
-            (middle.id.clone(), middle.clone()),
-        ]);
+        let known = Library::of_layouts([base.clone(), middle.clone()]);
         let mine = layout("id = \"mine\"\nextends = \"middle\"\n");
         let flat = crate::reset::base_of(&mine, &known);
         assert_eq!(
@@ -4143,7 +4216,7 @@ mod tests {
     #[test]
     fn taking_back_what_nothing_under_the_level_writes_is_a_warning() {
         let plain = layout(&format!("{ONE_BAR}{}", taking_back("DP-1")));
-        let report = validate_unsets(&plain, &BTreeMap::new());
+        let report = validate_unsets(&plain, &Library::default());
         assert!(report.errors.is_empty(), "{}", report.render());
         let at = "outputs.DP-1.layers.top.areas.bar-top";
         let mut warned: Vec<&str> = report.warnings.iter().map(|f| f.key.as_str()).collect();
@@ -4170,20 +4243,24 @@ mod tests {
             taking_back("DP-1")
         ));
         assert_eq!(
-            validate_unsets(&elsewhere, &BTreeMap::new()).warnings.len(),
+            validate_unsets(&elsewhere, &Library::default())
+                .warnings
+                .len(),
             3,
             "a rule for another monitor is never under this one"
         );
 
         let base = layout(EXPRESSIVE);
-        let known = BTreeMap::from([(base.id.clone(), base)]);
+        let known = Library::of_layouts([base]);
         let extending = layout(&format!(
             "id = \"mine\"\nextends = \"base\"\n{}",
             taking_back("DP-*")
         ));
         assert!(validate_unsets(&extending, &known).is_clean());
         assert_eq!(
-            validate_unsets(&extending, &BTreeMap::new()).warnings.len(),
+            validate_unsets(&extending, &Library::default())
+                .warnings
+                .len(),
             3,
             "with the layout it extends missing, nothing is under it"
         );
@@ -4202,13 +4279,13 @@ mod tests {
             "#
         ));
         assert!(validate(&parsed, &Modules).is_clean());
-        assert!(validate_unsets(&parsed, &BTreeMap::new()).is_clean());
+        assert!(validate_unsets(&parsed, &Library::default()).is_clean());
         let on = |name: &str| {
             let workspace = ActiveWorkspace {
                 name: name.into(),
                 ..ActiveWorkspace::default()
             };
-            expressions(&resolve(&parsed, &BTreeMap::new(), "DP-1", Some(&workspace)).0).0
+            expressions(&resolve(&parsed, &Library::default(), "DP-1", Some(&workspace)).0).0
         };
         assert_eq!(on("2"), None);
         assert_eq!(on("1"), Some(Expr("$battery.percent > 50".into())));
@@ -4233,7 +4310,7 @@ mod tests {
         let resolved = alone(&parsed, "DP-1");
         assert!(validate_resolved(&resolved, "locked", &theme()).is_clean());
         assert_eq!(
-            validate_unsets(&parsed, &BTreeMap::new()).warnings.len(),
+            validate_unsets(&parsed, &Library::default()).warnings.len(),
             1,
             "nothing under it gives the prompt an expression"
         );
@@ -4338,18 +4415,18 @@ mod tests {
         module = "clock"
     "##;
 
-    fn provenance() -> (Layout, BTreeMap<LayoutId, Layout>) {
+    fn provenance() -> (Layout, Library) {
         let (base, mine) = (layout(PROVENANCE_BASE), layout(PROVENANCE_MINE));
-        let known = BTreeMap::from([(base.id.clone(), base), (mine.id.clone(), mine.clone())]);
+        let known = Library::of_layouts([base, mine.clone()]);
         (mine, known)
     }
 
     fn origin(layout: &str, output: &str, workspace: Option<&str>) -> Origin {
-        Origin {
+        Origin::Level(Level {
             layout: LayoutId::new(layout),
             output: OutputMatch(output.to_string()),
             workspace: workspace.map(|workspace| WorkspaceMatch(workspace.to_string())),
-        }
+        })
     }
 
     /// Resolution keeps, beside each expression, the level that wrote it: a layout this one extends, one of its output rules, or the workspace rule up on the screen; a level that takes an expression back or places an item afresh leaves nothing of the old one's.
@@ -4394,8 +4471,8 @@ mod tests {
         );
         assert_eq!(clock.bindings["accent"].expr, Expr("#00ff00".into()));
         assert_eq!(
-            origin("mine", "DP-1", Some("2")).rule(),
-            "outputs.DP-1.workspaces.2"
+            origin("mine", "DP-1", Some("2")).level().map(Level::rule),
+            Some("outputs.DP-1.workspaces.2".to_string())
         );
 
         let bar = on("HDMI-A-1", "1");
@@ -4552,6 +4629,617 @@ mod tests {
         assert_eq!(
             finding.message.render_in("es"),
             "se esperaba booleano, pero esto da número"
+        );
+    }
+
+    const PILL: &str = r#"
+        [parameters.label]
+        type = "text"
+        default = "'Battery'"
+        [parameters.low]
+        type = "number"
+        default = "20"
+        [[children]]
+        id = "battery"
+        module = "battery"
+        [children.bindings]
+        accent = "if($battery.percent < $low, #ff0000, #00ff00)"
+        [[children]]
+        id = "clock"
+        module = "clock"
+        [children.bindings]
+        date_format = "$label"
+    "#;
+
+    const TWO_PILLS: &str = r#"
+        id = "test"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        place = "zone"
+        zone = "start"
+        komponent = "pill"
+        [outputs.layers.top.areas.groups.parameters]
+        label = "'Home'"
+        [[outputs.layers.top.areas.groups]]
+        id = "end"
+        place = "zone"
+        zone = "end"
+        komponent = "pill"
+    "#;
+
+    fn pill() -> Komponent {
+        toml::from_str(PILL).expect("the komponent parses")
+    }
+
+    fn with_pill(layouts: impl IntoIterator<Item = Layout>) -> Library {
+        Library::of_layouts(layouts).with_komponent("pill", pill())
+    }
+
+    fn group_of<'a>(resolved: &'a Resolved, layer: LayerKind, group: &str) -> &'a ResolvedGroup {
+        resolved
+            .layer(layer)
+            .into_iter()
+            .flat_map(|layer| layer.areas.iter())
+            .flat_map(|area| area.groups.iter())
+            .find(|held| held.id.as_str() == group)
+            .unwrap_or_else(|| panic!("the group {group} is drawn"))
+    }
+
+    fn child_ids(group: &ResolvedGroup) -> Vec<String> {
+        group
+            .children
+            .iter()
+            .map(|child| child.id.to_string())
+            .collect()
+    }
+
+    /// T-8.6: a use's parameter reads what the use sets it to, with the level that set it; one the use leaves alone reads the komponent's default; and what the komponent holds is drawn under the use's own ids, its expressions written in the komponent's file and reading the use's parameters.
+    #[test]
+    fn a_parameter_reads_what_its_use_sets_it_to_else_its_default() {
+        let parsed = layout(TWO_PILLS);
+        let (resolved, report) = resolve(&parsed, &with_pill([]), "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+
+        let start = group_of(&resolved, LayerKind::Top, "start");
+        let used = start
+            .komponent
+            .as_ref()
+            .expect("the group draws a komponent");
+        assert_eq!(used.id, KomponentId::new("pill"));
+        let read: Vec<(&str, &str)> = used
+            .parameters
+            .iter()
+            .map(|parameter| (parameter.name.as_str(), parameter.expr().0.as_str()))
+            .collect();
+        assert_eq!(read, [("label", "'Home'"), ("low", "20")]);
+        let label = &used.parameters[0];
+        assert_eq!(
+            label.value.as_ref().map(|value| value.origin.clone()),
+            Some(Origin::Level(Level {
+                layout: LayoutId::new("test"),
+                output: OutputMatch("*".into()),
+                workspace: None,
+            }))
+        );
+        assert_eq!(
+            used.parameters[1].value, None,
+            "`low` is left to its default"
+        );
+
+        assert_eq!(
+            child_ids(start),
+            ["bar-top.start/battery", "bar-top.start/clock"]
+        );
+        let clock = &start.children[1];
+        let bound = &clock.bindings["date_format"];
+        assert_eq!(bound.expr, Expr("$label".into()));
+        assert_eq!(bound.origin, Origin::Komponent(KomponentId::new("pill")));
+        assert_eq!(bound.origin.file(), "components/pill.toml");
+        assert_eq!(
+            bound.within.as_deref(),
+            Some(&**used),
+            "it reads this use's parameters"
+        );
+        assert_eq!(
+            clock.id.komponent_child(),
+            Some(InstanceId::new("clock")),
+            "the id it has in its komponent"
+        );
+        let end = group_of(&resolved, LayerKind::Top, "end");
+        assert_eq!(
+            end.komponent
+                .as_ref()
+                .map(|used| used.parameters[0].expr().clone()),
+            Some(Expr("'Battery'".into())),
+            "the other use sets nothing, so it reads the default"
+        );
+    }
+
+    /// Two uses of one komponent never share an id, so nothing kept by id — an instance's state, a stack's page — is shared between them, and both are placed for as long as the layout uses them.
+    #[test]
+    fn two_uses_of_one_komponent_draw_its_children_under_ids_of_their_own() {
+        let parsed = layout(TWO_PILLS);
+        let library = with_pill([]);
+        let (resolved, _) = resolve(&parsed, &library, "DP-1", None);
+        let ids = instance_ids(&resolved);
+        assert_eq!(
+            ids,
+            [
+                "bar-top.start/battery",
+                "bar-top.start/clock",
+                "bar-top.end/battery",
+                "bar-top.end/clock"
+            ]
+        );
+        let placed = Placed::of(&parsed, &library);
+        for id in &ids {
+            assert!(
+                placed.instances.contains(&InstanceId::new(id)),
+                "{id} is placed"
+            );
+        }
+        let mut alone = parsed.clone();
+        alone.outputs[0].layers.top.areas[0].groups.pop();
+        let gone = placed.gone(&Placed::of(&alone, &library));
+        assert_eq!(
+            gone.instances,
+            std::collections::BTreeSet::from([
+                InstanceId::new("bar-top.end/battery"),
+                InstanceId::new("bar-top.end/clock")
+            ]),
+            "dropping one use forgets its children and keeps the other's"
+        );
+    }
+
+    /// Robustness: a komponent nobody can read is one placeholder, named by its file and reported where the group names it, and the area around it still draws.
+    #[test]
+    fn a_missing_komponent_is_a_placeholder_and_a_finding_not_a_missing_area() {
+        let parsed = layout(TWO_PILLS);
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
+        assert_eq!(area_ids(&resolved, LayerKind::Top), ["bar-top"]);
+        let start = group_of(&resolved, LayerKind::Top, "start");
+        assert_eq!(child_ids(start), ["bar-top.start/pill"]);
+        assert_eq!(start.children[0].module, "components/pill.toml");
+        let keys: Vec<&str> = report
+            .errors
+            .iter()
+            .map(|finding| finding.key.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "layers.top.areas.bar-top.groups.start.komponent",
+                "layers.top.areas.bar-top.groups.end.komponent"
+            ]
+        );
+        assert!(
+            report.errors[0]
+                .message
+                .english()
+                .contains("components/pill.toml"),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// A use that sets a parameter the komponent does not declare is told which it has, where it set it; one that sets one to the wrong type is told so by validation, at the same key, with the span inside the expression.
+    #[test]
+    fn a_parameter_a_use_cannot_set_is_reported_where_it_is_set() {
+        let unknown = layout(&TWO_PILLS.replace("label = \"'Home'\"", "colour = \"'red'\""));
+        let (_, report) = resolve(&unknown, &with_pill([]), "DP-1", None);
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        assert_eq!(
+            report.errors[0].key,
+            "layers.top.areas.bar-top.groups.start.parameters.colour"
+        );
+        assert!(
+            report.errors[0]
+                .message
+                .english()
+                .contains("`label`, `low`")
+        );
+
+        let mistyped = layout(&TWO_PILLS.replace("label = \"'Home'\"", "low = \"'x'\""));
+        let report = validate_komponents(&mistyped, &with_pill([]), &Modules);
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        assert_eq!(
+            report.errors[0].key,
+            "outputs.*.layers.top.areas.bar-top.groups.start.parameters.low"
+        );
+        assert!(validate_komponents(&layout(TWO_PILLS), &with_pill([]), &Modules).is_clean());
+    }
+
+    /// A komponent's own expressions are checked with its parameters in scope — `$label` reads one, `$nope` reads nothing — and a parameter may not take a name a copy or a module already reads.
+    #[test]
+    fn a_komponent_is_checked_with_its_parameters_in_scope() {
+        let id = KomponentId::new("pill");
+        let report = validate_komponent(&id, &pill(), &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+
+        let broken: Komponent =
+            toml::from_str(&PILL.replace("date_format = \"$label\"", "date_format = \"$nope\""))
+                .expect("it parses");
+        let report = validate_komponent(&id, &broken, &Modules);
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        assert_eq!(
+            report.errors[0].file.display().to_string(),
+            "components/pill.toml"
+        );
+        assert_eq!(report.errors[0].key, "children.clock.bindings.date_format");
+
+        let named: Komponent = toml::from_str(
+            &PILL
+                .replace("[parameters.label]", "[parameters.item]")
+                .replace("$label", "$item")
+                .replace("[parameters.low]", "[parameters.battery]")
+                .replace("$low", "$battery"),
+        )
+        .expect("it parses");
+        let keys: Vec<String> = validate_komponent(&id, &named, &Modules)
+            .errors
+            .iter()
+            .map(|finding| finding.key.clone())
+            .collect();
+        assert!(keys.contains(&"parameters.item".to_string()), "{keys:?}");
+        assert!(keys.contains(&"parameters.battery".to_string()), "{keys:?}");
+    }
+
+    /// TA-8 reaches inside a komponent: one used on the lock layer may hold readings only and no actions, whatever its file allows elsewhere — the full check and the lock opener's both refuse it.
+    #[test]
+    fn a_komponent_on_the_lock_layer_may_not_hold_a_control() {
+        let mut controls = pill();
+        controls.children[1].module = Some("mixer".into());
+        controls.children[0].actions =
+            BTreeMap::from([(Trigger::Press, Action(vec!["panel toggle mixer".into()]))]);
+        let library = Library::default().with_komponent("pill", controls);
+        let locked = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.lock.areas]]
+            id = "readings"
+            kind = "free"
+            rect = { x = 0.0, y = 0.0, w = 0.2, h = 0.2 }
+            [[outputs.layers.lock.areas.groups]]
+            id = "g"
+            place = "zone"
+            zone = "start"
+            komponent = "pill"
+            "#,
+        );
+        for report in [
+            validate_komponents(&locked, &library, &Modules),
+            validate_komponents_lock(&locked, &library, &Modules),
+        ] {
+            let said: Vec<String> = report
+                .errors
+                .iter()
+                .map(|finding| finding.message.english())
+                .collect();
+            assert!(
+                said.iter().any(|it| it.contains("`mixer`")),
+                "the control is refused: {said:?}"
+            );
+            assert!(
+                said.iter().any(|it| it.contains("has actions")),
+                "and so is the action: {said:?}"
+            );
+            assert!(
+                report.errors.iter().all(|finding| finding.key
+                    == "outputs.*.layers.lock.areas.readings.groups.g.komponent")
+            );
+        }
+        assert!(
+            validate_komponents(&layout(TWO_PILLS), &library, &Modules).is_clean(),
+            "the same komponent off the lock layer is fine"
+        );
+    }
+
+    /// A level that names a komponent replaces what the group held under it, and the parameters a use sets are laid level over level by name — one taken back with `unset` reads its default again.
+    #[test]
+    fn a_komponent_replaces_what_a_group_inherits_and_its_parameters_merge_by_name() {
+        let parent = layout(&ONE_BAR.replace("id = \"test\"", "id = \"parent\""));
+        let child = layout(
+            r#"
+            id = "child"
+            extends = "parent"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            komponent = "pill"
+            [outputs.layers.top.areas.groups.parameters]
+            label = "'Home'"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            unset = ["parameters.label"]
+            [outputs.layers.top.areas.groups.parameters]
+            low = "5"
+            "#,
+        );
+        let library = with_pill([parent]);
+        let reads = |output: &str| {
+            let (resolved, report) = resolve(&child, &library, output, None);
+            assert!(report.is_clean(), "{}", report.render());
+            let start = group_of(&resolved, LayerKind::Top, "start").clone();
+            let read: Vec<String> = start
+                .komponent
+                .as_ref()
+                .expect("a use")
+                .parameters
+                .iter()
+                .map(|parameter| parameter.expr().0.clone())
+                .collect();
+            (child_ids(&start), read)
+        };
+        let (ids, read) = reads("HDMI-A-1");
+        assert_eq!(
+            ids,
+            ["bar-top.start/battery", "bar-top.start/clock"],
+            "clock-1 is gone"
+        );
+        assert_eq!(read, ["'Home'", "20"]);
+        let (_, read) = reads("DP-1");
+        assert_eq!(read, ["'Battery'", "5"]);
+        assert!(validate_unsets(&child, &library).is_clean());
+    }
+
+    /// Detach is the use drawn as plain instances: the komponent's children under ids the layout does not use yet, each parameter written into what reads it, what the use replaced kept away — one transaction, which one undo takes back.
+    #[test]
+    fn detaching_a_use_draws_what_it_drew_and_one_undo_takes_it_back() {
+        let parent = layout(&ONE_BAR.replace("id = \"test\"", "id = \"parent\""));
+        let mut mine = layout(
+            r#"
+            extends = "parent"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            komponent = "pill"
+            [outputs.layers.top.areas.groups.parameters]
+            label = "'Home'"
+            "#,
+        );
+        mine.id = LayoutId::new("mine");
+        let dir = scratch("detach").join("layouts");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("parent.toml"),
+            toml::to_string_pretty(&parent).unwrap(),
+        )
+        .unwrap();
+        let components = components_beside(&dir);
+        std::fs::create_dir_all(&components).unwrap();
+        std::fs::write(components.join("pill.toml"), PILL).unwrap();
+        let mut store = store_with(&dir, &mine);
+        let before = store.get(&LayoutId::new("mine")).unwrap().clone();
+        let (drawn, _) = resolve(&before, store.all(), "DP-1", None);
+        let used = group_of(&drawn, LayerKind::Top, "start").clone();
+
+        let ops = crate::components::detach(
+            &before,
+            store.all(),
+            (
+                &Site::everywhere(LayerKind::Top),
+                &AreaId::new("bar-top"),
+                &GroupId::new("start"),
+            ),
+            ("DP-1", None),
+        )
+        .expect("the group draws a komponent this layout names");
+        store
+            .commit(Transaction::new("Detach pill", LayoutId::new("mine"), ops))
+            .expect("it commits");
+
+        let after = store.get(&LayoutId::new("mine")).unwrap().clone();
+        let (now, report) = resolve(&after, store.all(), "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        let start = group_of(&now, LayerKind::Top, "start");
+        assert_eq!(start.komponent, None);
+        assert_eq!(
+            child_ids(start),
+            ["battery", "clock"],
+            "plain ids, and clock-1 stays away"
+        );
+        for (plain, drawn) in start.children.iter().zip(&used.children) {
+            assert_eq!(plain.module, drawn.module);
+            assert_eq!(plain.representation, drawn.representation);
+            assert_eq!(plain.options, drawn.options);
+            assert_eq!(plain.actions, drawn.actions);
+        }
+        assert_eq!(
+            start.children[1].bindings["date_format"].expr,
+            Expr("('Home')".into())
+        );
+        assert_eq!(
+            start.children[0].bindings["accent"].expr,
+            Expr("if($battery.percent < (20), #ff0000, #00ff00)".into())
+        );
+        assert!(
+            validate(&after, &Modules).is_clean(),
+            "{}",
+            validate(&after, &Modules).render()
+        );
+
+        assert_eq!(
+            store.undo().as_deref().ok(),
+            Some("Detach pill"),
+            "one entry takes it all back"
+        );
+        assert_eq!(store.get(&LayoutId::new("mine")), Some(&before));
+    }
+
+    /// Saving a group turns the values picked into parameters — an option read back through a binding of its key — and the group, written as a use of what it was saved as, draws the same modules with the same values.
+    #[test]
+    fn a_group_saved_as_a_komponent_draws_what_it_drew() {
+        let bar = layout(&ONE_BAR.replace(
+            "module = \"clock\"",
+            "module = \"clock\"\n        options = { date_format = \"%d\", show_date = true }",
+        ));
+        let (drawn, _) = resolve(&bar, &Library::default(), "DP-1", None);
+        let group = group_of(&drawn, LayerKind::Top, "start").clone();
+        let offered = crate::components::candidates(&group, &|module, key| {
+            Modules.binding_type(module, key).ok()
+        });
+        let names: Vec<&str> = offered.iter().map(|it| it.name.as_str()).collect();
+        assert_eq!(names, ["date_format", "show_date"]);
+        assert_eq!(offered[0].default, Expr("'%d'".into()));
+
+        let saved = crate::components::saved(&group, &offered[..1]);
+        assert!(validate_komponent(&KomponentId::new("clock-pill"), &saved, &Modules).is_clean());
+        let text = toml::to_string_pretty(&saved).expect("it serializes");
+        assert_eq!(
+            toml::from_str::<Komponent>(&text).expect("it parses back"),
+            saved
+        );
+
+        let mut used = bar.clone();
+        let written = &mut used.outputs[0].layers.top.areas[0].groups[0];
+        *written = crate::components::used(written, &KomponentId::new("clock-pill"));
+        let library = Library::default().with_komponent("clock-pill", saved);
+        let (now, report) = resolve(&used, &library, "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        let clock = &group_of(&now, LayerKind::Top, "start").children[0];
+        assert_eq!(clock.id, InstanceId::new("bar-top.start/clock-1"));
+        assert_eq!(clock.module, "clock");
+        assert_eq!(
+            clock.options.get("show_date"),
+            Some(&toml::Value::Boolean(true))
+        );
+        assert_eq!(
+            clock.options.get("date_format"),
+            None,
+            "the option became a parameter"
+        );
+        assert_eq!(
+            clock.bindings["date_format"].expr,
+            Expr("$date_format".into())
+        );
+        assert_eq!(
+            crate::komponents_of(&used, &library),
+            std::collections::BTreeSet::from([KomponentId::new("clock-pill")])
+        );
+    }
+
+    /// F-10.4's guard for komponents: a group using one writes keys validation knows, and a komponent file, every field filled, parses back as itself while a key no komponent has is refused.
+    #[test]
+    fn every_key_a_komponent_and_its_use_write_is_one_validation_knows() {
+        let area = Area {
+            id: AreaId::new("a"),
+            kind: Some(AreaKind::Bar {
+                edge: Some(config::Edge::Top),
+                thickness: Some(32.0),
+                length: None,
+                offset: None,
+                shape: BarShape::default(),
+                autohide: None,
+            }),
+            groups: vec![Group {
+                id: GroupId::new("g"),
+                kind: Some(GroupKind::Zone { zone: Zone::Start }),
+                komponent: Some(KomponentId::new("pill")),
+                parameters: BTreeMap::from([("label".to_string(), Expr("'Home'".into()))]),
+                unset: vec![Unset::parameter("low")],
+                ..Group::default()
+            }],
+            ..Area::default()
+        };
+        let written = written_layout(area);
+        let report = validate::check_unknown_keys(&written, &LayoutId::new("t"));
+        assert!(report.is_clean(), "{}", report.render());
+        toml::from_str::<Layout>(&written).expect("it parses back");
+
+        let mut filled = pill();
+        filled.stacked = Some(true);
+        filled.repeat = Some(Expr("$battery.cells".into()));
+        filled.children[0].representation = Some(Representation::Chip);
+        filled.children[0].options =
+            toml::Table::from_iter([("format".to_string(), toml::Value::String("%H".into()))]);
+        filled.children[0].actions =
+            BTreeMap::from([(Trigger::Press, Action(vec!["panel toggle clock".into()]))]);
+        filled.children[0].unset = vec![Unset::binding("accent")];
+        let text = toml::to_string_pretty(&filled).expect("it serializes");
+        assert_eq!(
+            toml::from_str::<Komponent>(&text).expect("it parses back"),
+            filled
+        );
+        assert!(toml::from_str::<Komponent>(&format!("colour = \"red\"\n{PILL}")).is_err());
+        assert!(
+            toml::from_str::<Komponent>(&PILL.replace("type = \"number\"", "type = \"amount\""))
+                .is_err(),
+            "a type the language has no name for"
+        );
+    }
+
+    /// The store reads komponents from `components/` beside the layouts, takes a rewritten one from its file and keeps one whose file holds what it last read or wrote, writes a saved one on the next flush, and refuses a second of the same name.
+    #[test]
+    fn the_store_reads_reloads_and_writes_komponents_by_content() {
+        let root = scratch("komponent-store");
+        let dir = root.join("layouts");
+        let components = root.join("components");
+        std::fs::create_dir_all(&components).unwrap();
+        std::fs::write(components.join("pill.toml"), PILL).unwrap();
+        let mut store = store_with(&dir, &layout(TWO_PILLS));
+        assert_eq!(store.komponent(&KomponentId::new("pill")), Some(&pill()));
+
+        std::fs::write(
+            components.join("pill.toml"),
+            PILL.replace("'Battery'", "'Power'"),
+        )
+        .unwrap();
+        assert!(store.reload().is_clean());
+        assert_eq!(
+            store
+                .komponent(&KomponentId::new("pill"))
+                .map(|it| it.parameters["label"].default.clone()),
+            Some(Expr("'Power'".into()))
+        );
+
+        let saved = Komponent::default();
+        store
+            .add_komponent(KomponentId::new("empty"), saved.clone())
+            .expect("a new name");
+        assert!(matches!(
+            store.add_komponent(KomponentId::new("pill"), saved.clone()),
+            Err(StoreError::KomponentExists(_))
+        ));
+        assert!(store.has_unsaved());
+        assert!(store.flush().is_clean());
+        util::writer::flush();
+        assert!(components.join("empty.toml").exists(), "the flush wrote it");
+        assert!(store.reload().is_clean(), "its own write is no edit");
+        assert_eq!(store.komponent(&KomponentId::new("empty")), Some(&saved));
+
+        store
+            .add_komponent(KomponentId::new("later"), saved)
+            .expect("a new name");
+        assert!(store.discard_komponent(&KomponentId::new("later")));
+        assert!(
+            !store.discard_komponent(&KomponentId::new("empty")),
+            "a written one stays"
+        );
+        std::fs::remove_file(components.join("pill.toml")).unwrap();
+        assert!(store.reload().is_clean());
+        assert_eq!(
+            store.komponent(&KomponentId::new("pill")),
+            None,
+            "its file is gone"
         );
     }
 }

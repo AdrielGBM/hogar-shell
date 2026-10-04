@@ -5,10 +5,10 @@ title: Scripting
 summary: Driving the shell from a script, and reading its answers.
 status: stable
 compositor: any
-commands: [shell, apps, audio, notifs, wallpaper, scheme, layout, var, rule]
-config: [rules]
+commands: [shell, apps, audio, notifs, wallpaper, scheme, layout, komponent, var, rule]
+config: [rules, automation]
 deps: [power-profiles-daemon]
-see_also: [ipc, keybinds]
+see_also: [ipc, keybinds, layouts, data-and-rules, bundles]
 ---
 
 # Scripting
@@ -62,12 +62,47 @@ hogar-shell layout use <name>                  # draw this layout from now on
 hogar-shell layout add <module> <area> [group] # place a module in an area of the layout being drawn
 hogar-shell layout remove <id>                 # take a placed module, or a whole area, out
 hogar-shell layout move <id> <group> [index]   # put a placed module in another group, or elsewhere in its own
-hogar-shell layout set <instance|area|area.group> <key> <value> # change one property of a placed module, an area's visible or a group's repeat
-hogar-shell layout reset <id|layer|all>        # put a part of the layout back to the built-in one
+hogar-shell layout set <instance|area|area.group> <key> <value...> # change one property of a placed module, an area's visible, or a group's repeat or parameters.<name>
+hogar-shell layout reset <id|layer|all>        # put a part back to what the layout it extends says, or the built-in one
 hogar-shell layout undo                        # take back the last edit, whatever made it
 hogar-shell layout redo                        # make the edit that was last taken back again
 hogar-shell layout edit <layer|off> [output]   # edit one layer on one screen, or stop
+hogar-shell layout export <bundle-path> [name] # write a layout and what it needs to a new directory
+hogar-shell layout import <bundle-path>        # add a bundle's layouts, komponents and pictures; waits up to 60 s and prints the outcome
+hogar-shell layout trust [bundle] [item|--all <set>] [--decline] # list, accept or decline what an imported bundle runs
+hogar-shell layout trust --dialog              # open the dialog that answers for what waits
 ```
+
+`list`, `show`, `check` and `export` read the files and answer in your terminal, so they work when the shell will not start. `show` and `check` with no name mean the built-in layout, not the one being drawn. Every other verb is answered by the running shell.
+
+What `layout set` takes as its key:
+
+| Of | Key | Sets |
+| --- | --- | --- |
+| an instance | `module`, `representation` | what it shows and how big it is drawn |
+| an instance | `options.<key>` | one option, the value read as TOML where it parses as TOML and as text otherwise (`options.show_date true`) |
+| an instance | `bindings.<key>` | an [expression](../features/customization/data-and-rules.md#bindings) that drives an option, or `accent` |
+| an instance | `actions.<gesture>` | a chain of command lines separated by `;` (`actions.press "panel toggle battery; var set seen true"`); `press`, `long_press`, `scroll_up`, `scroll_down`, `middle` or `secondary` |
+| an instance | `unset bindings.<key>` | takes back a binding a broader level wrote |
+| an area | `visible`, `unset visible` | the expression that decides whether it is drawn |
+| a group (`<area>.<group>`) | `repeat`, `unset repeat` | the list its children are drawn once per item of |
+| a group | `parameters.<name>`, `unset parameters.<name>` | what a [komponent](../features/customization/bundles.md#komponents) parameter reads |
+
+An expression is checked the way the editor checks it, so a typo is refused with a caret under it rather than written. An action line has to be a command the shell has, and the lock layer takes none.
+
+The komponents have a target of their own:
+
+```sh
+hogar-shell komponent list                                   # each komponent, its parameters, and the layouts that draw it
+hogar-shell komponent show <name>                            # print one as it is stored
+hogar-shell komponent save <area.group> <name> [parameter...] # save a group, making the values named into parameters
+hogar-shell komponent use <area>[.<group>] <name> [--zone start|center|end] [parameter=<expression>...]
+hogar-shell komponent detach <area.group>                    # turn a use back into instances of its own
+```
+
+`save`, `use` and `detach` are each one transaction too. On a bar, `use` puts the new group at the end of the zone `--zone` names, the end zone by default.
+`save` and `detach` refuse to copy a command, address or line that came with an imported bundle and that you have not accepted into a file of your own,
+and say which `layout trust` line accepts it.
 
 Every edit — `add`, `remove`, `move`, `set`, `reset` — is one transaction, so `layout undo` takes back one
 command whatever else made the edit before it: a gesture, a popover, or another line of a script.
@@ -100,6 +135,17 @@ commas. A new variable is text unless `--type` says otherwise, and a value that 
 has is refused: `var remove` it first to change its type. The value is the rest of the line as written, so a text keeps
 its spacing.
 
+A name is letters, digits and `_`, and does not start with a digit, which is what `$name` can spell. A number has to
+be finite, a colour is written `#rrggbb`, and a list cannot hold a list. In an expression an `image` is a text (a path)
+and a `font` is a text (a family), so they compare and join like any other.
+
+`var set` writes one, from a script, a rule's `run` or a layout's [actions](../features/customization/data-and-rules.md#actions), and so does a
+rule's `store`. A layout cannot hold one, and a [bundle](../features/customization/bundles.md) never carries one: they are machine state in
+`~/.local/state/hogar-shell/state.json`. A layout may read `$name` before it is set: it has no value until `var set`
+makes it, and then every binding that reads it follows. A source a layout declares under the same name wins over
+the variable while the layout is drawn. The lock screen can read variables, so keep nothing there you would not show
+it; `var set` itself cannot be reached from the lock layer, which has no actions.
+
 ## Rules
 
 A rule is a few lines of `config.toml`: when something happens, check a condition, run commands, and keep a value.
@@ -127,26 +173,45 @@ A trigger is exactly one of four:
 | `schedule = "<times> [days]"` | at each `HH:MM`, local time, on the days named: `mon` … `sun`, a range such as `mon-fri`, `weekdays` or `weekends`; every day when none is named. A time the machine slept through is skipped, not run late |
 | `every = "<interval>"` | every `30s`, `5m`, `1h`, counted from when the rule loaded; never more often than `[automation] min_interval_seconds` |
 
-`when` is checked as the rule fires, and the rule runs only if it gives true. `run` is a list of the same command
-lines as everywhere else, in order, stopping at the first one the shell refuses. `store` evaluates its `value` as the
-rule fires and keeps it in a [variable](#variables) of the value's type. `enabled = false` keeps a rule written down
-without loading it.
+`when` is checked as the rule fires, and the rule runs only if it gives true; one waiting on a reading that has not
+arrived yet does not hold, which is not a failure. `run` is a list of the same command lines as everywhere else, in
+order, stopping at the first one the shell refuses. `store` evaluates its `value` as the rule fires and keeps it in a
+[variable](#variables) of the value's type. `enabled = false` keeps a rule written down without loading it, though
+`rule run` still runs its commands.
 
-Expressions read module readings (`$battery.level`), variables (`$name`) and events (`$event.session_locked`) —
-not a layout's own `[sources]`, so a rule means the same thing whatever layout is drawn. Rules keep running while
-the session is locked: they are session automation, not something on the lock screen.
+Expressions read module readings (`$battery.level`), the palette (`$theme.accent`), variables (`$name`) and events
+(`$event.session_locked`) — not a layout's own `[sources]`, so a rule means the same thing whatever layout is drawn, and
+a bundle cannot change one. Rules keep running while the session is locked: they are session automation, not
+something on the lock screen. A `store` whose value reads something the lock screen hides is warned about by
+`config check`, since a variable is readable there.
 
 ```sh
-hogar-shell rule list        # id, trigger, state (on, off or invalid) and when it last fired, tab-separated
+hogar-shell rule list        # id, trigger, state (on, off, invalid or suspended) and when it last fired, tab-separated
 hogar-shell rule run <id>    # run a rule's commands now, whatever its trigger, `when` and `enabled` say
 hogar-shell config check     # what keeps a rule from loading, at the line and column it is written
 ```
 
+`rule run` prints each command it ran with the shell's reply, and does not write the rule's `store`.
+
 A rule written with a mistake — an unknown event, an expression that does not compile, a command line the shell
 does not have, a name two rules share — does not load, and `config check` and the problems notice say why. One that
-fails as it fires — a command refused, a `when` with no reading yet — is on the problems notice until it next fires
-cleanly. Saving `config.toml` reloads the rules without firing an unchanged one again or forgetting a crossing it is
-waiting on.
+fails as it fires — a command refused, a `when` or `store` that could not be read — is on the problems notice until it
+next fires cleanly. Saving `config.toml` reloads the rules without firing an unchanged one again or forgetting a crossing it is
+waiting on; a rule whose own text is unchanged but reads a variable that has appeared, gone or changed type is checked again.
+
+**A rule cannot run a rule.** `rule run` inside `run` is an error, and a rule asked to fire while it is already
+firing is refused and reported. Two rules setting each other off through a variable are caught by rate instead: a rule
+that fires more than **10 times within one second** is **suspended** — `rule list` says `suspended` and the problems
+notice says why — until the config is loaded again.
+
+**Logging out, rebooting and powering off wait for the rules they trigger.** `logging_out`, `rebooting` and `shutting_down`
+hold the session action until the rules triggered by that event have finished their commands, up to
+`[automation] shutdown_grace_seconds` (3; `0` does not wait), and then go ahead whether they have or not.
+
+A rule runs its commands but cannot read their output: [`shell run`](#running-a-command) discards it, and an expression cannot run
+anything. To bring a command's output into a layout, declare a `poll` or `listen` [source](../features/customization/data-and-rules.md#sources-the-layout-declares).
+
+The model — readings, expressions, bindings, what the lock screen shows — is [Data and rules](../features/customization/data-and-rules.md).
 
 ## Running a command
 
@@ -159,6 +224,31 @@ rule uses to run something: every action is a line like these, checked when the 
 line each argument stays the word your shell made it, so `"build done"` reaches `notify-send` as one argument with
 its spacing intact; to run a pipeline, hand it to `sh` yourself: `hogar-shell shell run sh -c 'ls | wc -l'`.
 
+**What the reply means.** `ok` says the command was handed off, not that it worked: the process is detached in a session of its
+own, with stdin, stdout and stderr closed, so it outlives the shell, writes nothing over its output, and its exit status and
+anything it prints are not reported to you, to a rule or to a layout. A command that cannot be started is only a
+line in the log. For output you want to read, declare a `poll` or `listen`
+[source](../features/customization/data-and-rules.md#sources-the-layout-declares), whose commands are run with limits.
+
+**It is the one command that runs text of its own.** Every other command acts inside the shell, so `shell run` is the
+verb to be careful with wherever a line is not yours. In an imported [bundle](../features/customization/bundles.md#trust)'s file it is not
+alone in being held, though: every action line waits for your trust at exactly the text you were shown, except the few
+[commands that only move what the shell shows](../features/customization/bundles.md#what-runs-without-asking), and a held line is taken out
+of its action chain until you accept it.
+
+### Importing and trusting from a script
+
+```sh
+hogar-shell layout import ~/shared/work-bar
+hogar-shell layout trust work
+hogar-shell layout trust work --all <set>
+```
+
+`layout import` is answered when the shell has read the bundle, up to 60 seconds, with what it wrote and everything that waits for trust;
+only one import is read at a time. `layout trust <bundle>` lists each item with a 32-hex-digit id (128 bits) and ends with the set id of the list. An id answers for
+that item at that text, and `--all <set>` answers for exactly the list it names: if the bundle's items changed since the listing, nothing is answered and you list again.
+A `layout trust` line cannot be written into an action, so a script's own gestures cannot accept for you either.
+
 ## Saying something
 
 ```sh
@@ -167,7 +257,8 @@ hogar-shell toast show "backup finished"
 
 A [toast](../features/surfaces/toasts.md) rather than a notification, deliberately — see that page for which
 one you want. For something that should be *recorded*, send a real notification with `notify-send`; hogar-shell is
-the daemon that receives it.
+the daemon that receives it. A notification from another program can carry buttons, but they only answer back to that program: only
+the shell's own notices run a line in the shell, so no client can trigger a command through one.
 
 ## Two rules worth knowing
 
@@ -180,15 +271,16 @@ where an unnamed target is not "all of them". Name a connector, or spell out `al
 
 ## Running a script from the shell
 
-Three places take a command line, and all three take the *same* vocabulary:
+Four places take a command line, and all four take the *same* vocabulary:
 
 | Where | What it runs |
 | --- | --- |
 | `[[idle.stages]] action` / `return_action` | on a timeout, and on wake |
 | `[launcher] actions` | from the launcher's `>` mode |
 | `[[rules]] run` | when a rule fires |
+| a layout's `actions` | on a gesture on an instance or an area: press, long press, scroll, middle or right click |
 
-Anything in `hogar-shell --list` is valid in all three, and a request line is validated **without being run** — so
+Anything in `hogar-shell --list` is valid in all four, and a request line is validated **without being run** — so
 a typo in an idle stage is a warning rather than a surprise at 3 a.m.
 
 ## Events
@@ -200,10 +292,10 @@ owns it:
 | --- | --- |
 | `started` | the shell has finished starting |
 | `wallpaper_changed` | a wallpaper was set or cleared, and the picture actually changed |
-| `colors_changed` | a wallpaper-derived palette was published, once its `[theme.export]` files are on disk |
+| `colors_changed` | the colours the shell paints with changed — an edited theme, a switch of palette, or a wallpaper-derived palette once its `[theme.export]` files are on disk |
 | `theme_mode_changed` | the palette switched between dark and light |
 | `session_locked`, `session_unlocked` | a lock **this shell** took was confirmed by the compositor, or ended; another locker's lock raises neither |
-| `logging_out`, `rebooting`, `shutting_down` | just before the session action is asked of logind |
+| `logging_out`, `rebooting`, `shutting_down` | just before the session action is asked of logind, which [waits for the rules they trigger](#rules) |
 | `wifi_enabled`, `wifi_disabled`, `bluetooth_enabled`, `bluetooth_disabled` | the radio was switched, from the shell or from anywhere else |
 | `battery_state_changed` | the charger was plugged in or pulled |
 | `battery_under_threshold` | the charge crossed down through a `[battery] warn_levels` threshold, once per crossing |

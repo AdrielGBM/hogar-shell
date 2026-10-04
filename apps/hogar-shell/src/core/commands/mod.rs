@@ -4,7 +4,9 @@
 
 pub mod args;
 pub mod audio;
+pub mod bundle;
 pub mod display;
+pub mod komponent;
 pub mod layout;
 pub mod rule;
 pub mod shell;
@@ -57,11 +59,51 @@ pub(crate) static TARGETS: &[Target] = &[
     shell::SCHEME,
     shell::CONFIG,
     layout::LAYOUT,
+    komponent::KOMPONENT,
     var::VAR,
     rule::RULE,
     shell::DEPS,
     shell::MAN,
 ];
+
+/// The commands an action line of an imported bundle's file may run before the user has trusted it (DEC-30, F-10.54): each only moves what the shell shows or plays — a panel, the launcher, the dashboard, the notification centre, the toasts on screen, the volume, the player, the backlight, the keyboard layout, the lock going on — and none runs a program, fetches anything, writes a layout, the config, machine state or a file, sets a variable, runs a rule, changes the network or the session beyond locking it, unmutes a microphone, puts a stranger's words on screen, or grants trust. Every other line of a bundle's file is an item that waits for the user's answer.
+const RUNS_UNASKED: &[(&str, &[&str])] = &[
+    ("panel", &["toggle", "open", "close"]),
+    ("launcher", &["toggle", "close"]),
+    ("dashboard", &["toggle", "open", "close", "tab"]),
+    ("notifs", &["center"]),
+    ("toast", &["clear"]),
+    ("volume", &["up", "down", "mute", "set", "step"]),
+    (
+        "media",
+        &[
+            "play-pause",
+            "next",
+            "previous",
+            "stop",
+            "seek",
+            "shuffle",
+            "loop",
+        ],
+    ),
+    ("brightness", &["up", "down", "set", "step"]),
+    ("keyboard", &["next"]),
+    ("lock", &["on"]),
+];
+
+/// Whether an action line of an imported bundle's file runs without the user's trust: it resolves to one of [`RUNS_UNASKED`]. Resolved, never run. What `layout::Trust` is made with, so resolution, the trust prompt and `layout check` hold back exactly the same lines.
+pub fn runs_unasked(line: &str) -> bool {
+    let Ok((command, _)) = resolve(line) else {
+        return false;
+    };
+    RUNS_UNASKED.iter().any(|(target, commands)| {
+        TARGETS
+            .iter()
+            .filter(|it| it.name == *target)
+            .flat_map(|it| it.commands.iter())
+            .any(|it| commands.contains(&it.name) && std::ptr::eq(it, command))
+    })
+}
 
 /// Whether `line` names a command the shell answers, **without running it**.
 ///
@@ -116,7 +158,12 @@ fn reply(resolved: Result<(&'static Command, Args<'_>), String>) -> String {
         Ok(found) => found,
         Err(message) => return format!("err {message}"),
     };
-    match (command.run)(&args) {
+    rendered((command.run)(&args))
+}
+
+/// A command's outcome as the reply line says it: `ok`, `ok <payload>` or `err <why>`. What a command that answers later sends as well.
+pub(crate) fn rendered(outcome: Result<String, String>) -> String {
+    match outcome {
         Ok(payload) if payload.is_empty() => "ok".to_string(),
         Ok(payload) => format!("ok {payload}"),
         Err(message) => format!("err {message}"),
@@ -264,6 +311,62 @@ mod tests {
         assert!(!resolves("run notify-send hi"));
     }
 
+    /// What a bundle's file runs unasked is read off the table: every entry of the allow-list is a command the shell answers, and a line runs unasked exactly when it resolves to one — never a program, a layout or state write, an import or export, a variable, a rule, or a grant of trust. Resolved, never dispatched.
+    #[test]
+    fn a_bundle_runs_unasked_only_what_moves_what_the_shell_shows() {
+        for (target, commands) in RUNS_UNASKED {
+            for command in *commands {
+                assert!(
+                    resolves(&format!("{target} {command}")),
+                    "`{target} {command}` is allowed but is not a command"
+                );
+            }
+        }
+        for line in [
+            "panel toggle clock",
+            "launcher   toggle",
+            "dashboard tab media",
+            "notifs center toggle",
+            "volume up",
+            "media play-pause",
+            "brightness step +5",
+            "keyboard next",
+            "lock on",
+        ] {
+            assert!(runs_unasked(line), "`{line}` only moves what is shown");
+        }
+        for line in [
+            "shell run notify-send hi",
+            "shell   run  date",
+            "shell quit",
+            "layout set clock actions.press shell run evil",
+            "layout trust nord --all",
+            "layout import /tmp/bundle",
+            "layout export /tmp/out",
+            "komponent save bar.start pill",
+            "var set mood calm",
+            "rule run nightly",
+            "wallpaper set /etc/passwd",
+            "scheme set nord",
+            "notifs dnd on",
+            "toast show your session expired, type your password",
+            "mic mute",
+            "wifi connect evil-ap",
+            "session do shutdown",
+            "lock off",
+            "idle inhibit on",
+            "screenshot screen",
+            "run date",
+        ] {
+            assert!(!runs_unasked(line), "`{line}` waits for trust");
+        }
+        assert!(::layout::grants_trust("layout trust nord --all"));
+        assert!(
+            resolves("layout trust nord --all"),
+            "it is a command, just not an action's"
+        );
+    }
+
     /// Resolved, never dispatched: `shell run` would start the command.
     #[test]
     fn a_command_that_takes_free_text_gets_the_rest_of_the_line_as_written() {
@@ -384,6 +487,9 @@ mod tests {
             ("var", "set"),
             ("var", "remove"),
             ("rule", "run"),
+            ("layout", "export"),
+            ("layout", "import"),
+            ("layout", "trust"),
         ];
         for (target, command) in ARGUMENTLESS_MUTATIONS {
             assert!(

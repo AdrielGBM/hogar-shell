@@ -29,6 +29,7 @@ an IPC target from `apps/hogar-shell/src/core/commands/` — and a test fails if
 - [Modules](features/modules/) — what you can put on a bar.
 - [Surfaces](features/surfaces/) — where the shell draws.
 - [System](features/system/) — what it does with no chip involved.
+- [Customization](features/customization/) — [layouts](features/customization/layouts.md), [edit modes](features/customization/edit-modes.md), [popovers](features/customization/popovers.md), [data and rules](features/customization/data-and-rules.md) and [bundles](features/customization/bundles.md): arranging the shell by pointing at it, and extending it with readings, expressions and rules.
 - [Theming](features/theming/) — colour, shape and what is exported to the rest of the desktop.
 
 ## Guides
@@ -53,7 +54,7 @@ Generated from the build, rewritten by `UPDATE_DOCS=1 cargo test -p hogar-shell 
 ```yaml
 ---
 id: brightness          # slug; matches the file name
-kind: module            # module | surface | system | theming
+kind: module            # module | surface | system | theming | customization
 title: Brightness
 summary: One line.
 status: stable          # stable | partial | planned

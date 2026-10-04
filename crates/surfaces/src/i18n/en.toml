@@ -5,5 +5,57 @@ no_stack = "no output has a stack area, so notifications, toasts and OSDs are sh
 no_blur = "the compositor offers no background blur (ext-background-effect-v1), so this area draws translucent without it"
 unknown_module = "there is no module called `{module}`"
 of_module = "`{module}`: {why}"
+repeat_truncated = "`repeat` gives {count} items, and only the first {max} are drawn: a group draws at most {max} copies of its children"
 and_more = "{first}; {rest}"
 no_store = "no running shell owns a layout store"
+trust_no_item = "the bundle `{bundle}` runs nothing called `{id}`; `hogar-shell layout trust {bundle}` lists what it runs"
+trust_ambiguous = "more than one thing the bundle `{bundle}` runs is called `{id}`; answer for all of them with `--all`"
+no_bundles = "there is no bundle called `{bundle}`: no bundle has been imported"
+unknown_bundle = "there is no bundle called `{bundle}` (there is: {names})"
+bundle_clash = "`{file}` exists already and is not the unchanged copy the bundle `{bundle}` wrote, so importing it would overwrite yours: rename or remove yours first"
+trust_dialog_locked = "the session is locked: what an imported bundle may run is answered in the unlocked session"
+trust_nothing_waits = "nothing an imported bundle runs waits for your answer"
+trust_changed = "what the bundle `{bundle}` runs has changed since it was shown, so nothing was answered: review it again"
+trust_set_changed = "what the bundle `{bundle}` runs has changed since it was listed, so nothing was answered: list it again with `hogar-shell layout trust {bundle}` and answer what it lists"
+trust_contested = "`{file}` is not the bundle `{bundle}`'s alone, so nothing it runs can be answered for: `hogar-shell layout check` says which bundles claim it"
+bundle_importing = "a bundle is being imported already: wait for it to finish"
+bundle_import_panicked = "reading the bundle stopped on a fault in the shell, so nothing was imported: {why}"
+bundle_impostor = "a different bundle called `{bundle}` was imported already: it wrote {files}, and this one writes {writes}. Give this one another name in its manifest.toml, or delete those files to replace it"
+bundle_claimed = "`{file}` was written by the bundle `{other}`, so the bundle `{bundle}` cannot write it: rename one of them"
+bundle_assets_clash = "`{path}` holds files no imported bundle accounts for, so the pictures of `{bundle}` cannot be kept there: move them away first"
+
+[notice]
+bundle_imported = "The bundle `{bundle}` is imported"
+bundle_import_failed = "The bundle at {path} was not imported"
+trust_body = "They came with an imported bundle and stay off until you accept them. Closing the dialog leaves them waiting."
+trust_review = "Review…"
+
+[notice.bundle_imported_body]
+one = "{count} thing it runs waits for your trust."
+other = "{count} things it runs wait for your trust."
+
+[notice.trust_title]
+one = "{count} command awaits your decision"
+other = "{count} commands await your decision"
+
+[trust]
+title = "Commands from imported bundles"
+intro = "Nothing below runs until you accept it, at exactly the text shown. Closing this leaves every item waiting."
+where = "Written in {file}, at {key}"
+lock_safe = "Says the lock screen may show what it reads: honoured only once you accept it"
+accept = "Accept"
+decline = "Decline"
+accept_all = "Accept all"
+decline_all = "Decline all"
+later = "Decide later"
+keys = "Tab or the arrows move, Enter answers, Esc closes without deciding"
+
+[trust.bundle]
+one = "{bundle}: {count} item waits"
+other = "{bundle}: {count} items wait"
+
+[trust.kind]
+poll = "Command, run on an interval"
+listen = "Command, kept running"
+http = "Address, fetched on an interval"
+action = "Action line, run when its gesture is made"

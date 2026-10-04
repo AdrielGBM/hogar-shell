@@ -2,10 +2,11 @@
 //!
 //! State kept by id outlives the node that showed it — an instance's store, the child a stack is showing, the picture a wallpaper region last faded to — so something has to say when an id is gone for good. That is a question about the layout rather than about any one output: an instance on a monitor that is unplugged right now is still placed, and one written only for another workspace still exists.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use util::report::Report;
 
+use crate::library::Library;
 use crate::model::*;
 use crate::resolve::chain_of;
 
@@ -19,7 +20,8 @@ pub struct Placed {
 }
 
 impl Placed {
-    pub fn of(layout: &Layout, known: &BTreeMap<LayoutId, Layout>) -> Self {
+    /// What `layout` places, a komponent's children under the ids each use draws them by included.
+    pub fn of(layout: &Layout, known: &Library) -> Self {
         let mut placed = Self::default();
         for level in chain_of(layout, known, &mut Report::default()) {
             for rule in &level.outputs {
@@ -29,20 +31,28 @@ impl Placed {
                     .iter()
                     .flat_map(|workspace| workspace.layers.each().map(|(_, layer)| layer));
                 for layer in own.into_iter().chain(ruled) {
-                    placed.add(layer);
+                    placed.add(layer, known);
                 }
             }
         }
         placed
     }
 
-    fn add(&mut self, layer: &Layer) {
+    fn add(&mut self, layer: &Layer, known: &Library) {
         for area in &layer.areas {
             self.areas.insert(area.id.clone());
             for group in &area.groups {
                 self.groups.insert((area.id.clone(), group.id.clone()));
                 self.instances
                     .extend(group.children.iter().map(|child| child.id.clone()));
+                let used = group.komponent.as_ref().and_then(|id| known.komponent(id));
+                for child in used
+                    .into_iter()
+                    .flat_map(|komponent| komponent.children.iter())
+                {
+                    self.instances
+                        .insert(InstanceId::in_komponent(&area.id, &group.id, &child.id));
+                }
             }
         }
     }
@@ -76,7 +86,7 @@ mod tests {
 
     #[test]
     fn a_removed_instance_is_gone_and_a_moved_one_is_not() {
-        let known = BTreeMap::new();
+        let known = Library::default();
         let before = crate::built_in::layout();
         let mut after = before.clone();
         apply(
@@ -123,8 +133,7 @@ mod tests {
     #[test]
     fn what_a_parent_layout_still_places_is_not_gone() {
         let parent = crate::built_in::layout();
-        let mut known = BTreeMap::new();
-        known.insert(parent.id.clone(), parent.clone());
+        let known = Library::of_layouts([parent.clone()]);
         let child = Layout {
             id: LayoutId::new("child"),
             extends: Some(parent.id.clone()),

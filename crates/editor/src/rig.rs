@@ -40,12 +40,21 @@ pub(crate) fn rig_with(test: &str, edit: impl FnOnce(&mut Layout)) -> Rig {
 
 /// [`rig_with`], its screen showing the workspace called `workspace`.
 pub(crate) fn rig_on(test: &str, workspace: Option<&str>, edit: impl FnOnce(&mut Layout)) -> Rig {
-    rig_across(test, &[SCREEN], workspace, edit)
+    rig_across(test, &[SCREEN], workspace, edit, |_| {})
+}
+
+/// [`rig_with`], its store given what `prepare` adds — komponents, the trust a bundle's files are held under — before the screen is first drawn from it.
+pub(crate) fn rig_prepared(
+    test: &str,
+    edit: impl FnOnce(&mut Layout),
+    prepare: impl FnOnce(&mut LayoutStore),
+) -> Rig {
+    rig_across(test, &[SCREEN], None, edit, prepare)
 }
 
 /// [`rig_with`], drawn on every screen `screens` names, side by side and each 1920 by 1080.
 pub(crate) fn rig_screens(test: &str, screens: &[&str], edit: impl FnOnce(&mut Layout)) -> Rig {
-    rig_across(test, screens, None, edit)
+    rig_across(test, screens, None, edit, |_| {})
 }
 
 fn rig_across(
@@ -53,6 +62,7 @@ fn rig_across(
     screens: &[&str],
     workspace: Option<&str>,
     edit: impl FnOnce(&mut Layout),
+    prepare: impl FnOnce(&mut LayoutStore),
 ) -> Rig {
     let workspace = workspace.map(|name| ActiveWorkspace {
         name: name.to_string(),
@@ -78,6 +88,7 @@ fn rig_across(
     let (mut store, report) = LayoutStore::load(&dir);
     assert!(report.is_clean(), "{}", report.render());
     store.use_layout(&LayoutId::new("mine")).expect("mine");
+    prepare(&mut store);
     let store = Rc::new(RefCell::new(store));
     let shell = Rc::new(RefCell::new(Shell::new()));
     let outputs: Vec<OutputDescriptor> = screens

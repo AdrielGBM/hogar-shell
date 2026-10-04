@@ -68,11 +68,30 @@ id_type!(
     /// Identifies one placed module. Unique across the whole layout, because IPC, rules and panels address instances by it without naming the area they sit in.
     InstanceId
 );
+id_type!(
+    /// The name a komponent is stored and used under: the stem of `components/<name>.toml`.
+    KomponentId
+);
 
 /// What separates a repeated child's id from the index of one of its copies: `player#2`. Refused in a written id, so a copy can never share an id with a child.
 pub const COPY_MARK: char = '#';
 
+/// What separates where a komponent is used from the id one of its children has in the komponent: `bar-top.end/battery` is the child `battery` of the komponent the group `end` of `bar-top` uses. Refused in a written id, so a komponent's child can never share an id with an instance of the layout.
+pub const KOMPONENT_MARK: char = '/';
+
 impl InstanceId {
+    /// The child `child` of the komponent the group `group` of `area` uses, as it is drawn: two uses of one komponent never share an id, because no two groups share an address.
+    pub fn in_komponent(area: &AreaId, group: &GroupId, child: &InstanceId) -> Self {
+        Self::new(format!("{area}.{group}{KOMPONENT_MARK}{child}"))
+    }
+
+    /// The id the komponent's own file gives this child, for a child of a komponent: `battery` for `bar-top.end/battery#2`.
+    pub fn komponent_child(&self) -> Option<InstanceId> {
+        let template = self.template();
+        let (_, child) = template.0.rsplit_once(KOMPONENT_MARK)?;
+        Some(Self::new(child))
+    }
+
     /// The copy at `index` of this child of a group with `repeat`.
     pub fn copy(&self, index: usize) -> Self {
         Self::new(format!("{self}{COPY_MARK}{index}"))
@@ -262,6 +281,24 @@ impl Layers {
     pub fn each(&self) -> [(LayerKind, &Layer); 5] {
         LayerKind::ALL.map(|kind| (kind, self.get(kind)))
     }
+
+    /// [`Layers::each`], to change.
+    pub fn each_mut(&mut self) -> [(LayerKind, &mut Layer); 5] {
+        let Layers {
+            background,
+            desktop,
+            top,
+            overlay,
+            lock,
+        } = self;
+        [
+            (LayerKind::Background, background),
+            (LayerKind::Desktop, desktop),
+            (LayerKind::Top, top),
+            (LayerKind::Overlay, overlay),
+            (LayerKind::Lock, lock),
+        ]
+    }
 }
 
 /// The four layers a workspace rule may refine.
@@ -307,6 +344,22 @@ impl SessionLayers {
             (LayerKind::Desktop, &self.desktop),
             (LayerKind::Top, &self.top),
             (LayerKind::Overlay, &self.overlay),
+        ]
+    }
+
+    /// [`SessionLayers::each`], to change.
+    pub fn each_mut(&mut self) -> [(LayerKind, &mut Layer); 4] {
+        let SessionLayers {
+            background,
+            desktop,
+            top,
+            overlay,
+        } = self;
+        [
+            (LayerKind::Background, background),
+            (LayerKind::Desktop, desktop),
+            (LayerKind::Top, top),
+            (LayerKind::Overlay, overlay),
         ]
     }
 }
@@ -1021,7 +1074,7 @@ pub const SMALLEST_PROMPT: f32 = 0.05;
 pub struct Group {
     /// What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`.
     pub id: GroupId,
-    /// Where in its area the group sits. `place` says which way, and the keys that way needs follow it.
+    /// Where in its area the group sits: `zone` in one of a bar's runs, or `cell` on a grid, with the keys that way needs beside it.
     #[serde(flatten)]
     pub kind: Option<GroupKind>,
     /// Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set.
@@ -1033,7 +1086,12 @@ pub struct Group {
     /// Ids of instances an earlier level placed that this one takes away.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remove: Vec<InstanceId>,
-    /// Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them. A group takes back `repeat`, the way an area takes back `visible`.
+    /// The komponent this group draws, by the name of its file: `komponent = "battery-pill"` draws what `components/battery-pill.toml` holds — its children, and whether they repeat or stack — so the group holds nothing else, and a level that names another komponent, or names one where the group held its own children, replaces what the group held. Each child is drawn as `<area>.<group>/<child>`, so two groups using one komponent never share an id or what an instance keeps. A komponent that is missing or cannot be read is drawn as one placeholder that says which.
+    pub komponent: Option<KomponentId>,
+    /// What the komponent's parameters read here, by name: an expression of the type the parameter declares (`threshold = "15"`, `label = "'Home'"`, `level = "$battery.level"`), read where the group is drawn. A parameter left out reads its default. A name the komponent does not declare is an error.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Expr>,
+    /// Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them, and `unset = ["parameters.label"]` puts back a komponent parameter's default. A group takes back `repeat` and `parameters.<name>`, the way an area takes back `visible`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unset: Vec<Unset>,
 }
@@ -1198,32 +1256,40 @@ impl fmt::Display for Expr {
     }
 }
 
-/// An expression a level takes back from the levels under it, written as the path of the key it takes back: `visible` on an area, `repeat` on a group, `bindings.<path>` on an instance.
+/// An expression a level takes back from the levels under it, written as the path of the key it takes back: `visible` on an area, `repeat` or `parameters.<name>` on a group, `bindings.<path>` on an instance.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(from = "String", into = "String", rename_all = "snake_case")]
 pub enum Unset {
     Visible,
     Repeat,
     Binding(String),
+    Parameter(String),
     /// A path that names no expression, kept as written so validation can say where it is. It takes nothing back.
     Unknown(String),
 }
 
 impl Unset {
     const BINDINGS: &str = "bindings.";
+    const PARAMETERS: &str = "parameters.";
 
     pub fn binding(path: impl Into<String>) -> Self {
         Self::Binding(path.into())
+    }
+
+    pub fn parameter(name: impl Into<String>) -> Self {
+        Self::Parameter(name.into())
     }
 }
 
 impl From<&str> for Unset {
     fn from(path: &str) -> Self {
+        let under = |prefix: &str| path.strip_prefix(prefix).filter(|rest| !rest.is_empty());
         match path {
             "visible" => Self::Visible,
             "repeat" => Self::Repeat,
-            _ => match path.strip_prefix(Self::BINDINGS) {
-                Some(binding) if !binding.is_empty() => Self::Binding(binding.to_string()),
+            _ => match (under(Self::BINDINGS), under(Self::PARAMETERS)) {
+                (Some(binding), _) => Self::Binding(binding.to_string()),
+                (_, Some(parameter)) => Self::Parameter(parameter.to_string()),
                 _ => Self::Unknown(path.to_string()),
             },
         }
@@ -1248,6 +1314,7 @@ impl fmt::Display for Unset {
             Unset::Visible => f.write_str("visible"),
             Unset::Repeat => f.write_str("repeat"),
             Unset::Binding(path) => write!(f, "{}{path}", Self::BINDINGS),
+            Unset::Parameter(name) => write!(f, "{}{name}", Self::PARAMETERS),
             Unset::Unknown(path) => f.write_str(path),
         }
     }
@@ -1401,4 +1468,92 @@ pub enum While {
     Visible,
     /// While anything reads it at all, on screen or not.
     Always,
+}
+
+/// A group saved to be used again: what it holds, and the values a group using it can set — `components/<name>.toml`, used by a group's `komponent = "<name>"`.
+///
+/// Its children are written as a group's are, with ids of their own that only have to be unique within this file, and their bindings and its `repeat` read its parameters as `$<name>` before any of the shell's names. A use sets a parameter with an expression of its own, read where the group is drawn; one it leaves out reads its default. "Detach" turns a use back into the group it stands for, its parameters written into the expressions that read them.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Komponent {
+    /// The values a use can set, by the name its expressions read each as (`$label`): letters, digits and `_`, and neither `item` nor `index`, which a copy of a repeated group reads.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Parameter>,
+    /// Shows the children one at a time, as a group's `stacked` does.
+    pub stacked: Option<bool>,
+    /// An expression giving a list the children are drawn once per item of, as a group's `repeat` is; it may read the parameters. Not allowed where the komponent is used in a grid cell, whose footprint is fixed.
+    pub repeat: Option<Expr>,
+    /// The instances it holds, written as a group's are. What each one may do is what the layer it is used on allows: on the lock layer only readings, and no actions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<Instance>,
+}
+
+/// One value a komponent's use can set.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Parameter {
+    /// What it holds: `text`, `number`, `bool`, `colour` (or `color`), or `list:<one of those>`. A picture's path and a font's family are text.
+    #[serde(rename = "type")]
+    pub ty: ParameterType,
+    /// What it reads where a use does not set it: an expression of that type, read where the group is drawn — `'Battery'`, `20`, `#88c0d0`, or a reading such as `$battery.level`.
+    pub default: Expr,
+}
+
+/// What a komponent parameter holds, as the expression language types it, spelt the way `var set` spells a variable's type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParameterType(pub telar_expression::Type);
+
+impl ParameterType {
+    /// The type `spelled` names, or `None` for a spelling that names none.
+    pub fn parse(spelled: &str) -> Option<Self> {
+        use telar_expression::Type;
+        let scalar = |name: &str| match name.trim() {
+            "text" => Some(Type::Text),
+            "number" => Some(Type::Number),
+            "bool" => Some(Type::Bool),
+            "colour" | "color" => Some(Type::Color),
+            _ => None,
+        };
+        let spelled = spelled.trim();
+        let ty = match spelled.strip_prefix("list:") {
+            Some(item) => Type::list(scalar(item)?),
+            None => scalar(spelled)?,
+        };
+        Some(Self(ty))
+    }
+}
+
+impl fmt::Display for ParameterType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use telar_expression::Type;
+        fn scalar(ty: &Type) -> &'static str {
+            match ty {
+                Type::Number => "number",
+                Type::Bool => "bool",
+                Type::Color => "colour",
+                _ => "text",
+            }
+        }
+        match &self.0 {
+            Type::List(item) => write!(f, "list:{}", scalar(item)),
+            other => f.write_str(scalar(other)),
+        }
+    }
+}
+
+impl Serialize for ParameterType {
+    fn serialize<S: serde::Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        out.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParameterType {
+    fn deserialize<D: serde::Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
+        let spelled = String::deserialize(input)?;
+        Self::parse(&spelled).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "`{spelled}` is not a type: text, number, bool, colour, or list:<one of those>"
+            ))
+        })
+    }
 }

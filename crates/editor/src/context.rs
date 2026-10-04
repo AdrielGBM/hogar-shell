@@ -1,13 +1,12 @@
 //! Context menus on every item and area (TA-4): a secondary press on a chip, a widget, a card or an area's empty space opens one, and so does the menu key (or Shift+F10) on what has the focus, in an edit mode and outside one.
 //!
-//! **What is in it.** An instance's module's own actions, "Customize…", a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), "Remove" and "Edit <layer>…"; an area's own bound actions, "Customize…", what the tools for its kind add ([`add_area_rows`]) and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config (TA-7). Nothing is offered on the lock layer (TA-8).
+//! **What is in it.** An instance's module's own actions, "Customize…", a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), saving its group as a komponent, "Remove" and "Edit <layer>…" — or, for a child of a komponent a group draws, its module's actions, the use's parameters, "Detach" and "Edit <layer>…" ([`crate::komponent`]); an area's own bound actions, "Customize…", what the tools for its kind add ([`add_area_rows`]) and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config (TA-7). Nothing is offered on the lock layer (TA-8).
 //!
 //! **Where.** A menu is a transient laid over the whole window it was asked in (F-2.3, DEC-9): the item's own, or the overlay window where that layer is hidden or an edit mode's host is over it. It opens at the pointer, or on the item when the keyboard asked, and never past an edge of the screen.
 //!
 //! **One undo entry a row.** A row that changes the layout is one edit through [`session`], so a remove, a reset and a move to another area are each taken back by one undo.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use telar::{Children, ContextMenuProps, MenuEntry, MenuStyle, Rect, context_menu, use_theme};
@@ -15,7 +14,7 @@ use telar::{Children, ContextMenuProps, MenuEntry, MenuStyle, Rect, context_menu
 use config::Edge;
 use config::theme::{FontRole, NordTheme};
 use layout::{
-    Action, AreaId, GroupId, Instance, InstanceId, LayerKind, Layout, LayoutId, LayoutOp,
+    Action, AreaId, GroupId, Instance, InstanceId, LayerKind, Layout, LayoutOp, Library,
     Representation, ResolvedArea, ResolvedAreaKind, ResolvedInstance, Trigger,
 };
 use platform_wayland::KeyboardMode;
@@ -188,13 +187,23 @@ fn instance_entries(
     group: &GroupId,
     id: &InstanceId,
 ) -> Result<Vec<MenuEntry>, EditError> {
-    let resolved = area
+    let holder = area
         .groups
         .iter()
         .find(|held| held.id == *group)
-        .and_then(|held| held.children.iter().find(|child| child.id == *id))
+        .ok_or_else(|| EditError::gone(&node.area))?;
+    let resolved = holder
+        .children
+        .iter()
+        .find(|child| child.id == *id)
         .cloned()
         .ok_or_else(|| EditError::gone(&node.area))?;
+    if holder.komponent.is_some() {
+        let mut rows = module_actions(&resolved);
+        rows.extend(crate::komponent::rows(area, node, holder));
+        rows.extend(edit_row(node));
+        return Ok(rows);
+    }
     let drawn = ui::descriptor::find(&resolved.module).filter(|module| {
         module
             .input(surfaces::area::representation(resolved.representation))
@@ -208,16 +217,7 @@ fn instance_entries(
         rows.extend(edit_row(node));
         return Ok(rows);
     };
-    let mut rows: Vec<MenuEntry> = module
-        .actions
-        .iter()
-        .map(|action| {
-            let line = Action(vec![action.command.to_string()]);
-            MenuEntry::row(action_label(action.id), "", move || {
-                surfaces::actions::run(&line)
-            })
-        })
-        .collect();
+    let mut rows = module_actions(&resolved);
     let customized = node.clone();
     rows.push(MenuEntry::row(
         telar::t!("editor.menu.customize", name = module.name),
@@ -227,11 +227,29 @@ fn instance_entries(
     rows.extend(
         destinations(desktop, node, &resolved, module)
             .into_iter()
-            .map(|to| move_row(node, &resolved, module.name, to)),
+            .map(|to| move_row(node, module.name, to)),
     );
+    rows.extend(crate::komponent::rows(area, node, holder));
     rows.push(remove_row(node, module.name));
     rows.extend(edit_row(node));
     Ok(rows)
+}
+
+/// A row for each action the module `resolved` shows declares, which runs it.
+fn module_actions(resolved: &ResolvedInstance) -> Vec<MenuEntry> {
+    let Some(module) = ui::descriptor::find(&resolved.module) else {
+        return Vec::new();
+    };
+    module
+        .actions
+        .iter()
+        .map(|action| {
+            let line = Action(vec![action.command.to_string()]);
+            MenuEntry::row(action_label(action.id), "", move || {
+                surfaces::actions::run(&line)
+            })
+        })
+        .collect()
 }
 
 /// An area's rows: what its own empty space binds, customizing it and editing its layer.
@@ -308,15 +326,13 @@ fn reset_row(node: &Node, resolved: &ResolvedInstance) -> MenuEntry {
     })
 }
 
-fn move_row(node: &Node, resolved: &ResolvedInstance, name: &str, to: Destination) -> MenuEntry {
+fn move_row(node: &Node, name: &str, to: Destination) -> MenuEntry {
     let label = match to.representation {
         Representation::Chip => telar::t!("editor.menu.to_chip", place = to.place.clone()),
         _ => telar::t!("editor.menu.to_widget", place = to.place.clone()),
     };
-    let (node, resolved, name) = (node.clone(), resolved.clone(), name.to_string());
-    MenuEntry::row(label, "", move || {
-        said(convert(&node, &resolved, &name, &to))
-    })
+    let (node, name) = (node.clone(), name.to_string());
+    MenuEntry::row(label, "", move || said(convert(&node, &name, &to)))
 }
 
 /// Takes the instance `node` names out of the layout being edited, as one undo entry.
@@ -355,12 +371,7 @@ pub fn reset(node: &Node, id: &InstanceId, name: &str) -> Result<(), EditError> 
 }
 
 /// Moves the instance `node` names into `to`, drawn the way `to` draws it, keeping its id, options and bindings: a chip becomes a widget and back without becoming another instance (TA-3). One undo entry.
-fn convert(
-    node: &Node,
-    resolved: &ResolvedInstance,
-    name: &str,
-    to: &Destination,
-) -> Result<(), EditError> {
+fn convert(node: &Node, name: &str, to: &Destination) -> Result<(), EditError> {
     let desktop =
         reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
     let layout = session::draft().peek();
@@ -376,12 +387,14 @@ fn convert(
         )?;
         return commit(label, ops);
     }
+    let shown = crate::modes::desktop::shown_instance(&desktop.resolving(&layout, &known()), node)
+        .ok_or_else(|| EditError::gone(&node.area))?;
     let mut ops = removal(&layout, &desktop, node)?;
     let mut after = layout.clone();
     layout::ops::apply_all(&mut after, &ops)?;
     let moved = Instance {
         representation: Some(to.representation),
-        ..crate::modes::desktop::placed_as(resolved)
+        ..crate::modes::desktop::placed_as(&shown)
     };
     let written = Written::area(
         &after,
@@ -391,7 +404,7 @@ fn convert(
         crate::variant::editing().as_ref(),
     )
     .map_err(EditError::Refused)?;
-    ops.extend(written.instance(&to.group, &resolved.id).ops(&moved));
+    ops.extend(written.instance(&to.group, &moved.id).ops(&moved));
     commit(label, ops)
 }
 
@@ -440,7 +453,7 @@ pub(crate) fn removal(
 /// Whether `layout` still places `id` in the area `node` names on its screen.
 fn placed(
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     desktop: &Desktop,
     node: &Node,
     id: &InstanceId,
@@ -648,7 +661,7 @@ pub(crate) fn rows() -> Vec<String> {
             .iter()
             .flat_map(|shown| shown.entries.iter())
             .filter_map(|entry| match entry {
-                MenuEntry::Row { label, .. } => Some(label.clone()),
+                MenuEntry::Row { label, .. } | MenuEntry::Sub { label, .. } => Some(label.clone()),
                 _ => None,
             })
             .collect()

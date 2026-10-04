@@ -39,7 +39,7 @@ matches nothing.
 | `hogar-shell-popout`, `hogar-shell-drawer` | Nothing of their own, usually: a drawer, a hover popout, a tray/context menu and the customization popover are nodes inside the window of the chip they hang off — `hogar-shell-top` for a bar chip. They land in `hogar-shell-overlay` only when that chip's bar is hidden under a fullscreen window. |
 | `hogar-shell-float` | `hogar-shell-overlay` — a float has no anchor, so it always lives there. |
 | `hogar-shell-overlay` *(old meaning: the launcher)* | `hogar-shell-overlay` — the string is unchanged, but the meaning is not: it now names the one shared window for everything unanchored — the launcher, a float, the notification centre, the region picker, and any drawer/popout/menu whose anchor is currently hidden. A rule against this namespace today reaches all of those at once, not the launcher alone. |
-| `hogar-shell-stack` | Wherever the active layout puts the `stack` area — by default `hogar-shell-overlay`, top right, but a layout can move it into any layer. `hogar-shell layout show` prints where it is. |
+| `hogar-shell-stack` | Wherever the active layout puts the `stack` area — by default `hogar-shell-overlay`, top right, but a layout can move it into any layer. `hogar-shell layout show <name>` prints where a layout puts it. |
 | `hogar-shell-sidebar` | The notification centre does not anchor to a chip: it is a node that always opens in `hogar-shell-overlay` on the focused output, whether reached from the bell, IPC or a keybind. |
 | `hogar-shell-picker` | `hogar-shell-overlay` — the region picker has no anchor. |
 

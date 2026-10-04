@@ -1724,8 +1724,8 @@ A run of instances inside an area, and how the area places it.
 .B id
 What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`.
 .TP
-.B kind
-Where in its area the group sits. `place` says which way, and the keys that way needs follow it.
+.B place
+Where in its area the group sits: `zone` in one of a bar's runs, or `cell` on a grid, with the keys that way needs beside it.
 .TP
 .B stacked
 Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set.
@@ -1739,8 +1739,14 @@ One placed module.
 .B remove
 Ids of instances an earlier level placed that this one takes away.
 .TP
+.B komponent
+The komponent this group draws, by the name of its file: `komponent = "battery\-pill"` draws what `components/battery\-pill.toml` holds \(em its children, and whether they repeat or stack \(em so the group holds nothing else, and a level that names another komponent, or names one where the group held its own children, replaces what the group held. Each child is drawn as `<area>.<group>/<child>`, so two groups using one komponent never share an id or what an instance keeps. A komponent that is missing or cannot be read is drawn as one placeholder that says which.
+.TP
+.B parameters
+What the komponent's parameters read here, by name: an expression of the type the parameter declares (`threshold = "15"`, `label = "'Home'"`, `level = "$battery.level"`), read where the group is drawn. A parameter left out reads its default. A name the komponent does not declare is an error.
+.TP
 .B unset
-Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them. A group takes back `repeat`, the way an area takes back `visible`.
+Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them, and `unset = ["parameters.label"]` puts back a komponent parameter's default. A group takes back `repeat` and `parameters.<name>`, the way an area takes back `visible`.
 .SS GroupKind::Zone
 One of a bar's three runs.
 .TP
@@ -1783,5 +1789,29 @@ What each gesture on this instance runs.
 .TP
 .B unset
 Bindings a level under this one gave the instance that this level takes back, each as `bindings.<path>`: `unset = ["bindings.accent"]` puts back the accent its options give it where a broader rule drives it by an expression. A path has to be one `bindings` could hold, the way an area takes back `visible`.
+.SS Komponent
+A group saved to be used again: what it holds, and the values a group using it can set \(em `components/<name>.toml`, used by a group's `komponent = "<name>"`.
+.sp
+Its children are written as a group's are, with ids of their own that only have to be unique within this file, and their bindings and its `repeat` read its parameters as `$<name>` before any of the shell's names. A use sets a parameter with an expression of its own, read where the group is drawn; one it leaves out reads its default. "Detach" turns a use back into the group it stands for, its parameters written into the expressions that read them.
+.TP
+.B parameters
+The values a use can set, by the name its expressions read each as (`$label`): letters, digits and `_`, and neither `item` nor `index`, which a copy of a repeated group reads.
+.TP
+.B stacked
+Shows the children one at a time, as a group's `stacked` does.
+.TP
+.B repeat
+An expression giving a list the children are drawn once per item of, as a group's `repeat` is; it may read the parameters. Not allowed where the komponent is used in a grid cell, whose footprint is fixed.
+.TP
+.B children
+The instances it holds, written as a group's are. What each one may do is what the layer it is used on allows: on the lock layer only readings, and no actions.
+.SS Parameter
+One value a komponent's use can set.
+.TP
+.B type
+What it holds: `text`, `number`, `bool`, `colour` (or `color`), or `list:<one of those>`. A picture's path and a font's family are text.
+.TP
+.B default
+What it reads where a use does not set it: an expression of that type, read where the group is drawn \(em `'Battery'`, `20`, `#88c0d0`, or a reading such as `$battery.level`.
 .SH SEE ALSO
 .BR hogar-shell (1)

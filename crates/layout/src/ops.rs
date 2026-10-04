@@ -13,6 +13,7 @@ use std::fmt;
 
 use util::report::Message;
 
+use crate::library::Library;
 use crate::model::*;
 use crate::validate::reserving_under;
 
@@ -699,13 +700,42 @@ pub fn sites(layout: &Layout) -> impl Iterator<Item = (Site, &Layer)> {
     own.chain(workspaces)
 }
 
+/// [`sites`], to change, in the same order.
+pub fn sites_mut(layout: &mut Layout) -> Vec<(Site, &mut Layer)> {
+    let mut own = Vec::new();
+    let mut workspaces = Vec::new();
+    for rule in &mut layout.outputs {
+        let output = rule.matches.clone();
+        for (kind, layer) in rule.layers.each_mut() {
+            own.push((
+                Site {
+                    output: output.clone(),
+                    workspace: None,
+                    layer: kind,
+                },
+                layer,
+            ));
+        }
+        for workspace in &mut rule.workspaces {
+            let matches = workspace.matches.clone();
+            for (kind, layer) in workspace.layers.each_mut() {
+                workspaces.push((
+                    Site {
+                        output: output.clone(),
+                        workspace: Some(matches.clone()),
+                        layer: kind,
+                    },
+                    layer,
+                ));
+            }
+        }
+    }
+    own.extend(workspaces);
+    own
+}
+
 /// An id no area of the layer `layer` has anywhere in `layout` or a layout it extends, readable and derived from `stem` (F-10.3): `left`, then `left-2`, `left-3`, a trailing count on `stem` taken off first so a split of `left-2` is `left-3` rather than `left-2-2`.
-pub fn free_area_id(
-    layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
-    layer: LayerKind,
-    stem: &str,
-) -> AreaId {
+pub fn free_area_id(layout: &Layout, known: &Library, layer: LayerKind, stem: &str) -> AreaId {
     let taken: BTreeSet<&str> = crate::resolve::chain_of(layout, known, &mut Default::default())
         .into_iter()
         .flat_map(|level| {
@@ -724,12 +754,15 @@ pub fn free_area_id(
 }
 
 /// An id no instance has anywhere in `layout` or a layout it extends, placed or named in a group's `remove`, derived from `stem` the way [`free_area_id`] derives one: `clock`, then `clock-2`. Instance ids are unique across the whole layout, so a new one never lands on an inherited instance and merges into it.
-pub fn free_instance_id(
-    layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
-    stem: &str,
-) -> InstanceId {
-    let taken: BTreeSet<&str> = crate::resolve::chain_of(layout, known, &mut Default::default())
+pub fn free_instance_id(layout: &Layout, known: &Library, stem: &str) -> InstanceId {
+    let taken = taken_instance_ids(layout, known);
+    let taken: BTreeSet<&str> = taken.iter().map(String::as_str).collect();
+    InstanceId::new(free_id(&taken, stem))
+}
+
+/// Every instance id `layout` or a layout it extends places or names in a group's `remove`.
+pub(crate) fn taken_instance_ids(layout: &Layout, known: &Library) -> BTreeSet<String> {
+    crate::resolve::chain_of(layout, known, &mut Default::default())
         .into_iter()
         .flat_map(|level| sites(level).flat_map(|(_, written)| written.areas.iter()))
         .flat_map(|area| area.groups.iter())
@@ -737,17 +770,16 @@ pub fn free_instance_id(
             group
                 .children
                 .iter()
-                .map(|child| child.id.as_str())
-                .chain(group.remove.iter().map(InstanceId::as_str))
+                .map(|child| child.id.to_string())
+                .chain(group.remove.iter().map(InstanceId::to_string))
         })
-        .collect();
-    InstanceId::new(free_id(&taken, stem))
+        .collect()
 }
 
 /// An id no group of the area `area` on `layer` has anywhere in `layout` or a layout it extends, placed or named in that area's `remove` at any level, derived from `stem` the way [`free_area_id`] derives one: `end`, then `end-2`. Group ids are scoped to their area, so a new group never merges into one a broader level places there, nor revives one a level took away.
 pub fn free_group_id(
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     layer: LayerKind,
     area: &AreaId,
     stem: &str,
@@ -771,7 +803,7 @@ pub fn free_group_id(
     GroupId::new(free_id(&taken, stem))
 }
 
-fn free_id(taken: &BTreeSet<&str>, stem: &str) -> String {
+pub(crate) fn free_id(taken: &BTreeSet<&str>, stem: &str) -> String {
     let stem = match stem.rsplit_once('-') {
         Some((base, count)) if !base.is_empty() && count.parse::<u32>().is_ok() => base,
         _ => stem,

@@ -219,6 +219,15 @@ pub struct EventSender<T> {
     receiver: Weak<()>,
 }
 
+impl<T> Clone for EventSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            channel: self.channel.clone(),
+            receiver: Weak::clone(&self.receiver),
+        }
+    }
+}
+
 impl<T> EventSender<T> {
     pub fn send(&self, event: T) -> bool {
         self.channel.send(event).is_ok()

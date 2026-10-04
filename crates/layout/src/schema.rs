@@ -45,6 +45,8 @@ const ORDER: &[&str] = &[
     "GroupKind::Zone",
     "GroupKind::Cell",
     "Instance",
+    "Komponent",
+    "Parameter",
 ];
 
 /// One item of the layout file's vocabulary: a table a file can hold, or a variant of one, with what it is for and the keys it has.
@@ -300,17 +302,27 @@ fn keyed_by_name(item: &str, field: &str) -> Option<&'static str> {
         .strip_suffix('>')
 }
 
-/// The variant a `kind = "bar"` or `place = "zone"` line names, as the item its flattened keys are looked up under.
+/// The variant a `kind = "bar"` or `place = "zone"` line names, as the item its flattened keys are looked up under: `key` is the tag of the table's own enum (a source), or of the enum a field of that name flattens into it (an area's `kind`, a group's `place`).
 fn variant_named(table: &str, key: &str, value: &str) -> Option<String> {
-    let owner = match (item_at(table)?, key) {
-        ("Area", "kind") => "AreaKind",
-        ("Source", "kind") => "Source",
-        ("Group", "place") => "GroupKind",
-        _ => return None,
-    };
+    let item = item_at(table)?;
+    let owner = [Some(item), type_of(item, key)]
+        .into_iter()
+        .flatten()
+        .find(|owner| tag_of(owner) == Some(key))?;
+    Some(variant_of(owner, value.trim().trim_matches('"')))
+}
+
+/// The key the internally tagged enum `owner` names its variant under.
+pub fn tag_of(owner: &str) -> Option<&'static str> {
+    LAYOUT_TAGS
+        .iter()
+        .find(|(name, _)| *name == owner)
+        .map(|(_, tag)| *tag)
+}
+
+/// The item of the variant of `owner` a file names `value` (`wallpaper_region` → `AreaKind::WallpaperRegion`), its keys looked up under it.
+pub fn variant_of(owner: &str, value: &str) -> String {
     let name: String = value
-        .trim()
-        .trim_matches('"')
         .split('_')
         .map(|word| {
             let mut letters = word.chars();
@@ -320,7 +332,16 @@ fn variant_named(table: &str, key: &str, value: &str) -> Option<String> {
             }
         })
         .collect();
-    Some(format!("{owner}::{name}"))
+    format!("{owner}::{name}")
+}
+
+/// The keys a file may write in a table of `item`, as the model spells them: what `layout check` holds that table's keys to, so the reference and the check cannot list different keys.
+pub fn keys_of(item: &str) -> Vec<&'static str> {
+    LAYOUT_FIELDS
+        .iter()
+        .filter(|(owner, _)| *owner == item)
+        .map(|(_, field)| *field)
+        .collect()
 }
 
 fn doc_for(item: &str, field: &str) -> Option<&'static str> {
@@ -372,7 +393,7 @@ mod tests {
         let printed = render().expect("the reference prints");
         let again: Layout = toml::from_str(&printed).expect("the reference is a layout");
         let (resolved, report) =
-            crate::resolve::resolve(&again, &std::collections::BTreeMap::new(), "DP-1", None);
+            crate::resolve::resolve(&again, &crate::Library::default(), "DP-1", None);
         assert!(report.is_clean(), "{}", report.render());
         assert!(
             crate::validate::validate_resolved(
@@ -390,6 +411,53 @@ mod tests {
             Some(5),
             "the built-in desktop's grid, and one area of every kind the built-in layout does not already show"
         );
+    }
+
+    /// Every key the printed reference writes is a key the vocabulary lists for the table it is in, so the manual and `docs/reference/layout.md` name keys a file can hold — and since the printed file parses back, every one of them parses. A field serde writes under another name is where the two part: a group's placement is a flattened enum written as `place`, and was listed as `kind`, which no file holds.
+    #[test]
+    fn every_key_the_reference_writes_is_one_the_vocabulary_lists() {
+        let printed = render().expect("the reference prints");
+        let mut table = String::new();
+        let mut variant: Option<(String, String)> = None;
+        let mut checked = Vec::new();
+        for line in printed.lines().filter(|line| !line.starts_with('#')) {
+            if let Some(path) = header_of(line) {
+                table = path;
+                variant = None;
+                continue;
+            }
+            let Some((key, value)) = line.split_once(" = ") else {
+                continue;
+            };
+            let key = key.trim();
+            let Some(item) = item_at(&table) else {
+                continue;
+            };
+            if let Some(named) = variant_named(&table, key, value) {
+                variant = Some((named, key.to_string()));
+            }
+            let listed = keys_of(item).contains(&key)
+                || variant
+                    .as_ref()
+                    .is_some_and(|(named, tag)| keys_of(named).contains(&key) || *tag == key);
+            assert!(
+                listed,
+                "`{key}` is written in a `{item}` table ({table}) but the vocabulary does not list it"
+            );
+            checked.push(format!("{item}.{key}"));
+        }
+        for renamed in ["Group.place", "OutputRule.match", "Source.while"] {
+            assert!(
+                checked.contains(&renamed.to_string()),
+                "the reference writes `{renamed}`, so the parse-back test covers it: {checked:?}"
+            );
+        }
+        let group: Vec<&str> = keys_of("Group");
+        assert!(
+            group.contains(&"place") && !group.contains(&"kind"),
+            "{group:?}"
+        );
+        assert!(keys_of("Source::Poll").contains(&"while"));
     }
 
     /// The order the reference reads in is written out, so a type added to the model is a type the reference forgets. This is what says so.

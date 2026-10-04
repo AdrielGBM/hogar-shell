@@ -80,8 +80,10 @@ struct State {
     unread: u32,
     dnd: bool,
     muted_apps: Vec<String>,
-    /// The notices that describe a state rather than an event — see [`notify_status`]. Never written to the history file: the state is read again on every start, and a copy restored from the last session would be a notice about a config that may have been fixed since, with nothing left that knows to withdraw it.
+    /// The notices that describe a state rather than an event — see [`notify_status`]. Never written to the history file: the state is read again on every start, and a copy restored from the last session would be a notice about a config that may have been fixed since, with nothing left that knows to withdraw it. Their action keys are request lines of the shell's command table, which [`invoke_action`] runs rather than signals. Only the shell raises one, and only the shell can replace one ([`State::assign`]).
     statuses: HashSet<u32>,
+    /// Who sent each live notification: what decides whether a `replaces_id` may name it. One restored from the history file has no sender, so nothing replaces it.
+    senders: HashMap<u32, Author>,
     /// Counts every send, so each one carries a stamp no earlier send has.
     sends: u64,
     /// The stamp of each live notification's latest send. A popup's clock carries the stamp it was started for, which is what stops the clock an earlier version started from retiring the version that replaced it.
@@ -111,7 +113,70 @@ impl State {
     fn forget(&mut self, id: u32) {
         self.statuses.remove(&id);
         self.latest.remove(&id);
+        self.senders.remove(&id);
     }
+
+    /// The id a send from `sender` goes under: `replaces_id` where it names a live notification `sender` may replace ([`State::may_take`]), else a fresh one.
+    ///
+    /// The spec treats a `replaces_id` it does not know as 0, so a client never picks an id: one it names before the shell hands it to a status notice is not live, and the send gets a fresh one. Any live notification but the shell's own may be replaced by any client, as the spec allows — `notify-send -r <id>` runs as a new process with a new bus name, so tying an id to the connection that sent it broke the one tool everybody scripts replacement with. The shell's notices are the exception: their action keys are request lines the shell runs ([`State::take_action`]), so a client naming one gets a fresh id and the notice stays the shell's.
+    fn assign(&mut self, replaces_id: u32, sender: &Author) -> u32 {
+        if replaces_id != 0 && self.may_take(replaces_id, sender) {
+            return replaces_id;
+        }
+        loop {
+            self.next_id = self.next_id.wrapping_add(1).max(1);
+            if !self.active.iter().any(|n| n.id == self.next_id) {
+                return self.next_id;
+            }
+        }
+    }
+
+    /// Whether `sender` may replace or close the live notification `id`: the shell any of its own, a client anything live that is not the shell's.
+    fn may_take(&self, id: u32, sender: &Author) -> bool {
+        if !self.active.iter().any(|n| n.id == id) {
+            return false;
+        }
+        let shells = self.senders.get(&id) == Some(&Author::Shell);
+        match sender {
+            Author::Shell => shells,
+            Author::Client => !shells,
+        }
+    }
+
+    /// Takes `id` down for its action `key`, answering how the action is carried out, or `None` — leaving it up — where `id` is gone or its own actions hold no such key. Decided on the notification as it is stored now, not on whatever copy the caller pressed, which a replacement may have changed since.
+    fn take_action(&mut self, id: u32, key: &str) -> Option<Answered> {
+        let notification = self.active.iter().find(|n| n.id == id)?;
+        let offered = notification.actions.chunks(2).any(|pair| pair[0] == key);
+        if !offered {
+            return None;
+        }
+        let answered =
+            match self.statuses.contains(&id) && self.senders.get(&id) == Some(&Author::Shell) {
+                true => Answered::Request(key.to_string()),
+                false => Answered::Signal,
+            };
+        self.active.retain(|n| n.id != id);
+        self.forget(id);
+        Some(answered)
+    }
+}
+
+/// Who sent a notification.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Author {
+    /// The shell itself, through [`notify_shell`] or [`notify_status`].
+    Shell,
+    /// A client of the bus. Which connection it came over does not matter: a client may replace or close any notification but the shell's ([`State::may_take`]).
+    Client,
+}
+
+/// How a notification's action is carried out once it is taken down.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Answered {
+    /// One of the shell's status notices: the key is a request line of its command table, run in the shell.
+    Request(String),
+    /// Anything else: the key goes back to the sender as `ActionInvoked`.
+    Signal,
 }
 
 /// Whether a notice is an event, kept in the history once it has popped, or a state, kept only for as long as it holds.
@@ -177,20 +242,22 @@ impl Inner {
         self.policy.lock().unwrap().clone()
     }
 
-    fn push(&self, notification: Notification, replaces_id: u32) -> u32 {
-        self.push_as(notification, replaces_id, Kept::History)
+    /// Takes a notification a bus client sent, under the id [`State::assign`] gives it.
+    fn push(&self, notification: Notification, replaces_id: u32, sender: Author) -> u32 {
+        self.push_as(notification, (replaces_id, sender), Kept::History)
     }
 
-    /// [`push`](Self::push), saying whether the notice is kept in the history.
-    fn push_as(&self, mut notification: Notification, replaces_id: u32, kept: Kept) -> u32 {
+    /// [`push`](Self::push), from `sender`, saying whether the notice is kept in the history.
+    fn push_as(
+        &self,
+        mut notification: Notification,
+        (replaces_id, sender): (u32, Author),
+        kept: Kept,
+    ) -> u32 {
         let (mut assigned, mut popped) = (0, false);
         self.commit(|state| {
-            let id = if replaces_id != 0 {
-                replaces_id
-            } else {
-                state.next_id = state.next_id.wrapping_add(1).max(1);
-                state.next_id
-            };
+            let id = state.assign(replaces_id, &sender);
+            state.senders.insert(id, sender);
             notification.id = id;
             assigned = id;
             state.sends = state.sends.wrapping_add(1);
@@ -238,6 +305,14 @@ impl Inner {
         });
     }
 
+    /// [`close`](Self::close), where `sender` may take `id` down ([`State::may_take`]); nothing otherwise.
+    fn close_from(&self, id: u32, sender: &Author) {
+        let may = self.state.lock().unwrap().may_take(id, sender);
+        if may {
+            self.close(id);
+        }
+    }
+
     /// Drops every notification `app_name` sent, answering with the ids that went so the caller can close them on the bus.
     fn clear_app(&self, app_name: &str) -> Vec<u32> {
         let mut closed = Vec::new();
@@ -261,9 +336,19 @@ impl Inner {
     /// The arming is the part that was missing. Only the D-Bus path armed one, so the column's [`shown`] found no clock to start for a notice of the shell's own, and every one of them — a low battery, a saved screenshot, a config that did not load — stayed popped until it was swiped, whatever its urgency said.
     fn post_shell(&self, notification: Notification, replaces_id: u32, kept: Kept) -> u32 {
         let urgency = notification.urgency;
-        let id = self.push_as(notification, replaces_id, kept);
+        let id = self.push_as(notification, (replaces_id, Author::Shell), kept);
         self.arm_expiry(id, -1, urgency);
         id
+    }
+
+    /// Takes `id` down for its action `key`, as [`State::take_action`] decides, with its expiry disarmed.
+    fn take_action(&self, id: u32, key: &str) -> Option<Answered> {
+        let mut answered = None;
+        self.commit(|state| answered = state.take_action(id, key));
+        if answered.is_some() {
+            self.disarm_expiry(id);
+        }
+        answered
     }
 
     /// Retires `id`'s popup while keeping it in the history: the popup stack stops showing it (it filters on `popup`), but the panel — which lists all of `active` — keeps it until dismissed. This is what a popup timeout does, so an auto-dismissed notification is still there to read later.
@@ -376,6 +461,7 @@ pub fn init(policy: Policy) {
                 dnd: remembered.dnd,
                 muted_apps: remembered.muted_apps,
                 statuses: HashSet::new(),
+                senders: HashMap::new(),
                 sends: 0,
                 latest: HashMap::new(),
             }),
@@ -413,15 +499,13 @@ pub fn notify_shell(app_name: &str, summary: &str, body: &str, app_icon: &str, u
     shell_notice(
         None,
         Kept::History,
-        app_name,
-        summary,
-        body,
-        app_icon,
-        urgency,
+        shell_notification(app_name, summary, body, app_icon, urgency),
     );
 }
 
 /// A notice about a *state* rather than an event, in the shape of the freedesktop `Notify`: `replaces` names a notice an earlier call returned, which is updated where it stands — and popped again — instead of joined by a second one, and the answer is the id to replace next time. `None` before the daemon is up, when the notice goes to stderr.
+///
+/// Each of `actions` is a button on it: a request line of the shell's command table, and what the button says. Pressing it takes the notice down and runs the line in the shell ([`invoke_action`]).
 ///
 /// What lets the shell keep **one live notice** about something that keeps changing, like the problems in a config rewritten on every save, rather than a stack of cards each describing a moment that has passed. [`withdraw_status`] takes it down once the state it describes is gone, and it is never written to the history file, since the next start reads the state again.
 pub fn notify_status(
@@ -431,15 +515,18 @@ pub fn notify_status(
     body: &str,
     app_icon: &str,
     urgency: Urgency,
+    actions: &[(&str, &str)],
 ) -> Option<u32> {
     shell_notice(
         replaces,
         Kept::WhileCurrent,
-        app_name,
-        summary,
-        body,
-        app_icon,
-        urgency,
+        Notification {
+            actions: actions
+                .iter()
+                .flat_map(|(request, label)| [request.to_string(), label.to_string()])
+                .collect(),
+            ..shell_notification(app_name, summary, body, app_icon, urgency)
+        },
     )
 }
 
@@ -451,34 +538,40 @@ pub fn withdraw_status(id: u32) {
     emit_closed(id, 3);
 }
 
-fn shell_notice(
-    replaces: Option<u32>,
-    kept: Kept,
+/// A notice of the shell's own. Its body is plain text — the shell writes no markup, and what it says can quote somebody else's words, a bundle's finding among them — while every body is drawn as markup (`body-markup`), so it is escaped here, once, for every notice the shell raises.
+fn shell_notification(
     app_name: &str,
     summary: &str,
     body: &str,
     app_icon: &str,
     urgency: Urgency,
-) -> Option<u32> {
+) -> Notification {
+    Notification {
+        id: 0,
+        app_name: app_name.to_string(),
+        app_icon: app_icon.to_string(),
+        summary: summary.to_string(),
+        body: util::text::markup_escaped(body),
+        actions: Vec::new(),
+        urgency,
+        popup: true,
+        image: None,
+    }
+}
+
+fn shell_notice(replaces: Option<u32>, kept: Kept, notification: Notification) -> Option<u32> {
     let Some(service) = SERVICE.get() else {
-        eprintln!("{app_name}: {summary} — {body}");
+        eprintln!(
+            "{}: {} — {}",
+            notification.app_name, notification.summary, notification.body
+        );
         return None;
     };
-    Some(service.inner.post_shell(
-        Notification {
-            id: 0,
-            app_name: app_name.to_string(),
-            app_icon: app_icon.to_string(),
-            summary: summary.to_string(),
-            body: body.to_string(),
-            actions: Vec::new(),
-            urgency,
-            popup: true,
-            image: None,
-        },
-        replaces.unwrap_or(0),
-        kept,
-    ))
+    Some(
+        service
+            .inner
+            .post_shell(notification, replaces.unwrap_or(0), kept),
+    )
 }
 
 /// The current state without subscribing — for an initial read or tests; surfaces should [`subscribe`] to stay live.
@@ -522,18 +615,34 @@ fn expire_on_clock(id: u32, sent: u64) {
     }
 }
 
-/// Invokes a notification's action `key`: emits `ActionInvoked`, then closes it (the sender closes on invocation, per the spec). Wired to the history panel's action buttons.
+/// Invokes a notification's action `key`: emits `ActionInvoked` and closes it (the sender closes on invocation, per the spec). Wired to the history panel's action buttons. On one of the shell's own status notices the key is a request line, which runs in the shell once the notice is down.
+///
+/// `key` comes from the copy of the notification the caller drew, so it is checked against the notification as stored now: a key it does not offer is ignored, and only a status notice the shell raised runs its key as a request line.
 pub fn invoke_action(id: u32, key: &str) {
-    if let Some(conn) = CONNECTION.get() {
-        let _ = conn.emit_signal(
-            None::<&str>,
-            OBJECT_PATH,
-            BUS_NAME,
-            "ActionInvoked",
-            &(id, key),
-        );
+    let Some(service) = SERVICE.get() else {
+        return;
+    };
+    match service.inner.take_action(id, key) {
+        None => tracing::info!("notification {id} offers no action `{key}` now; ignored"),
+        Some(Answered::Request(line)) => {
+            emit_closed(id, 2);
+            if let Err(why) = crate::command::run_checked(&line) {
+                tracing::warn!("the notice's `{line}` was refused: {why}");
+            }
+        }
+        Some(Answered::Signal) => {
+            if let Some(conn) = CONNECTION.get() {
+                let _ = conn.emit_signal(
+                    None::<&str>,
+                    OBJECT_PATH,
+                    BUS_NAME,
+                    "ActionInvoked",
+                    &(id, key),
+                );
+            }
+            emit_closed(id, 2);
+        }
     }
-    close(id);
 }
 
 /// Emits `NotificationClosed(id, reason)` (1 = expired, 2 = dismissed, 3 = app-requested) to any listeners.
@@ -737,13 +846,15 @@ impl NotificationsIface {
                 image,
             },
             replaces_id,
+            Author::Client,
         );
         self.inner.arm_expiry(id, expire_timeout, urgency);
         id
     }
 
+    /// Closes `id` for a client: any notification but the shell's own, as the spec lets any client close any id. The shell's notices are refused because they describe its own state and carry its own request lines, which only it may take down.
     fn close_notification(&self, id: u32) {
-        self.inner.close(id);
+        self.inner.close_from(id, &Author::Client);
     }
 
     fn get_capabilities(&self) -> Vec<String> {
@@ -852,6 +963,7 @@ mod tests {
                 dnd: false,
                 muted_apps,
                 statuses: HashSet::new(),
+                senders: HashMap::new(),
                 sends: 0,
                 latest: HashMap::new(),
             }),
@@ -875,6 +987,171 @@ mod tests {
         }
     }
 
+    fn client() -> Author {
+        Author::Client
+    }
+
+    fn with_actions(notification: Notification, actions: &[&str]) -> Notification {
+        Notification {
+            actions: actions.iter().map(|it| it.to_string()).collect(),
+            ..notification
+        }
+    }
+
+    fn is_up(inner: &Inner, id: u32) -> bool {
+        inner
+            .state
+            .lock()
+            .unwrap()
+            .active
+            .iter()
+            .any(|n| n.id == id)
+    }
+
+    /// A status notice's buttons are the shell's own request lines, and only for as long as it is up; an event's and an application's are keys to signal back, and taking any of them down takes the notice down.
+    #[test]
+    fn only_a_status_notice_answers_its_buttons_with_request_lines() {
+        let inner = test_inner(Vec::new());
+        let review = ["layout trust --dialog", "Review…"];
+        let notice = inner.post_shell(
+            with_actions(status("2 items wait"), &review),
+            0,
+            Kept::WhileCurrent,
+        );
+        let event = inner.post_shell(
+            with_actions(sample_from("hogar-shell", "Battery low"), &review),
+            0,
+            Kept::History,
+        );
+        let app = inner.push(
+            with_actions(sample_from("Slack", "hi"), &review),
+            0,
+            client(),
+        );
+        assert_eq!(
+            inner.take_action(notice, review[0]),
+            Some(Answered::Request(review[0].to_string()))
+        );
+        assert_eq!(inner.take_action(event, review[0]), Some(Answered::Signal));
+        assert_eq!(inner.take_action(app, review[0]), Some(Answered::Signal));
+        assert!(![notice, event, app].iter().any(|id| is_up(&inner, *id)));
+        assert_eq!(
+            inner.take_action(notice, review[0]),
+            None,
+            "a notice that is down answers nothing"
+        );
+    }
+
+    /// The key a press hands over comes from the copy the panel drew, which may be stale: it is looked up in the notice as stored now, and one the notice does not offer — a label, a key from another notice — does nothing and leaves it up.
+    #[test]
+    fn a_key_the_stored_notice_does_not_offer_is_refused() {
+        let inner = test_inner(Vec::new());
+        let notice = inner.post_shell(
+            with_actions(
+                status("2 items wait"),
+                &["layout trust --dialog", "Review…"],
+            ),
+            0,
+            Kept::WhileCurrent,
+        );
+        assert_eq!(inner.take_action(notice, "shell run rm -rf ~"), None);
+        assert_eq!(
+            inner.take_action(notice, "Review…"),
+            None,
+            "a label is not a key"
+        );
+        assert!(is_up(&inner, notice));
+    }
+
+    /// The pre-claim: a client names an id the shell has not handed out yet, hoping a status notice lands on it and a stale copy of its own card runs its key as a request line. A `replaces_id` naming no live notification is treated as 0, as the spec says of an unknown one, so a client never picks an id; and one naming the shell's notice gets a fresh id, so the notice and its request lines stay the shell's.
+    #[test]
+    fn a_client_never_picks_an_id_nor_takes_a_notice_of_the_shell() {
+        let inner = test_inner(Vec::new());
+        let claimed = inner.push(
+            with_actions(sample_from("evil", "hi"), &["shell run rm -rf ~", "OK"]),
+            2,
+            client(),
+        );
+        assert_ne!(claimed, 2, "an id nobody sent is not the client's to pick");
+        let notice = inner.post_shell(
+            with_actions(
+                status("2 items wait"),
+                &["layout trust --dialog", "Review…"],
+            ),
+            0,
+            Kept::WhileCurrent,
+        );
+        assert_ne!(notice, claimed);
+
+        let over_shell = inner.push(
+            with_actions(
+                sample_from("evil", "mine now"),
+                &["shell run rm -rf ~", "OK"],
+            ),
+            notice,
+            client(),
+        );
+        assert_ne!(over_shell, notice, "the shell's notice is not a client's");
+        assert_eq!(
+            inner.take_action(notice, "shell run rm -rf ~"),
+            None,
+            "and it still offers only its own lines"
+        );
+        assert_eq!(
+            inner.take_action(notice, "layout trust --dialog"),
+            Some(Answered::Request("layout trust --dialog".to_string()))
+        );
+        inner.close(claimed);
+        assert_ne!(
+            inner.push(sample_from("evil", "back"), claimed, client()),
+            claimed,
+            "once closed, the id is no longer live, so it is nobody's to name"
+        );
+    }
+
+    /// `notify-send -r <id>` runs as a new process every time, so the send naming a live id comes from a connection that never sent it: it replaces in place, as the spec allows any client to, and the replacement's actions go back as signals, never as request lines.
+    #[test]
+    fn a_new_process_replaces_a_live_notification_by_its_id() {
+        let inner = test_inner(Vec::new());
+        let first = inner.push(sample_from("notify-send", "50%"), 0, client());
+        assert_eq!(
+            inner.push(
+                with_actions(sample_from("notify-send", "60%"), &["run", "Run"]),
+                first,
+                client()
+            ),
+            first,
+            "replaced in place"
+        );
+        assert_eq!(inner.take_action(first, "run"), Some(Answered::Signal));
+    }
+
+    /// `CloseNotification` takes down any notification but the shell's own: the spec lets a client close any id, and the shell's notices describe its own state.
+    #[test]
+    fn a_client_closes_anything_but_a_notice_of_the_shell() {
+        let inner = test_inner(Vec::new());
+        let notice = inner.post_shell(status("2 items wait"), 0, Kept::WhileCurrent);
+        let theirs = inner.push(sample_from("Slack", "hi"), 0, client());
+        let own = inner.push(sample_from("evil", "hi"), 0, client());
+        inner.close_from(notice, &client());
+        inner.close_from(theirs, &client());
+        inner.close_from(own, &client());
+        assert!(is_up(&inner, notice));
+        assert!(!is_up(&inner, theirs) && !is_up(&inner, own));
+    }
+
+    /// A notice of the shell's own is plain text, and every body is drawn as markup: what it quotes — a bundle's finding, a path — reaches the card as the characters it is, never as a tag.
+    #[test]
+    fn a_notice_of_the_shell_is_never_read_as_markup() {
+        let notice = shell_notification(
+            "hogar-shell",
+            "import failed",
+            "<b>x</b> & <a href='y'>",
+            "",
+            Urgency::Normal,
+        );
+        assert_eq!(notice.body, "&lt;b&gt;x&lt;/b&gt; &amp; &lt;a href='y'&gt;");
+    }
     /// One notice about a state that keeps changing, not a card per change: each draft replaces the last where it stands, so typing through three partial ids leaves one card showing the third — and it is still one unread, since a user who has not looked has one thing to look at.
     #[test]
     fn a_status_replaced_in_place_is_one_card_showing_the_last_draft() {
@@ -1074,12 +1351,12 @@ mod tests {
         let inner = test_inner(Vec::new());
         let sample = |summary: &str| sample_from("app", summary);
 
-        let first = inner.push(sample("a"), 0);
-        let second = inner.push(sample("b"), 0);
+        let first = inner.push(sample("a"), 0, client());
+        let second = inner.push(sample("b"), 0, client());
         assert_ne!(first, second, "fresh notifications get distinct ids");
         assert_eq!(inner.state.lock().unwrap().unread, 2);
 
-        inner.push(sample("b-edited"), second);
+        inner.push(sample("b-edited"), second, client());
         let state = inner.state.lock().unwrap();
         assert_eq!(
             state.active.len(),
@@ -1149,7 +1426,7 @@ mod tests {
     #[test]
     fn expiry_retires_the_popup_but_keeps_the_notification_in_history() {
         let inner = test_inner(Vec::new());
-        let id = inner.push(sample_from("a", "hi"), 0);
+        let id = inner.push(sample_from("a", "hi"), 0, client());
 
         inner.expire(id);
         {
@@ -1168,8 +1445,8 @@ mod tests {
     #[test]
     fn a_muted_app_is_recorded_and_never_popped() {
         let inner = test_inner(vec!["Slack".to_string()]);
-        inner.push(sample_from("Slack", "muted"), 0);
-        inner.push(sample_from("Calendar", "heard"), 0);
+        inner.push(sample_from("Slack", "muted"), 0, client());
+        inner.push(sample_from("Calendar", "heard"), 0, client());
 
         let state = inner.state.lock().unwrap();
         assert_eq!(state.active.len(), 2, "a mute silences, it does not drop");
@@ -1187,14 +1464,14 @@ mod tests {
     #[test]
     fn dnd_retires_what_it_hides_and_switching_it_off_brings_nothing_back() {
         let inner = test_inner(Vec::new());
-        inner.push(sample_from("Calendar", "before"), 0);
+        inner.push(sample_from("Calendar", "before"), 0, client());
         assert!(
             inner.state.lock().unwrap().active[0].popup,
             "on screen before the toggle"
         );
 
         inner.set_dnd(true);
-        inner.push(sample_from("Slack", "during"), 0);
+        inner.push(sample_from("Slack", "during"), 0, client());
 
         inner.set_dnd(false);
         let state = inner.state.lock().unwrap();
@@ -1209,9 +1486,9 @@ mod tests {
     #[test]
     fn clearing_one_group_leaves_every_other_app_alone() {
         let inner = test_inner(Vec::new());
-        let first = inner.push(sample_from("Slack", "a"), 0);
-        let second = inner.push(sample_from("Slack", "b"), 0);
-        inner.push(sample_from("Calendar", "standup"), 0);
+        let first = inner.push(sample_from("Slack", "a"), 0, client());
+        let second = inner.push(sample_from("Slack", "b"), 0, client());
+        inner.push(sample_from("Calendar", "standup"), 0, client());
 
         let closed = inner.clear_app("Slack");
         assert_eq!(

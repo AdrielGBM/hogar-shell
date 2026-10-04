@@ -6,14 +6,14 @@
 //!
 //! **What a verb refuses is as much the point as what it does.** A module nothing answers to, a representation it cannot be drawn as, an area that holds no instances, a control placed on the lock layer: each is a message naming what there is instead of an edit that draws a placeholder the user then has to find.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use layout::ops::{areas_at, placement_of, site_of_area, sites};
 use layout::reset::Target as Aim;
 use layout::{
     Action, Area, AreaId, AreaKind, BUILT_IN, Catalogue, Expr, Group, GroupId, GroupKind, Instance,
-    InstanceId, LayerKind, Layout, LayoutId, LayoutOp, LayoutStore, NOMINAL_OUTPUT, Representation,
-    Site, Spot, Trigger,
+    InstanceId, LayerKind, Layout, LayoutId, LayoutOp, LayoutStore, Library, NOMINAL_OUTPUT,
+    Representation, Site, Spot, Trigger,
 };
 
 use super::args::{Args, arg};
@@ -82,7 +82,7 @@ pub(crate) const LAYOUT: Target = Target {
         Command {
             name: "set",
             args: "<instance|area|area.group> <key> <value...>",
-            help: "change one property of a placed module, or an area's visible or a group's repeat",
+            help: "change one property of a placed module, an area's visible, or a group's repeat or parameters.<name>",
             run: set,
         },
         Command {
@@ -96,6 +96,24 @@ pub(crate) const LAYOUT: Target = Target {
             args: "<background|desktop|top|overlay|lock|off> [output]",
             help: "edit one layer on one screen (the focused one unless named), or stop",
             run: |args| edit(args),
+        },
+        Command {
+            name: "export",
+            args: "<bundle-path> [layout]",
+            help: "write a layout (the one being drawn unless named), the layouts it extends, the komponents it draws and the pictures it shows to a new bundle directory",
+            run: |args| super::bundle::export(args),
+        },
+        Command {
+            name: "import",
+            args: "<bundle-path>",
+            help: "add a bundle's layouts, komponents and pictures, read in the background; every command and address it brings, and every action that does more than show a panel or move a control, stays off until `layout trust`",
+            run: |args| super::bundle::import(args),
+        },
+        Command {
+            name: "trust",
+            args: "[bundle] [item|--all <set>] [--decline] | --dialog",
+            help: "list what imported bundles run, or accept one item of a bundle by its id or everything listed by the set id the listing prints (refuse with --decline), or open the dialog that answers for what waits",
+            run: |args| super::bundle::trust(args),
         },
     ],
 };
@@ -176,35 +194,26 @@ fn show(name: Option<&str>) -> Result<String, String> {
     toml::to_string_pretty(found).map_err(|why| why.to_string())
 }
 
-/// Parses, validates and resolves one layout, and says what is wrong with it.
+/// Parses, validates and resolves one layout, and says what is wrong with it, with each komponent it draws, and what of it waits for the user's trust (`Descriptors::check`).
 ///
 /// Resolution is per output, and which outputs exist is a question only a running compositor answers, so this resolves against one nominal output. That catches everything that does not depend on a monitor's name — a missing prompt, an area with no kind, an instance with no module — and leaves the per-monitor half to the running shell's own notice.
 fn check(name: Option<&str>) -> Result<String, String> {
-    let (store, mut report) = LayoutStore::load(layouts::dir());
+    let (mut store, mut report) = LayoutStore::load(layouts::dir());
+    store.set_trust(surfaces::bundles::trust_of(
+        &services::state::get(),
+        super::runs_unasked,
+    ));
     let id = LayoutId::new(name.unwrap_or(BUILT_IN));
     let found = store
         .get(&id)
         .ok_or_else(|| format!("there is no layout called '{id}'"))?;
 
     let path = store.path_of(&id);
-    let text = std::fs::read_to_string(&path).ok();
-    if let Some(text) = &text {
-        report.merge(layout::check_unknown_keys(text, &id));
-    }
     let config = current_config();
-    let (sources, sourcing) =
-        automation::sources::of_layout(found, store.all(), &config.automation);
-    let mut checked = layout::validate(found, &catalogue().with_sources(sources));
-    checked.merge(layout::validate_unsets(found, store.all()));
-    if let Some(text) = &text {
-        layout::locate_expressions(text, &mut checked);
-        layout::locate_unsets(text, &mut checked);
-    }
+    let config_dir = util::paths::config_dir();
+    let text = |file: &str| std::fs::read_to_string(config_dir.join(file)).ok();
+    let (checked, resolved) = catalogue().check(found, store.all(), &text, &config.automation);
     report.merge(checked);
-    report.merge(sourcing);
-
-    let (resolved, resolving) = layout::resolve(found, store.all(), NOMINAL_OUTPUT, None);
-    report.merge(resolving);
     report.merge(layout::validate_resolved(
         &resolved,
         &path.display().to_string(),
@@ -249,7 +258,7 @@ pub(crate) fn lock_theme() -> config::theme::NordTheme {
 }
 
 /// The running config where there is one, and the file on disk where this answers in the CLI.
-fn current_config() -> std::sync::Arc<config::Config> {
+pub(super) fn current_config() -> std::sync::Arc<config::Config> {
     config::config().unwrap_or_else(|| {
         std::sync::Arc::new(config::Config::load_or_default(
             &config::Config::default_path(),
@@ -300,6 +309,12 @@ fn add(args: &[&str]) -> Result<String, String> {
         };
         let landing = group_of(found, &group)
             .ok_or_else(|| format!("`{area}` has no group called `{group}`{}", groups_of(found)))?;
+        if let Some(komponent) = &landing.komponent {
+            return Err(format!(
+                "`{area}.{group}` draws the komponent `{komponent}`, which holds what it shows: add to `{}`, or detach it first",
+                layout::komponent_path(komponent)
+            ));
+        }
         let representation = fits(found.kind.as_ref(), &module).ok_or_else(|| {
             format!(
                 "`{module}` cannot be drawn in {}",
@@ -462,9 +477,9 @@ fn region_for(layout: &Layout, id: &AreaId, output: &str) -> Result<Site, String
         })
 }
 
-/// Changes one property of something the layout places. Of a placed module: which module it shows, how big it is drawn, one of its options, one bound expression, what a gesture on it runs, or a binding it takes back from a broader level (`unset bindings.<key>`, DEC-26). Of an area, whether it is shown (`<area> visible <expr>`, `<area> unset visible`); of a group, what it repeats over (`<area>.<group> repeat <expr>`, `<area>.<group> unset repeat`). The value is the rest of the line as written.
+/// Changes one property of something the layout places. Of a placed module: which module it shows, how big it is drawn, one of its options, one bound expression, what a gesture on it runs, or a binding it takes back from a broader level (`unset bindings.<key>`, DEC-26). Of an area, whether it is shown (`<area> visible <expr>`, `<area> unset visible`); of a group, what it repeats over (`<area>.<group> repeat <expr>`, `<area>.<group> unset repeat`) and what it sets a parameter of the komponent it draws to (`<area>.<group> parameters.<name> <expr>`, `<area>.<group> unset parameters.<name>`). The value is the rest of the line as written.
 ///
-/// The key says what the first argument names, so an id an area, a group and a module share is never ambiguous: `visible` and `repeat` are not properties of a module.
+/// The key says what the first argument names, so an id an area, a group and a module share is never ambiguous: `visible`, `repeat` and `parameters.<name>` are not properties of a module.
 fn set(args: &Args<'_>) -> Result<String, String> {
     let target = arg(args, 0, "instance")?;
     let key = arg(args, 1, "key")?.to_string();
@@ -485,6 +500,11 @@ fn set(args: &Args<'_>) -> Result<String, String> {
     }
 
     let instance = InstanceId::new(target);
+    if instance.komponent_child().is_some() {
+        return Err(format!(
+            "`{instance}` is drawn by the komponent its group uses: set what the use reads with `layout set <area>.<group> parameters.<name> <expr>`, edit the komponent's file, or `komponent detach` the group"
+        ));
+    }
     let label = format!("Set `{key}` on `{instance}`");
     layouts::edit(&label, move |layout, _| {
         let at = placement_of(layout, &instance)
@@ -542,7 +562,7 @@ fn unset_binding(target: &str, path: String) -> Result<String, String> {
     })
 }
 
-/// An expression an area or a group holds, and what `set` does to it: gives it, or takes back what a broader level gives it.
+/// An expression an area or a group holds — its `visible`, its `repeat`, or what it sets a komponent parameter to — and what `set` does to it: gives it, or takes back what a broader level gives it.
 struct Expression {
     held: layout::Unset,
     written: Option<String>,
@@ -555,10 +575,13 @@ impl Expression {
             "visible" => (Unset::Visible, Some(value.to_string())),
             "repeat" => (Unset::Repeat, Some(value.to_string())),
             "unset" => match Unset::from(value) {
-                held @ (Unset::Visible | Unset::Repeat) => (held, None),
+                held @ (Unset::Visible | Unset::Repeat | Unset::Parameter(_)) => (held, None),
                 _ => return None,
             },
-            _ => return None,
+            _ => match Unset::from(key) {
+                held @ Unset::Parameter(_) => (held, Some(value.to_string())),
+                _ => return None,
+            },
         };
         Some(Self { held, written })
     }
@@ -568,7 +591,7 @@ impl Expression {
     }
 }
 
-/// Gives an area its `visible` or a group its `repeat` in the rule that writes the area (a partial entry for one only a layout it extends writes), checked as the editor checks it; or takes it back where that is laid over whatever writes it ([`taking_back`]).
+/// Gives an area its `visible`, or a group its `repeat` or a value for a parameter of the komponent it draws, in the rule that writes the area (a partial entry for one only a layout it extends writes), checked as the editor checks it; or takes it back where that is laid over whatever writes it ([`taking_back`]).
 fn set_expression(target: &str, expression: Expression) -> Result<String, String> {
     let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
     let verb = if expression.written.is_some() {
@@ -596,6 +619,7 @@ fn set_expression(target: &str, expression: Expression) -> Result<String, String
                 )
             })?;
         if let Some(group) = &group
+            && expression.held == layout::Unset::Repeat
             && matches!(
                 group_kind(&[layout, &base], &area, group),
                 Some(GroupKind::Cell { .. })
@@ -614,18 +638,25 @@ fn set_expression(target: &str, expression: Expression) -> Result<String, String
             let taken = layout::Taken {
                 layer: site.layer,
                 area: &area,
-                held: match &group {
-                    None => layout::Held::Visible,
-                    Some(group) => layout::Held::Repeat(group),
+                held: match (&group, &expression.held) {
+                    (None, _) => layout::Held::Visible,
+                    (Some(group), layout::Unset::Parameter(name)) => {
+                        layout::Held::Parameter { group, name }
+                    }
+                    (Some(group), _) => layout::Held::Repeat(group),
                 },
             };
             return Ok((taking_back(layout, &known, taken)?, said));
         };
         let expr = Expr(text.clone());
         let on_lock = site.layer == LayerKind::Lock;
-        let errors = match group {
-            None => layout::visible_errors(&catalogue(), &expr, on_lock),
-            Some(_) => layout::repeat_errors(&catalogue(), &expr, on_lock),
+        let errors = match (&group, &expression.held) {
+            (None, _) => layout::visible_errors(&catalogue(), &expr, on_lock),
+            (Some(group), layout::Unset::Parameter(name)) => {
+                let ty = parameter_type(&known, &[layout, &base], (&area, group), name)?;
+                layout::parameter_errors(&catalogue(), &ty, &expr, on_lock)
+            }
+            (Some(_), _) => layout::repeat_errors(&catalogue(), &expr, on_lock),
         };
         refuse_errors(&errors, &expr.0)?;
         let written = Written::area(
@@ -643,7 +674,12 @@ fn set_expression(target: &str, expression: Expression) -> Result<String, String
             }
             Some(group) => {
                 let held = group_entry(&mut changed, group);
-                held.repeat = Some(expr);
+                match &expression.held {
+                    layout::Unset::Parameter(name) => {
+                        held.parameters.insert(name.clone(), expr);
+                    }
+                    _ => held.repeat = Some(expr),
+                }
                 take_back(&mut held.unset, &expression.held, false);
             }
         }
@@ -654,7 +690,7 @@ fn set_expression(target: &str, expression: Expression) -> Result<String, String
 /// The operations that take `taken` back on every screen the shell draws — every output, where it draws none — in the narrowest rule of `layout` for all of them, which has to be laid over whatever writes it on each ([`layout::taking_back`]): what that rule writes itself is deleted, and the expression is named in its `unset` while a level under it still gives one.
 fn taking_back(
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     taken: layout::Taken<'_>,
 ) -> Result<Vec<LayoutOp>, String> {
     let screens: Vec<String> = surfaces::reconcile::desktops_now()
@@ -682,6 +718,13 @@ fn taking_back(
             }
             take_back(&mut held.unset, &layout::Unset::Repeat, at.unset);
         }
+        layout::Held::Parameter { group, name } => {
+            let held = group_entry(&mut changed, group);
+            if at.own {
+                held.parameters.remove(name);
+            }
+            take_back(&mut held.unset, &layout::Unset::parameter(name), at.unset);
+        }
         layout::Held::Binding {
             group,
             instance,
@@ -699,8 +742,42 @@ fn taking_back(
     Ok(written.ops(&changed))
 }
 
+/// The type the komponent the group `area.group` draws, as the first of `layouts` that names one says, declares for its parameter `name`.
+fn parameter_type(
+    known: &Library,
+    layouts: &[&Layout],
+    (area, group): (&AreaId, &GroupId),
+    name: &str,
+) -> Result<telar_expression::Type, String> {
+    let id = layouts
+        .iter()
+        .find_map(|layout| {
+            sites(layout)
+                .flat_map(|(_, layer)| layer.areas.iter())
+                .filter(|held| held.id == *area)
+                .find_map(|held| group_of(held, group)?.komponent.clone())
+        })
+        .ok_or_else(|| {
+            format!("`{area}.{group}` draws no komponent, so it has no parameters to set")
+        })?;
+    let komponent = known.komponent(&id).ok_or_else(|| {
+        format!(
+            "there is no komponent `{id}` ({})",
+            layout::komponent_path(&id)
+        )
+    })?;
+    let declared = komponent.parameters.get(name).ok_or_else(|| {
+        let names: Vec<&str> = komponent.parameters.keys().map(String::as_str).collect();
+        format!(
+            "the komponent `{id}` has no parameter `{name}` (it has: {})",
+            names.join(", ")
+        )
+    })?;
+    Ok(declared.ty.0.clone())
+}
+
 /// The group `id` of `area` as the area's entry writes it, made as an entry naming only its id where it writes none.
-fn group_entry<'a>(area: &'a mut Area, id: &GroupId) -> &'a mut Group {
+pub(super) fn group_entry<'a>(area: &'a mut Area, id: &GroupId) -> &'a mut Group {
     let at = match area.groups.iter().position(|held| &held.id == id) {
         Some(at) => at,
         None => {
@@ -806,6 +883,11 @@ fn apply_key(
             for line in &chain {
                 if !super::resolves(line) {
                     return Err(format!("`{line}` is not a command this shell has"));
+                }
+                if layout::grants_trust(line) {
+                    return Err(format!(
+                        "`{line}` would trust a bundle from a gesture, and trust is yours to give: run `layout trust` yourself"
+                    ));
                 }
             }
             instance.actions.insert(trigger, Action(chain));
@@ -954,7 +1036,10 @@ fn group_named(layout: &Layout, name: &str) -> Result<Spot, String> {
 }
 
 /// The group a command named, as [`group_named`] reads it, in the layout or in what it extends: an area and a group, found in either.
-fn inherited_group_named(layouts: &[&Layout], name: &str) -> Result<(AreaId, GroupId), String> {
+pub(super) fn inherited_group_named(
+    layouts: &[&Layout],
+    name: &str,
+) -> Result<(AreaId, GroupId), String> {
     let (area, group) = match name.split_once('.') {
         Some((area, group)) => (Some(AreaId::new(area)), GroupId::new(group)),
         None => (None, GroupId::new(name)),
@@ -1162,6 +1247,28 @@ pub(crate) fn catalogue() -> Descriptors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A gesture can never be bound to `layout trust`: over IPC as at load, whoever asks, so no action planted by anything — a bundle's accepted line included — can grant trust when pressed.
+    #[test]
+    fn an_action_granting_trust_is_refused_over_ipc() {
+        let top = (LayerKind::Top, &layout::Locals::default());
+        let mut clock = Instance {
+            id: InstanceId::new("clock"),
+            module: Some("clock".into()),
+            ..Instance::default()
+        };
+        for chain in [
+            "layout trust nord --all 0123456789abcdef",
+            "panel toggle clock; layout   trust nord 0123456789abcdef",
+        ] {
+            let refused = apply_key(&mut clock, "actions.press", chain, top)
+                .expect_err("trust is the user's to give");
+            assert!(refused.contains("trust is yours to give"), "{refused}");
+            assert!(clock.actions.is_empty(), "nothing was written");
+        }
+        apply_key(&mut clock, "actions.press", "panel toggle clock", top)
+            .expect("an ordinary line");
+    }
 
     /// `layout set <instance> bindings.<path> <expr>` checks the expression as validation would before anything is written.
     #[test]

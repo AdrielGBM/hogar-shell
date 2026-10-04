@@ -1084,6 +1084,7 @@ mod tests {
                 },
                 stacked: false,
                 repeat: None,
+                komponent: None,
                 children: vec![layout::ResolvedInstance {
                     id: layout::InstanceId::new(module),
                     module: module.to_string(),

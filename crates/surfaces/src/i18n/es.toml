@@ -5,5 +5,57 @@ no_stack = "ninguna salida tiene un área de pila, así que las notificaciones, 
 no_blur = "el compositor no ofrece desenfoque de fondo (ext-background-effect-v1), así que esta área se dibuja translúcida sin él"
 unknown_module = "no hay ningún módulo llamado `{module}`"
 of_module = "`{module}`: {why}"
+repeat_truncated = "`repeat` da {count} elementos, y solo se dibujan los primeros {max}: un grupo dibuja como mucho {max} copias de sus hijos"
 and_more = "{first}; {rest}"
 no_store = "ningún shell en marcha tiene un almacén de diseños"
+trust_no_item = "el paquete `{bundle}` no ejecuta nada llamado `{id}`; `hogar-shell layout trust {bundle}` enumera lo que ejecuta"
+trust_ambiguous = "más de una cosa que ejecuta el paquete `{bundle}` se llama `{id}`; responde por todas con `--all`"
+no_bundles = "no hay ningún paquete llamado `{bundle}`: no se ha importado ningún paquete"
+unknown_bundle = "no hay ningún paquete llamado `{bundle}` (hay: {names})"
+bundle_clash = "`{file}` ya existe y no es la copia sin cambios que escribió el paquete `{bundle}`, así que importarlo sobrescribiría el tuyo: cambia el nombre del tuyo o quítalo primero"
+trust_dialog_locked = "la sesión está bloqueada: lo que puede ejecutar un paquete importado se responde en la sesión desbloqueada"
+trust_nothing_waits = "nada de lo que ejecuta un paquete importado espera tu respuesta"
+trust_changed = "lo que ejecuta el paquete `{bundle}` ha cambiado desde que se mostró, así que no se respondió nada: revísalo de nuevo"
+trust_set_changed = "lo que ejecuta el paquete `{bundle}` ha cambiado desde que se enumeró, así que no se respondió nada: enuméralo de nuevo con `hogar-shell layout trust {bundle}` y responde a lo que enumere"
+trust_contested = "`{file}` no es solo del paquete `{bundle}`, así que no se puede responder por nada de lo que ejecuta: `hogar-shell layout check` dice qué paquetes lo reclaman"
+bundle_importing = "ya se está importando un paquete: espera a que termine"
+bundle_import_panicked = "la lectura del paquete se detuvo por un fallo del shell, así que no se importó nada: {why}"
+bundle_impostor = "ya se importó otro paquete llamado `{bundle}`: escribió {files}, y este escribe {writes}. Dale a este otro nombre en su manifest.toml, o borra esos archivos para reemplazarlo"
+bundle_claimed = "`{file}` lo escribió el paquete `{other}`, así que el paquete `{bundle}` no puede escribirlo: cambia el nombre de uno de los dos"
+bundle_assets_clash = "`{path}` contiene archivos de los que no da cuenta ningún paquete importado, así que las imágenes de `{bundle}` no pueden guardarse ahí: muévelos antes"
+
+[notice]
+bundle_imported = "El paquete `{bundle}` está importado"
+bundle_import_failed = "El paquete de {path} no se importó"
+trust_body = "Llegaron con un paquete importado y siguen desactivados hasta que los aceptes. Cerrar el diálogo los deja esperando."
+trust_review = "Revisar…"
+
+[notice.bundle_imported_body]
+one = "{count} cosa que ejecuta espera tu confianza."
+other = "{count} cosas que ejecuta esperan tu confianza."
+
+[notice.trust_title]
+one = "{count} comando espera tu decisión"
+other = "{count} comandos esperan tu decisión"
+
+[trust]
+title = "Comandos de paquetes importados"
+intro = "Nada de lo que sigue se ejecuta hasta que lo aceptes, exactamente con el texto mostrado. Cerrar esto deja todo esperando."
+where = "Escrito en {file}, en {key}"
+lock_safe = "Dice que la pantalla de bloqueo puede mostrar lo que lee: solo se respeta una vez que lo aceptes"
+accept = "Aceptar"
+decline = "Rechazar"
+accept_all = "Aceptar todo"
+decline_all = "Rechazar todo"
+later = "Decidir más tarde"
+keys = "Tab o las flechas mueven, Intro responde, Esc cierra sin decidir"
+
+[trust.bundle]
+one = "{bundle}: espera {count} elemento"
+other = "{bundle}: esperan {count} elementos"
+
+[trust.kind]
+poll = "Comando, ejecutado a intervalos"
+listen = "Comando, en ejecución continua"
+http = "Dirección, consultada a intervalos"
+action = "Línea de acción, ejecutada al hacer su gesto"

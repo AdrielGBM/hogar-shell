@@ -2,7 +2,7 @@
 //!
 //! Same argument as [`super::man`], applied to the other audience. The manual is what a distribution installs; `docs/` is what someone reads on the web before installing anything, and a reference typed out there is a third copy of the command table and the config schema — two of which would be wrong by the next release. So `docs/reference/` is walked out of the same two tables the manual is, and only the *prose* pages are written by hand.
 //!
-//! The other half is what keeps the hand-written pages honest. Every feature page carries front matter naming the dependencies, config sections and IPC targets it describes, **by id**, and the checks below fail if a page names one that does not exist — or if a module exists that no page describes. A page that drifts from the build is a test failure rather than something a reader discovers.
+//! The other half is what keeps the hand-written pages honest. Every feature page carries front matter naming the dependencies, config sections and IPC targets it describes, **by id**, and the checks below fail if a page names one that does not exist — or if a module exists that no page describes. The same goes for the prose: a command, a table header or a key path a page writes in backticks has to be in the command table or the schemas, and the customization commands have to be named somewhere. A page that drifts from the build is a test failure rather than something a reader discovers.
 //!
 //! Test-only on purpose: nothing here is reachable from the running shell. Exposing it as a command would put a documentation generator in the IPC table, which is a surface users would have to be told to ignore.
 #![cfg(test)]
@@ -284,6 +284,10 @@ fn feature_index(pages: &[Page]) -> String {
         ("surface", "Surfaces — where the shell draws"),
         ("system", "System — what it does with no chip involved"),
         ("theming", "Theming"),
+        (
+            "customization",
+            "Customization — arranging the shell, and extending it",
+        ),
     ] {
         let _ = writeln!(out, "## {heading}\n");
         let _ = writeln!(out, "| Page | What it is | Needs |");
@@ -614,7 +618,15 @@ fn every_page_declares_a_known_kind_and_status() {
     for page in pages() {
         let kind = page.kind();
         assert!(
-            ["module", "surface", "system", "theming", "guide"].contains(&kind),
+            [
+                "module",
+                "surface",
+                "system",
+                "theming",
+                "customization",
+                "guide"
+            ]
+            .contains(&kind),
             "{}: '{kind}' is not a page kind",
             page.label
         );
@@ -684,4 +696,338 @@ fn every_dependency_is_claimed_by_a_page() {
             entry.id
         );
     }
+}
+
+/// Every page written by hand, with its text: the generated ones are walked out of the tables these checks hold the rest to.
+fn hand_written() -> Vec<(String, String)> {
+    let root = docs_dir();
+    markdown_files(&root)
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let label = path.strip_prefix(&root).ok()?.to_string_lossy().to_string();
+            (!text.starts_with(GENERATED)).then_some((label, text))
+        })
+        .collect()
+}
+
+/// A page's prose with its fenced blocks taken out, so a code sample is read by its own rules rather than as text.
+fn prose_of(text: &str) -> String {
+    let mut fenced = false;
+    let mut prose = String::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            prose.push('\n');
+        } else if !fenced {
+            prose.push_str(line);
+            prose.push('\n');
+        }
+    }
+    prose
+}
+
+/// Every inline code span of a page's prose, a span that runs over a line break read as one line.
+fn inline_spans(text: &str) -> Vec<String> {
+    let prose = prose_of(text);
+    let mut spans = Vec::new();
+    for paragraph in prose.split("\n\n") {
+        let pieces: Vec<&str> = paragraph.split('`').collect();
+        if pieces.len().is_multiple_of(2) {
+            continue;
+        }
+        spans.extend(
+            pieces
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .map(|span| span.replace('\n', " ")),
+        );
+    }
+    spans
+}
+
+/// Every line of a page's `sh` blocks that mentions the shell's own command, from `hogar-shell` onward and without its trailing comment.
+fn shell_block_mentions(text: &str) -> Vec<String> {
+    let mut inside = false;
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let fence = line.trim_start();
+        if let Some(info) = fence.strip_prefix("```") {
+            inside = !inside && matches!(info.trim(), "sh" | "bash" | "shell");
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let code = line.split(" # ").next().unwrap_or(line);
+        let mut rest = code;
+        while let Some(at) = rest.find("hogar-shell ") {
+            let after = &rest[at + "hogar-shell ".len()..];
+            found.push(after.to_string());
+            rest = after;
+        }
+    }
+    found
+}
+
+/// A word of a command mention with the punctuation prose and shell put round it taken off.
+fn bare(word: &str) -> &str {
+    word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_' | '|'))
+}
+
+/// The commands a mention names, as `<target> <command>` lines that resolve, or what keeps it from resolving.
+///
+/// A mention is the words after `hogar-shell` or a span that starts with a target's name. What is not a command at all is skipped rather than refused: a flag, a placeholder, a lone target, or the shorthand forms the manual lists. `a|b` names both.
+fn command_mention(words: &[&str]) -> Result<Vec<String>, String> {
+    let Some(first) = words.first().copied() else {
+        return Ok(Vec::new());
+    };
+    if first.starts_with(|c: char| !c.is_ascii_alphabetic()) {
+        return Ok(Vec::new());
+    }
+    let target = bare(first);
+    if matches!(target, "run" | "toggle") {
+        return Ok(Vec::new());
+    }
+    if !TARGETS.iter().any(|known| known.name == target) {
+        return Err(format!("`{target}` is not an IPC target"));
+    }
+    let Some(second) = words.get(1).copied() else {
+        return Ok(Vec::new());
+    };
+    if !second.starts_with(|c: char| c.is_ascii_lowercase()) {
+        return Ok(Vec::new());
+    }
+    let mut named = Vec::new();
+    for command in bare(second).split('|').filter(|word| !word.is_empty()) {
+        let line = format!("{target} {command}");
+        if !super::commands::resolves(&line) {
+            return Err(format!("`{line}` is not a command"));
+        }
+        named.push(line);
+    }
+    Ok(named)
+}
+
+/// Every command mention of a page and what is wrong with it: inline spans that start `hogar-shell` or a target's name, and the lines of its `sh` blocks.
+fn command_mentions(text: &str) -> Vec<Result<Vec<String>, String>> {
+    let target_names: BTreeSet<&str> = TARGETS.iter().map(|target| target.name).collect();
+    let mut mentions = Vec::new();
+    for span in inline_spans(text) {
+        let words: Vec<&str> = span.split_whitespace().collect();
+        match words.first().copied() {
+            Some("hogar-shell") => mentions.push(command_mention(&words[1..])),
+            Some(first) if target_names.contains(bare(first)) => {
+                mentions.push(command_mention(&words))
+            }
+            _ => {}
+        }
+    }
+    for line in shell_block_mentions(text) {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        mentions.push(command_mention(&words));
+    }
+    mentions
+}
+
+/// T-9.5's acceptance, the commands half: every `hogar-shell <target> <command>` in a code span or an `sh` block, and every span that starts with a target's name and a lower-case word after it, resolves through the command table — so a page cannot keep naming a verb that was deleted.
+#[test]
+fn every_command_a_hand_written_page_shows_resolves_through_the_command_table() {
+    let mut failures = Vec::new();
+    for (label, text) in hand_written() {
+        for mention in command_mentions(&text) {
+            if let Err(why) = mention {
+                failures.push(format!("{label}: {why}"));
+            }
+        }
+    }
+    failures.sort();
+    failures.dedup();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// T-9.5's acceptance, the IPC half: every command of the customization targets, and `shell run`, is named in a hand-written page.
+#[test]
+fn every_customization_command_is_named_by_a_hand_written_page() {
+    let named: BTreeSet<String> = hand_written()
+        .iter()
+        .flat_map(|(_, text)| command_mentions(text))
+        .flatten()
+        .flatten()
+        .collect();
+    let mut missing: Vec<String> = TARGETS
+        .iter()
+        .filter(|target| matches!(target.name, "layout" | "komponent" | "var" | "rule"))
+        .flat_map(|target| {
+            target
+                .commands
+                .iter()
+                .map(|command| format!("{} {}", target.name, command.name))
+        })
+        .chain(["shell run".to_string()])
+        .filter(|line| !named.contains(line))
+        .collect();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "no page under docs/ names: {}",
+        missing.join(", ")
+    );
+}
+
+/// Every table path the config schema has, and the keys each holds. A table that is a list's entry is the list's path.
+fn config_tables() -> BTreeMap<String, BTreeSet<String>> {
+    fn walk(table: &Table, found: &mut BTreeMap<String, BTreeSet<String>>) {
+        let keys = found.entry(table.path.replace('"', "")).or_default();
+        for entry in &table.entries {
+            if let Entry::Key { name, .. } = entry {
+                keys.insert(name.clone());
+            }
+        }
+        for entry in &table.entries {
+            match entry {
+                Entry::Table(nested) => walk(nested, found),
+                Entry::List { path, elements, .. } => {
+                    let path = path.replace('"', "");
+                    if let Some((parent, name)) = path.rsplit_once('.') {
+                        found
+                            .entry(parent.to_string())
+                            .or_default()
+                            .insert(name.to_string());
+                    }
+                    let keys = found.entry(path).or_default();
+                    for element in elements {
+                        if let Some(table) = element.as_table() {
+                            keys.extend(table.keys().cloned());
+                        }
+                    }
+                }
+                Entry::Key { .. } => {}
+            }
+        }
+    }
+    let mut found = BTreeMap::new();
+    for table in &config::schema::outline(None).expect("the config outline builds") {
+        walk(table, &mut found);
+    }
+    found
+}
+
+/// Whether `written`, a dotted path of a page, names `schema`'s path segment by segment, a `<placeholder>` on either side standing for any one name.
+fn same_path(written: &str, schema: &str) -> bool {
+    let (written, schema): (Vec<&str>, Vec<&str>) =
+        (written.split('.').collect(), schema.split('.').collect());
+    written.len() == schema.len()
+        && written
+            .iter()
+            .zip(&schema)
+            .all(|(a, b)| a == b || a.starts_with('<') || b.starts_with('<'))
+}
+
+/// The keys of the tables of a layout, komponent and bundle file, which is all the layout schema says of where a key may be.
+fn layout_words() -> BTreeSet<String> {
+    layout::schema::vocabulary()
+        .into_iter()
+        .flat_map(|item| item.keys.into_iter().map(|key| key.name.to_string()))
+        .collect()
+}
+
+/// A table written the way a file opens it: `[a.b]` or `[[a.b]]`, with the one key after it a page may add (`[a.b] key`).
+fn header_span(span: &str) -> Option<(String, Option<String>)> {
+    let (header, rest) = span.split_at(span.rfind(']')? + 1);
+    let inner = header
+        .strip_prefix("[[")
+        .and_then(|h| h.strip_suffix("]]"))
+        .or_else(|| header.strip_prefix('[').and_then(|h| h.strip_suffix(']')))?;
+    let plain = |c: char| c.is_ascii_lowercase() || matches!(c, '_' | '.' | '<' | '>' | '"' | '-');
+    let key = match rest.strip_prefix(' ') {
+        Some(key) if !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '_') => {
+            Some(key.to_string())
+        }
+        None if rest.is_empty() => None,
+        _ => return None,
+    };
+    (!inner.is_empty() && inner.chars().all(plain)).then(|| (inner.replace('"', ""), key))
+}
+
+/// Whether a table of `path` holding `key`, or nothing, is in the schema of the config or of a layout file.
+fn in_schema(
+    path: &str,
+    key: Option<&str>,
+    tables: &BTreeMap<String, BTreeSet<String>>,
+    words: &BTreeSet<String>,
+) -> bool {
+    let in_config = tables
+        .iter()
+        .any(|(table, keys)| same_path(path, table) && key.is_none_or(|key| keys.contains(key)));
+    let in_layout = path
+        .split('.')
+        .all(|segment| segment.starts_with('<') || words.contains(segment))
+        && key.is_none_or(|key| words.contains(key));
+    in_config || in_layout
+}
+
+/// A dotted key path of prose (`automation.timeout_seconds`): its table is everything before the last segment, and the last is a key of it — or the whole path is a table, or a path of layout words.
+fn dotted_path(span: &str) -> Option<&str> {
+    let plain = |c: char| c.is_ascii_lowercase() || matches!(c, '_' | '.' | '<' | '>');
+    let file = |last: &str| {
+        matches!(
+            last,
+            "toml" | "json" | "md" | "rs" | "conf" | "css" | "sh" | "so" | "lua"
+        )
+    };
+    let last = span.rsplit('.').next()?;
+    (span.contains('.')
+        && span.chars().all(plain)
+        && !span.starts_with('.')
+        && !span.ends_with('.')
+        && !file(last))
+    .then_some(span)
+}
+
+/// T-9.5's acceptance, the keys half: a hand-written page's code span that is a table header (`[automation]`, `[[rules]]`, `[sources.<name>]`), a header with its key (`[automation] min_interval_seconds`) or a dotted path that starts at a section of the config or a root of a layout file (`automation.timeout_seconds`) is in the schema of `config.toml` or of a layout, so a page cannot keep naming a key or table that was deleted. A dotted path that starts anywhere else is prose (`state.json`, `style.radius`) and is not judged.
+#[test]
+fn every_header_span_and_every_dotted_path_under_a_known_section_a_hand_written_page_writes_is_in_the_schema()
+ {
+    let tables = config_tables();
+    let words = layout_words();
+    let sections: BTreeSet<&str> = tables
+        .keys()
+        .filter_map(|path| path.split('.').next())
+        .chain(["sources", "outputs"])
+        .collect();
+    let mut failures = Vec::new();
+    for (label, text) in hand_written() {
+        for span in inline_spans(&text) {
+            if let Some((header, key)) = header_span(&span) {
+                if !in_schema(&header, key.as_deref(), &tables, &words) {
+                    failures.push(format!(
+                        "{label}: `{span}` is not in the config or layout schema"
+                    ));
+                }
+                continue;
+            }
+            let Some(path) = dotted_path(&span) else {
+                continue;
+            };
+            let Some(first) = path.split('.').next() else {
+                continue;
+            };
+            if !sections.contains(first) {
+                continue;
+            }
+            let (table, key) = path.rsplit_once('.').expect("a dotted path has a dot");
+            let as_key = in_schema(table, Some(key), &tables, &words);
+            let as_table = in_schema(path, None, &tables, &words);
+            if !as_key && !as_table {
+                failures.push(format!(
+                    "{label}: `{span}` is not in the config or layout schema"
+                ));
+            }
+        }
+    }
+    failures.sort();
+    failures.dedup();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

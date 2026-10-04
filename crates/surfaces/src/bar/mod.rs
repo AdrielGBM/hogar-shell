@@ -1421,6 +1421,7 @@ mod tests {
             kind: GroupKind::Zone { zone },
             stacked: false,
             repeat: None,
+            komponent: None,
             children: ids.iter().map(|id| instance(id)).collect(),
         }
     }
@@ -1721,6 +1722,7 @@ mod tests {
                         kind: GroupKind::Zone { zone: Zone::Start },
                         stacked: false,
                         repeat: None,
+                        komponent: None,
                         children: vec![
                             styled_instance("dummy", config::Variant::Filled, "green"),
                             instance(broken),

@@ -2,15 +2,18 @@
 //!
 //! Resolution is a pure function of the layout, the output and the active workspace: no service is read, no surface is opened and nothing is cached, so the same three inputs always give the same arrangement and a test can ask for one without a compositor. Each output resolves on its own, which is what lets a monitor be re-planned on hotplug without touching the others.
 //!
-//! The precedence is fixed and total, each level laid over the one before it: the `extends` chain, root first; then every [`OutputRule`] whose glob matches this output, broadest glob first so a named monitor refines a `*` .filter(|rule| rule.matches.matches(output)); then the [`WorkspaceRule`] for the workspace that is active on it. Merging is by id at every level ([`crate::merge`]).
+//! The precedence is fixed and total, each level laid over the one before it: the `extends` chain, root first; then every [`OutputRule`] whose glob matches this output, broadest glob first so a named monitor refines a `*` one; then the [`WorkspaceRule`] for the workspace that is active on it. Merging is by id at every level ([`crate::merge`]).
 //!
 //! The last step is the one that turns *what the file said* into *what was decided*: the partial [`AreaKind`] becomes a [`ResolvedAreaKind`] with every field answered. A field no level ever filled is where an arrangement stops being drawable, so it becomes a [`Finding`] naming the area and the field, and that area alone is dropped. The rest of the layer still resolves, because one unfinished bar is not a reason for a user to lose their desktop.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use config::{Edge, glob_matches};
+use telar_expression::Type;
 use util::report::{Finding, Message, Report};
 
+use crate::library::{Library, komponent_path};
 use crate::merge::{At, Origins, merge_layers, merge_session_layers, merge_sources};
 use crate::model::*;
 
@@ -26,13 +29,13 @@ pub struct ActiveWorkspace {
 
 /// The level of a layout that wrote an expression resolution kept: the layout whose file says it, and the rule in that file — an output rule, or one of that rule's workspace rules.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Origin {
+pub struct Level {
     pub layout: LayoutId,
     pub output: OutputMatch,
     pub workspace: Option<WorkspaceMatch>,
 }
 
-impl Origin {
+impl Level {
     pub fn file(&self) -> String {
         layout_path(&self.layout)
     }
@@ -46,11 +49,69 @@ impl Origin {
     }
 }
 
-/// An expression resolution kept, with the level that wrote it: where a failure of it is reported, and what a level has to come after to take it back.
+/// Who wrote an expression resolution kept: a level of a layout, or the komponent a group uses, whose own file holds what it draws.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Origin {
+    Level(Level),
+    Komponent(KomponentId),
+}
+
+impl Origin {
+    /// The file the expression is written in.
+    pub fn file(&self) -> String {
+        match self {
+            Origin::Level(level) => level.file(),
+            Origin::Komponent(id) => komponent_path(id),
+        }
+    }
+
+    /// The level that wrote it, for one a layout writes.
+    pub fn level(&self) -> Option<&Level> {
+        match self {
+            Origin::Level(level) => Some(level),
+            Origin::Komponent(_) => None,
+        }
+    }
+}
+
+/// An expression resolution kept, with who wrote it — where a failure of it is reported, and what a level has to come after to take it back — and, for one a komponent holds, the use whose parameters it reads.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedExpr {
     pub expr: Expr,
     pub origin: Origin,
+    /// The komponent use this expression is drawn in, whose parameters it reads before any of the shell's names; `None` for one a layout writes.
+    pub within: Option<Arc<KomponentUse>>,
+}
+
+/// A group drawing a komponent: which one, where, and what each of its parameters reads there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KomponentUse {
+    pub id: KomponentId,
+    pub layer: LayerKind,
+    pub area: AreaId,
+    pub group: GroupId,
+    /// In the order the komponent declares them. Empty where the komponent is missing.
+    pub parameters: Vec<ResolvedParameter>,
+}
+
+/// One parameter of a komponent use: what it holds, what the komponent gives it, and what the use sets it to, if it does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedParameter {
+    pub name: String,
+    pub ty: Type,
+    /// What the komponent's file gives it.
+    pub default: Expr,
+    /// What the use sets it to, with the level that wrote it.
+    pub value: Option<ResolvedExpr>,
+}
+
+impl ResolvedParameter {
+    /// What it reads: the use's own value, else the default.
+    pub fn expr(&self) -> &Expr {
+        self.value
+            .as_ref()
+            .map_or(&self.default, |value| &value.expr)
+    }
 }
 
 /// What one output shows, with every field answered.
@@ -244,6 +305,8 @@ pub struct ResolvedGroup {
     pub stacked: bool,
     /// The list the children are drawn once per item of. Never on a grid cell: validation refuses it there, and a file edited past that draws the children once, as written.
     pub repeat: Option<ResolvedExpr>,
+    /// The komponent the group draws, where it uses one: its children, `stacked` and `repeat` are then the komponent's, each child under its use's id (`<area>.<group>/<child>`). A komponent the library does not hold is one placeholder child named by its file.
+    pub komponent: Option<Arc<KomponentUse>>,
     pub children: Vec<ResolvedInstance>,
 }
 
@@ -257,28 +320,31 @@ pub struct ResolvedInstance {
     pub actions: BTreeMap<Trigger, Action>,
 }
 
-/// Resolves `layout` for one output and workspace, following `extends` through `known`.
+/// Resolves `layout` for one output and workspace, following `extends` and the komponents its groups use through `known`.
 ///
 /// Always returns an arrangement. Whatever could not be decided is in the [`Report`] and is missing from the arrangement, so a caller draws what the user asked for minus the parts that were not finished, and says what those were.
 pub fn resolve(
     layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
+    known: &Library,
     output: &str,
     workspace: Option<&ActiveWorkspace>,
 ) -> (Resolved, Report) {
     let mut report = Report::default();
-    let chain = chain_of(layout, known, &mut report);
+    let chain: Vec<std::borrow::Cow<'_, Layout>> = chain_of(layout, known, &mut report)
+        .into_iter()
+        .map(|level| known.trust.gate_layout(level))
+        .collect();
 
     let mut layers = Layers::default();
     // The same arrangement with every workspace rule left out, which is the only thing an exclusive zone may be derived from: a rule that could re-tile the user's windows would do it on every workspace switch (F-6.7). Kept beside rather than recomputed, because it is the same merge and two of them could drift.
     let mut without_rules = Layers::default();
     let (mut origins, mut origins_without_rules) = (Origins::default(), Origins::default());
     let mut ruled = false;
-    for level in &chain {
+    for level in chain.iter().map(|level| level.as_ref()) {
         let rules = rules_for(level, output);
 
         for rule in &rules {
-            let origin = Origin {
+            let origin = Level {
                 layout: level.id.clone(),
                 output: rule.matches.clone(),
                 workspace: None,
@@ -293,7 +359,7 @@ pub fn resolve(
                 match matches_workspace(&workspace_rule.matches, workspace) {
                     WorkspaceVerdict::Matches => {
                         merge_session_layers(&mut layers, &workspace_rule.layers);
-                        let origin = Origin {
+                        let origin = Level {
                             layout: level.id.clone(),
                             output: rule.matches.clone(),
                             workspace: Some(workspace_rule.matches.clone()),
@@ -315,7 +381,7 @@ pub fn resolve(
         }
     }
 
-    let answered = answer_layers(&layers, &origins, layout, &mut report);
+    let answered = answer_layers(&layers, &origins, layout, known, &mut report);
     // A workspace rule may only add, remove and restyle; what each edge takes off the screen is settled before any of them runs. Answering the rule-free arrangement a second time is the cost of that, and only where a rule actually matched — its own findings are the ones already reported, so they go to a report nobody reads.
     let reserved = match ruled {
         false => reserved_edges(&answered),
@@ -323,6 +389,7 @@ pub fn resolve(
             &without_rules,
             &origins_without_rules,
             layout,
+            known,
             &mut Report::default(),
         )),
     };
@@ -343,6 +410,7 @@ fn answer_layers(
     layers: &Layers,
     origins: &Origins,
     layout: &Layout,
+    library: &Library,
     report: &mut Report,
 ) -> BTreeMap<LayerKind, ResolvedLayer> {
     LayerKind::ALL
@@ -352,18 +420,20 @@ fn answer_layers(
                 layer: kind,
                 origins,
                 layout,
+                library,
             };
             (kind, answer_layer(layers.get(kind), answering, report))
         })
         .collect()
 }
 
-/// What answering one layer of a merge reads besides the merge: which layer it is, who wrote each expression the merge kept, and the layout being resolved, whose file names what could not be answered.
+/// What answering one layer of a merge reads besides the merge: which layer it is, who wrote each expression the merge kept, the layout being resolved, whose file names what could not be answered, and the komponents its groups may use.
 #[derive(Clone, Copy)]
 struct Answering<'a> {
     layer: LayerKind,
     origins: &'a Origins,
     layout: &'a Layout,
+    library: &'a Library,
 }
 
 impl Answering<'_> {
@@ -376,7 +446,8 @@ impl Answering<'_> {
             .clone();
         ResolvedExpr {
             expr: expr.clone(),
-            origin,
+            origin: Origin::Level(origin),
+            within: None,
         }
     }
 }
@@ -395,16 +466,10 @@ fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
 
 /// The sources `layout` declares, each laid over what the layouts it extends declare under the same name.
 ///
-/// A source that is still missing what it runs once every level has had its say — a `poll` or `listen` with no `cmd`, an `http` with no `url` — is reported and left out, so the rest still run.
-pub fn sources(
-    layout: &Layout,
-    known: &BTreeMap<LayoutId, Layout>,
-) -> (BTreeMap<String, Source>, Report) {
+/// A source that is still missing what it runs once every level has had its say — a `poll` or `listen` with no `cmd`, an `http` with no `url` — is reported and left out, so the rest still run. So is one whose command or address came with a bundle and was not accepted at that text ([`held_sources`]), which [`crate::trust::held`] reports rather than this: it is waiting for the user, not wrong.
+pub fn sources(layout: &Layout, known: &Library) -> (BTreeMap<String, Source>, Report) {
     let mut report = Report::default();
-    let mut merged = BTreeMap::new();
-    for level in chain_of(layout, known, &mut report) {
-        merge_sources(&mut merged, &level.sources);
-    }
+    let (mut merged, _) = merged_sources(layout, known, &mut report);
     merged.retain(|name, source| {
         let missing = match source {
             Source::Poll { cmd: None, .. } | Source::Listen { cmd: None, .. } => Some("cmd"),
@@ -428,10 +493,37 @@ pub fn sources(
     (merged, report)
 }
 
-/// The layouts to apply, root first. A cycle stops at the layout that closes it, reported once, so a file that extends itself is a message rather than a hang.
+/// The sources `layout` declares that [`sources`] holds back until the user trusts what they run: an expression reading one waits for that rather than reading a variable of its name.
+pub fn held_sources(layout: &Layout, known: &Library) -> BTreeMap<String, Source> {
+    merged_sources(layout, known, &mut Report::default()).1
+}
+
+/// `layout`'s sources merged down its chain, split into those that may run and those held for the user's trust.
+fn merged_sources(
+    layout: &Layout,
+    known: &Library,
+    report: &mut Report,
+) -> (BTreeMap<String, Source>, BTreeMap<String, Source>) {
+    let mut merged = BTreeMap::new();
+    let chain = chain_of(layout, known, report);
+    for level in &chain {
+        merge_sources(&mut merged, &level.sources);
+    }
+    let writers = crate::trust::source_items(&chain);
+    merged.into_iter().partition(|(name, _)| {
+        writers
+            .get(name)
+            .is_none_or(|item| known.trust.verdict(item).runs())
+    })
+}
+
+/// How many layouts an `extends` chain may hold, the layout itself included: far more than anybody layers by hand, and few enough that a bundle of hundreds of layouts each extending the next costs nothing to resolve, every time each of them is.
+pub const EXTENDS_DEPTH: usize = 16;
+
+/// The layouts to apply, root first. A cycle stops at the layout that closes it, and a chain longer than [`EXTENDS_DEPTH`] at the layout past it, each reported once at `extends`, so a file that extends itself is a message rather than a hang and a deep one a message rather than a cost.
 pub(crate) fn chain_of<'a>(
     layout: &'a Layout,
-    known: &'a BTreeMap<LayoutId, Layout>,
+    known: &'a Library,
     report: &mut Report,
 ) -> Vec<&'a Layout> {
     let mut chain = vec![layout];
@@ -439,6 +531,14 @@ pub(crate) fn chain_of<'a>(
     let mut parent = layout.extends.clone();
 
     while let Some(id) = parent {
+        if chain.len() == EXTENDS_DEPTH {
+            report.error(Finding::new(
+                layout_path(&layout.id),
+                "extends",
+                util::message!("finding.extends_too_deep", id = id, limit = EXTENDS_DEPTH),
+            ));
+            break;
+        }
         if seen.contains(&id) {
             report.error(Finding::new(
                 layout_path(&layout.id),
@@ -447,7 +547,7 @@ pub(crate) fn chain_of<'a>(
             ));
             break;
         }
-        let Some(found) = known.get(&id) else {
+        let Some(found) = known.layout(&id) else {
             report.error(Finding::new(
                 layout_path(&layout.id),
                 "extends",
@@ -464,7 +564,8 @@ pub(crate) fn chain_of<'a>(
     chain
 }
 
-fn layout_path(id: &LayoutId) -> String {
+/// Where a layout's file is, as a finding names it, by the id it answers to.
+pub fn layout_path(id: &LayoutId) -> String {
     format!("layouts/{id}.toml")
 }
 
@@ -725,6 +826,18 @@ fn answer_group(
         ));
         return None;
     };
+    if let Some(komponent) = &group.komponent {
+        return Some(answer_use(
+            group, kind, komponent, area, &at, answering, report,
+        ));
+    }
+    if !group.parameters.is_empty() {
+        report.error(Finding::new(
+            layout_path(&layout.id),
+            format!("{at}.parameters"),
+            util::message!("finding.parameters_without_komponent"),
+        ));
+    }
     let held = (area, &group.id);
     let children = group
         .children
@@ -749,7 +862,174 @@ fn answer_group(
             .as_ref()
             .filter(|_| !matches!(kind, GroupKind::Cell { .. }))
             .map(|repeat| answering.sourced(repeat, at(Unset::Repeat))),
+        komponent: None,
         children,
+    })
+}
+
+/// A group drawing the komponent `id`: the komponent's children under the use's ids, its `stacked` and `repeat`, and what each parameter reads here. What the merged group holds besides is reported and not drawn; a komponent the library does not hold is one placeholder child named by its file, so the area still draws and says what is missing.
+fn answer_use(
+    group: &Group,
+    kind: GroupKind,
+    id: &KomponentId,
+    area: &AreaId,
+    at: &str,
+    answering: Answering<'_>,
+    report: &mut Report,
+) -> ResolvedGroup {
+    let file = layout_path(&answering.layout.id);
+    if !group.children.is_empty() || group.repeat.is_some() || group.stacked.is_some() {
+        report.error(Finding::new(
+            file.clone(),
+            format!("{at}.komponent"),
+            util::message!("finding.komponent_holds_more", komponent = id),
+        ));
+    }
+    let mut used = KomponentUse {
+        id: id.clone(),
+        layer: answering.layer,
+        area: area.clone(),
+        group: group.id.clone(),
+        parameters: Vec::new(),
+    };
+    let on_cell = matches!(kind, GroupKind::Cell { .. });
+    let Some(komponent) = answering
+        .library
+        .komponent(id)
+        .map(|komponent| answering.library.trust.gate_komponent(id, komponent))
+    else {
+        report.error(Finding::new(
+            file,
+            format!("{at}.komponent"),
+            util::message!(
+                "finding.unknown_komponent",
+                komponent = id,
+                file = komponent_path(id)
+            ),
+        ));
+        let standing_in = ResolvedInstance {
+            id: InstanceId::in_komponent(area, &group.id, &InstanceId::new(id.as_str())),
+            module: komponent_path(id),
+            representation: match on_cell {
+                true => Representation::WidgetS,
+                false => Representation::Chip,
+            },
+            options: toml::Table::new(),
+            bindings: BTreeMap::new(),
+            actions: BTreeMap::new(),
+        };
+        return ResolvedGroup {
+            id: group.id.clone(),
+            kind,
+            stacked: false,
+            repeat: None,
+            komponent: Some(Arc::new(used)),
+            children: vec![standing_in],
+        };
+    };
+    for (name, declared) in &komponent.parameters {
+        let value = group.parameters.get(name).map(|expr| {
+            let slot = (
+                answering.layer,
+                area.clone(),
+                Some(group.id.clone()),
+                None,
+                Unset::parameter(name),
+            );
+            answering.sourced(expr, slot)
+        });
+        used.parameters.push(ResolvedParameter {
+            name: name.clone(),
+            ty: declared.ty.0.clone(),
+            default: declared.default.clone(),
+            value,
+        });
+    }
+    for name in group
+        .parameters
+        .keys()
+        .filter(|name| !komponent.parameters.contains_key(*name))
+    {
+        report.error(Finding::new(
+            file.clone(),
+            format!("{at}.parameters.{name}"),
+            util::message!(
+                "finding.unknown_parameter",
+                komponent = id,
+                name = name,
+                declared = declared_names(&komponent)
+            ),
+        ));
+    }
+    let used = Arc::new(used);
+    let drawn = |expr: &Expr| ResolvedExpr {
+        expr: expr.clone(),
+        origin: Origin::Komponent(id.clone()),
+        within: Some(Arc::clone(&used)),
+    };
+    let children = komponent
+        .children
+        .iter()
+        .filter_map(|child| answer_komponent_child(child, &used, &drawn, report))
+        .collect();
+    ResolvedGroup {
+        id: group.id.clone(),
+        kind,
+        stacked: komponent.stacked.unwrap_or(false),
+        repeat: komponent.repeat.as_ref().filter(|_| !on_cell).map(&drawn),
+        komponent: Some(Arc::clone(&used)),
+        children,
+    }
+}
+
+/// The parameters `komponent` declares, as a sentence lists them.
+pub(crate) fn declared_names(komponent: &Komponent) -> String {
+    match komponent.parameters.is_empty() {
+        true => "—".to_string(),
+        false => komponent
+            .parameters
+            .keys()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+/// One child of a komponent, as the use `used` draws it: under the use's id, its expressions read through `drawn`. What its file leaves out is reported in that file.
+fn answer_komponent_child(
+    child: &Instance,
+    used: &KomponentUse,
+    drawn: &dyn Fn(&Expr) -> ResolvedExpr,
+    report: &mut Report,
+) -> Option<ResolvedInstance> {
+    let file = komponent_path(&used.id);
+    if child.id.is_empty() {
+        report.error(Finding::new(
+            file,
+            "children",
+            util::message!("finding.instance_no_id"),
+        ));
+        return None;
+    }
+    let Some(module) = child.module.clone() else {
+        report.error(Finding::new(
+            file,
+            format!("children.{}.module", child.id),
+            util::message!("finding.instance_no_module"),
+        ));
+        return None;
+    };
+    Some(ResolvedInstance {
+        id: InstanceId::in_komponent(&used.area, &used.group, &child.id),
+        module,
+        representation: child.representation.unwrap_or(Representation::Chip),
+        options: child.options.clone(),
+        bindings: child
+            .bindings
+            .iter()
+            .map(|(path, expr)| (path.clone(), drawn(expr)))
+            .collect(),
+        actions: child.actions.clone(),
     })
 }
 
@@ -813,8 +1093,11 @@ fn rules_for<'a>(layout: &'a Layout, screen: &str) -> Vec<&'a OutputRule> {
     rules
 }
 
-/// Whether what `level` writes is laid over what `writer` wrote on a screen called `screen`, whichever workspace is up (TA-2). `level` is a level of `layout`, `writer` one of `layout` or of a layout it extends: every level of a layout it extends is under every level of its own, and within one layout the output rules come first, broadest first, then their workspace rules in the same order.
-pub fn lays_over(layout: &Layout, screen: &str, level: &Origin, writer: &Origin) -> bool {
+/// Whether what `level` writes is laid over what `writer` wrote on a screen called `screen`, whichever workspace is up (TA-2). `level` is a level of `layout`, `writer` one of `layout` or of a layout it extends: every level of a layout it extends is under every level of its own, and within one layout the output rules come first, broadest first, then their workspace rules in the same order. Nothing is laid over what a komponent's own file writes.
+pub fn lays_over(layout: &Layout, screen: &str, level: &Level, writer: &Origin) -> bool {
+    let Origin::Level(writer) = writer else {
+        return false;
+    };
     if level.layout != layout.id {
         return false;
     }
@@ -831,7 +1114,7 @@ pub fn lays_over(layout: &Layout, screen: &str, level: &Origin, writer: &Origin)
                 .map(|workspace| (&rule.matches, Some(&workspace.matches)))
         }))
         .collect();
-    let at = |origin: &Origin| {
+    let at = |origin: &Level| {
         order.iter().position(|(output, workspace)| {
             **output == origin.output && *workspace == origin.workspace.as_ref()
         })

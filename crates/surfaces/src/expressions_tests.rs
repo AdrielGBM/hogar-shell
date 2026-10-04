@@ -186,11 +186,12 @@ mod tests {
     fn written(text: &str) -> ResolvedExpr {
         ResolvedExpr {
             expr: Expr(text.to_string()),
-            origin: layout::Origin {
+            origin: layout::Origin::Level(layout::Level {
                 layout: layout::LayoutId::new("written"),
                 output: layout::OutputMatch::default(),
                 workspace: None,
-            },
+            }),
+            within: None,
         }
     }
 
@@ -229,6 +230,7 @@ mod tests {
                 kind: GroupKind::Zone { zone: Zone::Start },
                 stacked: false,
                 repeat: None,
+                komponent: None,
                 children,
             }],
             actions: BTreeMap::new(),
@@ -469,6 +471,84 @@ mod tests {
         );
     }
 
+    /// T-8.6 on screen: what a komponent holds reads each use's own parameters — one the use sets, one left to a default that is itself a live reading — and two uses of one komponent are two instances, each with what it keeps under its own id.
+    #[test]
+    fn each_use_of_a_komponent_reads_its_own_parameters_and_keeps_its_own_state() {
+        let red = Color::from_hex("#ff0000").expect("a colour");
+        let stored: layout::Layout = toml::from_str(
+            r#"
+            id = "mine"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "readings"
+            kind = "free"
+            rect = { x = 0.0, y = 0.0, w = 1.0, h = 1.0 }
+            [[outputs.layers.top.areas.groups]]
+            id = "a"
+            place = "zone"
+            zone = "start"
+            komponent = "pill"
+            [outputs.layers.top.areas.groups.parameters]
+            label = "'%A'"
+            [[outputs.layers.top.areas.groups]]
+            id = "b"
+            place = "zone"
+            zone = "start"
+            komponent = "pill"
+            "#,
+        )
+        .expect("the layout parses");
+        let pill: layout::Komponent = toml::from_str(
+            r#"
+            [parameters.label]
+            type = "text"
+            default = "'%d'"
+            [parameters.lit]
+            type = "bool"
+            default = "$probe.on"
+            [[children]]
+            id = "c"
+            module = "counter"
+            [children.bindings]
+            date_format = "$label"
+            accent = "if($lit, #ff0000, #00ff00)"
+            "#,
+        )
+        .expect("the komponent parses");
+        let library = layout::Library::default().with_komponent("pill", pill);
+        let (resolved, report) = layout::resolve(&stored, &library, SCREEN, None);
+        assert!(report.is_clean(), "{}", report.render());
+        let area = resolved
+            .area(LayerKind::Top, &AreaId::new("readings"))
+            .expect("the area resolves")
+            .clone();
+        let (a, b) = ("readings.a/c", "readings.b/c");
+        KEPT.set(&ui::host::InstanceId::new(a), 1);
+        KEPT.set(&ui::host::InstanceId::new(b), 2);
+        let _rig = Rig::new(area);
+        let formats = |id: &str| {
+            builds(id)
+                .last()
+                .map(|seen| (seen.date_format.clone(), seen.kept))
+        };
+        assert_eq!(
+            formats(a),
+            Some(("%A".to_string(), 1)),
+            "the use's own value"
+        );
+        assert_eq!(formats(b), Some(("%d".to_string(), 2)), "the default");
+
+        publish(true, 0.0);
+        for id in [a, b] {
+            assert_eq!(
+                builds(id).last().map(|seen| seen.accent),
+                Some(red),
+                "{id} follows the reading its parameter's default reads"
+            );
+        }
+    }
+
     /// F-2.16 keeps a hidden window's tree, so what stops a hidden window's bindings is the window being off screen, not the tree going away.
     #[test]
     fn a_hidden_window_s_bindings_stop_reading_and_start_again_when_it_is_shown() {
@@ -504,6 +584,7 @@ mod tests {
                 kind: GroupKind::Zone { zone: Zone::Start },
                 stacked,
                 repeat: Some(written(repeat)),
+                komponent: None,
                 children: vec![child],
             },
         );
@@ -663,6 +744,36 @@ mod tests {
         publish_lists(&["a", "b"], &[]);
         assert!(drawn("p#1"), "the page on show stays on show");
         assert!(!drawn("p#0"));
+    }
+
+    /// A list longer than [`crate::expressions::MAX_COPIES`] draws its first items only, and says so where the `repeat` is written for as long as it is that long; a source answering with a huge list cannot stall the shell.
+    #[test]
+    fn a_list_longer_than_the_cap_draws_its_first_items_and_is_reported() {
+        let max = crate::expressions::MAX_COPIES;
+        let truncated = || {
+            automation::failures::report()
+                .findings()
+                .map(|finding| finding.message.english())
+                .filter(|said| said.contains(&format!("only the first {max} are drawn")))
+                .count()
+        };
+        let mut area = repeating("$probe.names", false, labelled("counter"));
+        // The failures registry is process-wide: a group id of its own keeps the other repeat tests from recovering this site.
+        area.groups[0].id = GroupId::new("capped");
+        let _rig = Rig::new(area);
+        let names: Vec<&'static str> = (0..max + 5).map(|at| &*format!("n{at}").leak()).collect();
+        publish_lists(&names, &[]);
+        assert!(drawn(&format!("p#{}", max - 1)));
+        assert!(!drawn(&format!("p#{max}")), "nothing past the cap");
+        assert_eq!(truncated(), 1);
+
+        publish_lists(&["a", "b"], &[]);
+        assert!(drawn("p#1") && !drawn("p#2"));
+        assert_eq!(
+            truncated(),
+            0,
+            "a list within the cap is no longer reported"
+        );
     }
 
     /// On the lock screen a private list reads as empty, so a group repeated over it draws nothing, while one over a public list draws its copies there.
@@ -842,10 +953,7 @@ mod tests {
             })
             .map(|finding| (finding.file.display().to_string(), finding.key))
             .collect();
-        let known = BTreeMap::from([
-            (parent.id.clone(), parent.clone()),
-            (child.id.clone(), child.clone()),
-        ]);
+        let known = layout::Library::of_layouts([parent.clone(), child.clone()]);
         let on = |workspace: &str| {
             let active = layout::ActiveWorkspace {
                 name: workspace.to_string(),

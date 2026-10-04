@@ -31,6 +31,31 @@ pub struct ShellState {
     pub layout: Option<String>,
     /// Typed values the user's layouts, rules and scripts set and read by name (`$name` in an expression), kept across restarts.
     pub vars: BTreeMap<String, Var>,
+    /// The bundles `layout import` brought in, by the name their manifest gives: which files each wrote, and what the user decided about what those files run (DEC-30).
+    pub bundles: BTreeMap<String, BundleRecord>,
+}
+
+/// One imported bundle, as the shell remembers it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BundleRecord {
+    /// What made the bundle the bundle it is when it was first imported — a hash of its name and the names of the layouts and komponents it writes (`layout::bundle::Bundle::identity`) — so a later bundle that takes its name but writes other files is refused rather than taken for a reimport.
+    pub identity: String,
+    /// Each file the import wrote, as a finding names it (`layouts/<name>.toml`, `components/<name>.toml`), with a hash of what it wrote there: a file still holding exactly that is one a reimport may replace.
+    pub files: BTreeMap<String, String>,
+    /// Every answer the user gave, each bound to the exact text it was given for.
+    pub decisions: Vec<TrustDecision>,
+}
+
+/// The user's answer for one thing a bundle's file runs: a source's command or address, or an action line, where it is written and exactly as it was written when they answered.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TrustDecision {
+    pub file: String,
+    pub key: String,
+    pub text: String,
+    #[serde(default)]
+    pub lock_safe: bool,
+    pub accepted: bool,
 }
 
 /// One stored variable: its type and its value together, so a value can never be read back as a type it was not set as.
@@ -123,6 +148,11 @@ pub fn get() -> ShellState {
     STATE.get()
 }
 
+/// What the state file holds: what the next start reads back, whatever this process holds in memory.
+pub fn on_disk() -> ShellState {
+    load_from(&path())
+}
+
 /// Applies `change`, fans the result out to every subscriber, and persists it. The single write path, so no caller has to remember to save; the write is queued before the next change can start, so the file ends with the last change made.
 pub fn update(change: impl FnOnce(&mut ShellState)) {
     STATE.update_then(change, persist);
@@ -167,6 +197,41 @@ mod tests {
         assert!(load_from(&file).dnd, "a valid file is read back");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// DEC-30: what a bundle wrote and each answer about what it runs, bound to the text answered for, come back from the file as they went in.
+    #[test]
+    fn a_bundles_files_and_answers_survive_the_file() {
+        let mut state = ShellState::default();
+        state.bundles.insert(
+            "nord".to_string(),
+            BundleRecord {
+                identity: "0f0f".to_string(),
+                files: BTreeMap::from([(
+                    "layouts/nord.toml".to_string(),
+                    "00ff00ff00ff00ff".to_string(),
+                )]),
+                decisions: vec![TrustDecision {
+                    file: "layouts/nord.toml".to_string(),
+                    key: "sources.weather.cmd".to_string(),
+                    text: "curl -s 'wttr.in?format=3'".to_string(),
+                    lock_safe: true,
+                    accepted: true,
+                }],
+            },
+        );
+        let written = serde_json::to_string(&state).expect("writes");
+        assert_eq!(
+            serde_json::from_str::<ShellState>(&written).expect("reads back"),
+            state
+        );
+        assert_eq!(
+            serde_json::from_str::<ShellState>(r#"{"dnd": true}"#)
+                .expect("an older file")
+                .bundles,
+            BTreeMap::new(),
+            "a file from before bundles reads as none imported"
+        );
     }
 
     #[test]

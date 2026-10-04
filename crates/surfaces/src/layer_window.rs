@@ -1446,6 +1446,7 @@ mod tests {
                 kind: GroupKind::Zone { zone: Zone::Start },
                 stacked: false,
                 repeat: None,
+                komponent: None,
                 children: modules.iter().map(instance).collect(),
             }],
         }
@@ -1837,11 +1838,12 @@ mod tests {
         let mut conditional = bar("bar-top", &["clock"]);
         conditional.visible = Some(layout::ResolvedExpr {
             expr: Expr("$media.playing".into()),
-            origin: layout::Origin {
+            origin: layout::Origin::Level(layout::Level {
                 layout: layout::LayoutId::new("conditional"),
                 output: layout::OutputMatch::default(),
                 workspace: None,
-            },
+            }),
+            within: None,
         });
         assert!(area_draws(&conditional));
         assert!(window_draws(&drawn(vec![conditional])));
@@ -2120,6 +2122,82 @@ mod tests {
         );
     }
 
+    /// F-10.42 for komponents: a komponent file that changes changes the arrangement of the areas whose groups draw it and of no other, so a reload builds those again and keeps every other node.
+    #[test]
+    fn a_changed_komponent_rebuilds_only_the_areas_that_draw_it() {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        let stored: layout::Layout = toml::from_str(
+            r#"
+            id = "mine"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            place = "zone"
+            zone = "start"
+            komponent = "pill"
+            [[outputs.layers.top.areas]]
+            id = "bar-second"
+            kind = "bar"
+            edge = "bottom"
+            thickness = 32
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            place = "zone"
+            zone = "start"
+            [[outputs.layers.top.areas.groups.children]]
+            id = "notes"
+            module = "notes"
+            "#,
+        )
+        .expect("the layout parses");
+        let pill = |format: &str| -> layout::Komponent {
+            toml::from_str(&format!(
+                "[[children]]\nid = \"clock\"\nmodule = \"clock\"\noptions = {{ format = \"{format}\" }}\n"
+            ))
+            .expect("the komponent parses")
+        };
+        let drawn_with = |format: &str| {
+            let library = layout::Library::default().with_komponent("pill", pill(format));
+            let (resolved, report) = layout::resolve(&stored, &library, SCREEN, None);
+            assert!(report.is_clean(), "{}", report.render());
+            WindowAreas::of(&resolved, LayerKind::Top)
+        };
+        let built = Rc::new(RefCell::new(Vec::new()));
+        let app = LayerApp {
+            kind: LayerKind::Top,
+            output: Some(SCREEN.to_string()),
+            layer: LiveLayer::new(drawn_with("%H")),
+            config: LiveConfig::new(config()),
+            demands: Rc::new(Demands::new(Layer::Top)),
+            screen: Rc::new(Cell::new(screen())),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
+            areas: Rc::new(Naming(Rc::clone(&built))),
+        };
+        let _root = app.root();
+        let taken = || std::mem::take(&mut *built.borrow_mut());
+        assert_eq!(taken(), ["bar-top", "bar-second"]);
+
+        app.layer.set(drawn_with("%H:%M"));
+        app.generation.look_again();
+        assert_eq!(taken(), ["bar-top"], "only the bar whose group draws it");
+
+        app.layer.set(drawn_with("%H:%M"));
+        app.generation.look_again();
+        assert!(
+            taken().is_empty(),
+            "the same komponent again builds nothing"
+        );
+    }
+
     fn picture(dir: &std::path::Path, name: &str, pixel: [u8; 4]) -> String {
         std::fs::create_dir_all(dir).expect("a scratch directory");
         let path = dir.join(name);
@@ -2264,7 +2342,7 @@ mod tests {
     {
         telar::reset_layout_runtime();
         set_theme(Config::default().resolve_theme());
-        let known = BTreeMap::new();
+        let known = layout::Library::default();
         let stored = layout::built_in();
         let (resolved, _) = layout::resolve(&stored, &known, SCREEN, None);
         crate::reconcile::publish(&[crate::reconcile::Desktop {
@@ -2831,6 +2909,7 @@ mod tests {
             kind: GroupKind::Zone { zone: Zone::End },
             stacked: false,
             repeat: None,
+            komponent: None,
             children: end.iter().map(instance).collect(),
         });
         area
@@ -3060,6 +3139,7 @@ mod grid_tests {
             },
             stacked: false,
             repeat: None,
+            komponent: None,
             children: vec![ResolvedInstance {
                 id: InstanceId::new(id),
                 module: id.to_string(),

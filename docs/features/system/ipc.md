@@ -21,7 +21,7 @@ the running shell over a Unix socket and the reply is printed.
 That is why a keybind is just a shell command, and why anything the UI does is scriptable.
 
 ```sh
-hogar-shell ping
+hogar-shell shell ping
 hogar-shell --list        # every target, command and argument
 ```
 
@@ -56,6 +56,10 @@ its write half, and read to end-of-file:
 ```sh
 printf 'shell status\n' | socat - UNIX-CONNECT:$sock
 ```
+
+A connection that sends nothing for 10 seconds, or does not take the reply it is sent, is closed — including one kept open after a reply that took longer, such as `layout import` — so no client can hold the socket or one of its threads.
+
+The client prints every reply with control characters, terminal escapes, bidirectional controls and invisible characters written out as `\u{…}`, keeping only line breaks, tabs and padding: a reply can quote ids and commands from an imported bundle, and none of them can repaint the terminal.
 
 ## Four commands are answered locally
 
