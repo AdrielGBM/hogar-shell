@@ -480,7 +480,7 @@ fn set_rect(kind: &mut AreaKind, to: layout::Rect) {
     if let AreaKind::Grid { rect, .. }
     | AreaKind::WallpaperRegion { rect, .. }
     | AreaKind::Texture { rect, .. }
-    | AreaKind::Free { rect }
+    | AreaKind::Free { rect, .. }
     | AreaKind::Prompt { rect } = kind
     {
         *rect = Some(to);
@@ -492,7 +492,7 @@ fn rect_of(kind: &ResolvedAreaKind) -> Option<layout::Rect> {
         ResolvedAreaKind::Grid { rect, .. }
         | ResolvedAreaKind::WallpaperRegion { rect, .. }
         | ResolvedAreaKind::Texture { rect, .. }
-        | ResolvedAreaKind::Free { rect }
+        | ResolvedAreaKind::Free { rect, .. }
         | ResolvedAreaKind::Prompt { rect } => Some(*rect),
         _ => None,
     }

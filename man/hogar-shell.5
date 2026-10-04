@@ -1543,7 +1543,7 @@ How big one cell is, in logical pixels. A widget covers whole cells, so this is 
 The space between two cells.
 .TP
 .B anchor
-Where the cells sit inside `rect` when they do not fill it. A grid of one widget is the common case, and without this it could only ever sit in the corner its origin is at.
+Where the grid's cells sit inside `rect`. A grid has every cell that fits in `rect`, whatever is placed on them, so a widget stays where it was put; what `rect` has left over once whole cells are taken is under a cell's width, and this says which side it is left on.
 .SS AreaKind::Stack
 A column that notification, toast and OSD cards are routed into.
 .TP
@@ -1611,6 +1611,9 @@ A rectangle placed by hand.
 .TP
 .B rect
 A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+.TP
+.B anchor
+Where what it holds sits inside `rect`: a corner, the middle of an edge, or the centre.
 .SS AreaKind::Prompt
 The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden. Its card is drawn from the area's own `style`: `fill`, `radius` and `opacity`, the fill held to a contrast the field's text can be read on and the opacity to 0.9 or above.
 .TP

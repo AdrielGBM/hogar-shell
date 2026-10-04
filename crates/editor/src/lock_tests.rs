@@ -462,6 +462,7 @@ mod tests {
                     id: AreaId::new("over"),
                     kind: Some(AreaKind::Free {
                         rect: Some(Rect::default()),
+                        anchor: None,
                     }),
                     ..Area::default()
                 }),
@@ -486,6 +487,7 @@ mod tests {
                 id: AreaId::new("over"),
                 kind: Some(AreaKind::Free {
                     rect: Some(Rect::default()),
+                    anchor: None,
                 }),
                 ..Area::default()
             });

@@ -107,7 +107,7 @@ drag to 45°), and a handle per stop, at most eight. See [Wallpaper](../surfaces
 
 ### Desktop
 
-Grids of widgets placed by explicit cells. `a` opens
+Grids of widgets placed by explicit cells, which are where the grid's rectangle puts them whatever is on it. `a` opens
 the **palette** of every module that draws as a widget and the komponents you have saved. A widget
 dropped where another is never deletes it: the one in the way moves to the free cells nearest, and nothing else moves.
 Drop a widget on the middle of another to stack the two into a **Smart Stack**, and drag it out to make it a widget again;

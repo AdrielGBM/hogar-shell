@@ -155,7 +155,7 @@ A grid of cells that widgets are placed into by explicit coordinates.
 | `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
 | `cell` | How big one cell is, in logical pixels. A widget covers whole cells, so this is what decides how big every widget on this grid is. |
 | `gap` | The space between two cells. |
-| `anchor` | Where the cells sit inside `rect` when they do not fill it. A grid of one widget is the common case, and without this it could only ever sit in the corner its origin is at. |
+| `anchor` | Where the grid's cells sit inside `rect`. A grid has every cell that fits in `rect`, whatever is placed on them, so a widget stays where it was put; what `rect` has left over once whole cells are taken is under a cell's width, and this says which side it is left on. |
 
 ## `AreaKind::Stack`
 
@@ -210,6 +210,7 @@ A rectangle placed by hand.
 | Key | What it is |
 | --- | --- |
 | `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
+| `anchor` | Where what it holds sits inside `rect`: a corner, the middle of an edge, or the centre. |
 
 ## `AreaKind::Prompt`
 

@@ -577,7 +577,10 @@ fn blank(kind: &str) -> Option<AreaKind> {
             edge: None,
             thickness: None,
         },
-        "free" => AreaKind::Free { rect: None },
+        "free" => AreaKind::Free {
+            rect: None,
+            anchor: None,
+        },
         "prompt" => AreaKind::Prompt { rect: None },
         _ => return None,
     })

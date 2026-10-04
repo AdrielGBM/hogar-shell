@@ -163,7 +163,7 @@ fn drawn(area: &ResolvedArea, surround: Surround) -> Option<Built> {
         ResolvedAreaKind::Dock { edge, thickness } => Some(dock(area, *edge, *thickness, surround)),
         ResolvedAreaKind::WallpaperRegion { .. } => Some(wallpaper_region(area, surround)),
         ResolvedAreaKind::Texture { .. } => Some(texture(area, surround)),
-        ResolvedAreaKind::Free { rect } => Some(free(area, *rect, surround)),
+        ResolvedAreaKind::Free { rect, anchor } => Some(free(area, *rect, *anchor, surround)),
         ResolvedAreaKind::Stack { .. } => STACK
             .with(|stack| stack.get())
             .map(|build| build(area, surround)),
@@ -212,10 +212,11 @@ pub fn is_filled(style: &AreaStyle, theme: &NordTheme) -> bool {
     style.paint(theme).is_some_and(|fill| fill.a > 0.0)
 }
 
-/// A free area: its groups down the box `rect` names, each instance at the size its representation asks for.
+/// A free area: its groups down the box `rect` names, each instance at the size its representation asks for, the column they make sitting where `anchor` says.
 ///
 /// It is the kind with no arrangement of its own — no cells, no zones, no edge — so it is what a layout says when the answer to "where" is simply a rectangle.
-pub fn free(area: &ResolvedArea, rect: Rect, surround: Surround) -> Built {
+pub fn free(area: &ResolvedArea, rect: Rect, anchor: Anchor, surround: Surround) -> Built {
+    let (vertical, horizontal) = anchored(anchor);
     let groups = area
         .groups
         .iter()
@@ -249,7 +250,10 @@ pub fn free(area: &ResolvedArea, rect: Rect, surround: Surround) -> Built {
             dressed(
                 &area.style,
                 &surround.theme,
-                region(rect, surround).flex_column(),
+                region(rect, surround)
+                    .flex_column()
+                    .justify_content(justify(vertical))
+                    .align_items(align_items(horizontal)),
                 groups,
             )?,
             area,
@@ -259,9 +263,9 @@ pub fn free(area: &ResolvedArea, rect: Rect, surround: Surround) -> Built {
     )))
 }
 
-/// A grid: every group on the cells it was placed at, `cell` px each and `gap` apart, the block they make anchored inside `rect` and held off its edges by the area's padding.
+/// A grid: every group on the cells it was placed at, `cell` px each and `gap` apart, on the lattice of every cell that fits `rect` inside the area's padding.
 ///
-/// The block is sized to its cells rather than to `rect`, which is what `anchor` is for: a grid of one widget covers a corner of the region it is given, and without an anchor that corner could only ever be the one the origin is at.
+/// The lattice is sized to `rect`, never to what is on it, so a cell is in the same place whatever else the grid holds ([`lattice`]). `anchor` says where it sits in what `rect` has left over once whole cells are taken.
 pub fn grid(
     area: &ResolvedArea,
     rect: Rect,
@@ -280,8 +284,9 @@ pub fn grid(
                 .map(|built| Box::new(telar::animate_layout(built, slide)) as Box<dyn LayoutItem>)
         })
         .collect::<Result<Vec<_>, LayoutError>>()?;
-    let block = Container::new(tracks(covered(area), cell, gap), placed)?
-        .styled_by(move || live.with(|now| tracks(covered(now), cell, gap)));
+    let room = room_in(area, within(rect, surround.bounds), cell, gap);
+    let block = Container::new(tracks(room.holding(covered(area)), cell, gap), placed)?
+        .styled_by(move || live.with(|now| tracks(room.holding(covered(now)), cell, gap)));
     let (vertical, horizontal) = anchored(anchor);
     Ok(Box::new(empty_space(
         area,
@@ -389,7 +394,32 @@ pub fn moves_only(was: &ResolvedArea, now: &ResolvedArea) -> bool {
     placed_as_before == *was
 }
 
-/// Where the block of cells a grid draws sits when the area itself is placed at `region`: inside its padding, as big as the cells its groups cover and aligned by its anchor — what a pointer over the grid is read against to find the cell under it. `None` for an area that is no grid.
+/// How many cells a grid `area` placed at `region` has room for: every whole cell that fits inside its padding, never less than one each way.
+fn room_in(area: &ResolvedArea, region: telar::Rect, cell: f32, gap: f32) -> Footprint {
+    let pad = 2.0 * area.style.padding.unwrap_or(0.0);
+    let fitting = |length: f32| (((length - pad + gap) / (cell + gap).max(1.0)).floor() as u16).max(1);
+    Footprint {
+        columns: fitting(region.width),
+        rows: fitting(region.height),
+    }
+}
+
+/// The lattice a grid `area` placed at `region` draws: the cells it has room for, and past them only as far as a group written beyond them reaches. `None` for an area that is no grid.
+pub fn lattice(area: &ResolvedArea, region: telar::Rect) -> Option<Footprint> {
+    let ResolvedAreaKind::Grid { cell, gap, .. } = area.kind else {
+        return None;
+    };
+    Some(room_in(area, region, cell, gap).holding(covered(area)))
+}
+
+pub fn room(area: &ResolvedArea, region: telar::Rect) -> Option<Footprint> {
+    let ResolvedAreaKind::Grid { cell, gap, .. } = area.kind else {
+        return None;
+    };
+    Some(room_in(area, region, cell, gap))
+}
+
+/// Where the lattice of a grid sits when the area itself is placed at `region`: inside its padding, as big as [`lattice`] makes it and aligned by its anchor — what a pointer over the grid is read against to find the cell under it. `None` for an area that is no grid.
 pub fn grid_block(area: &ResolvedArea, region: telar::Rect) -> Option<telar::Rect> {
     let ResolvedAreaKind::Grid {
         cell, gap, anchor, ..
@@ -402,7 +432,7 @@ pub fn grid_block(area: &ResolvedArea, region: telar::Rect) -> Option<telar::Rec
         (region.width - 2.0 * pad).max(0.0),
         (region.height - 2.0 * pad).max(0.0),
     );
-    let extent = covered(area).extent(cell, gap);
+    let extent = lattice(area, region)?.extent(cell, gap);
     let (vertical, horizontal) = anchored(anchor);
     let offset = |align: Align, room: f32| match align {
         Align::Start => 0.0,
@@ -2486,6 +2516,7 @@ mod tests {
             },
             ResolvedAreaKind::Free {
                 rect: Rect::default(),
+                anchor: Anchor::TopLeft,
             },
             ResolvedAreaKind::Dock {
                 edge: Edge::Top,
@@ -2559,6 +2590,7 @@ mod tests {
         let placed = smart_stack_in(
             ResolvedAreaKind::Free {
                 rect: Rect::default(),
+                anchor: Anchor::TopLeft,
             },
             START,
         );

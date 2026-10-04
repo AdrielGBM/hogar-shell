@@ -164,6 +164,7 @@ pub fn reference() -> Layout {
                         w: 0.25,
                         h: 0.2,
                     }),
+                    anchor: None,
                 },
             )
         },
@@ -408,8 +409,8 @@ mod tests {
             resolved
                 .layer(LayerKind::Desktop)
                 .map(|layer| layer.areas.len()),
-            Some(5),
-            "the built-in desktop's grid, and one area of every kind the built-in layout does not already show"
+            Some(6),
+            "the built-in desktop's grid and clock, and one area of every kind the built-in layout does not already show"
         );
     }
 

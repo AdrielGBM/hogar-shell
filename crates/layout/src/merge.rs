@@ -379,8 +379,15 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
             replace_if_set(edge, over_edge);
             replace_if_set(thickness, over_thickness);
         }
-        (AreaKind::Free { rect }, AreaKind::Free { rect: over_rect }) => {
+        (
+            AreaKind::Free { rect, anchor },
+            AreaKind::Free {
+                rect: over_rect,
+                anchor: over_anchor,
+            },
+        ) => {
             replace_if_set(rect, over_rect);
+            replace_if_set(anchor, over_anchor);
         }
         (AreaKind::Prompt { rect }, AreaKind::Prompt { rect: over_rect }) => {
             replace_if_set(rect, over_rect);

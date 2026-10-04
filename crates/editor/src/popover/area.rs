@@ -143,13 +143,23 @@ fn dock(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     })
 }
 
-/// A free area: a rectangle placed by hand, and nothing else of its own.
+/// A free area: a rectangle placed by hand, and where what it holds sits inside it.
 fn free(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
-    let ResolvedAreaKind::Free { rect } = draft.resolved.kind else {
+    let ResolvedAreaKind::Free { rect, anchor } = draft.resolved.kind else {
         return Ok(Inspector::default());
     };
+    let mut rows = picked(
+        draft,
+        "anchor",
+        label!("editor.area.anchor"),
+        help("AreaKind::Free", "anchor"),
+        variants("Anchor"),
+        anchor,
+        |area, anchor: layout::Anchor| kind_field!(area, "free", Free { anchor }, anchor),
+    )?;
+    rows.extend(rect_rows(draft, rect)?);
     Ok(Inspector {
-        rows: rect_rows(draft, rect)?,
+        rows,
         handles: Vec::new(),
     })
 }
@@ -163,7 +173,7 @@ pub(crate) fn rect_rows(draft: &AreaDraft, seed: Rect) -> Rows {
                 AreaKind::Grid { rect, .. }
                 | AreaKind::WallpaperRegion { rect, .. }
                 | AreaKind::Texture { rect, .. }
-                | AreaKind::Free { rect }
+                | AreaKind::Free { rect, .. }
                 | AreaKind::Prompt { rect },
             ) => rect,
             _ => return,

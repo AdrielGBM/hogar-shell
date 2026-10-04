@@ -210,6 +210,13 @@ impl Footprint {
             height: span(self.rows),
         }
     }
+
+    pub fn holding(self, other: Footprint) -> Footprint {
+        Footprint {
+            columns: self.columns.max(other.columns),
+            rows: self.rows.max(other.rows),
+        }
+    }
 }
 
 impl WidgetSize {

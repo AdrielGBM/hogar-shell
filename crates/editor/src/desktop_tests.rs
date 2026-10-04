@@ -30,7 +30,7 @@ mod tests {
     use crate::modes::grid::{self, Cells, Room};
     use crate::modes::palette::{self, Line, Pick};
     use crate::modes::widgets;
-    use crate::rig::{Rig, SCREEN, rig_on, rig_with};
+    use crate::rig::{Rig, SCREEN};
     use crate::session::{self, Selection};
     use crate::{context, host, popover, variant};
 
@@ -159,6 +159,31 @@ mod tests {
 
     fn stored(rig: &Rig) -> Layout {
         rig.store.borrow().active().clone()
+    }
+
+    /// The built-in layout with its clock on the first cells of the grid, which is what these tests move, stack and resize.
+    fn clock_on_grid(layout: &mut Layout) {
+        let areas = &mut layout.outputs[0].layers.desktop.areas;
+        let centre = areas.pop().expect("the clock's own area");
+        let mut clock = centre.groups.into_iter().next().expect("its group");
+        clock.kind = Some(GroupKind::Cell {
+            col: 0,
+            row: 0,
+            col_span: 1,
+            row_span: 1,
+        });
+        areas[0].groups.push(clock);
+    }
+
+    fn rig_with(test: &str, edit: impl FnOnce(&mut Layout)) -> Rig {
+        rig_on(test, None, edit)
+    }
+
+    fn rig_on(test: &str, workspace: Option<&str>, edit: impl FnOnce(&mut Layout)) -> Rig {
+        crate::rig::rig_on(test, workspace, |layout| {
+            clock_on_grid(layout);
+            edit(layout);
+        })
     }
 
     fn widgets_area() -> AreaId {
@@ -325,23 +350,29 @@ mod tests {
         }
     }
 
-    /// The built-in layout's desktop shows its clock where the old default `[widgets.clock]` put it: in the middle of the screen, at the medium size.
+    /// A grid's cells are where its rectangle puts them, whatever is on it: the built-in grid, empty, has every cell the screen fits inside its padding, centred in what is left over, and a widget added to it moves none of them.
     #[test]
-    fn the_built_in_desktop_shows_the_clock_in_the_middle_of_the_screen() {
-        let _rig = rig_with("desktop-clock", |_| {});
+    fn a_grids_cells_hold_still_whatever_is_on_it() {
+        let _rig = crate::rig::rig_with("desktop-lattice", |_| {});
         let _owner = Owner::new();
-        let desktop = surfaces::reconcile::desktops()[0].clone();
-        let grid = grid_now();
-        let geometry = widgets::Geometry::of(&desktop, &grid).expect("a grid");
-        let clock = cells_of("clock-2").expect("the desktop clock is on it");
-        assert_eq!((clock.cols, clock.rows), (4, 2), "a medium widget");
-        let face = geometry.rect_of(clock);
-        let middle = (face.x + face.width / 2.0, face.y + face.height / 2.0);
-        assert_eq!(
-            middle,
-            (desktop.size.0 / 2.0, desktop.size.1 / 2.0),
-            "centred on the screen, as the old default drew it"
-        );
+        let _host = enter(LayerKind::Desktop);
+        let geometry = || {
+            let desktop = surfaces::reconcile::desktops()[0].clone();
+            widgets::Geometry::of(&desktop, &grid_now()).expect("a grid")
+        };
+        let empty = geometry();
+        assert!(grid_now().groups.is_empty(), "nothing on it yet");
+        assert_eq!(empty.room, Room { cols: 19, rows: 10 });
+        assert_eq!(empty.origin, (56.0, 68.0), "centred in what the cells leave");
+
+        desktop::put(
+            &Pick::Module("weather".to_string()),
+            Some((widgets_area(), (7, 4))),
+            LayerKind::Desktop,
+        )
+        .expect("a widget is added");
+        assert_eq!(cells_of("weather").map(|at| (at.col, at.row)), Some((7, 4)));
+        assert_eq!(geometry(), empty, "the cells are where they were");
     }
 
     /// The acceptance: a widget put on cells another covers takes them, and the one it displaced moves to the free cells nearest — it is never taken off the screen. One undo takes the whole drop back.

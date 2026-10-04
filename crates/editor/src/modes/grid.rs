@@ -65,17 +65,6 @@ pub struct Room {
     pub rows: u32,
 }
 
-impl Room {
-    /// The room of a rectangle `width` by `height` px holding cells of `cell` px `gap` apart: never less than one cell.
-    pub fn of(width: f32, height: f32, cell: f32, gap: f32) -> Self {
-        let fitting =
-            |length: f32| (((length + gap) / (cell + gap).max(1.0)).floor() as u32).max(1);
-        Self {
-            cols: fitting(width),
-            rows: fitting(height),
-        }
-    }
-}
 
 /// Every group of `area` placed at an explicit cell, with the cells it covers: its written span, widened to hold what is in it.
 pub fn placed(area: &ResolvedArea) -> Vec<(GroupId, Cells)> {

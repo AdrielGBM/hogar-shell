@@ -917,7 +917,14 @@ mod tests {
                 },
                 zone,
             ),
-            with("free", AreaKind::Free { rect: None }, zone),
+            with(
+                "free",
+                AreaKind::Free {
+                    rect: None,
+                    anchor: None,
+                },
+                zone,
+            ),
             readings("control"),
         ]
     }

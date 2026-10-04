@@ -513,7 +513,7 @@ pub enum AreaKind {
         /// The space between two cells.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         gap: Option<f32>,
-        /// Where the cells sit inside `rect` when they do not fill it. A grid of one widget is the common case, and without this it could only ever sit in the corner its origin is at.
+        /// Where the grid's cells sit inside `rect`. A grid has every cell that fits in `rect`, whatever is placed on them, so a widget stays where it was put; what `rect` has left over once whole cells are taken is under a cell's width, and this says which side it is left on.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<Anchor>,
     },
@@ -579,6 +579,9 @@ pub enum AreaKind {
     Free {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<Rect>,
+        /// Where what it holds sits inside `rect`: a corner, the middle of an edge, or the centre.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<Anchor>,
     },
     /// The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden. Its card is drawn from the area's own `style`: `fill`, `radius` and `opacity`, the fill held to a contrast the field's text can be read on and the opacity to 0.9 or above.
     Prompt {

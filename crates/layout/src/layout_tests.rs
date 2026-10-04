@@ -1498,6 +1498,7 @@ mod tests {
             },
             AreaKind::Free {
                 rect: Some(Rect::default()),
+                anchor: None,
             },
             AreaKind::Prompt {
                 rect: Some(Rect::default()),
@@ -3092,6 +3093,7 @@ mod tests {
                 area: Box::new(Area {
                     kind: Some(AreaKind::Free {
                         rect: Some(Rect::default()),
+                        anchor: None,
                     }),
                     ..bare_area("note")
                 }),
@@ -3224,6 +3226,7 @@ mod tests {
                 area: Box::new(Area {
                     kind: Some(AreaKind::Free {
                         rect: Some(Rect::default()),
+                        anchor: None,
                     }),
                     ..bare_area("only-here")
                 }),
@@ -3443,6 +3446,7 @@ mod tests {
                 id: prompt.clone(),
                 kind: Box::new(Some(AreaKind::Free {
                     rect: Some(Rect::default()),
+                    anchor: None,
                 })),
             },
             ops::PromptEdit::ChangeKind,
@@ -3777,14 +3781,14 @@ mod tests {
         assert_eq!(area_ids(&resolved, LayerKind::Overlay), ["stack"]);
     }
 
-    /// The built-in layout's desktop shows the clock face where the old default `[widgets.clock]` put it: centred on the whole output, held 48 px off its edges, at the medium size, one instance of the clock module like the bar's chip is another.
+    /// The built-in layout's desktop has an empty grid of every cell the output fits, held 48 px off its edges, and the clock face where the old default `[widgets.clock]` put it: centred on the whole output at the medium size, in a free area of its own, one instance of the clock module like the bar's chip is another.
     #[test]
     fn the_built_in_desktop_shows_the_clock_where_the_old_default_put_it() {
         let resolved = alone(&built_in(), "DP-1");
         let desktop = resolved.layer(LayerKind::Desktop).expect("a desktop layer");
-        let [widgets] = desktop.areas.as_slice() else {
+        let [widgets, centre] = desktop.areas.as_slice() else {
             panic!(
-                "one area on the desktop: {:?}",
+                "a grid and the clock's area on the desktop: {:?}",
                 area_ids(&resolved, LayerKind::Desktop)
             );
         };
@@ -3799,10 +3803,23 @@ mod tests {
         );
         assert_eq!(widgets.within, Within::Output);
         assert_eq!(widgets.style.padding, Some(48.0));
-        let [clock] = widgets.groups.as_slice() else {
+        assert!(widgets.groups.is_empty(), "nothing on the grid yet");
+        assert_eq!(
+            centre.kind,
+            ResolvedAreaKind::Free {
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+                anchor: Anchor::Center,
+            }
+        );
+        assert_eq!(centre.within, Within::Output);
+        let [clock] = centre.groups.as_slice() else {
             panic!("one group");
         };
-        assert!(matches!(clock.kind, GroupKind::Cell { col: 0, row: 0, .. }));
         let [face] = clock.children.as_slice() else {
             panic!("one instance");
         };

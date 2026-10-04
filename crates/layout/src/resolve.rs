@@ -234,6 +234,7 @@ pub enum ResolvedAreaKind {
     },
     Free {
         rect: Rect,
+        anchor: Anchor,
     },
     Prompt {
         rect: Rect,
@@ -787,9 +788,12 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
                 thickness: thickness.expect("checked"),
             })
         }
-        AreaKind::Free { rect } => need(rect.is_some(), "rect").then(|| ResolvedAreaKind::Free {
-            rect: rect.expect("checked"),
-        }),
+        AreaKind::Free { rect, anchor } => {
+            need(rect.is_some(), "rect").then(|| ResolvedAreaKind::Free {
+                rect: rect.expect("checked"),
+                anchor: anchor.unwrap_or(Anchor::TopLeft),
+            })
+        }
         AreaKind::Prompt { rect } => Some(ResolvedAreaKind::Prompt {
             rect: rect.unwrap_or(Rect {
                 x: 0.3,

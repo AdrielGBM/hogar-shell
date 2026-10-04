@@ -282,17 +282,16 @@ pub(crate) fn placed_as(resolved: &ResolvedInstance) -> Instance {
     }
 }
 
-/// How many cells the grid `area` has room for inside its rectangle on `desktop`'s screen, its padding taken off.
+/// How many cells the grid `area` has room for inside its rectangle on `desktop`'s screen, its padding taken off: the lattice it draws ([`surfaces::area::room`]).
 pub(crate) fn room_of(desktop: &Desktop, area: &ResolvedArea) -> Room {
-    let ResolvedAreaKind::Grid {
-        rect, cell, gap, ..
-    } = area.kind
-    else {
+    let ResolvedAreaKind::Grid { rect, .. } = area.kind else {
         return Room { cols: 1, rows: 1 };
     };
     let region = region_of(desktop, area.within, rect);
-    let pad = 2.0 * area.style.padding.unwrap_or(0.0);
-    Room::of(region.width - pad, region.height - pad, cell, gap)
+    surfaces::area::room(area, region).map_or(Room { cols: 1, rows: 1 }, |room| Room {
+        cols: u32::from(room.columns),
+        rows: u32::from(room.rows),
+    })
 }
 
 /// Where a rectangle measured in `within` lands on `desktop`'s screen, in pixels.

@@ -219,6 +219,7 @@ mod tests {
                     w: 1.0,
                     h: 1.0,
                 },
+                anchor: layout::Anchor::TopLeft,
             },
             reserve: false,
             above_fullscreen: false,

@@ -1734,12 +1734,12 @@ mod tests {
         assert!(refused.contains("expected bool"), "{refused}");
         let refused = set(&Args::of("bar-top.end repeat 1")).expect_err("a number is no list");
         assert!(refused.contains("expected a list"), "{refused}");
-        let cell = written_area(&store.borrow(), "widgets")
+        let cell = written_area(&store.borrow(), "lock-readings")
             .groups
             .into_iter()
             .find(|group| matches!(group.kind, Some(layout::GroupKind::Cell { .. })))
             .expect("the grid has cells");
-        let refused = set(&Args::of(&format!("widgets.{} repeat {{1, 2}}", cell.id)))
+        let refused = set(&Args::of(&format!("lock-readings.{} repeat {{1, 2}}", cell.id)))
             .expect_err("a cell's footprint is fixed");
         assert!(refused.contains("grid cell"), "{refused}");
         assert!(set(&Args::of("nowhere visible true")).is_err());

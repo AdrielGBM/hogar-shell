@@ -834,6 +834,7 @@ fn every_area() -> Vec<layout::ResolvedArea> {
                 w: 0.25,
                 h: 0.25,
             },
+            anchor: layout::Anchor::TopLeft,
         },
         vec![stacked(
             GroupKind::Zone { zone: Zone::Start },

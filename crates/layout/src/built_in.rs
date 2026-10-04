@@ -26,7 +26,7 @@ pub fn layout() -> Layout {
                     remove: Vec::new(),
                 },
                 desktop: Layer {
-                    areas: vec![desktop_clock()],
+                    areas: vec![widgets(), desktop_clock()],
                     remove: Vec::new(),
                 },
                 top: Layer {
@@ -63,8 +63,8 @@ fn wallpaper() -> Area {
     }
 }
 
-/// The clock face on the desktop, where the old `[widgets.clock]` put it by default: centred on the output, held 48 px off its edges, at the medium size. An ordinary instance on an ordinary grid, so moving it, resizing it or taking it away is an edit like any other.
-fn desktop_clock() -> Area {
+/// The desktop's grid: every cell that fits the output held 48 px off its edges, with nothing on it yet. Where a widget added in the editor lands.
+fn widgets() -> Area {
     Area {
         id: AreaId::new("widgets"),
         kind: Some(AreaKind::Grid {
@@ -77,7 +77,34 @@ fn desktop_clock() -> Area {
             padding: Some(48.0),
             ..AreaStyle::default()
         },
-        groups: vec![cell("clock", 0, 0, &[("clock-2", "clock")])],
+        ..Area::default()
+    }
+}
+
+/// The clock face on the desktop, where the old `[widgets.clock]` put it by default: centred on the output at the medium size. A free area rather than a cell of the grid, because the middle of the output is not a cell on every monitor.
+fn desktop_clock() -> Area {
+    Area {
+        id: AreaId::new("centre"),
+        kind: Some(AreaKind::Free {
+            rect: Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+            }),
+            anchor: Some(Anchor::Center),
+        }),
+        groups: vec![Group {
+            id: GroupId::new("clock"),
+            kind: Some(GroupKind::Zone { zone: Zone::Center }),
+            children: vec![Instance {
+                id: InstanceId::new("clock-2"),
+                module: Some("clock".to_string()),
+                representation: Some(Representation::WidgetM),
+                ..Instance::default()
+            }],
+            ..Group::default()
+        }],
         ..Area::default()
     }
 }

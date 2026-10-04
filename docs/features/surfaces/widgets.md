@@ -19,10 +19,14 @@ screen only while the layer resolves something to show.
 
 ## Where they sit
 
-**The layout says, not a config key.** A clock face is a widget instance in a `grid` area: the area's `anchor`
-picks which of the nine places it is pinned to and its `padding` how far it is held off them. A row of bars is
-an instance in a `dock` area: the area's `edge` is the edge they stand on and its `thickness` how far the
-tallest reaches.
+**The layout says, not a config key.** A widget is an instance on a cell of a `grid` area. A grid has every
+cell that fits its rectangle inside its `padding`, whatever is on them, so a widget stays where it was put: adding,
+moving or removing another never shifts it. What the rectangle has left over once whole cells are taken is under
+a cell's width, and the area's `anchor` says which side it is left on. A row of bars is an instance in a `dock`
+area: the area's `edge` is the edge they stand on and its `thickness` how far the tallest reaches.
+
+What has to sit somewhere that is no cell — the middle of the screen on every monitor — goes in a `free` area:
+a rectangle, with an `anchor` saying where in it what it holds sits.
 
 An area written `within = "usable"` is measured against **the space the bars left**, not the whole screen — so
 `anchor = "center"` is the centre of the application area. On a screen with bars down one side only, that is
@@ -31,7 +35,8 @@ deliberately not the centre of the glass.
 `hogar-shell layout show <name>` prints the areas a layout has (`layout list` marks the one being drawn); `hogar-shell layout check` says what is
 wrong with one.
 
-The built-in layout places one: a medium clock face in the middle of the screen, 48 px off its edges.
+The built-in layout has an empty grid over the whole screen, 48 px off its edges, and a medium clock face in
+the middle of the screen in a free area of its own.
 
 ## Arranging them
 
