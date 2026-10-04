@@ -680,15 +680,23 @@ fn placed(entry: &Rc<Entry>, frame: &Frame, builds: RwSignal<u64>) -> Built {
             .on_press(move || close(&id)),
         ));
     }
-    let content = content(entry, builds)?;
+    let content = content(entry, builds, fill_of(&spec.place))?;
     children.push(position(&spec.place, content, frame.screen)?);
     Ok(Box::new(passthrough(whole(), children)?))
 }
 
-fn content(entry: &Rc<Entry>, builds: RwSignal<u64>) -> Built {
+/// A whole-screen transient is given the screen to lay out in, so what it sizes as a share of its parent is a share of the screen; every other place sizes to what it holds.
+fn fill_of(place: &Place) -> LayoutStyle {
+    match place {
+        Place::Whole => whole(),
+        _ => LayoutStyle::new(),
+    }
+}
+
+fn content(entry: &Rc<Entry>, builds: RwSignal<u64>, style: LayoutStyle) -> Built {
     let built = Rc::clone(entry);
     let list = ReactiveList::with_style(
-        LayoutStyle::new(),
+        style,
         move || vec![builds.get()],
         |build: &u64| *build,
         move |_| {
