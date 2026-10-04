@@ -13,9 +13,10 @@ see_also: [first-run, configuration, dependencies]
 
 ## What you need to build
 
-A Rust toolchain, `fontconfig`, and a checkout of [`telar`](https://github.com/AdrielGBM/telar) **next to**
+A Rust toolchain, `fontconfig`, `libxkbcommon`, and a checkout of [`telar`](https://github.com/AdrielGBM/telar) **next to**
 this one. hogar-shell depends on telar by path — the two are developed together, and a fix that is agnostic to
-this shell belongs upstream.
+this shell belongs upstream. The `.rsx` files are transpiled by `cargo-telar`, which has to be built from that
+same checkout (the Nix dev shell provides it).
 
 ```
 somewhere/
@@ -24,8 +25,12 @@ somewhere/
 ```
 
 ```sh
+cargo install --path ../telar/crates/tools/cargo-telar   # once, unless the dev shell has it
+cargo telar transpile
 cargo build --release     # target/release/hogar-shell
 ```
+
+[Developing](../guides/developing.md) explains why, and what breaks when the transpiler and the library drift apart.
 
 ## What you need to run
 

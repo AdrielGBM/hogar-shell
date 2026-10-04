@@ -36,10 +36,14 @@ pass over the result.
 ```sh
 git clone https://github.com/AdrielGBM/hogar-shell
 cd hogar-shell
+cargo telar transpile        # cargo-telar, built from the telar checkout (below)
 cargo build --release        # target/release/hogar-shell
 ```
 
-One clone is enough. Building needs Rust 1.95 or newer and `libxkbcommon` — the only library the binary links
+For now the build needs a clone of [`telar`](https://github.com/AdrielGBM/telar) next to this one
+(`git clone https://github.com/AdrielGBM/telar ../telar`), because the workspace builds against it by path until
+telar is released; `cargo install --path ../telar/crates/tools/cargo-telar` provides the transpiler.
+Building needs Rust 1.95 or newer and `libxkbcommon` — the only library the binary links
 besides glibc, so its development files have to be present. Everything under [Dependencies](#dependencies) is
 reached at runtime and missing gracefully; `hogar-shell deps` reports which of them this machine actually has.
 
@@ -163,16 +167,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 hogar-shell and [`telar`](https://github.com/AdrielGBM/telar) are developed together, and a fix that is agnostic
-to this shell belongs upstream rather than worked around here. The dependency is a published version so that a
-clone builds on its own; point cargo at a local checkout while you work on both, and take it back out before
-committing:
-
-```toml
-# Cargo.toml — never commit this block: it makes the build need a second checkout
-[patch.crates-io]
-telar = { path = "../telar/crates/telar" }
-telar-platform-headless = { path = "../telar/crates/platform/platform-headless" }
-```
+to this shell belongs upstream rather than worked around here. Until telar is released, the workspace
+`Cargo.toml` carries a committed `[patch.crates-io]` that points at `../telar`, so a clone needs that checkout
+beside it, and CI and the Nix package cannot build. The `.rsx` files are transpiled by a `cargo-telar` that must
+match that checkout. [`docs/guides/developing.md`](docs/guides/developing.md) covers the patch, the transpile step,
+the testing gotchas and the window benchmark.
 
 The manual is generated from the command table and the config schema, and `cargo test` fails if the checked-in
 copies no longer match this build:
@@ -195,9 +194,11 @@ cargo fmt --check -- $(find apps crates -name '*.rs' -not -path '*/target/*' -no
 crate root as well. To format an exact set — one new module, without dragging a reformat of unrelated files
 into the same commit — call `rustfmt --edition 2024 <files>` directly.
 
-**The build writes into the source tree.** `rsx_modules!` transpiles into `.telar/build/` at macro-expansion
-time, so the source directory has to be writable — a build pointed at a read-only path fails with `Failed to
-create .telar/build/`. The directory is gitignored and regenerated from the `.rsx` files.
+**The build reads, and writes, a gitignored `.telar/` in each package.** `cargo telar transpile` turns the `.rsx`
+files into Rust there, and `rsx_modules!` wires that output into the crate at macro-expansion time, writing its
+module tree beside it — so the source directory has to be writable, and a build pointed at a read-only path
+fails with `Failed to create .telar/build/`. An `.rsx` edit needs `cargo telar transpile` again; see
+[`docs/guides/developing.md`](docs/guides/developing.md).
 
 Anything with a look is a `[preview]`, so it renders on every run rather than when an environment variable asks
 — by hand as a window or a PNG, and in CI as a measurement:

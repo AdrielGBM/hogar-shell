@@ -38,6 +38,9 @@ an IPC target from `apps/hogar-shell/src/core/commands/` — and a test fails if
 - [Scripting](guides/scripting.md) — driving the shell from a script over its socket.
 - [Per-monitor setup](guides/per-monitor.md) — different bars on different screens.
 - [Troubleshooting](guides/troubleshooting.md) — a chip is missing, a panel is empty, a command is refused.
+- [Compositor rules](guides/compositor-rules.md) — what a namespace, a layer rule or an animation rule reaches.
+- [Compositor constraints](guides/compositor-constraints.md) — what Hyprland does with a layer-shell window, measured.
+- [Developing](guides/developing.md) — building against a local telar, transpiling, testing, the window benchmark.
 
 ## Reference
 
