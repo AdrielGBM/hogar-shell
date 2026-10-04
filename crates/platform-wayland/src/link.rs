@@ -129,6 +129,14 @@ impl SurfaceLink {
         self.rebuilding.store(true, Ordering::Relaxed);
     }
 
+    pub(crate) fn wants_rebuild(&self) -> bool {
+        self.rebuilding.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn has_update(&self) -> bool {
+        self.pending.lock().is_ok_and(|pending| !pending.is_empty())
+    }
+
     pub(crate) fn take_rebuild(&self) -> bool {
         self.rebuilding.swap(false, Ordering::Relaxed)
     }

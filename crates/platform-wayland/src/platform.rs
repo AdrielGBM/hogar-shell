@@ -596,6 +596,15 @@ impl SurfaceEntry {
         }
     }
 
+    /// Whether its link holds something the next pass would act on. A rebuild asked of a hidden surface is not one: it waits for the surface to be shown.
+    fn has_request(&self) -> bool {
+        let Some(link) = &self.link else {
+            return false;
+        };
+        let driven = self.configured && self.mapping.wanted();
+        link.is_closing() || link.has_update() || (driven && self.mounted && link.wants_rebuild())
+    }
+
     /// Pushes whatever the surface asked for since the last turn to the compositor; mapping is applied last, since both of its transitions commit on the spot and carry whatever the fields before it queued.
     fn apply_update(&mut self, change: SurfaceUpdate, compositor: &CompositorState) {
         let mut moved = false;
@@ -693,10 +702,13 @@ impl SurfaceEntry {
     /// **A `wl_surface` has one set of pending state and nothing guarding it.** The renderer commits from its own thread to present, so a commit from here can land between the buffer it attached and the commit it was about to make — taking its explicit-sync acquire point with no buffer of our own behind it, which the compositor answers with `wp_linux_drm_syncobj_surface_v1` error 3 and the death of the whole connection. Asking for a frame instead lets the one thread that owns the surface's buffer carry both, which costs a frame's delay on an input region or a renegotiated size and nothing else.
     ///
     /// A surface with no renderer — a reservation strip, or one that has not had its first frame — has no such thread, and commits here.
-    fn commit_pending(&self) {
-        match &self.window {
-            Some(window) => window.request_redraw(),
-            None => self.shell.commit(),
+    fn commit_pending(&mut self) {
+        match (&self.window, self.handler.as_mut()) {
+            (Some(window), Some(handler)) => {
+                handler.owe_presentation();
+                window.request_redraw();
+            }
+            _ => self.shell.commit(),
         }
     }
 
@@ -1279,7 +1291,13 @@ where
         }
 
         LIVE_SURFACES.store(driver.surfaces.len(), Ordering::Relaxed);
-        next_timeout = min_timeout;
+        // A surface visited early in the pass can be asked for something by one visited after it — an edit mode closing in the overlay window lowers the desktop window it raised — and nothing else wakes the loop for it.
+        let asked = DYN_QUEUE.with(|q| !q.0.borrow().is_empty())
+            || driver.surfaces.iter().any(SurfaceEntry::has_request);
+        next_timeout = match asked {
+            true => Some(Duration::ZERO),
+            false => min_timeout,
+        };
     }
 
     for entry in driver.surfaces.drain(..) {
