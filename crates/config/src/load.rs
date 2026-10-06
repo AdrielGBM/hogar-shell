@@ -31,6 +31,47 @@ pub(crate) fn keep_subtables_with_their_parent(doc: &mut DocumentMut) {
     walk(doc.as_table_mut(), &mut next);
 }
 
+/// Brings `existing` to `wanted` key by key, so a save changes only what it has to.
+///
+/// Rendering the section from scratch and swapping the table in wrote every key the struct serializes and dropped every comment inside the table; editing in place keeps the decor of each key that survives, which is where a user's comments live. A changed value takes the old value's decor with it, so a trailing comment outlives the edit.
+pub(crate) fn update_table(existing: &mut toml_edit::Table, wanted: &toml_edit::Table) {
+    let stale: Vec<String> = existing
+        .iter()
+        .map(|(key, _)| key)
+        .filter(|key| !wanted.contains_key(key))
+        .map(str::to_string)
+        .collect();
+    for key in stale {
+        existing.remove(&key);
+    }
+    for (key, item) in wanted.iter() {
+        match (existing.get_mut(key), item) {
+            (Some(Item::Table(old)), Item::Table(new)) => update_table(old, new),
+            (Some(Item::Value(old)), Item::Value(new)) => {
+                if !same_value(old, new) {
+                    let mut replacement = new.clone();
+                    *replacement.decor_mut() = old.decor().clone();
+                    *old = replacement;
+                }
+            }
+            (Some(Item::ArrayOfTables(old)), Item::ArrayOfTables(new))
+                if old.to_string() == new.to_string() => {}
+            _ => {
+                existing.insert(key, item.clone());
+            }
+        }
+    }
+}
+
+fn same_value(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
+    let bare = |value: &toml_edit::Value| {
+        let mut value = value.clone();
+        value.decor_mut().clear();
+        value.to_string()
+    };
+    bare(a) == bare(b)
+}
+
 /// Sections one process owns, and which a per-monitor file therefore cannot change.
 ///
 /// Each of these is read once for the whole shell rather than once per surface: the UI locale and the helper applications (`general`), the icon store (`icons`), the notification daemon (`notifications`), the launcher — a single overlay, not a per-output surface — the user's directories (`paths`), and every section whose job is to start a background producer. A per-monitor value here would apply on whichever screen happened to be reconciled last and do nothing on the rest, which is worse than not being allowed at all.

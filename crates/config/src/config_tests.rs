@@ -168,6 +168,86 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    fn save_theme_over(initial: &str, theme: &ThemeConfig) -> String {
+        let dir = std::env::temp_dir().join(format!(
+            "hogar-shell-save-keys-{}-{}",
+            std::process::id(),
+            initial.len()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, initial).unwrap();
+        Config::save_section(&path, "theme", theme).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        Config::load(&path).expect("the saved file loads");
+        std::fs::remove_dir_all(&dir).ok();
+        text
+    }
+
+    #[test]
+    fn saving_a_section_keeps_the_comments_inside_it() {
+        let text = save_theme_over(
+            "[theme]\n# the palette\nname = \"nord\"\naccent = \"cyan\" # my accent\nmode = \"dark\"\n",
+            &ThemeConfig {
+                name: "nord".to_string(),
+                accent: "orange".to_string(),
+                mode: "light".to_string(),
+                ..ThemeConfig::default()
+            },
+        );
+        assert!(text.contains("# the palette\nname"), "{text}");
+        assert!(text.contains("accent = \"orange\" # my accent"), "{text}");
+        assert!(text.contains("mode = \"light\""), "{text}");
+    }
+
+    #[test]
+    fn saving_a_section_does_not_write_keys_that_stay_unset() {
+        let text = save_theme_over(
+            "[theme]\nname = \"nord\"\n",
+            &ThemeConfig {
+                name: "nord".to_string(),
+                ..ThemeConfig::default()
+            },
+        );
+        assert!(!text.contains("radius"), "{text}");
+        assert!(!text.contains("font_family"), "{text}");
+    }
+
+    #[test]
+    fn saving_a_section_removes_a_key_the_value_no_longer_writes() {
+        let text = save_theme_over(
+            "[theme]\nname = \"nord\"\nradius = 6\n",
+            &ThemeConfig {
+                name: "nord".to_string(),
+                radius: None,
+                ..ThemeConfig::default()
+            },
+        );
+        assert!(!text.contains("radius"), "{text}");
+        assert!(text.contains("name = \"nord\""), "{text}");
+    }
+
+    #[test]
+    fn saving_a_section_keeps_the_comments_in_its_sub_tables() {
+        let text = save_theme_over(
+            "[theme]\nname = \"nord\"\n\n# type scale\n[theme.scale]\n# bigger text\nfont = 1.5 # large\n",
+            &ThemeConfig {
+                name: "gruvbox".to_string(),
+                scale: ScaleConfig {
+                    font: 1.5,
+                    spacing: 1.25,
+                    ..ScaleConfig::default()
+                },
+                ..ThemeConfig::default()
+            },
+        );
+        assert!(text.contains("# type scale\n[theme.scale]"), "{text}");
+        assert!(text.contains("# bigger text\nfont = 1.5 # large"), "{text}");
+        assert!(text.contains("spacing = 1.25"), "{text}");
+        assert!(text.contains("name = \"gruvbox\""), "{text}");
+    }
+
     #[test]
     fn edge_orientation() {
         assert!(Edge::Top.is_horizontal() && Edge::Bottom.is_horizontal());

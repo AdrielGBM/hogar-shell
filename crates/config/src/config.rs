@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, Item};
 
 use crate::load::{
     GLOBAL_ONLY_SECTIONS, LoadError, SaveError, keep_subtables_with_their_parent, merge_into,
-    monitor_config_path,
+    monitor_config_path, update_table,
 };
 use crate::scheme;
 use crate::sections::*;
@@ -394,7 +394,7 @@ impl Config {
         paths::config_dir().join("config.toml")
     }
 
-    /// Persists a single `[name]` section back to `config.toml`, replacing just that table while preserving every other section, key order, and comment in the file (format-preserving via `toml_edit`). `value` is a section struct such as [`ThemeConfig`]. Creates the file and its parent directory if missing. The running shell's config watcher then hot-reloads the change, so a save applies live.
+    /// Persists a single `[name]` section back to `config.toml`, updating that table key by key (changed keys are rewritten, keys the value no longer writes are removed, new ones are added) while preserving every other section, key order, and comment in the file, including those inside the table (format-preserving via `toml_edit`). `value` is a section struct such as [`ThemeConfig`]. Creates the file and its parent directory if missing. The running shell's config watcher then hot-reloads the change, so a save applies live.
     ///
     /// The file itself is replaced by [`util::writer`], which stages a whole copy and renames it into place: the user's hand-written config is the one file in the shell that cannot be regenerated, and a truncating write that died half way through would take their comments and every section this function promises to preserve with it. The wait for the writer is what keeps the `Result` meaningful — a caller that reports a failed save has to be told about one, and the settings panel's forms do.
     ///
@@ -412,12 +412,12 @@ impl Config {
             .map_err(SaveError::Parse)?;
         let rendered = toml::to_string(value).map_err(SaveError::Serialize)?;
         let section = rendered.parse::<DocumentMut>().map_err(SaveError::Parse)?;
-        let mut table = section.as_table().clone();
-        // Carry over the existing header's decor (its leading comment) so replacing the table keeps the section's surrounding comments, not just its values.
-        if let Some(existing) = doc.get(name).and_then(Item::as_table) {
-            *table.decor_mut() = existing.decor().clone();
+        match doc.get_mut(name) {
+            Some(Item::Table(existing)) => update_table(existing, section.as_table()),
+            _ => {
+                doc.insert(name, Item::Table(section.as_table().clone()));
+            }
         }
-        doc.insert(name, Item::Table(table));
         keep_subtables_with_their_parent(&mut doc);
         let written = doc.to_string();
         writer::write(path, written.clone().into_bytes()).map_err(SaveError::Io)?;
