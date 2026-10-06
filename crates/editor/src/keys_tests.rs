@@ -937,7 +937,6 @@ mod tests {
                     "bar-join",
                     "chip-zone",
                     "chip-bar",
-
                     "bar-shape",
                     "bar-reserve",
                     "bar-autohide",

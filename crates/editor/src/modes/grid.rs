@@ -65,7 +65,6 @@ pub struct Room {
     pub rows: u32,
 }
 
-
 /// Every group of `area` placed at an explicit cell, with the cells it covers: its written span, widened to hold what is in it.
 pub fn placed(area: &ResolvedArea) -> Vec<(GroupId, Cells)> {
     area.groups
