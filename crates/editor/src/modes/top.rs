@@ -20,9 +20,9 @@ use telar::RwSignal;
 
 use config::Edge;
 use layout::{
-    Action, Area, AreaId, AreaKind, AutoHide, Corners, Extent, Group, GroupId, GroupKind,
-    InstanceId, LayerKind, Layout, LayoutOp, Library, OutputMatch, OutputRule, ResolvedArea,
-    ResolvedAreaKind, ResolvedGroup, Site, Spot, Trigger, Zone,
+    Action, Area, AreaId, AreaKind, AutoHide, Extent, Group, GroupId, GroupKind, InstanceId,
+    LayerKind, Layout, LayoutOp, Library, OutputMatch, OutputRule, ResolvedArea, ResolvedAreaKind,
+    ResolvedGroup, Site, Spot, Trigger, Zone,
 };
 use surfaces::bar::Span;
 use surfaces::reconcile::{self, Desktop};
@@ -34,6 +34,7 @@ use crate::keys::{self, Chord, Direction, KeyOp, Run};
 use crate::mode::said;
 use crate::popover::area::{chosen, chosen_as, edges, variants};
 use crate::popover::handles::{self, SHORTEST};
+use crate::popover::look::{self, BarStyle};
 use crate::popover::rows::{self, Range, label};
 use crate::popover::{AreaDraft, Inspector, help, kind_field};
 use crate::session::{self, EditError, Selection};
@@ -1512,29 +1513,8 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         )?,
     )?);
 
-    let seed = shape.radius.unwrap_or(Corners::all(resolved_shape.radius));
-    let corners = corners(draft, seed, {
-        let reading = shape_now.clone();
-        move |area| match bar_now(area).and_then(|bar| bar.shape.radius) {
-            Some(radius) => radius,
-            None => Corners::all(reading(area).radius),
-        }
-    });
-    let most = handles::most_radius(draft);
-    let all = handles::uniform_radius(draft, corners);
-    let mut radius = vec![rows::number(
-        label!("editor.look.radius"),
-        help("BarShape", "radius"),
-        all,
-        Range::whole(0.0, most),
-    )?];
-    for (corner, label) in corners
-        .into_iter()
-        .zip(crate::popover::look::corner_labels())
-    {
-        radius.push(rows::number(label, None, corner, Range::whole(0.0, most))?);
-    }
-    list.push(draft.marked(&["shape.radius"], rows::together(radius)?)?);
+    let rounded = look::rounded(&BarStyle(draft.clone()))?;
+    list.push(rounded.row);
 
     let peek = draft.setting(
         "peek",
@@ -1586,61 +1566,9 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
                 length,
                 offset,
                 gap,
-                corners,
+                corners: rounded.corners,
             },
         )?,
-    })
-}
-
-/// The four corner radii the bar's rows and handles share, top left first and clockwise, each written back as the bar's own corners and read again from the bar as drawn by `read` once Reset takes them back.
-fn corners(
-    draft: &AreaDraft,
-    seed: Corners,
-    read: impl Fn(&ResolvedArea) -> Corners + Clone + 'static,
-) -> [telar::RwSignal<f32>; 4] {
-    let kind = draft.kind();
-    let seeds = [
-        seed.top_left(),
-        seed.top_right(),
-        seed.bottom_right(),
-        seed.bottom_left(),
-    ];
-    let names = [
-        "radius.top_left",
-        "radius.top_right",
-        "radius.bottom_right",
-        "radius.bottom_left",
-    ];
-    std::array::from_fn(|corner| {
-        let read = read.clone();
-        draft.setting(
-            names[corner],
-            "shape.radius",
-            move |area| {
-                let now = read(area);
-                [
-                    now.top_left(),
-                    now.top_right(),
-                    now.bottom_right(),
-                    now.bottom_left(),
-                ][corner]
-            },
-            move |area, value: &f32| {
-                set_shape(area, kind, |shape| {
-                    let now = shape
-                        .radius
-                        .unwrap_or(Corners::each(seeds[0], seeds[1], seeds[2], seeds[3]));
-                    let mut each = [
-                        now.top_left(),
-                        now.top_right(),
-                        now.bottom_right(),
-                        now.bottom_left(),
-                    ];
-                    each[corner] = *value;
-                    shape.radius = Some(Corners::each(each[0], each[1], each[2], each[3]));
-                })
-            },
-        )
     })
 }
 

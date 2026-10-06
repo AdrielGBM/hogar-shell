@@ -199,7 +199,7 @@ type Plan = fn(&Node, &Layout, [f32; 4]) -> Result<Vec<LayoutOp>, EditError>;
 
 /// What `read` finds of `node` as the screen draws it at this moment, without following it.
 fn read_now(read: Read, node: &Node) -> Option<[f32; 4]> {
-    reconcile::desktop_now(node.output.as_deref()).and_then(|desktop| read(&desktop, node))
+    reconcile::with_desktop_now(node.output.as_deref(), |desktop| read(desktop, node)).flatten()
 }
 
 /// The four values of `node` a tool's handles drag, kept to what the screen draws between gestures, and what the handles tell the edit each gesture previews into: called `label` in the history, planned by `plan` against the layout as it was when a drag began, or as the held arrow's edit has left it. A gesture that leaves the four as they were drawn writes nothing.
@@ -216,8 +216,9 @@ fn live(
     {
         let (node, edit) = (node.clone(), edit.clone());
         effect(move || {
-            let Some(drawn) = reconcile::desktop(node.output.as_deref())
-                .and_then(|desktop| read(&desktop, &node))
+            let Some(drawn) =
+                reconcile::with_desktop(node.output.as_deref(), |desktop| read(desktop, &node))
+                    .flatten()
             else {
                 return;
             };

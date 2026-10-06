@@ -14,7 +14,7 @@ mod tests {
     use surfaces::transient;
 
     use crate::popover;
-    use crate::rig::{Rig, SCREEN, rig_with};
+    use crate::rig::{Rig, SCREEN, bar, rig_with};
     use crate::session;
 
     /// An owner for what a test builds, disposed when it ends.
@@ -206,10 +206,6 @@ mod tests {
 
     fn widgets() -> Node {
         Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("widgets"))
-    }
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
     }
 
     fn clock() -> Node {

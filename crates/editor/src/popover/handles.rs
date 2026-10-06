@@ -5,9 +5,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use telar::{
-    Children, Color, Cursor, LayoutError, LayoutItem, Rect, RwSignal, Transaction, batch, effect,
-};
+use telar::{Children, Color, Cursor, LayoutError, LayoutItem, Rect, RwSignal, Transaction, batch};
 
 use config::Edge;
 use surfaces::rects::{self, Node};
@@ -173,44 +171,6 @@ pub fn most_padding_in(rect: Rect) -> f32 {
 /// The largest radius the area's corners take: half its short side, where two arcs meet.
 pub fn most_radius(draft: &AreaDraft) -> f32 {
     most_radius_in(draft.rect().unwrap_or_default())
-}
-
-/// All four corners at once: the largest of them, and a change to it rounds all four to it.
-pub fn uniform_radius(draft: &AreaDraft, corners: [RwSignal<f32>; 4]) -> RwSignal<f32> {
-    let largest = move || {
-        corners
-            .iter()
-            .map(|corner| corner.get())
-            .fold(0.0, f32::max)
-    };
-    let largest_now = move || {
-        corners
-            .iter()
-            .map(|corner| corner.peek())
-            .fold(0.0, f32::max)
-    };
-    let seed = largest_now();
-    let all = draft.value("radius", || seed, |_, _| {});
-    effect(move || {
-        let wanted = all.get();
-        if wanted == largest_now() {
-            return;
-        }
-        batch(|| {
-            for corner in corners {
-                if corner.peek() != wanted {
-                    corner.set(wanted);
-                }
-            }
-        });
-    });
-    effect(move || {
-        let most = largest();
-        if all.peek() != most {
-            all.set(most);
-        }
-    });
-    all
 }
 
 /// The four values a box's corner or side handles drag, clockwise from the top left corner or the top side, and the most any of them may be.

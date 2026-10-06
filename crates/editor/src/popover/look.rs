@@ -2,15 +2,20 @@
 
 use std::rc::Rc;
 
-use telar::{LayoutItem, Rect, RwSignal, batch, effect};
+use telar::{LayoutError, LayoutItem, Rect, RwSignal, batch, effect};
 
-use layout::{Border, Corners, Sides, Style};
+use layout::{
+    Area, AreaKind, Border, Corners, GroupId, InstanceId, LayoutOp, ResolvedArea, ResolvedAreaKind,
+    Sides, Style,
+};
 use surfaces::reconcile::Desktop;
 use surfaces::rects::Node;
 use ui::descriptor::Built;
 
+use crate::written::Written;
+
 use super::area::help;
-use super::draft::{AreaDraft, GroupDraft, InstanceDraft};
+use super::draft::{AreaDraft, GroupDraft, InstanceDraft, group_entry};
 use super::handles;
 use super::rows::{self, Range, Rows, label};
 
@@ -33,6 +38,10 @@ pub(crate) trait Styled: Clone + 'static {
     fn rect(&self) -> Option<Rect>;
 
     fn area_kind(&self) -> &'static str;
+
+    fn documented(&self, key: &'static str) -> Option<String> {
+        help("Style", key)
+    }
 }
 
 impl Styled for AreaDraft {
@@ -145,6 +154,125 @@ impl Styled for InstanceDraft {
     }
 }
 
+/// A bar's style as its look rows edit it: the area's own, but for its corners, which a bar writes as its shape's `radius`.
+#[derive(Clone)]
+pub(crate) struct BarStyle(pub(crate) AreaDraft);
+
+impl Styled for BarStyle {
+    fn style<T: Clone + PartialEq + 'static>(
+        &self,
+        name: &'static str,
+        key: &'static str,
+        read: impl Fn(&Style) -> T + 'static,
+        write: impl Fn(&mut Style, &T) + 'static,
+    ) -> RwSignal<T> {
+        self.0.setting(
+            name,
+            on_bar(key),
+            move |area| read(&bar_style(area)),
+            move |area, value| restyle_bar(area, |style| write(style, value)),
+        )
+    }
+
+    fn shared<T: Clone + PartialEq + 'static>(&self, name: &'static str, seed: T) -> RwSignal<T> {
+        self.0.value(name, || seed, |_, _| {})
+    }
+
+    fn marked(&self, keys: &[&'static str], row: Box<dyn LayoutItem>) -> Built {
+        let keys: Vec<&'static str> = keys.iter().map(|key| on_bar(key)).collect();
+        self.0.marked(&keys, row)
+    }
+
+    fn node(&self) -> &Node {
+        &self.0.node
+    }
+
+    fn rect(&self) -> Option<Rect> {
+        self.0.rect()
+    }
+
+    fn area_kind(&self) -> &'static str {
+        self.0.kind()
+    }
+
+    fn documented(&self, key: &'static str) -> Option<String> {
+        match key {
+            "radius" => help("BarShape", key),
+            _ => help("Style", key),
+        }
+    }
+}
+
+fn on_bar(key: &'static str) -> &'static str {
+    match key {
+        "style.radius" => "shape.radius",
+        _ => key,
+    }
+}
+
+fn bar_style(area: &ResolvedArea) -> Style {
+    let mut style = area.style.clone();
+    if let ResolvedAreaKind::Bar { shape, .. } = &area.kind {
+        style.radius = shape.radius;
+    }
+    style
+}
+
+/// A bar's kind is made a partial entry only when its corners change, so a change to the rest of its style writes nothing else.
+fn restyle_bar(area: &mut Area, change: impl FnOnce(&mut Style)) {
+    let corners = match &area.kind {
+        Some(AreaKind::Bar { shape, .. }) => shape.radius,
+        _ => None,
+    };
+    let mut style = Style {
+        radius: corners,
+        ..area.style.clone()
+    };
+    change(&mut style);
+    if style.radius != corners
+        && let Some(AreaKind::Bar { shape, .. }) = AreaDraft::kind_mut(area, "bar")
+    {
+        shape.radius = style.radius;
+    }
+    area.style = Style {
+        radius: area.style.radius,
+        ..style
+    };
+}
+
+/// The style a tool writes without a popover: where a draft of the same node writes it, straight into what a level of the layout writes.
+pub(crate) struct WrittenStyle {
+    pub(crate) written: Written,
+    pub(crate) of: StyleOf,
+}
+
+/// Which style, of what a level writes of an area, a look goes into.
+pub(crate) enum StyleOf {
+    Area,
+    /// The area's own, its corners its shape's, as [`BarStyle`] edits it.
+    Bar,
+    Group(GroupId),
+    Instance(GroupId, InstanceId),
+}
+
+impl WrittenStyle {
+    pub(crate) fn ops(&self, change: impl FnOnce(&mut Style)) -> Vec<LayoutOp> {
+        let mut area = self.written.area.clone();
+        match &self.of {
+            StyleOf::Area => change(&mut area.style),
+            StyleOf::Bar => restyle_bar(&mut area, change),
+            StyleOf::Group(id) => change(&mut group_entry(&mut area, id).style),
+            StyleOf::Instance(group, id) => {
+                let held = self.written.instance(group, id);
+                let mut instance = held.instance.clone();
+                change(&mut instance.style);
+                return held.ops(&instance);
+            }
+        }
+        self.written.ops(&area)
+    }
+}
+
 pub(crate) fn fill(holder: &impl Styled) -> Built {
     let fill = holder.style(
         "style.fill",
@@ -156,7 +284,7 @@ pub(crate) fn fill(holder: &impl Styled) -> Built {
         &["style.fill"],
         rows::colour(
             label!("editor.look.fill"),
-            help("Style", "fill"),
+            holder.documented("fill"),
             fill,
             Rc::from(config::theme::PAINT_TOKENS),
             Rc::new(ui::form::swatch_row::is_colour),
@@ -180,7 +308,7 @@ pub(crate) fn opacity(holder: &impl Styled) -> Built {
         &["style.opacity"],
         rows::number(
             label!("editor.look.opacity"),
-            help("Style", "opacity"),
+            holder.documented("opacity"),
             opacity,
             Range::new(faintest, 1.0, 0.05),
         )?,
@@ -188,35 +316,33 @@ pub(crate) fn opacity(holder: &impl Styled) -> Built {
 }
 
 pub(crate) fn radius(holder: &impl Styled) -> Built {
+    Ok(rounded(holder)?.row)
+}
+
+/// The radius rows of a holder, and the four corners they edit, which handles on the box drag too.
+pub(crate) struct Rounded {
+    pub(crate) row: Box<dyn LayoutItem>,
+    pub(crate) corners: [RwSignal<f32>; 4],
+}
+
+pub(crate) fn rounded(holder: &impl Styled) -> Result<Rounded, LayoutError> {
     let most = most_in(holder, handles::most_radius_in, ROUNDEST);
-    let [all, corners @ ..] = four(
-        holder,
-        FourKeys {
-            name: "style.radius.corners",
-            key: "style.radius",
-            all: "style.radius",
-            each: [
-                "style.radius.top_left",
-                "style.radius.top_right",
-                "style.radius.bottom_right",
-                "style.radius.bottom_left",
-            ],
-            default: drawn(holder, crate::tools::target::radius_of),
-            read: |style| style.radius.map(Corners::to_array),
-            write: |style, [a, b, c, d]| style.radius = Some(Corners::each(a, b, c, d)),
-        },
-    );
+    let default = drawn(holder, crate::tools::target::radius_of);
+    let [all, corners @ ..] = four(holder, &RADIUS, default);
     let range = Range::whole(0.0, most);
     let mut list = vec![rows::number(
         label!("editor.look.radius"),
-        help("Style", "radius"),
+        holder.documented("radius"),
         all,
         range,
     )?];
     for (corner, label) in corners.into_iter().zip(corner_labels()) {
         list.push(rows::number(label, None, corner, range)?);
     }
-    holder.marked(&["style.radius"], rows::together(list)?)
+    Ok(Rounded {
+        row: holder.marked(&[RADIUS.key], rows::together(list)?)?,
+        corners,
+    })
 }
 
 /// The rows naming each corner, clockwise from the top left as the layout lists a radius per corner.
@@ -231,23 +357,8 @@ pub(crate) fn corner_labels() -> [telar::Reactive<String>; 4] {
 
 pub(crate) fn padding(holder: &impl Styled) -> Built {
     let most = most_in(holder, handles::most_padding_in, WIDEST_PADDING);
-    let [all, sides @ ..] = four(
-        holder,
-        FourKeys {
-            name: "style.padding.sides",
-            key: "style.padding",
-            all: "style.padding",
-            each: [
-                "style.padding.top",
-                "style.padding.right",
-                "style.padding.bottom",
-                "style.padding.left",
-            ],
-            default: drawn(holder, crate::tools::target::padding_of),
-            read: |style| style.padding.map(Sides::to_array),
-            write: |style, [a, b, c, d]| style.padding = Some(Sides::each(a, b, c, d)),
-        },
-    );
+    let default = drawn(holder, crate::tools::target::padding_of);
+    let [all, sides @ ..] = four(holder, &PADDING, default);
     let labels = [
         label!("editor.look.top"),
         label!("editor.look.right"),
@@ -257,14 +368,14 @@ pub(crate) fn padding(holder: &impl Styled) -> Built {
     let range = Range::whole(0.0, most);
     let mut list = vec![rows::number(
         label!("editor.look.padding"),
-        help("Style", "padding"),
+        holder.documented("padding"),
         all,
         range,
     )?];
     for (side, label) in sides.into_iter().zip(labels) {
         list.push(rows::number(label, None, side, range)?);
     }
-    holder.marked(&["style.padding"], rows::together(list)?)
+    holder.marked(&[PADDING.key], rows::together(list)?)
 }
 
 pub(crate) fn edges(holder: &impl Styled) -> Rows {
@@ -339,7 +450,7 @@ pub(crate) fn edges(holder: &impl Styled) -> Rows {
             &["style.shadow"],
             rows::listed(
                 label!("editor.look.shadow"),
-                help("Style", "shadow"),
+                holder.documented("shadow"),
                 shadow,
                 steps,
             )?,
@@ -361,27 +472,54 @@ fn most_in(holder: &impl Styled, of: fn(Rect) -> f32, unknown: f32) -> f32 {
 }
 
 /// Four values the file writes as one key — corners or sides — which a row for each and one for all four edit.
-struct FourKeys {
+pub(crate) struct FourKeys {
     name: &'static str,
     key: &'static str,
     all: &'static str,
     each: [&'static str; 4],
-    default: [f32; 4],
     read: fn(&Style) -> Option<[f32; 4]>,
-    write: fn(&mut Style, [f32; 4]),
+    pub(crate) write: fn(&mut Style, [f32; 4]),
 }
+
+pub(crate) const RADIUS: FourKeys = FourKeys {
+    name: "style.radius.corners",
+    key: "style.radius",
+    all: "style.radius",
+    each: [
+        "style.radius.top_left",
+        "style.radius.top_right",
+        "style.radius.bottom_right",
+        "style.radius.bottom_left",
+    ],
+    read: |style| style.radius.map(Corners::to_array),
+    write: |style, [a, b, c, d]| style.radius = Some(Corners::each(a, b, c, d)),
+};
+
+pub(crate) const PADDING: FourKeys = FourKeys {
+    name: "style.padding.sides",
+    key: "style.padding",
+    all: "style.padding",
+    each: [
+        "style.padding.top",
+        "style.padding.right",
+        "style.padding.bottom",
+        "style.padding.left",
+    ],
+    read: |style| style.padding.map(Sides::to_array),
+    write: |style, [a, b, c, d]| style.padding = Some(Sides::each(a, b, c, d)),
+};
 
 /// What the screen draws as the four where nothing writes them, so a row reads what the canvas shows.
 fn drawn(holder: &impl Styled, of: fn(&Desktop, &Node) -> Option<[f32; 4]>) -> [f32; 4] {
     let node = holder.node();
-    surfaces::reconcile::desktop_now(node.output.as_deref())
-        .and_then(|desktop| of(&desktop, node))
+    surfaces::reconcile::with_desktop_now(node.output.as_deref(), |desktop| of(desktop, node))
+        .flatten()
         .unwrap_or_default()
 }
 
 /// Only the four together are written; "all" reads the largest and sets each, so the five rows never fight over the key.
-fn four(holder: &impl Styled, four: FourKeys) -> [RwSignal<f32>; 5] {
-    let (read, write, default) = (four.read, four.write, four.default);
+fn four(holder: &impl Styled, four: &FourKeys, default: [f32; 4]) -> [RwSignal<f32>; 5] {
+    let (read, write) = (four.read, four.write);
     let written = holder.style(
         four.name,
         four.key,

@@ -38,15 +38,15 @@ pub(crate) fn arranged(draft: &InstanceDraft) -> bool {
     let Part::Instance(group, _) = &draft.node.part else {
         return false;
     };
-    surfaces::reconcile::desktop(draft.node.output.as_deref())
-        .and_then(|desktop| {
-            let area = desktop.resolved.area(draft.node.layer, &draft.node.area)?;
-            area.groups
-                .iter()
-                .find(|held| held.id == *group)
-                .map(surfaces::container::arranges)
-        })
-        .unwrap_or(false)
+    surfaces::reconcile::with_desktop(draft.node.output.as_deref(), |desktop| {
+        let area = desktop.resolved.area(draft.node.layer, &draft.node.area)?;
+        area.groups
+            .iter()
+            .find(|held| held.id == *group)
+            .map(surfaces::container::arranges)
+    })
+    .flatten()
+    .unwrap_or(false)
 }
 
 fn container_note(draft: &InstanceDraft) -> Rows {

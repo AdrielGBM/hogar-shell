@@ -6,7 +6,7 @@ mod tests {
     use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle,
+        AvailableSpace, ComponentList, Container, DrawCommand, Key, LayoutItem, LayoutStyle,
         ModifiersState, NamedKey, Text, compute_layout,
     };
 
@@ -26,11 +26,11 @@ mod tests {
     };
     use ui::host::{Host, WidgetSize};
 
-    use crate::keys::{self, Press};
+    use crate::keys::{self};
     use crate::mode::{self, Mode};
     use crate::modes::lock::{self as lock_mode, Privacy};
     use crate::modes::{background, desktop, palette, widgets};
-    use crate::rig::{Rig, SCREEN, enter, rig_with};
+    use crate::rig::{SCREEN, close, enter, rig_with, stored, tap};
     use crate::session::{self, Selection};
     use crate::{context, select};
 
@@ -173,27 +173,6 @@ mod tests {
         is_meta: false,
     };
 
-    fn tap(key: Key, modifiers: ModifiersState) -> bool {
-        telar::observe_keyboard(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        });
-        let taken = telar::dispatch_overlays(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        }) || keys::press_as(&key, modifiers, Press::First);
-        telar::observe_keyboard(&Event::KeyReleased {
-            key: key.clone(),
-            modifiers,
-        });
-        keys::settle_released();
-        taken
-    }
-
-    fn stored(rig: &Rig) -> Layout {
-        rig.store.borrow().active().clone()
-    }
-
     fn prompt() -> Node {
         Node::area(Some(SCREEN), LayerKind::Lock, &AreaId::new("prompt"))
     }
@@ -244,10 +223,6 @@ mod tests {
             workspace: None,
             layer: LayerKind::Lock,
         }
-    }
-
-    fn close(a: f32, b: f32) -> bool {
-        (a - b).abs() < 1e-4
     }
 
     /// Lock mode is the background and desktop modes' tools over a preview: every tool builds, the preview's areas, instances and prompt are in the rect registry the tools read, the prompt is selected by a press on it, and the keys the mode answers include the lock's own.

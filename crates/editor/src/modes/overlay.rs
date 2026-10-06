@@ -196,7 +196,7 @@ pub fn landing(bounds: Rect, width: f32, at: (f32, f32)) -> (Anchor, Offset) {
         at.0.clamp(bounds.x, (bounds.x + bounds.width - width).max(bounds.x));
     let y =
         at.1.clamp(bounds.y, (bounds.y + bounds.height - height).max(bounds.y));
-    let anchor = anchor_at(bounds, (x + width / 2.0, y + height / 2.0));
+    let anchor = pinned::anchor_at(bounds, (x + width / 2.0, y + height / 2.0));
     let natural = ghost(pinned::column(bounds, anchor, width, Offset::ZERO), anchor);
     let snapped = |by: f32| match by.abs() < SNAP {
         true => 0.0,
@@ -208,19 +208,6 @@ pub fn landing(bounds: Rect, width: f32, at: (f32, f32)) -> (Anchor, Offset) {
             x: snapped(x - natural.x),
             y: snapped(y - natural.y),
         },
-    )
-}
-
-/// The anchor of the ninth of `bounds` that `point` is over, or of the ninth nearest it from outside.
-pub fn anchor_at(bounds: Rect, point: (f32, f32)) -> Anchor {
-    let third = |start: f32, length: f32, at: f32| match (at - start) / length.max(1.0) {
-        part if part < 1.0 / 3.0 => Side::Start,
-        part if part < 2.0 / 3.0 => Side::Middle,
-        _ => Side::End,
-    };
-    pinned::anchor_of(
-        third(bounds.x, bounds.width, point.0),
-        third(bounds.y, bounds.height, point.1),
     )
 }
 

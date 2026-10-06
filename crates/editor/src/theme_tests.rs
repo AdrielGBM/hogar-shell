@@ -2,7 +2,7 @@
 mod tests {
 
     use telar::{
-        ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle, ModifiersState,
+        ComponentList, Container, DrawCommand, Key, LayoutItem, LayoutStyle, ModifiersState,
         NamedKey, NodeId, Rect,
     };
 
@@ -11,10 +11,9 @@ mod tests {
     use surfaces::menu::Pointed;
     use surfaces::{reconcile, transient};
 
-    use crate::keys::{self, Press};
     use crate::mode::{self};
     use crate::modes::lock as lock_mode;
-    use crate::rig::{SCREEN, enter, rig, rig_with};
+    use crate::rig::{SCREEN, enter, rig, rig_with, tap};
     use crate::theme::{self, Controls, Look};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
@@ -46,23 +45,6 @@ mod tests {
             theme::pending().set(None);
             mode::leave();
         }
-    }
-
-    fn tap(key: Key) -> bool {
-        telar::observe_keyboard(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers: NONE,
-        });
-        let taken = telar::dispatch_overlays(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers: NONE,
-        }) || keys::press_as(&key, NONE, Press::First);
-        telar::observe_keyboard(&Event::KeyReleased {
-            key,
-            modifiers: NONE,
-        });
-        keys::settle_released();
-        taken
     }
 
     /// The popover as the transient draws it, laid out over the screen, the pointer followed as its window follows it.
@@ -204,7 +186,7 @@ mod tests {
         card.controls.radius.set(was + 5.0);
         card.controls.name.set("rose-pine".to_string());
         assert_eq!(shown_radius(), was + 5.0);
-        assert!(tap(Key::Named(NamedKey::Escape)));
+        assert!(tap(Key::Named(NamedKey::Escape), NONE));
         assert!(!transient::is_open(theme::ID));
         assert_eq!(theme::pending().peek(), None);
         assert_eq!(shown_radius(), was);

@@ -327,10 +327,11 @@ fn lattice_row(draft: &AreaDraft) -> Rows {
     }
     let node = draft.node.clone();
     Ok(vec![rows::note(move || {
-        let counted = surfaces::reconcile::desktop(node.output.as_deref()).and_then(|desktop| {
+        let counted = surfaces::reconcile::with_desktop(node.output.as_deref(), |desktop| {
             let area = desktop.resolved.area(node.layer, &node.area)?;
             surfaces::area::lattice(area, surfaces::rects::rect(&node)?)
-        });
+        })
+        .flatten();
         match counted {
             Some(room) => telar::t!("editor.look.lattice", cols = room.columns, rows = room.rows),
             None => String::new(),

@@ -18,7 +18,7 @@ mod tests {
     };
     use surfaces::layer_window::WindowKey;
     use surfaces::reconcile;
-    use surfaces::rects::{self, Node};
+    use surfaces::rects::{self};
     use surfaces::transient;
     use toml::{Table, Value};
 
@@ -28,7 +28,7 @@ mod tests {
     use crate::popover::place::{GAP, card_at};
     use crate::popover::value::{Step, get, path_of, set, unset};
     use crate::popover::{self, Provenance};
-    use crate::rig::{Rig, SCREEN, rig, rig_with};
+    use crate::rig::{Rig, SCREEN, bar, holding_alt, rig, rig_with};
     use crate::session;
 
     const BAR: Rect = Rect {
@@ -51,10 +51,6 @@ mod tests {
         fn drop(&mut self) {
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
     }
 
     /// Where the bar is on screen, as its window would register it once built.
@@ -121,15 +117,6 @@ mod tests {
         }
     }
 
-    fn holding_alt(alt: bool) -> Event {
-        Event::ModifiersChanged {
-            modifiers: ModifiersState {
-                is_alt: alt,
-                ..ModifiersState::default()
-            },
-        }
-    }
-
     /// The bar's corners as the screen draws them now.
     fn corners_on_screen() -> Option<Corners> {
         reconcile::desktops()[0]
@@ -146,10 +133,10 @@ mod tests {
 
     fn corner(which: Corner) -> telar::RwSignal<f32> {
         let name = match which {
-            Corner::TopLeft => "radius.top_left",
-            Corner::TopRight => "radius.top_right",
-            Corner::BottomRight => "radius.bottom_right",
-            Corner::BottomLeft => "radius.bottom_left",
+            Corner::TopLeft => "style.radius.top_left",
+            Corner::TopRight => "style.radius.top_right",
+            Corner::BottomRight => "style.radius.bottom_right",
+            Corner::BottomLeft => "style.radius.bottom_left",
         };
         popover::shared::<f32>(name).expect("the bar's popover has its corners")
     }

@@ -9,11 +9,11 @@ mod tests {
 
     use config::theme::NordTheme;
     use layout::{Area, AreaId, Expr, LayerKind, Layout, OutputMatch, OutputRule};
-    use surfaces::rects::{self, Node};
+    use surfaces::rects::{self};
     use surfaces::transient;
 
     use crate::popover;
-    use crate::rig::{SCREEN, rig_with};
+    use crate::rig::{SCREEN, bar, rig_with};
 
     const SCREEN_WIDTH: f32 = 1920.0;
     const SCREEN_HEIGHT: f32 = 1080.0;
@@ -130,10 +130,6 @@ mod tests {
             && inner.y >= outer.y
             && inner.x + inner.width <= outer.x + outer.width
             && inner.y + inner.height <= outer.y + outer.height
-    }
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
     }
 
     fn whole_screen() -> Rect {

@@ -6,8 +6,8 @@
 mod tests {
     use std::cell::Cell;
 
-    use telar::{Event, Key, LayoutStyle, ModifiersState, NamedKey, Rect};
-    use telar::{RectStyle, StyledContainer, signal};
+    use telar::signal;
+    use telar::{Event, Key, ModifiersState, NamedKey, Rect};
 
     use config::Edge;
     use layout::{
@@ -17,22 +17,14 @@ mod tests {
     use surfaces::reconcile;
     use surfaces::rects::{self, Node, Part};
     use surfaces::transient;
-    use ui::descriptor::{Built, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
-    use ui::host::{Host, WidgetSize};
+    use ui::descriptor::{ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::host::WidgetSize;
 
     use crate::keys::{self, Chord, Direction, KeyOp, Press, Run, Scope};
     use crate::mode::{self};
-    use crate::rig::{Rig, SCREEN, enter, rig_with};
+    use crate::rig::{Rig, SCREEN, enter, face, rig_with};
     use crate::session::{self, Selection};
     use crate::{context, pie, popover};
-
-    fn face(_: &Host) -> Built {
-        Ok(Box::new(StyledContainer::new(
-            LayoutStyle::new().width(40.0).height(20.0),
-            |_| RectStyle::default(),
-            Vec::new(),
-        )?))
-    }
 
     static PROBES: &[ModuleDescriptor] = &[ModuleDescriptor {
         id: "clock",

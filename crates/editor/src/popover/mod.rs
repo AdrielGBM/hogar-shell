@@ -47,7 +47,7 @@ use rows::label;
 pub use actions::Actions;
 pub use area::{help, parsed, spelled};
 pub use draft::{AreaDraft, GroupDraft, InstanceDraft, Settle};
-pub(crate) use draft::{group_entry, kind_field, kind_read};
+pub(crate) use draft::{kind_field, kind_read};
 pub use instance::{option, shown};
 pub use origin::Provenance;
 pub use value::{Path, Step, path_of};

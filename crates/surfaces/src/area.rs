@@ -2084,32 +2084,14 @@ mod tests {
     use layout::{AreaId, Arrange, GroupId, InstanceId as PlacedId, Style};
     use ui::descriptor::{Input, ModuleDescriptor, Representations, WidgetDef};
 
+    use crate::test_rig::{self, cell};
+
     fn instance(module: &str, representation: Placed) -> ResolvedInstance {
-        ResolvedInstance {
-            id: PlacedId::new(module),
-            module: module.to_string(),
-            representation,
-            options: toml::Table::new(),
-            bindings: BTreeMap::new(),
-            style: Style::default(),
-            placement: None,
-            actions: BTreeMap::new(),
-        }
+        test_rig::instance(module, module, representation)
     }
 
     fn group(kind: GroupKind, children: Vec<ResolvedInstance>) -> ResolvedGroup {
-        ResolvedGroup {
-            id: GroupId::new("run"),
-            kind,
-            arrange: None,
-            cols: Arrange::TRACKS,
-            rows: Arrange::TRACKS,
-            gap: None,
-            repeat: None,
-            komponent: None,
-            style: Style::default(),
-            children,
-        }
+        test_rig::group("run", kind, children)
     }
 
     fn stacked_group(kind: GroupKind, children: Vec<ResolvedInstance>) -> ResolvedGroup {
@@ -2120,26 +2102,7 @@ mod tests {
     }
 
     fn area(kind: ResolvedAreaKind, groups: Vec<ResolvedGroup>) -> ResolvedArea {
-        ResolvedArea {
-            id: AreaId::new("area"),
-            kind,
-            reserve: false,
-            above_fullscreen: false,
-            within: layout::Within::Output,
-            style: Style::default(),
-            visible: None,
-            actions: Default::default(),
-            groups,
-        }
-    }
-
-    fn cell(col: u32, row: u32) -> GroupKind {
-        GroupKind::Cell {
-            col,
-            row,
-            col_span: 1,
-            row_span: 1,
-        }
+        test_rig::area("area", kind, groups)
     }
 
     thread_local! {
@@ -2710,7 +2673,8 @@ mod tests {
     }
 
     fn region_area(id: &str, rect: Rect, source: &Path, transition: Transition) -> ResolvedArea {
-        let mut placed = area(
+        test_rig::area(
+            id,
             ResolvedAreaKind::WallpaperRegion {
                 rect,
                 source: source.display().to_string(),
@@ -2718,9 +2682,7 @@ mod tests {
                 transition,
             },
             Vec::new(),
-        );
-        placed.id = AreaId::new(id);
-        placed
+        )
     }
 
     /// Every picture a tree draws, in the order it draws them, with the part of the page it can reach — its rect, placed by the translations around it and cut by every clip — leaving out the blank an empty layer stands in with.

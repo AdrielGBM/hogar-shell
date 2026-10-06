@@ -4,14 +4,11 @@
 mod tests {
     use telar::Rect;
 
-    use layout::{AreaId, GroupId, InstanceId, LayerKind};
+    use layout::{GroupId, InstanceId};
     use surfaces::rects::Node;
 
+    use crate::rig::bar;
     use crate::session::{self, Selection};
-
-    fn bar() -> Node {
-        Node::area(Some("DP-1"), LayerKind::Top, &AreaId::new("bar-top"))
-    }
 
     /// A bar, its centre zone and the clock in it, one inside the other, and the end zone beside them.
     fn placed() -> Vec<(Node, Rect)> {

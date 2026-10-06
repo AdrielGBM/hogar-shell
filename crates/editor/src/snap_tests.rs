@@ -5,7 +5,7 @@ mod tests {
 
     use telar::{
         AvailableSpace, ComponentList, Container, DrawCommand, Event, LayoutItem, LayoutStyle,
-        ModifiersState, Paint, PointerButton, PointerSource, compute_layout, signal, use_theme,
+        Paint, PointerButton, PointerSource, compute_layout, signal, use_theme,
     };
 
     use config::theme::NordTheme;
@@ -22,7 +22,7 @@ mod tests {
     use crate::modes::regions::{self, Cut, Plan};
     use crate::modes::widgets::{self, Geometry};
     use crate::modes::{background, lock as lock_mode};
-    use crate::rig::{Rig, SCREEN, enter, rig_with};
+    use crate::rig::{Rig, SCREEN, close, enter, hold_alt, rig_with, stored};
     use crate::session;
     use crate::snap::{self, Axis, Guide, Motion, Moving, Snapped};
     use crate::{host, select};
@@ -31,10 +31,6 @@ mod tests {
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect { x, y, w, h }
-    }
-
-    fn close(a: f32, b: f32) -> bool {
-        (a - b).abs() < 1e-5
     }
 
     fn close_rect(a: Rect, b: Rect) -> bool {
@@ -350,15 +346,6 @@ mod tests {
         }
     }
 
-    fn hold_alt(held: bool) {
-        telar::observe_keyboard(&Event::ModifiersChanged {
-            modifiers: ModifiersState {
-                is_alt: held,
-                ..ModifiersState::default()
-            },
-        });
-    }
-
     /// The selection tool, which draws what a drag shows, under `tools`, over the whole screen, inside the root every window has.
     struct Screen(ComponentList);
 
@@ -442,10 +429,6 @@ mod tests {
             });
             found
         }
-    }
-
-    fn stored(rig: &Rig) -> Layout {
-        rig.store.borrow().active().clone()
     }
 
     fn stored_region(rig: &Rig, id: &str) -> Rect {

@@ -2,6 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use telar::{Container, LayoutItem, ReactiveList, Rect, Shadow, StyledContainer};
 
@@ -17,10 +18,10 @@ use ui::scale::elevation;
 
 use crate::area::{BACKDROP_BLUR, Surround, empty_space, padded, panel_cells};
 use crate::expressions::{self, Expressions};
-use crate::layer_window::{Blur, LayerWindowContext, blur_of};
+use crate::layer_window::{Blur, LayerWindowContext, Reserved, blur_of};
 use crate::look::{self, Look, Rest};
 use crate::panel_area::{BarSite, PanelShape, place};
-use crate::reconcile::Desktop;
+use crate::reconcile::{with_desktop, with_desktop_now};
 use crate::rects::{self, Node, Part};
 use crate::transient::{self, Motion, Owned, Place, Slot, Spec};
 
@@ -112,26 +113,37 @@ fn find(resolved: &Resolved, instance: &InstanceId) -> Option<Found> {
     })
 }
 
-fn on<'a>(desktops: &'a [Desktop], owner: &Owner) -> Option<&'a Desktop> {
-    desktops
-        .iter()
-        .find(|desktop| desktop.output == owner.output)
-}
-
 /// What the windows show now, without following it: a press and a reload ask once.
 fn found_now(owner: &Owner) -> Option<Found> {
-    find(
-        &on(&crate::reconcile::desktops_now(), owner)?.resolved,
-        &owner.instance,
-    )
+    with_desktop_now(owner.output.as_deref(), |desktop| {
+        find(&desktop.resolved, &owner.instance)
+    })
+    .flatten()
+}
+
+/// The screen a panel is drawn on, without the arrangement it was found in.
+#[derive(Clone)]
+struct Screen {
+    output: Option<String>,
+    config: Arc<Config>,
+    reserved: Reserved,
+    size: (f32, f32),
 }
 
 /// What the windows show, followed: read inside an effect or a build, it runs again on the next reconcile or preview.
-fn found(owner: &Owner, layer: LayerKind) -> Option<(Found, Desktop)> {
-    let desktops = crate::reconcile::desktops();
-    let desktop = on(&desktops, owner)?;
-    let found = find(&desktop.resolved, &owner.instance).filter(|found| found.layer == layer)?;
-    Some((found, desktop.clone()))
+fn found(owner: &Owner, layer: LayerKind) -> Option<(Found, Screen)> {
+    with_desktop(owner.output.as_deref(), |desktop| {
+        let found =
+            find(&desktop.resolved, &owner.instance).filter(|found| found.layer == layer)?;
+        let screen = Screen {
+            output: desktop.output.clone(),
+            config: Arc::clone(&desktop.config),
+            reserved: desktop.reserved,
+            size: desktop.size,
+        };
+        Some((found, screen))
+    })
+    .flatten()
 }
 
 thread_local! {
@@ -144,15 +156,14 @@ pub fn owns_panel(node: &Node) -> bool {
     let Some(owner) = Owner::of(node) else {
         return false;
     };
-    let desktops = crate::reconcile::desktops_now();
-    let Some(desktop) = on(&desktops, &owner) else {
-        return false;
-    };
-    desktop.resolved.layer(node.layer).is_some_and(|layer| {
-        layer.areas.iter().any(|area| {
-            matches!(&area.kind, ResolvedAreaKind::Panel { owner: held, .. } if *held == owner.instance)
+    with_desktop_now(owner.output.as_deref(), |desktop| {
+        desktop.resolved.layer(node.layer).is_some_and(|layer| {
+            layer.areas.iter().any(|area| {
+                matches!(&area.kind, ResolvedAreaKind::Panel { owner: held, .. } if *held == owner.instance)
+            })
         })
     })
+    .unwrap_or(false)
 }
 
 pub fn is_open(owner: &Owner) -> bool {
@@ -277,38 +288,38 @@ fn content(owner: &Owner, layer: LayerKind) -> Built {
     let holder = owner.clone();
     let owner = owner.clone();
     let seen: RefCell<(u64, Option<ResolvedArea>)> = RefCell::new((0, None));
-    let shown = move || -> Vec<(u64, Found, Desktop)> {
-        let Some((found, desktop)) = found(&owner, layer) else {
+    let shown = move || -> Vec<(u64, Found, Screen)> {
+        let Some((found, screen)) = found(&owner, layer) else {
             return Vec::new();
         };
         let mut seen = seen.borrow_mut();
         if seen.1.as_ref() != Some(&found.panel) {
             *seen = (seen.0.wrapping_add(1), Some(found.panel.clone()));
         }
-        vec![(seen.0, found, desktop)]
+        vec![(seen.0, found, screen)]
     };
     let list = ReactiveList::with_style(
         fill(),
         shown,
-        |(version, _, _): &(u64, Found, Desktop)| *version,
-        move |(_, found, desktop)| panel_box(&holder, &found, &desktop),
+        |(version, _, _): &(u64, Found, Screen)| *version,
+        move |(_, found, screen)| panel_box(&holder, &found, &screen),
     )?;
     Ok(Box::new(list))
 }
 
-fn panel_box(owner: &Owner, found: &Found, desktop: &Desktop) -> Built {
-    let theme = desktop.config.resolve_theme();
+fn panel_box(owner: &Owner, found: &Found, screen: &Screen) -> Built {
+    let theme = screen.config.resolve_theme();
     let surround = Surround {
-        config: &desktop.config,
+        config: &screen.config,
         theme,
-        output: desktop.output.as_deref(),
+        output: screen.output.as_deref(),
         layer: found.layer,
-        bounds: desktop.reserved.box_of(found.panel.within, desktop.size),
-        reserved: desktop.reserved,
+        bounds: screen.reserved.box_of(found.panel.within, screen.size),
+        reserved: screen.reserved,
         audience: Audience::Owner,
     };
     let panel = &found.panel;
-    let node = Node::area(desktop.output.as_deref(), found.layer, &panel.id);
+    let node = Node::area(screen.output.as_deref(), found.layer, &panel.id);
     let presence = panel.visible.as_ref().map(|visible| {
         let presence = Expressions::here(Audience::Owner).visible(&node, visible);
         let owner = owner.clone();
@@ -319,7 +330,7 @@ fn panel_box(owner: &Owner, found: &Found, desktop: &Desktop) -> Built {
         });
         presence
     });
-    let look = look_of(panel, found.along(), &desktop.config, &theme);
+    let look = look_of(panel, found.along(), &screen.config, &theme);
     let window = LayerWindowContext::current();
     let blur = window
         .as_ref()

@@ -196,40 +196,29 @@ pub fn chip_extent(share: Size, cell: f32) -> Size {
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
+    use layout::{GroupKind, Instance, ResolvedInstance, Sides, Style};
 
-    use layout::{GroupId, GroupKind, Instance, InstanceId, ResolvedInstance, Sides, Style};
+    use crate::test_rig::{group, instance};
 
     fn child(placement: Placement) -> ResolvedInstance {
         ResolvedInstance {
-            id: InstanceId::new("child"),
-            module: "probe".to_string(),
-            representation: Placed::WidgetS,
-            options: toml::Table::new(),
-            bindings: BTreeMap::new(),
-            style: Style::default(),
             placement: Some(placement),
-            actions: BTreeMap::new(),
+            ..instance("child", "probe", Placed::WidgetS)
         }
     }
 
     fn container(arrange: Arrange, children: Vec<ResolvedInstance>) -> ResolvedGroup {
+        let kind = GroupKind::Cell {
+            col: 0,
+            row: 0,
+            col_span: 6,
+            row_span: 2,
+        };
         ResolvedGroup {
-            id: GroupId::new("box"),
-            kind: GroupKind::Cell {
-                col: 0,
-                row: 0,
-                col_span: 6,
-                row_span: 2,
-            },
             arrange: Some(arrange),
-            cols: Arrange::TRACKS,
-            rows: Arrange::TRACKS,
             gap: Some(8.0),
-            repeat: None,
-            komponent: None,
             style: unpadded(),
-            children,
+            ..group("box", kind, children)
         }
     }
 
@@ -647,13 +636,13 @@ mod built {
 #[cfg(test)]
 mod kept {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+
     use std::rc::Rc;
     use std::sync::Arc;
 
     use config::Config;
     use layout::{
-        Anchor, AreaId, Arrange, GroupId, GroupKind, InstanceId, LayerKind, Placement, Rect,
+        AreaId, Arrange, GroupId, GroupKind, InstanceId, LayerKind, Placement, Rect,
         Representation as Placed, ResolvedArea, ResolvedAreaKind, ResolvedGroup, ResolvedInstance,
         Sides, Style,
     };
@@ -670,6 +659,7 @@ mod kept {
     use crate::expressions::set_edited;
     use crate::layer_window::{Demands, LayerWindowContext, Reserved};
     use crate::rects;
+    use crate::test_rig::{area, grid_kind, group, instance};
 
     const SCREEN: &str = "SCREEN-1";
     const PAGE: (u32, u32) = (1000, 400);
@@ -723,37 +713,26 @@ mod kept {
 
     fn child(id: &str, placement: Placement) -> ResolvedInstance {
         ResolvedInstance {
-            id: InstanceId::new(id),
-            module: "swatch".to_string(),
-            representation: Placed::WidgetM,
-            options: toml::Table::new(),
-            bindings: BTreeMap::new(),
-            style: Style::default(),
             placement: Some(placement),
-            actions: BTreeMap::new(),
+            ..instance(id, "swatch", Placed::WidgetM)
         }
     }
 
     fn container(arrange: Arrange, children: Vec<ResolvedInstance>) -> ResolvedGroup {
+        let kind = GroupKind::Cell {
+            col: 0,
+            row: 0,
+            col_span: 4,
+            row_span: 2,
+        };
         ResolvedGroup {
-            id: GroupId::new("box"),
-            kind: GroupKind::Cell {
-                col: 0,
-                row: 0,
-                col_span: 4,
-                row_span: 2,
-            },
             arrange: Some(arrange),
-            cols: Arrange::TRACKS,
-            rows: Arrange::TRACKS,
             gap: Some(8.0),
-            repeat: None,
-            komponent: None,
             style: Style {
                 padding: Some(Sides::all(0.0)),
                 ..Style::default()
             },
-            children,
+            ..group("box", kind, children)
         }
     }
 
@@ -778,22 +757,7 @@ mod kept {
     }
 
     fn grid(container: ResolvedGroup) -> ResolvedArea {
-        ResolvedArea {
-            id: AreaId::new("widgets"),
-            kind: ResolvedAreaKind::Grid {
-                rect: Rect::default(),
-                cell: 80.0,
-                gap: 16.0,
-                anchor: Anchor::TopLeft,
-            },
-            reserve: false,
-            above_fullscreen: false,
-            within: layout::Within::Output,
-            style: Style::default(),
-            visible: None,
-            actions: Default::default(),
-            groups: vec![container, beside()],
-        }
+        area("widgets", grid_kind(), vec![container, beside()])
     }
 
     /// `area` built into a desktop window of [`SCREEN`], as the window builds it, and laid out on a page that size.

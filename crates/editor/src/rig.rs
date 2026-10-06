@@ -6,13 +6,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use config::Config;
-use layout::{ActiveWorkspace, LayerKind, Layout, LayoutId, LayoutStore};
+use layout::{ActiveWorkspace, AreaId, LayerKind, Layout, LayoutId, LayoutStore};
 use platform_wayland::OutputDescriptor;
-use surfaces::layer_window::Content;
+use surfaces::layer_window::{Content, Demands, LayerWindowContext};
 use surfaces::reconcile::{Shell, plan};
+use surfaces::rects::Node;
 use surfaces::transient;
-use telar::DismissRegistration;
+use telar::{DismissRegistration, LayoutItem};
+use ui::descriptor::Built;
+use ui::host::Host;
 
+use crate::keys::{self, Press};
 use crate::mode::{self, Compositor, Mode};
 
 /// The one screen a rig draws on.
@@ -247,4 +251,96 @@ pub(crate) fn click_at((x, y): (f32, f32)) -> [telar::Event; 2] {
 pub(crate) fn move_and_click(at: (f32, f32)) -> [telar::Event; 3] {
     let [press, release] = click_at(at);
     [pointer_at(at), press, release]
+}
+
+pub(crate) fn stored(rig: &Rig) -> Layout {
+    rig.store.borrow().active().clone()
+}
+
+/// The area every rig's top bar is.
+pub(crate) fn bar() -> Node {
+    Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
+}
+
+/// A module's chip or widget that takes room and shows nothing.
+pub(crate) fn face(_: &Host) -> Built {
+    Ok(Box::new(telar::StyledContainer::new(
+        telar::LayoutStyle::new().width(40.0).height(20.0),
+        |_| telar::RectStyle::default(),
+        Vec::new(),
+    )?))
+}
+
+/// `key` pressed and let go as the runner routes it: to the overlays first, and to the editor's keys when none takes it.
+pub(crate) fn tap(key: telar::Key, modifiers: telar::ModifiersState) -> bool {
+    let event = telar::Event::KeyPressed {
+        key: key.clone(),
+        modifiers,
+    };
+    telar::observe_keyboard(&event);
+    let taken = telar::dispatch_overlays(&event) || keys::press_as(&key, modifiers, Press::First);
+    telar::observe_keyboard(&telar::Event::KeyReleased { key, modifiers });
+    keys::settle_released();
+    taken
+}
+
+pub(crate) fn holding_alt(alt: bool) -> telar::Event {
+    telar::Event::ModifiersChanged {
+        modifiers: telar::ModifiersState {
+            is_alt: alt,
+            ..telar::ModifiersState::default()
+        },
+    }
+}
+
+pub(crate) fn hold_alt(held: bool) {
+    telar::observe_keyboard(&holding_alt(held));
+}
+
+pub(crate) fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 1e-5
+}
+
+thread_local! {
+    static DRAWN: RefCell<Option<(telar::OwnerId, telar::ComponentList)>> = const { RefCell::new(None) };
+}
+
+/// The rig's screen as the windows show it now.
+pub(crate) fn desktop() -> surfaces::reconcile::Desktop {
+    surfaces::reconcile::desktop(Some(SCREEN)).expect("the rig's screen")
+}
+
+/// Takes down what [`draw`] drew.
+pub(crate) fn undraw() {
+    if let Some((owner, tree)) = DRAWN.with(|drawn| drawn.borrow_mut().take()) {
+        drop(tree);
+        telar::dispose_owner(owner);
+    }
+}
+
+/// Draws the rig's screen's `layer` as its window would, from the arrangement the windows show now, so what the editor reads from the rect registry is there: the rig runs no compositor, so its windows build nothing. What was drawn before is taken down first.
+pub(crate) fn draw(layer: LayerKind) {
+    undraw();
+    let scope = telar::owner_scope();
+    telar::set_context(LayerWindowContext {
+        layer,
+        output: Some(SCREEN.to_string()),
+        demands: Rc::new(Demands::new(platform_wayland::Layer::Top)),
+        mapped: telar::signal(true).read_only(),
+    });
+    let drawn = surfaces::area::stand_in(&desktop(), layer).expect("the layer builds");
+    let page = telar::Container::new(
+        telar::LayoutStyle::new().width(1920.0).height(1080.0),
+        vec![drawn],
+    )
+    .expect("a screen");
+    let root = page.layout_node();
+    let tree = telar::ComponentList::new(page);
+    telar::compute_layout(
+        root,
+        telar::AvailableSpace::Definite(1920.0),
+        telar::AvailableSpace::Definite(1080.0),
+    )
+    .expect("the layer lays out");
+    DRAWN.with(|drawn| *drawn.borrow_mut() = Some((scope.id(), tree)));
 }

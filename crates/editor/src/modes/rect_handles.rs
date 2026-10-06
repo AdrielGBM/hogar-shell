@@ -12,6 +12,7 @@ use config::theme::NordTheme;
 use layout::{
     Anchor, AreaKind, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind, SMALLEST_PROMPT,
 };
+use surfaces::pinned;
 use surfaces::reconcile;
 use surfaces::rects::Node;
 use ui::descriptor::Built;
@@ -242,13 +243,15 @@ pub(crate) fn previewed(
 
 /// Where the area `node` names is on screen now, in pixels, and its kind.
 fn drawn(node: &Node) -> Option<(telar::Rect, ResolvedAreaKind)> {
-    let desktop = reconcile::desktop(node.output.as_deref())?;
-    let area = desktop.resolved.area(node.layer, &node.area)?;
-    let bounds = desktop.reserved.box_of(area.within, desktop.size);
-    Some((
-        surfaces::area::within(area.kind.rect()?, bounds),
-        area.kind.clone(),
-    ))
+    reconcile::with_desktop(node.output.as_deref(), |desktop| {
+        let area = desktop.resolved.area(node.layer, &node.area)?;
+        let bounds = desktop.reserved.box_of(area.within, desktop.size);
+        Some((
+            surfaces::area::within(area.kind.rect()?, bounds),
+            area.kind.clone(),
+        ))
+    })
+    .flatten()
 }
 
 fn drawn_rect(node: &Node) -> Option<telar::Rect> {
@@ -256,22 +259,22 @@ fn drawn_rect(node: &Node) -> Option<telar::Rect> {
 }
 
 fn carried_areas(output: &str, layer: LayerKind) -> Vec<(Node, &'static str)> {
-    let Some(desktop) = reconcile::desktop(Some(output)) else {
-        return Vec::new();
-    };
-    let Some(held) = desktop.resolved.layer(layer) else {
-        return Vec::new();
-    };
-    held.areas
-        .iter()
-        .filter(|area| {
-            matches!(
-                area.kind,
-                ResolvedAreaKind::Texture { .. } | ResolvedAreaKind::Free { .. }
-            )
-        })
-        .map(|area| (Node::area(Some(output), layer, &area.id), area.kind.name()))
-        .collect()
+    reconcile::with_desktop(Some(output), |desktop| {
+        let Some(held) = desktop.resolved.layer(layer) else {
+            return Vec::new();
+        };
+        held.areas
+            .iter()
+            .filter(|area| {
+                matches!(
+                    area.kind,
+                    ResolvedAreaKind::Texture { .. } | ResolvedAreaKind::Free { .. }
+                )
+            })
+            .map(|area| (Node::area(Some(output), layer, &area.id), area.kind.name()))
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// A box over every texture and free area of the edited layer, dragged by its body: a texture is carried, a free area pins what it holds.
@@ -362,7 +365,7 @@ fn free_body(node: Node) -> Built {
         Cursor::Move,
         selected_in,
         move |held, point| {
-            let anchor = overlay::anchor_at(held.drawn(), point);
+            let anchor = pinned::anchor_at(held.drawn(), point);
             gesture::hint().set(Some(Hint {
                 pointer: point,
                 tag: Some(overlay::anchor_name(anchor)),

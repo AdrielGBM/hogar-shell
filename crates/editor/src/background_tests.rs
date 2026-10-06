@@ -16,11 +16,11 @@ mod tests {
     };
     use surfaces::rects::Node;
 
-    use crate::keys::{self, Direction, Press};
+    use crate::keys::Direction;
     use crate::mode::{self};
     use crate::modes::regions::{self, Cut, Plan, SMALLEST, Tile as Region};
     use crate::modes::texture::{self, MOST_STOPS, Refusal};
-    use crate::rig::{Rig, SCREEN, enter, rig_on, rig_with};
+    use crate::rig::{SCREEN, enter, rig_on, rig_with, stored, tap};
     use crate::session::{self, Selection};
     use crate::{host, popover, variant};
 
@@ -275,28 +275,6 @@ mod tests {
 
     fn region(id: &str) -> Node {
         Node::area(Some(SCREEN), LayerKind::Background, &AreaId::new(id))
-    }
-
-    /// A key pressed and let go the way the host's window hears it.
-    fn tap(key: Key, modifiers: ModifiersState) -> bool {
-        telar::observe_keyboard(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        });
-        let taken = telar::dispatch_overlays(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        }) || keys::press_as(&key, modifiers, Press::First);
-        telar::observe_keyboard(&Event::KeyReleased {
-            key: key.clone(),
-            modifiers,
-        });
-        keys::settle_released();
-        taken
-    }
-
-    fn stored(rig: &Rig) -> Layout {
-        rig.store.borrow().active().clone()
     }
 
     fn shown(id: &str) -> Option<Rect> {

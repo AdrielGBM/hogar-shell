@@ -350,11 +350,29 @@ pub fn desktop_now(output: Option<&str>) -> Option<Desktop> {
     on(output, &desktops_now())
 }
 
+/// [`desktop`] lent to `read` rather than cloned, for a reader that wants a part of one screen and not a copy of its whole arrangement. Reactive, like [`desktops`].
+pub fn with_desktop<R>(output: Option<&str>, read: impl FnOnce(&Desktop) -> R) -> Option<R> {
+    lent(output, &desktops(), read)
+}
+
+/// [`with_desktop`] without following it, from [`desktops_now`].
+pub fn with_desktop_now<R>(output: Option<&str>, read: impl FnOnce(&Desktop) -> R) -> Option<R> {
+    lent(output, &desktops_now(), read)
+}
+
 fn on(output: Option<&str>, desktops: &[Desktop]) -> Option<Desktop> {
+    lent(output, desktops, Desktop::clone)
+}
+
+fn lent<R>(
+    output: Option<&str>,
+    desktops: &[Desktop],
+    read: impl FnOnce(&Desktop) -> R,
+) -> Option<R> {
     desktops
         .iter()
         .find(|desktop| desktop.output.as_deref() == output)
-        .cloned()
+        .map(read)
 }
 
 /// Every output's arrangement as the last reconcile left it, whatever a preview shows over it: what the store holds, on screen. Reactive, like [`desktops`].

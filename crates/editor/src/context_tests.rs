@@ -8,8 +8,8 @@ mod tests {
 
     use telar::{
         AvailableSpace, ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle,
-        ModifiersState, NamedKey, Paint, PointerButton, PointerSource, Rect, RectStyle,
-        StyledContainer, compute_layout, use_theme,
+        ModifiersState, NamedKey, Paint, PointerButton, PointerSource, Rect, compute_layout,
+        use_theme,
     };
 
     use config::theme::NordTheme;
@@ -26,25 +26,17 @@ mod tests {
     use ui::descriptor::{
         ActionDef, Built, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef,
     };
-    use ui::host::{Audience, Host, WidgetSize};
+    use ui::host::{Audience, WidgetSize};
 
     use crate::context;
     use crate::keys::{self, Press};
     use crate::mode::{self};
     use crate::popover;
     use crate::popover::handles::{Corner, NEAREST};
-    use crate::rig::{Rig, SCREEN, rig, rig_prepared, rig_with};
+    use crate::rig::{Rig, SCREEN, bar, face, rig, rig_prepared, rig_with};
     use crate::session::{self, Selection};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
-
-    fn face(_: &Host) -> Built {
-        Ok(Box::new(StyledContainer::new(
-            LayoutStyle::new().width(40.0).height(20.0),
-            |_| RectStyle::default(),
-            Vec::new(),
-        )?))
-    }
 
     static PROBES: &[ModuleDescriptor] = &[ModuleDescriptor {
         id: "clock",
@@ -93,10 +85,6 @@ mod tests {
             transient::close_all();
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
     }
 
     fn clock() -> Node {
@@ -397,7 +385,7 @@ mod tests {
             );
 
             let mut handles = popover_tree();
-            let radius = popover::shared::<f32>("radius.top_left")
+            let radius = popover::shared::<f32>("style.radius.top_left")
                 .expect("the corner")
                 .peek();
             let start = Corner::TopLeft.point(strip, radius.max(NEAREST));

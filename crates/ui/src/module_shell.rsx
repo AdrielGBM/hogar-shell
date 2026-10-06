@@ -1,6 +1,6 @@
 [logic]
 use crate::icon_glyph::{icon_glyph, IconGlyphProps};
-use crate::module::{DragOpen, from_chip, open_panel};
+use crate::module::{DragOpen, Placement, from_chip, open_panel};
 use ::config::Variant;
 use ::config::theme::NordTheme;
 use std::cell::RefCell;
@@ -31,10 +31,14 @@ pub struct Props {
     pub on_alt_press: Option<Rc<dyn Fn(::telar::PointerButton)>> = None,
     pub on_scroll: Option<Rc<dyn Fn(f32, f32)>> = None,
     pub drag_open: Option<DragOpen> = None,
+    /// Where the surface placed the chip, handed back with each of its presses and drags.
+    pub placement: Option<Placement> = None,
 }
 
 let output = crate::host::Host::current().ok().and_then(|host| host.output.clone());
 let dragged_on = output.clone();
+let placement = props.placement;
+let dragged_at = placement.clone();
 let theme = use_theme::<NordTheme>();
 let radius = props.radius;
 let accent = props.accent;
@@ -66,7 +70,7 @@ let press = props
     .map(|press| {
         let output = output.clone();
         move || {
-            let chip = crate::module::Pressed { rect: pressed.get(), output: output.clone() };
+            let chip = crate::module::Pressed { rect: pressed.get(), output: output.clone(), placement: placement.clone() };
             from_chip(chip, || press())
         }
     });
@@ -87,7 +91,7 @@ let settle = drag.map(|drag| {
     move |x: f32, y: f32| {
         let from = released.borrow_mut().take().unwrap_or((x, y));
         if drag.travel(from, (x, y)) >= drag.threshold {
-            let chip = crate::module::Pressed { rect: dragged.get(), output: dragged_on.clone() };
+            let chip = crate::module::Pressed { rect: dragged.get(), output: dragged_on.clone(), placement: dragged_at.clone() };
             from_chip(chip, || open_panel(&drag.module));
         }
     }

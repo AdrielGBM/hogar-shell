@@ -5,8 +5,8 @@ mod tests {
 
     use telar::{
         AvailableSpace, Color, ComponentList, Container, DrawCommand, Event, LayoutItem,
-        LayoutStyle, Paint, PointerButton, PointerSource, Rect, RectStyle, StyledContainer,
-        compute_layout, signal, use_theme,
+        LayoutStyle, Paint, PointerButton, PointerSource, Rect, RectStyle, compute_layout, signal,
+        use_theme,
     };
 
     use config::theme::NordTheme;
@@ -14,25 +14,17 @@ mod tests {
     use surfaces::menu::Pointed;
     use surfaces::rects::{self, Node};
     use surfaces::transient;
-    use ui::descriptor::{Built, Category, Input, ModuleDescriptor, Representations, WidgetDef};
-    use ui::host::{Host, WidgetSize};
+    use ui::descriptor::{Category, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::host::WidgetSize;
 
     use crate::mode::{self};
     use crate::modes::widgets::{self, Geometry};
     use crate::modes::{gesture, grid};
-    use crate::rig::{Rig, SCREEN, enter};
+    use crate::rig::{Rig, SCREEN, enter, face};
     use crate::session::{self, Selection};
     use crate::{host, popover};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
-
-    fn face(_: &Host) -> Built {
-        Ok(Box::new(StyledContainer::new(
-            LayoutStyle::new().width(40.0).height(20.0),
-            |_| RectStyle::default(),
-            Vec::new(),
-        )?))
-    }
 
     static PROBES: &[ModuleDescriptor] = &[ModuleDescriptor {
         id: "clock",

@@ -21,7 +21,7 @@ mod tests {
     use crate::modes::rect_handles;
     use crate::modes::{background, lock as lock_mode, widgets};
     use crate::popover::handles::{CORNERS, Corner};
-    use crate::rig::{Rig, SCREEN, enter, rig_with};
+    use crate::rig::{Rig, SCREEN, close, enter, hold_alt, rig_with, stored};
     use crate::select;
     use crate::session::{self, Selection};
 
@@ -31,10 +31,6 @@ mod tests {
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect { x, y, w, h }
-    }
-
-    fn close(a: f32, b: f32) -> bool {
-        (a - b).abs() < 1e-4
     }
 
     fn close_rect(a: Rect, b: Rect) -> bool {
@@ -56,15 +52,6 @@ mod tests {
             transient::close_all();
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn hold_alt(held: bool) {
-        telar::observe_keyboard(&Event::ModifiersChanged {
-            modifiers: ModifiersState {
-                is_alt: held,
-                ..ModifiersState::default()
-            },
-        });
     }
 
     /// The selection tool, then the mode's `tools` in the order the host stacks them, over the whole screen inside the root every window has.
@@ -170,10 +157,6 @@ mod tests {
     struct Shown {
         tag: Option<String>,
         guides: Vec<telar::Rect>,
-    }
-
-    fn stored(rig: &Rig) -> Layout {
-        rig.store.borrow().active().clone()
     }
 
     fn stored_kind(rig: &Rig, layer: LayerKind, id: &str) -> ResolvedAreaKind {

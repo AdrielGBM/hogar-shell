@@ -19,7 +19,7 @@ mod tests {
     use ui::host::Audience;
 
     use crate::popover::{self, Provenance, actions};
-    use crate::rig::{Rig, SCREEN, rig_with};
+    use crate::rig::{Rig, SCREEN, bar, face, rig_with};
     use crate::session;
 
     struct Scope(telar::OwnerGuard);
@@ -124,10 +124,6 @@ mod tests {
 
     fn widgets() -> Node {
         Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("widgets"))
-    }
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
     }
 
     /// A grid over the whole screen holding the built-in clock on its first cell and, eight columns on, a copy of it inside a row container.
@@ -701,13 +697,6 @@ mod tests {
         assert_eq!(value::<f32>("style.padding").peek(), drawn[0]);
         popover::close();
         assert_eq!(rig.undo_label(), None);
-    }
-
-    fn face(_: &ui::host::Host) -> ui::descriptor::Built {
-        Ok(Box::new(Container::new(
-            LayoutStyle::new().width(40.0).height(20.0),
-            Vec::new(),
-        )?))
     }
 
     static CLOCK: ui::descriptor::ModuleDescriptor = ui::descriptor::ModuleDescriptor {

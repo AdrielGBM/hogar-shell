@@ -8,7 +8,6 @@ mod tests {
         AvailableSpace, ComponentList, Container, Event, Key, LayoutItem, LayoutStyle,
         ModifiersState, NamedKey, PointerButton, PointerSource, compute_layout,
     };
-    use telar::{RectStyle, StyledContainer};
 
     use layout::{
         ActiveWorkspace, Area, AreaId, AreaKind, Arrange, GroupId, GroupKind, InstanceId,
@@ -21,25 +20,16 @@ mod tests {
     use ui::descriptor::{
         Built, Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef,
     };
-    use ui::host::{Host, WidgetSize};
+    use ui::host::WidgetSize;
 
-    use crate::keys::{self, Press};
     use crate::mode::{self};
     use crate::modes::desktop::{self, Landing};
     use crate::modes::grid::{self, Cells, Room};
     use crate::modes::palette::{self, Line, Pick};
     use crate::modes::widgets;
-    use crate::rig::{Rig, SCREEN, enter};
+    use crate::rig::{Rig, SCREEN, enter, face, stored, tap};
     use crate::session::{self, Selection};
     use crate::{context, popover, variant};
-
-    fn face(_: &Host) -> Built {
-        Ok(Box::new(StyledContainer::new(
-            LayoutStyle::new().width(40.0).height(20.0),
-            |_| RectStyle::default(),
-            Vec::new(),
-        )?))
-    }
 
     const fn module(
         id: &'static str,
@@ -123,27 +113,6 @@ mod tests {
         is_alt: false,
         is_meta: false,
     };
-
-    fn tap(key: Key, modifiers: ModifiersState) -> bool {
-        telar::observe_keyboard(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        });
-        let taken = telar::dispatch_overlays(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        }) || keys::press_as(&key, modifiers, Press::First);
-        telar::observe_keyboard(&Event::KeyReleased {
-            key: key.clone(),
-            modifiers,
-        });
-        keys::settle_released();
-        taken
-    }
-
-    fn stored(rig: &Rig) -> Layout {
-        rig.store.borrow().active().clone()
-    }
 
     /// The built-in layout with its clock on the first cells of the grid, which is what these tests move, stack and resize.
     fn clock_on_grid(layout: &mut Layout) {

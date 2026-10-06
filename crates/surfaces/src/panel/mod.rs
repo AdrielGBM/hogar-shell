@@ -3,12 +3,12 @@ mod owned;
 use std::rc::Rc;
 
 use config::OpenMode;
-use layout::{LayerKind, Resolved};
+use layout::Resolved;
 use ui::chrome::Chrome;
 use ui::descriptor;
 use ui::module::pressed_chip;
 
-use crate::rects::{self, Node, Part};
+use crate::rects::{Node, Part};
 use crate::transient::{self, Motion, Place, Slot, Spec, chips};
 use crate::{drawer, float, popout};
 
@@ -124,21 +124,9 @@ pub(crate) fn prune_owned(desktops: &[(Option<&str>, &Resolved)]) {
 /// The instance whose chip a press or a drag came from, where it owns a panel.
 fn pressed_owner() -> Option<Owner> {
     let pressed = pressed_chip()?;
-    let outputs: Vec<Option<String>> = match &pressed.output {
-        Some(output) => vec![Some(output.clone())],
-        None => crate::reconcile::desktops_now()
-            .iter()
-            .map(|desktop| desktop.output.clone())
-            .collect(),
-    };
-    outputs
-        .iter()
-        .flat_map(|output| {
-            LayerKind::SESSION
-                .into_iter()
-                .flat_map(move |layer| rects::on(output.as_deref(), layer))
-        })
-        .find(|(node, rect)| matches!(node.part, Part::Instance(..)) && *rect == pressed.rect)
-        .filter(|(node, _)| owns_panel(node))
-        .and_then(|(node, _)| Owner::of(&node))
+    let node = pressed.placement.as_ref()?.get::<Node>()?;
+    match (&node.part, owns_panel(node)) {
+        (Part::Instance(..), true) => Owner::of(node),
+        _ => None,
+    }
 }

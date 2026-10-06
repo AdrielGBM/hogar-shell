@@ -2,42 +2,31 @@
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
-    use telar::{
-        Event, Key, LayoutItem, LayoutStyle, ModifiersState, NamedKey, RectStyle, StyledContainer,
-    };
+    use telar::{Event, Key, LayoutItem, LayoutStyle, ModifiersState, NamedKey};
 
     use config::{Edge, Shape};
     use layout::{
         AreaId, Extent, InstanceId, LayerKind, Layout, ResolvedArea, ResolvedAreaKind, Zone,
     };
-    use surfaces::layer_window::{Demands, LayerWindowContext};
+
     use surfaces::menu::{Asked, Pointed};
     use surfaces::reconcile;
     use surfaces::rects::{self, Node};
     use surfaces::transient;
-    use ui::descriptor::{
-        Built, Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef,
-    };
-    use ui::host::{Host, WidgetSize};
+    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::host::WidgetSize;
 
-    use crate::keys::{self, Direction, Press};
+    use crate::keys::Direction;
     use crate::mode::{self};
     use crate::modes::bars::{Seen, measured, nearest_edge};
     use crate::modes::top::{self, ChipLanding, Drawn};
-    use crate::rig::{Rig, SCREEN, enter, rig_on, rig_prepared, rig_screens, rig_with};
+    use crate::rig::{
+        SCREEN, desktop, draw, enter, face, rig_on, rig_prepared, rig_screens, rig_with, stored,
+        tap, undraw,
+    };
     use crate::session::{self, Edit, EditError, Selection};
     use crate::{context, popover, variant};
-
-    fn face(_: &Host) -> Built {
-        Ok(Box::new(StyledContainer::new(
-            LayoutStyle::new().width(40.0).height(20.0),
-            |_| RectStyle::default(),
-            Vec::new(),
-        )?))
-    }
 
     const fn module(
         id: &'static str,
@@ -91,10 +80,6 @@ mod tests {
         }
     }
 
-    fn stored(rig: &Rig) -> Layout {
-        rig.store.borrow().active().clone()
-    }
-
     fn commit(ops: Vec<layout::LayoutOp>) {
         context::commit("test".to_string(), ops).expect("the edit commits");
     }
@@ -103,16 +88,8 @@ mod tests {
         AreaId::new("bar-top")
     }
 
-    fn screen() -> reconcile::Desktop {
-        reconcile::desktops()
-            .iter()
-            .find(|desktop| desktop.output.as_deref() == Some(SCREEN))
-            .cloned()
-            .expect("the edited screen")
-    }
-
     fn bar(id: &AreaId) -> Option<ResolvedArea> {
-        screen()
+        desktop()
             .resolved
             .layer(LayerKind::Top)?
             .areas
@@ -126,7 +103,7 @@ mod tests {
     }
 
     fn span(id: &AreaId) -> surfaces::bar::Span {
-        top::span_of(&screen(), &bar(id).expect("the bar is on screen")).expect("it is a bar")
+        top::span_of(&desktop(), &bar(id).expect("the bar is on screen")).expect("it is a bar")
     }
 
     /// The instances of a bar's zone, in order.
@@ -142,46 +119,9 @@ mod tests {
             .unwrap_or_default()
     }
 
-    thread_local! {
-        static DRAWN: RefCell<Option<(telar::OwnerId, telar::ComponentList)>> = const { RefCell::new(None) };
-    }
-
-    fn undraw() {
-        if let Some((owner, tree)) = DRAWN.with(|drawn| drawn.borrow_mut().take()) {
-            drop(tree);
-            telar::dispose_owner(owner);
-        }
-    }
-
-    /// Draws the edited screen's top layer as its window would, from the arrangement the windows show now, so what the tools read from the rect registry is there — the rig runs no compositor, so its windows build nothing. What was drawn before is taken down first.
-    fn draw() {
-        undraw();
-        let scope = telar::owner_scope();
-        telar::set_context(LayerWindowContext {
-            layer: LayerKind::Top,
-            output: Some(SCREEN.to_string()),
-            demands: Rc::new(Demands::new(platform_wayland::Layer::Top)),
-            mapped: telar::signal(true).read_only(),
-        });
-        let layer =
-            surfaces::area::stand_in(&screen(), LayerKind::Top).expect("the top layer builds");
-        let page =
-            telar::Container::new(LayoutStyle::new().width(1920.0).height(1080.0), vec![layer])
-                .expect("a screen");
-        let root = page.layout_node();
-        let tree = telar::ComponentList::new(page);
-        telar::compute_layout(
-            root,
-            telar::AvailableSpace::Definite(1920.0),
-            telar::AvailableSpace::Definite(1080.0),
-        )
-        .expect("the top layer lays out");
-        DRAWN.with(|drawn| *drawn.borrow_mut() = Some((scope.id(), tree)));
-    }
-
     /// The chip `id`, drawn as the screen shows it now.
     fn chip(id: &str) -> Node {
-        draw();
+        draw(LayerKind::Top);
         rects::instance(Some(SCREEN), &InstanceId::new(id))
             .map(|(node, _)| node)
             .unwrap_or_else(|| panic!("`{id}` is drawn"))
@@ -194,7 +134,7 @@ mod tests {
         crate::written::area_removal(
             &layout,
             &known,
-            &screen().resolving(&layout, &known).resolved,
+            &desktop().resolving(&layout, &known).resolved,
             LayerKind::Top,
             id,
             None,
@@ -217,7 +157,7 @@ mod tests {
         for edge in Edge::ALL {
             let (ops, id) = top::created(
                 &session::draft().peek(),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 edge,
                 None,
@@ -244,7 +184,7 @@ mod tests {
             assert_eq!(rig.undo_label().as_deref(), Some("test"));
             let refused = top::created(
                 &session::draft().peek(),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 edge,
                 None,
@@ -257,7 +197,7 @@ mod tests {
 
         let (ops, _) = top::split(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &AreaId::new("bar-top"),
             1200.0,
@@ -266,9 +206,9 @@ mod tests {
         .expect("the top bar splits");
         commit(ops);
         let freed = top::free_on(
-            &screen(),
+            &desktop(),
             Edge::Top,
-            top::new_run(&screen(), Edge::Top),
+            top::new_run(&desktop(), Edge::Top),
             None,
         );
         assert!(
@@ -286,7 +226,7 @@ mod tests {
         for edge in [Edge::Left, Edge::Bottom, Edge::Right, Edge::Top] {
             let ops = top::moved_to_edge(
                 &session::draft().peek(),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 &bar_top(),
                 edge,
@@ -304,7 +244,7 @@ mod tests {
 
         let (ops, _) = top::created(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             Edge::Bottom,
             None,
@@ -313,7 +253,7 @@ mod tests {
         commit(ops);
         let (ops, half) = top::split(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &AreaId::new("bar-bottom"),
             960.0,
@@ -324,7 +264,7 @@ mod tests {
         commit(removal(&AreaId::new("bar-bottom")));
         let ops = top::moved_to_edge(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &bar_top(),
             Edge::Bottom,
@@ -348,7 +288,7 @@ mod tests {
             let _mode = enter(LayerKind::Top);
             let (ops, id) = top::created(
                 &session::draft().peek(),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 edge,
                 None,
@@ -359,7 +299,7 @@ mod tests {
             let middle = whole.at + whole.along / 2.0;
             let (ops, second) = top::split(
                 &session::draft().peek(),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 &id,
                 middle,
@@ -410,14 +350,14 @@ mod tests {
         let _owner = Owner::new();
         let rig = rig_with("top-drag", |_| {});
         let _mode = enter(LayerKind::Top);
-        let before = screen().reserved;
+        let before = desktop().reserved;
         let reconciled = rig.reconciles.get();
         let edit = Edit::new("drag the bar");
         edit.begin().expect("the drag begins");
         for near in [100.0, 300.0, 500.0, 700.0] {
             let ops = top::moved_to_edge(
                 &edit.transaction().before().expect("a snapshot"),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 &bar_top(),
                 Edge::Left,
@@ -425,7 +365,7 @@ mod tests {
             )
             .expect("it previews on the left");
             edit.preview(ops).expect("it previews");
-            assert_eq!(screen().reserved, before, "a preview never re-reserves");
+            assert_eq!(desktop().reserved, before, "a preview never re-reserves");
             assert_eq!(
                 rig.reconciles.get(),
                 reconciled,
@@ -483,7 +423,7 @@ mod tests {
         for edge in [Edge::Left, Edge::Bottom, Edge::Right, Edge::Left] {
             let ops = top::moved_to_edge(
                 &edit.transaction().before().expect("a snapshot"),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 &bar_top(),
                 edge,
@@ -492,7 +432,7 @@ mod tests {
             .expect("it previews");
             edit.preview(ops).expect("it previews");
             assert_eq!(
-                screen().reserved,
+                desktop().reserved,
                 reconcile::planned()[0].reserved,
                 "{edge:?}: the drawn screen reserves what was committed"
             );
@@ -546,11 +486,11 @@ mod tests {
             },
         );
         let _mode = enter(LayerKind::Top);
-        draw();
+        draw(LayerKind::Top);
         let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
         let (ops, second) = top::split(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &bar_top(),
             700.0,
@@ -586,11 +526,11 @@ mod tests {
         let rig = rig_with("top-split-join", |_| {});
         let _mode = enter(LayerKind::Top);
         let original = stored(&rig);
-        draw();
+        draw(LayerKind::Top);
         let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
         let (ops, second) = top::split(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &bar_top(),
             700.0,
@@ -610,7 +550,7 @@ mod tests {
 
         let splitting = top::split(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &bar_top(),
             20.0,
@@ -623,7 +563,7 @@ mod tests {
 
         let ops = top::joined(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &second,
             &bar_top(),
@@ -649,11 +589,11 @@ mod tests {
             );
         });
         let _mode = enter(LayerKind::Top);
-        draw();
+        draw(LayerKind::Top);
         let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
         let (ops, second) = top::split(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &bar_top(),
             700.0,
@@ -679,7 +619,7 @@ mod tests {
         let join = || {
             top::joined(
                 &session::draft().peek(),
-                &screen(),
+                &desktop(),
                 LayerKind::Top,
                 &bar_top(),
                 &second,
@@ -733,7 +673,7 @@ mod tests {
         let land = |node: &Node, area: &AreaId, zone: Zone, index: usize| {
             let ops = top::chip_moved(
                 &session::draft().peek(),
-                &screen(),
+                &desktop(),
                 node,
                 &ChipLanding {
                     area: area.clone(),
@@ -750,7 +690,7 @@ mod tests {
         assert_eq!(zone(&bar_top(), Zone::Start), ["workspaces", "clock"]);
         let unchanged = top::chip_moved(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             &chip("clock"),
             &ChipLanding {
                 area: bar_top(),
@@ -763,7 +703,7 @@ mod tests {
 
         let (ops, left) = top::created(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             Edge::Left,
             None,
@@ -815,7 +755,7 @@ mod tests {
         transient::close(context::ID);
 
         let original = stored(&rig);
-        let from = screen();
+        let from = desktop();
         let onto = reconcile::desktops()
             .iter()
             .find(|desktop| desktop.output.as_deref() == Some(OTHER))
@@ -851,7 +791,7 @@ mod tests {
         assert!(written_here.is_present());
         let ops = top::moved_to_output(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             &onto,
             LayerKind::Top,
             &bottom,
@@ -870,23 +810,6 @@ mod tests {
         is_alt: false,
         is_meta: false,
     };
-
-    fn tap(key: Key, modifiers: ModifiersState) -> bool {
-        telar::observe_keyboard(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        });
-        let taken = telar::dispatch_overlays(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        }) || keys::press_as(&key, modifiers, Press::First);
-        telar::observe_keyboard(&Event::KeyReleased {
-            key: key.clone(),
-            modifiers,
-        });
-        keys::settle_released();
-        taken
-    }
 
     fn shaped(mode: Shape) -> impl FnOnce(&mut Layout) {
         move |layout: &mut Layout| {
@@ -912,7 +835,7 @@ mod tests {
                     commit(
                         top::moved_to_edge(
                             &session::draft().peek(),
-                            &screen(),
+                            &desktop(),
                             LayerKind::Top,
                             &bar_top(),
                             edge,
@@ -921,12 +844,12 @@ mod tests {
                         .expect("it moves"),
                     );
                 }
-                draw();
+                draw(LayerKind::Top);
                 let whole = span(&bar_top());
                 let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), edge);
                 let (ops, _) = top::split(
                     &session::draft().peek(),
-                    &screen(),
+                    &desktop(),
                     LayerKind::Top,
                     &bar_top(),
                     whole.at + whole.along / 2.0,
@@ -934,7 +857,7 @@ mod tests {
                 )
                 .unwrap_or_else(|why| panic!("{shape:?} {edge:?}: {why}"));
                 commit(ops);
-                draw();
+                draw(LayerKind::Top);
                 let mode = mode::current().expect("the mode is up");
                 crate::modes::bars::tool(&mode)
                     .unwrap_or_else(|why| panic!("{shape:?} {edge:?}: {why}"));
@@ -954,7 +877,7 @@ mod tests {
         let _mode = enter(LayerKind::Top);
         let (ops, second) = top::split(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             LayerKind::Top,
             &bar_top(),
             960.0,
@@ -962,7 +885,7 @@ mod tests {
         )
         .expect("it splits");
         commit(ops);
-        draw();
+        draw(LayerKind::Top);
         popover::open_area(Node::area(Some(SCREEN), LayerKind::Top, &bar_top()))
             .expect("the popover opens");
         let _rows = popover::tree().expect("a popover").expect("it builds");
@@ -997,7 +920,7 @@ mod tests {
         let rig = rig_with("top-keys", |_| {});
         let _mode = enter(LayerKind::Top);
         let original = stored(&rig);
-        draw();
+        draw(LayerKind::Top);
         assert!(session::select(Selection::Area(Node::area(
             Some(SCREEN),
             LayerKind::Top,
@@ -1054,7 +977,7 @@ mod tests {
         let _mode = enter(LayerKind::Top);
         let ops = top::chip_moved(
             &session::draft().peek(),
-            &screen(),
+            &desktop(),
             &chip("clock"),
             &ChipLanding {
                 area: bar_top(),
@@ -1117,7 +1040,7 @@ mod tests {
         let _owner = Owner::new();
         let _rig = rig_with("top-pointer-drag", |_| {});
         let _mode = enter(LayerKind::Top);
-        draw();
+        draw(LayerKind::Top);
         let mode = mode::current().expect("the mode is up");
         let page = LayoutStyle::new().width(1920.0).height(1080.0);
         let root = Pointed::new(Box::new(

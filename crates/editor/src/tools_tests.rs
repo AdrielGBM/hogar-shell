@@ -2,36 +2,34 @@
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+
     use std::sync::Arc;
 
     use telar::{
         AvailableSpace, ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle,
-        ModifiersState, NamedKey, PointerButton, PointerSource, Rect, RectStyle, StyledContainer,
-        compute_layout, signal,
+        ModifiersState, NamedKey, PointerButton, PointerSource, Rect, compute_layout, signal,
     };
 
     use layout::{
         Area, AreaId, AreaKind, Arrange, Corners, GroupId, GroupKind, InstanceId, LayerKind,
         Layout, Representation, Sides,
     };
-    use surfaces::layer_window::{Demands, LayerWindowContext};
+
     use surfaces::menu::Pointed;
-    use surfaces::reconcile;
+
     use surfaces::rects::{self, Node};
     use surfaces::transient;
-    use ui::descriptor::{
-        Built, Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef,
-    };
-    use ui::host::{Host, WidgetSize};
+    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::host::WidgetSize;
 
-    use crate::keys::{self, Press};
+    use crate::keys::{self};
     use crate::mode;
     use crate::popover::handles::{
         CORNERS, Corner, NEAREST, Side, handle_point, most_padding_in, most_radius_in,
     };
-    use crate::rig::{Rig, SCREEN, enter, rig, rig_with};
+    use crate::rig::{
+        Rig, SCREEN, bar, desktop, draw, enter, face, rig, rig_with, stored, tap, undraw,
+    };
     use crate::session::{self, Selection};
     use crate::tools::{self, Tool};
     use crate::{host, popover};
@@ -43,14 +41,6 @@ mod tests {
         is_alt: false,
         is_meta: false,
     };
-
-    fn face(_: &Host) -> Built {
-        Ok(Box::new(StyledContainer::new(
-            LayoutStyle::new().width(40.0).height(20.0),
-            |_| RectStyle::default(),
-            Vec::new(),
-        )?))
-    }
 
     const fn module(id: &'static str, name: &'static str) -> ModuleDescriptor {
         ModuleDescriptor {
@@ -79,10 +69,6 @@ mod tests {
         module("notes", "Notes"),
     ];
 
-    thread_local! {
-        static DRAWN: RefCell<Option<(telar::OwnerId, ComponentList)>> = const { RefCell::new(None) };
-    }
-
     struct Owner(telar::OwnerGuard);
 
     impl Owner {
@@ -103,41 +89,6 @@ mod tests {
             transient::close_all();
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn undraw() {
-        if let Some((owner, tree)) = DRAWN.with(|drawn| drawn.borrow_mut().take()) {
-            drop(tree);
-            telar::dispose_owner(owner);
-        }
-    }
-
-    fn desktop() -> reconcile::Desktop {
-        reconcile::desktop(Some(SCREEN)).expect("the edited screen")
-    }
-
-    /// Draws the edited screen's `layer` as its window would, so what the tools read from the rect registry is there.
-    fn draw(layer: LayerKind) {
-        undraw();
-        let scope = telar::owner_scope();
-        telar::set_context(LayerWindowContext {
-            layer,
-            output: Some(SCREEN.to_string()),
-            demands: Rc::new(Demands::new(platform_wayland::Layer::Top)),
-            mapped: telar::signal(true).read_only(),
-        });
-        let drawn = surfaces::area::stand_in(&desktop(), layer).expect("the layer builds");
-        let page = Container::new(LayoutStyle::new().width(SIZE.0).height(SIZE.1), vec![drawn])
-            .expect("a screen");
-        let root = page.layout_node();
-        let tree = ComponentList::new(page);
-        compute_layout(
-            root,
-            AvailableSpace::Definite(SIZE.0),
-            AvailableSpace::Definite(SIZE.1),
-        )
-        .expect("the layer lays out");
-        DRAWN.with(|held| *held.borrow_mut() = Some((scope.id(), tree)));
     }
 
     /// The mode's tools as its host builds them, over the whole screen.
@@ -262,33 +213,6 @@ mod tests {
         }
     }
 
-    /// A key pressed in the mode, as the host hands it to the key table.
-    fn tap(ch: char) -> bool {
-        let key = Key::Char(ch);
-        telar::observe_keyboard(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers: NONE,
-        });
-        let taken = telar::dispatch_overlays(&Event::KeyPressed {
-            key: key.clone(),
-            modifiers: NONE,
-        }) || keys::press_as(&key, NONE, Press::First);
-        telar::observe_keyboard(&Event::KeyReleased {
-            key,
-            modifiers: NONE,
-        });
-        keys::settle_released();
-        taken
-    }
-
-    fn stored(rig: &Rig) -> Layout {
-        rig.store.borrow().active().clone()
-    }
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
-    }
-
     fn written_bar(rig: &Rig) -> Area {
         stored(rig).outputs[0]
             .layers
@@ -332,7 +256,7 @@ mod tests {
             Tool::Radius => 'r',
             Tool::Padding => 'i',
         };
-        assert!(tap(key), "the tool's key answers");
+        assert!(tap(Key::Char(key), NONE), "the tool's key answers");
         assert_eq!(tools::active(), Some(tool));
         Screen::new()
     }
@@ -358,7 +282,7 @@ mod tests {
         );
         assert_eq!(screen.says("16"), 1, "linked, one tag says the radius");
 
-        assert!(tap('u'), "the link key answers");
+        assert!(tap(Key::Char('u'), NONE), "the link key answers");
         assert!(!tools::linked_now());
         screen.settle();
         assert_eq!(screen.says("16"), 4, "unlinked, every corner says its own");
@@ -393,7 +317,7 @@ mod tests {
         let start = corner_handle(&bar(), Corner::TopLeft, before[0]);
         screen.drag(start, Corner::TopLeft.point(rect, 16.0));
         assert_eq!(bar_radius(&rig), Some(Corners::all(16.0)));
-        assert!(tap('u'));
+        assert!(tap(Key::Char('u'), NONE));
         screen.settle();
 
         let shown_from = NEAREST.min(most_radius_in(rect));
@@ -570,7 +494,7 @@ mod tests {
         let _owner = Owner::new();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Padding);
-        assert!(tap('u'), "the link key answers");
+        assert!(tap(Key::Char('u'), NONE), "the link key answers");
         screen.settle();
         let rect = rect_of(&bar());
         let before = tools::target::padding_of(&desktop(), &bar()).expect("the bar is drawn");
@@ -672,7 +596,7 @@ mod tests {
         assert_eq!(tools::active(), None);
 
         assert!(session::select(Selection::Area(bar())));
-        assert!(tap('r'));
+        assert!(tap(Key::Char('r'), NONE));
         popover::open_area(bar()).expect("the bar's popover opens");
         assert_eq!(tools::active(), None);
         popover::close();
@@ -691,7 +615,7 @@ mod tests {
         screen.drag(Side::Top.point(rect, before[0]), Side::Top.point(rect, 9.0));
         assert_eq!(written_bar(&rig).style.padding, Some(Sides::all(9.0)));
 
-        assert!(tap('u'));
+        assert!(tap(Key::Char('u'), NONE));
         screen.settle();
         screen.drag(Side::Left.point(rect, 9.0), Side::Left.point(rect, 13.0));
         assert_eq!(
@@ -729,10 +653,10 @@ mod tests {
         draw(LayerKind::Top);
         let (chip, _) = rects::instance(Some(SCREEN), &InstanceId::new("clock")).expect("drawn");
         assert!(session::select(Selection::Instance(chip)));
-        tap('i');
+        tap(Key::Char('i'), NONE);
         assert_eq!(tools::active(), None);
         assert!(mode::refusal().peek().is_some(), "the strip says why");
-        assert!(tap('r'), "corners it has");
+        assert!(tap(Key::Char('r'), NONE), "corners it has");
         assert_eq!(tools::active(), Some(Tool::Radius));
     }
 
@@ -755,7 +679,7 @@ mod tests {
         let before = tools::target::padding_of(&desktop(), &bar()).expect("the bar is drawn");
         let reconciles = rig.reconciles.get();
 
-        assert!(tap('u'));
+        assert!(tap(Key::Char('u'), NONE));
         screen.settle();
         screen.press(Side::Left.point(rect, before[3]));
         screen.to(Side::Left.point(rect, before[3] + 9.0));
@@ -858,7 +782,7 @@ mod tests {
             .clone();
 
         assert!(session::select(Selection::Group(shelf.clone())));
-        assert!(tap('r'));
+        assert!(tap(Key::Char('r'), NONE));
         let mut screen = Screen::new();
         let drawn = tools::target::radius_of(&desktop(), &shelf).expect("the container is drawn");
         screen.drag(
@@ -867,7 +791,7 @@ mod tests {
         );
         assert_eq!(written_shelf(&rig).style.radius, Some(Corners::all(30.0)));
 
-        assert!(tap('i'));
+        assert!(tap(Key::Char('i'), NONE));
         assert_eq!(
             tools::active(),
             Some(Tool::Padding),
@@ -879,7 +803,7 @@ mod tests {
         assert_eq!(written_shelf(&rig).style.padding, Some(Sides::all(20.0)));
 
         assert!(session::select(Selection::Instance(clock.clone())));
-        assert!(tap('r'));
+        assert!(tap(Key::Char('r'), NONE));
         screen.settle();
         let drawn = tools::target::radius_of(&desktop(), &clock).expect("the clock is drawn");
         screen.drag(

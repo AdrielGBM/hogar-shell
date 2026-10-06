@@ -44,6 +44,19 @@ pub fn anchor_of(across: Side, down: Side) -> Anchor {
     }
 }
 
+/// The anchor of the ninth of `bounds` that `point` is over, or of the ninth nearest it from outside.
+pub fn anchor_at(bounds: Rect, point: (f32, f32)) -> Anchor {
+    let third = |start: f32, length: f32, at: f32| match (at - start) / length.max(1.0) {
+        part if part < 1.0 / 3.0 => Side::Start,
+        part if part < 2.0 / 3.0 => Side::Middle,
+        _ => Side::End,
+    };
+    anchor_of(
+        third(bounds.x, bounds.width, point.0),
+        third(bounds.y, bounds.height, point.1),
+    )
+}
+
 /// Where a box `length` long starts along a run from `start` that is `run` long: a gap in from the side it is pinned to, moved by `by`, and kept on the run.
 fn along(start: f32, run: f32, length: f32, side: Side, by: f32) -> f32 {
     let natural = match side {

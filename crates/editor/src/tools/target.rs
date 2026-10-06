@@ -2,13 +2,12 @@
 
 use config::Shape;
 use layout::{
-    AreaKind, Corners, GroupId, Layout, LayoutOp, ResolvedArea, ResolvedAreaKind, ResolvedGroup,
-    Sides, Style,
+    Corners, GroupId, Layout, LayoutOp, ResolvedArea, ResolvedAreaKind, ResolvedGroup, Sides,
 };
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{Node, Part};
 
-use crate::popover::{AreaDraft, group_entry};
+use crate::popover::look::{self, StyleOf, WrittenStyle};
 use crate::session::{EditError, Selection};
 use crate::written::Written;
 
@@ -19,17 +18,17 @@ pub(crate) fn offers(selection: &Selection, tool: Tool) -> bool {
     let Some(node) = selection.node() else {
         return false;
     };
-    let Some(desktop) = reconcile::desktop_now(node.output.as_deref()) else {
-        return false;
-    };
-    let Some(area) = desktop.resolved.area(node.layer, &node.area) else {
-        return false;
-    };
-    match (tool, &node.part) {
-        (Tool::Radius, Part::Area | Part::Group(_)) => true,
-        (Tool::Radius, Part::Instance(_, id)) => id.komponent_child().is_none(),
-        (Tool::Padding, part) => has_padding(area, part),
-    }
+    reconcile::with_desktop_now(node.output.as_deref(), |desktop| {
+        let Some(area) = desktop.resolved.area(node.layer, &node.area) else {
+            return false;
+        };
+        match (tool, &node.part) {
+            (Tool::Radius, Part::Area | Part::Group(_)) => true,
+            (Tool::Radius, Part::Instance(_, id)) => id.komponent_child().is_none(),
+            (Tool::Padding, part) => has_padding(area, part),
+        }
+    })
+    .unwrap_or(false)
 }
 
 /// Whether `part` of `area` holds anything off its edges ([`area_has_padding`], [`group_has_padding`]); an instance never does.
@@ -129,20 +128,7 @@ pub(crate) fn radius_ops(
     layout: &Layout,
     corners: [f32; 4],
 ) -> Result<Vec<LayoutOp>, EditError> {
-    let [top_left, top_right, bottom_right, bottom_left] = corners;
-    let corners = Corners::each(top_left, top_right, bottom_right, bottom_left);
-    let bar = reconcile::desktop_now(node.output.as_deref())
-        .and_then(|desktop| desktop.resolved.area(node.layer, &node.area).map(in_bar))
-        .unwrap_or(false);
-    restyled(node, layout, |area_or_group| match area_or_group {
-        Restyled::Area(area) if bar => {
-            if let Some(AreaKind::Bar { shape, .. }) = AreaDraft::kind_mut(area, "bar") {
-                shape.radius = Some(corners);
-            }
-        }
-        Restyled::Area(area) => area.style.radius = Some(corners),
-        Restyled::Style(style) => style.radius = Some(corners),
-    })
+    Ok(written_style(node, layout)?.ops(|style| (look::RADIUS.write)(style, corners)))
 }
 
 /// The operations that pad what `node` names by `sides`, written into `layout` where it decides them, as its `style.padding`.
@@ -151,25 +137,11 @@ pub(crate) fn padding_ops(
     layout: &Layout,
     sides: [f32; 4],
 ) -> Result<Vec<LayoutOp>, EditError> {
-    let [top, right, bottom, left] = sides;
-    let sides = Sides::each(top, right, bottom, left);
-    restyled(node, layout, |area_or_group| match area_or_group {
-        Restyled::Area(area) => area.style.padding = Some(sides),
-        Restyled::Style(style) => style.padding = Some(sides),
-    })
+    Ok(written_style(node, layout)?.ops(|style| (look::PADDING.write)(style, sides)))
 }
 
-/// What a change to a look is written into: the area as its level writes it, or the style of a group or an instance in it.
-enum Restyled<'a> {
-    Area(&'a mut layout::Area),
-    Style(&'a mut Style),
-}
-
-fn restyled(
-    node: &Node,
-    layout: &Layout,
-    change: impl FnOnce(Restyled),
-) -> Result<Vec<LayoutOp>, EditError> {
+/// Where `layout` writes the style of what `node` names, at the level the editor writes into.
+fn written_style(node: &Node, layout: &Layout) -> Result<WrittenStyle, EditError> {
     let workspace = crate::variant::editing_for(node);
     let written = Written::area(
         layout,
@@ -179,22 +151,21 @@ fn restyled(
         workspace.as_ref(),
     )
     .map_err(EditError::Refused)?;
-    match &node.part {
-        Part::Area => {
-            let mut area = written.area.clone();
-            change(Restyled::Area(&mut area));
-            Ok(written.ops(&area))
-        }
-        Part::Group(id) => {
-            let mut area = written.area.clone();
-            change(Restyled::Style(&mut group_entry(&mut area, id).style));
-            Ok(written.ops(&area))
-        }
-        Part::Instance(group, id) => {
-            let held = written.instance(group, &id.template());
-            let mut instance = held.instance.clone();
-            change(Restyled::Style(&mut instance.style));
-            Ok(held.ops(&instance))
-        }
-    }
+    let of = match &node.part {
+        Part::Area if is_bar(node) => StyleOf::Bar,
+        Part::Area => StyleOf::Area,
+        Part::Group(id) => StyleOf::Group(id.clone()),
+        Part::Instance(group, id) => StyleOf::Instance(group.clone(), id.template()),
+    };
+    Ok(WrittenStyle { written, of })
+}
+
+fn is_bar(node: &Node) -> bool {
+    reconcile::with_desktop_now(node.output.as_deref(), |desktop| {
+        desktop
+            .resolved
+            .area(node.layer, &node.area)
+            .is_some_and(in_bar)
+    })
+    .unwrap_or(false)
 }

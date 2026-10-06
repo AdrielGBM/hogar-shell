@@ -25,7 +25,7 @@ use layout::{
 use ui::descriptor::{Built, ChipDef, ChipFrame, ModuleDescriptor};
 use ui::host::{Audience, Host, Instance, InstanceId, Representation, Size};
 use ui::layout::{fill, painted_chrome};
-use ui::module::{DragOpen, module_foreground, resting_fill};
+use ui::module::{DragOpen, Placement, module_foreground, resting_fill};
 use ui::module_shell::{ModuleShellProps, module_shell};
 use ui::placeholder::placeholder;
 
@@ -1321,6 +1321,7 @@ impl ChipKit {
             popout: module.representations.popout.is_some() && config.popouts.enabled,
             drag_open: drag_open_for(config, &module, self.edge),
             site: self.site.clone(),
+            at: at.clone(),
             bound: Bound::of(&instance.actions, self.audience)
                 .with_menu(menu.clone())
                 .owning(at.clone()),
@@ -1434,6 +1435,8 @@ struct Dressing {
     popout: bool,
     drag_open: Option<DragOpen>,
     site: Site,
+    /// Where the chip is, which its presses and drags carry to whatever they open.
+    at: rects::Node,
     /// What the layout binds to this instance's gestures, each in place of the chip's own for that gesture alone, and its context menu on a secondary press nothing is bound to.
     bound: Bound,
 }
@@ -1500,6 +1503,7 @@ fn placed_chip(
             .on_alt_press(look.bound.alt_press())
             .on_scroll(wheel)
             .drag_open(look.drag_open)
+            .placement(Some(Placement::new(look.at)))
             .build(),
         telar::Children::new({
             let inner = std::cell::RefCell::new(Some(inner));

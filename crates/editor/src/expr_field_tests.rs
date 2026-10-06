@@ -30,7 +30,7 @@ mod tests {
     use crate::mode::{self};
     use crate::popover;
     use crate::popover::bindings::{Step, plan, removal};
-    use crate::rig::{Rig, SCREEN, rig, rig_with};
+    use crate::rig::{Rig, SCREEN, bar, rig, rig_with};
 
     fn face(_: &Host) -> Built {
         Ok(Box::new(Container::new(
@@ -489,10 +489,6 @@ mod tests {
         );
         screen.named(NamedKey::Enter);
         assert_eq!(rig.undo_label().as_deref(), Some("Customize clock"));
-    }
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
     }
 
     /// What the stored layout repeats the bar's centre over.

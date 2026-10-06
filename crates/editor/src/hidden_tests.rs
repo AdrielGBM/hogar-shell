@@ -14,19 +14,15 @@ mod tests {
     use surfaces::expressions;
     use surfaces::menu::Pointed;
     use surfaces::reconcile;
-    use surfaces::rects::{self, Node};
+    use surfaces::rects::{self};
     use surfaces::transient;
 
     use crate::mode::{self};
-    use crate::rig::{SCREEN, rig_with};
+    use crate::rig::{SCREEN, bar, rig_with};
     use crate::select;
     use crate::session;
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
-
-    fn bar() -> Node {
-        Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
-    }
 
     fn hide_the_bar(layout: &mut Layout) {
         layout.outputs[0]

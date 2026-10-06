@@ -1,4 +1,7 @@
+use std::any::Any;
 use std::cell::RefCell;
+use std::fmt;
+use std::rc::Rc;
 
 use telar::{Color, Rect};
 
@@ -14,11 +17,32 @@ thread_local! {
 /// The rect is what a drawer hangs off, on the same terms as the card a hover opens over the same chip, and only the chip knows it. What travelled here before was the *zone* the chip sat in, which could say no more than which end of the bar to align to — and could not always say that: an id placed in more than one zone resolves to whichever the config search reaches first, and a module the layout places on the desktop grid sits in no bar zone at all despite being laid out at a very definite place on screen. A rect answers both without asking the config anything.
 ///
 /// Ambient rather than a parameter because the handler that reads it may be a `ModuleClick::Action` — a bare `fn()` that opens someone else's panel — which no signature change reaches. Scoped strictly to the synchronous dispatch, so nothing can read a stale rect afterwards.
-/// The chip a press or a drag came from: its rect, and the output it is on, which two identical bars on two identical screens need to tell apart.
-#[derive(Clone, Debug, PartialEq)]
+/// The chip a press or a drag came from: its rect, the output it is on, which two identical bars on two identical screens need to tell apart, and where the surface that built it placed it.
+#[derive(Clone, Debug)]
 pub struct Pressed {
     pub rect: Rect,
     pub output: Option<String>,
+    pub placement: Option<Placement>,
+}
+
+/// Where a surface placed the chip, as that surface names it, handed back with a press of it so the surface need not find the chip again by where it is drawn.
+#[derive(Clone)]
+pub struct Placement(Rc<dyn Any>);
+
+impl Placement {
+    pub fn new(at: impl Any) -> Self {
+        Self(Rc::new(at))
+    }
+
+    pub fn get<T: Any>(&self) -> Option<&T> {
+        self.0.downcast_ref()
+    }
+}
+
+impl fmt::Debug for Placement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Placement")
+    }
 }
 
 pub fn from_chip<R>(chip: Pressed, act: impl FnOnce() -> R) -> R {

@@ -829,7 +829,12 @@ fn follow_extent(
     extent: RwSignal<Option<Rect>>,
 ) {
     if let Some(laid) = track_layout(node) {
-        telar::effect(move || extent.set(Some(settled(&place, laid.get(), screen.get()))));
+        telar::effect(move || {
+            let now = Some(settled(&place, laid.get(), screen.get()));
+            if extent.peek() != now {
+                extent.set(now);
+            }
+        });
     }
 }
 
@@ -1260,6 +1265,7 @@ mod tests {
         let pressed = ui::module::Pressed {
             rect: at,
             output: Some("HDMI-A-1".into()),
+            placement: None,
         };
         let found = chips::find("clock", Some(pressed), Some("DP-1")).expect("a clock chip");
         assert_eq!(found.anchor.output.as_deref(), Some("HDMI-A-1"));

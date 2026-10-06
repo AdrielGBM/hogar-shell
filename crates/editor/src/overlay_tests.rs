@@ -14,10 +14,10 @@ mod tests {
     use surfaces::rects::Node;
     use surfaces::transient::{self, Place};
 
-    use crate::keys::{self, Direction, Press};
+    use crate::keys::Direction;
     use crate::mode::{self};
     use crate::modes::overlay::{self, Placed, stacks_of};
-    use crate::rig::{Rig, SCREEN, enter, rig_with};
+    use crate::rig::{Rig, SCREEN, enter, rig_with, tap};
     use crate::session::{self, Edit, Selection};
     use crate::{context, popover};
 
@@ -73,23 +73,6 @@ mod tests {
         is_alt: true,
         ..NONE
     };
-
-    /// A key pressed and let go, as the host's window hears it: the keyboard's state, the dismiss stack, then the host's keys.
-    fn tap(key: Key, modifiers: ModifiersState) -> bool {
-        let event = Event::KeyPressed {
-            key: key.clone(),
-            modifiers,
-        };
-        telar::observe_keyboard(&event);
-        let taken =
-            telar::dispatch_overlays(&event) || keys::press_as(&key, modifiers, Press::First);
-        telar::observe_keyboard(&Event::KeyReleased {
-            key: key.clone(),
-            modifiers,
-        });
-        keys::settle_released();
-        taken
-    }
 
     fn arrow(direction: Direction) -> Key {
         Key::Named(direction.arrow())

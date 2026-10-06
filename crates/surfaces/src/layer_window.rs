@@ -1104,7 +1104,7 @@ impl LayerWindowContext {
 }
 
 /// The app one layer window draws: its layer's areas built into one tree over a cell the host writes a new arrangement into, so a layout change is a rebuild rather than a new window.
-struct LayerApp {
+pub(crate) struct LayerApp {
     kind: LayerKind,
     output: Option<String>,
     layer: LiveLayer,
@@ -1123,6 +1123,44 @@ struct LayerApp {
 pub(crate) struct Screen {
     pub(crate) size: (f32, f32),
     pub(crate) reserved: Reserved,
+}
+
+#[cfg(test)]
+impl LayerApp {
+    /// The `kind` window of the tests' screen, drawing `layer` as `areas` builds it over `screen`, before the host has shown or mapped anything.
+    pub(crate) fn standing(
+        kind: LayerKind,
+        layer: WindowAreas,
+        config: Arc<Config>,
+        screen: Screen,
+        areas: Rc<dyn Areas>,
+    ) -> Self {
+        Self {
+            kind,
+            output: Some(crate::test_rig::SCREEN.to_string()),
+            layer: LiveLayer::new(layer),
+            config: LiveConfig::new(config),
+            demands: Rc::new(Demands::new(window_layer(kind).expect("a session layer").0)),
+            screen: Rc::new(Cell::new(screen)),
+            generation: Generation::default(),
+            shown: ScreenFeed::default(),
+            mapped: MappedFeed::default(),
+            areas,
+        }
+    }
+
+    /// Builds every area again, as a reload does.
+    pub(crate) fn rebuild(&self) {
+        self.generation.bump();
+    }
+
+    pub(crate) fn demands(&self) -> &Demands {
+        &self.demands
+    }
+
+    pub(crate) fn screen(&self) -> Screen {
+        self.screen.get()
+    }
 }
 
 impl LayerApp {
@@ -1479,7 +1517,7 @@ fn whole_window() -> LayoutStyle {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     use platform_headless::{HeadlessPlatform, SurfaceFrameSink};
@@ -1490,15 +1528,15 @@ mod tests {
 
     use config::{Edge, Shape};
     use layout::{
-        AreaId, BarShape, Expr, Extent, GroupId, GroupKind, InstanceId, Representation,
-        ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Style, Zone,
+        AreaId, Expr, GroupId, GroupKind, InstanceId, Representation, ResolvedAreaKind,
+        ResolvedInstance, Style, Zone,
     };
     use telar::set_theme;
     use ui::scale::paint;
 
     use super::*;
 
-    const SCREEN: &str = "DP-1";
+    use crate::test_rig::{DOTS, SCREEN, area, bar_kind, grid_kind, group, instance};
 
     fn config() -> Arc<Config> {
         Arc::new(Config::default())
@@ -1537,66 +1575,34 @@ mod tests {
 
     fn bar(id: &str, modules: &[&str]) -> ResolvedArea {
         ResolvedArea {
-            id: AreaId::new(id),
-            kind: ResolvedAreaKind::Bar {
-                edge: Edge::Top,
-                thickness: 34.0,
-                length: Extent::Fill,
-                offset: 0.0,
-                shape: BarShape::default(),
-                autohide: None,
-            },
             reserve: true,
-            above_fullscreen: false,
-            within: layout::Within::Output,
-            style: Style::default(),
-            visible: None,
-            actions: Default::default(),
-            groups: vec![ResolvedGroup {
-                id: GroupId::new("start"),
-                kind: GroupKind::Zone { zone: Zone::Start },
-                arrange: None,
-                cols: layout::Arrange::TRACKS,
-                rows: layout::Arrange::TRACKS,
-                gap: None,
-                repeat: None,
-                komponent: None,
-                style: Style::default(),
-                children: modules.iter().map(instance).collect(),
-            }],
+            ..area(
+                id,
+                bar_kind(Edge::Top),
+                vec![group(
+                    "start",
+                    GroupKind::Zone { zone: Zone::Start },
+                    modules.iter().map(chip).collect(),
+                )],
+            )
         }
     }
 
-    fn instance(module: &&str) -> ResolvedInstance {
-        ResolvedInstance {
-            id: InstanceId::new(*module),
-            module: (*module).to_string(),
-            representation: Representation::Chip,
-            options: toml::Table::new(),
-            bindings: BTreeMap::new(),
-            style: Style::default(),
-            placement: None,
-            actions: BTreeMap::new(),
-        }
+    fn chip(module: &&str) -> ResolvedInstance {
+        instance(module, module, Representation::Chip)
     }
 
     fn wallpaper() -> ResolvedArea {
-        ResolvedArea {
-            id: AreaId::new("wall"),
-            kind: ResolvedAreaKind::WallpaperRegion {
+        area(
+            "wall",
+            ResolvedAreaKind::WallpaperRegion {
                 rect: layout::Rect::default(),
                 source: "~/pictures/wall.png".into(),
                 fit: layout::Fit::Cover,
                 transition: layout::Transition::Fade,
             },
-            reserve: false,
-            above_fullscreen: false,
-            within: layout::Within::Output,
-            style: Style::default(),
-            visible: None,
-            actions: Default::default(),
-            groups: Vec::new(),
-        }
+            Vec::new(),
+        )
     }
 
     /// The starter arrangement: one top bar with modules on it and nothing anywhere else, which is what the built-in layout resolves to.
@@ -1816,20 +1822,8 @@ mod tests {
 
     fn empty_grid() -> ResolvedArea {
         ResolvedArea {
-            id: AreaId::new("desktop"),
-            kind: ResolvedAreaKind::Grid {
-                rect: layout::Rect::default(),
-                cell: 80.0,
-                gap: 16.0,
-                anchor: layout::Anchor::TopLeft,
-            },
-            reserve: false,
-            above_fullscreen: false,
             within: layout::Within::Usable,
-            style: Style::default(),
-            visible: None,
-            actions: Default::default(),
-            groups: Vec::new(),
+            ..area("desktop", grid_kind(), Vec::new())
         }
     }
 
@@ -2190,18 +2184,13 @@ mod tests {
         set_theme(Config::default().resolve_theme());
         crate::transient::close_all();
         let areas = Rc::new(Cell::new(0));
-        let app = LayerApp {
-            kind: LayerKind::Top,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn(vec![bar("bar-top", &["clock"])])),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(Layer::Top)),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Counting(Rc::clone(&areas))),
-        };
+        let app = LayerApp::standing(
+            LayerKind::Top,
+            drawn(vec![bar("bar-top", &["clock"])]),
+            config(),
+            screen(),
+            Rc::new(Counting(Rc::clone(&areas))),
+        );
         let content = Rc::new(Cell::new(0));
         let counted = Rc::clone(&content);
         crate::transient::open(crate::transient::Spec::new(
@@ -2248,21 +2237,16 @@ mod tests {
         telar::reset_layout_runtime();
         set_theme(Config::default().resolve_theme());
         let built = Rc::new(RefCell::new(Vec::new()));
-        let app = LayerApp {
-            kind: LayerKind::Top,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn(vec![
+        let app = LayerApp::standing(
+            LayerKind::Top,
+            drawn(vec![
                 bar("bar-top", &["clock"]),
                 bar("bar-second", &["notes"]),
-            ])),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(Layer::Top)),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Naming(Rc::clone(&built))),
-        };
+            ]),
+            config(),
+            screen(),
+            Rc::new(Naming(Rc::clone(&built))),
+        );
         let _root = app.root();
         let taken = || std::mem::take(&mut *built.borrow_mut());
         assert_eq!(taken(), ["bar-top", "bar-second"]);
@@ -2346,18 +2330,13 @@ mod tests {
             WindowAreas::of(&resolved, LayerKind::Top)
         };
         let built = Rc::new(RefCell::new(Vec::new()));
-        let app = LayerApp {
-            kind: LayerKind::Top,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn_with("%H")),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(Layer::Top)),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Naming(Rc::clone(&built))),
-        };
+        let app = LayerApp::standing(
+            LayerKind::Top,
+            drawn_with("%H"),
+            config(),
+            screen(),
+            Rc::new(Naming(Rc::clone(&built))),
+        );
         let _root = app.root();
         let taken = || std::mem::take(&mut *built.borrow_mut());
         assert_eq!(taken(), ["bar-top", "bar-second"]);
@@ -2384,9 +2363,9 @@ mod tests {
     }
 
     fn half(id: &str, x: f32, source: &str) -> ResolvedArea {
-        ResolvedArea {
-            id: AreaId::new(id),
-            kind: ResolvedAreaKind::WallpaperRegion {
+        area(
+            id,
+            ResolvedAreaKind::WallpaperRegion {
                 rect: layout::Rect {
                     x,
                     y: 0.0,
@@ -2397,14 +2376,8 @@ mod tests {
                 fit: layout::Fit::Cover,
                 transition: layout::Transition::Fade,
             },
-            reserve: false,
-            above_fullscreen: false,
-            within: Within::Output,
-            style: Style::default(),
-            visible: None,
-            groups: Vec::new(),
-            actions: BTreeMap::new(),
-        }
+            Vec::new(),
+        )
     }
 
     fn images(commands: &[telar::DrawCommand]) -> HashSet<u64> {
@@ -2439,21 +2412,16 @@ mod tests {
                 layer(vec![half("left", 0.0, left), half("right", 0.5, &blue)]),
             )
         };
-        let app = LayerApp {
-            kind: LayerKind::Background,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(window(&red)),
-            config: LiveConfig::new(Arc::clone(&config)),
-            demands: Rc::new(Demands::new(Layer::Background)),
-            screen: Rc::new(Cell::new(Screen {
+        let app = LayerApp::standing(
+            LayerKind::Background,
+            window(&red),
+            Arc::clone(&config),
+            Screen {
                 size: (WIDE as f32, HIGH as f32),
                 reserved: Reserved::default(),
-            })),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(crate::area::ShellAreas),
-        };
+            },
+            Rc::new(crate::area::ShellAreas),
+        );
         let tree = telar::testing::mount(app.root(), WIDE, HIGH);
         let frame = || {
             telar::relayout_if_dirty();
@@ -2498,18 +2466,13 @@ mod tests {
     }
 
     fn counting_app(kind: LayerKind, resolved: &Resolved, built: &Rc<Cell<u32>>) -> LayerApp {
-        LayerApp {
+        LayerApp::standing(
             kind,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(WindowAreas::of(resolved, kind)),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(window_layer(kind).expect("a session layer").0)),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Counting(Rc::clone(built))),
-        }
+            WindowAreas::of(resolved, kind),
+            config(),
+            screen(),
+            Rc::new(Counting(Rc::clone(built))),
+        )
     }
 
     /// An edit's preview reaches the windows whose areas it changes and no others, and ending it puts back exactly what was reconciled — the same arrangement, not a copy of it — rebuilding only what the preview had touched.
@@ -2632,18 +2595,13 @@ mod tests {
         telar::reset_layout_runtime();
         set_theme(Config::default().resolve_theme());
         let areas = Rc::new(Cell::new(0));
-        let app = LayerApp {
-            kind: LayerKind::Desktop,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn(vec![bar("bar-top", &["clock"])])),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(Layer::Bottom)),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Counting(Rc::clone(&areas))),
-        };
+        let app = LayerApp::standing(
+            LayerKind::Desktop,
+            drawn(vec![bar("bar-top", &["clock"])]),
+            config(),
+            screen(),
+            Rc::new(Counting(Rc::clone(&areas))),
+        );
         let _root = app.root();
         assert_eq!(areas.get(), 1);
 
@@ -2704,18 +2662,13 @@ mod tests {
             }
             drawn(vec![area])
         };
-        let app = LayerApp {
-            kind: LayerKind::Top,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(placed(None)),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(Layer::Top)),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(crate::area::ShellAreas),
-        };
+        let app = LayerApp::standing(
+            LayerKind::Top,
+            placed(None),
+            config(),
+            screen(),
+            Rc::new(crate::area::ShellAreas),
+        );
         let _root = app.root();
         let section = config::ClockConfig::default().date_format;
 
@@ -2756,21 +2709,16 @@ mod tests {
         set_theme(Config::default().resolve_theme());
         crate::transient::close_all();
         let pressed = Rc::new(Cell::new(0));
-        let app = LayerApp {
-            kind: LayerKind::Top,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn(vec![bar("bar-top", &["clock"])])),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(Layer::Top)),
-            screen: Rc::new(Cell::new(Screen {
+        let app = LayerApp::standing(
+            LayerKind::Top,
+            drawn(vec![bar("bar-top", &["clock"])]),
+            config(),
+            Screen {
                 size: (400.0, 300.0),
                 reserved: Reserved::default(),
-            })),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Pressable(Rc::clone(&pressed))),
-        };
+            },
+            Rc::new(Pressable(Rc::clone(&pressed))),
+        );
         crate::transient::open(crate::transient::Spec::new(
             "card",
             crate::transient::Place::Beside(crate::transient::Anchor {
@@ -2906,16 +2854,14 @@ mod tests {
 
     fn app(kind: LayerKind, areas: Vec<ResolvedArea>) -> LayerApp {
         LayerApp {
-            kind,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn(areas)),
-            config: LiveConfig::new(config()),
             demands: Rc::new(Demands::new(Layer::Top)),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
+            ..LayerApp::standing(
+                kind,
+                drawn(areas),
+                config(),
+                screen(),
+                Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
+            )
         }
     }
 
@@ -2927,16 +2873,14 @@ mod tests {
 
         let demands = Rc::new(Demands::new(Layer::Top));
         let app = LayerApp {
-            kind: LayerKind::Top,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn(vec![blurring])),
-            config: LiveConfig::new(config()),
             demands: Rc::clone(&demands),
-            screen: Rc::new(Cell::new(screen())),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
+            ..LayerApp::standing(
+                LayerKind::Top,
+                drawn(vec![blurring]),
+                config(),
+                screen(),
+                Rc::new(Solid(Color::from_rgb_u8(40, 200, 40))),
+            )
         };
 
         run_with_platform::<_, _, ()>(
@@ -3086,34 +3030,6 @@ mod tests {
         assert!(windows.is_mapped(Some(SCREEN), LayerKind::Top));
     }
 
-    fn dot(_: &ui::host::Host) -> ui::descriptor::Built {
-        Ok(Box::new(Container::new(
-            LayoutStyle::new().width(20.0).height(20.0),
-            Vec::new(),
-        )?))
-    }
-
-    const fn dot_module(id: &'static str) -> ui::descriptor::ModuleDescriptor {
-        ui::descriptor::ModuleDescriptor {
-            id,
-            name: id,
-            icon: "circle",
-            category: ui::descriptor::Category::Info,
-            options: &[],
-            representations: ui::descriptor::Representations {
-                chip: Some(ui::descriptor::ChipDef::new(
-                    dot,
-                    ui::descriptor::Input::ReadOnly,
-                )),
-                ..ui::descriptor::Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }
-    }
-
-    const DOTS: &[ui::descriptor::ModuleDescriptor] = &[dot_module("dot-a"), dot_module("dot-b")];
-
     fn bar_on(
         edge: Edge,
         start: &[&str],
@@ -3121,46 +3037,32 @@ mod tests {
         autohide: Option<layout::AutoHide>,
     ) -> ResolvedArea {
         let mut area = bar("bar", start);
-        area.kind = ResolvedAreaKind::Bar {
-            edge,
-            thickness: 34.0,
-            length: Extent::Fill,
-            offset: 0.0,
-            shape: BarShape::default(),
-            autohide,
-        };
-        area.groups.push(ResolvedGroup {
-            id: GroupId::new("end"),
-            kind: GroupKind::Zone { zone: Zone::End },
-            arrange: None,
-            cols: layout::Arrange::TRACKS,
-            rows: layout::Arrange::TRACKS,
-            gap: None,
-            repeat: None,
-            komponent: None,
-            style: Style::default(),
-            children: end.iter().map(instance).collect(),
-        });
+        area.kind = bar_kind(edge);
+        if let ResolvedAreaKind::Bar {
+            autohide: hides, ..
+        } = &mut area.kind
+        {
+            *hides = autohide;
+        }
+        area.groups.push(group(
+            "end",
+            GroupKind::Zone { zone: Zone::End },
+            end.iter().map(chip).collect(),
+        ));
         area
     }
 
     fn app_of(kind: LayerKind, areas: WindowAreas) -> LayerApp {
-        let wlr = window_layer(kind).expect("a session layer").0;
-        LayerApp {
+        LayerApp::standing(
             kind,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(areas),
-            config: LiveConfig::new(config()),
-            demands: Rc::new(Demands::new(wlr)),
-            screen: Rc::new(Cell::new(Screen {
+            areas,
+            config(),
+            Screen {
                 size: (600.0, 400.0),
                 reserved: Reserved::default(),
-            })),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(crate::area::ShellAreas),
-        }
+            },
+            Rc::new(crate::area::ShellAreas),
+        )
     }
 
     fn laid_out(root: &mut Box<dyn Component>) {
@@ -3312,97 +3214,27 @@ mod tests {
 #[cfg(test)]
 mod grid_tests {
     use std::cell::Cell;
-    use std::collections::BTreeMap;
+
     use std::rc::Rc;
     use std::sync::Arc;
 
     use config::Config;
     use layout::{
-        Anchor, AreaId, GroupId, GroupKind, InstanceId, LayerKind, Representation, ResolvedArea,
-        ResolvedAreaKind, ResolvedGroup, ResolvedInstance, ResolvedLayer, Style, Within,
+        AreaId, GroupId, LayerKind, Representation, ResolvedArea, ResolvedGroup, ResolvedLayer,
     };
-    use platform_wayland::Layer;
+
     use telar::{Component, LayoutError, LayoutItem, set_theme};
 
     use super::*;
 
-    const SCREEN: &str = "DP-1";
-
-    fn dot(_: &ui::host::Host) -> ui::descriptor::Built {
-        Ok(Box::new(telar::Container::new(
-            telar::LayoutStyle::new().width(20.0).height(20.0),
-            Vec::new(),
-        )?))
-    }
-
-    const fn dot_module(id: &'static str) -> ui::descriptor::ModuleDescriptor {
-        ui::descriptor::ModuleDescriptor {
-            id,
-            name: id,
-            icon: "circle",
-            category: ui::descriptor::Category::Info,
-            options: &[],
-            representations: ui::descriptor::Representations {
-                widget: Some(ui::descriptor::WidgetDef {
-                    sizes: &ui::host::WidgetSize::ALL,
-                    build: dot,
-                    input: ui::descriptor::Input::ReadOnly,
-                }),
-                ..ui::descriptor::Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }
-    }
-
-    const DOTS: &[ui::descriptor::ModuleDescriptor] = &[dot_module("dot-a"), dot_module("dot-b")];
+    use crate::test_rig::{DOTS, SCREEN, area, cell, grid_kind, group, instance};
 
     fn widget(id: &str, col: u32, row: u32, representation: Representation) -> ResolvedGroup {
-        ResolvedGroup {
-            id: GroupId::new(id),
-            kind: GroupKind::Cell {
-                col,
-                row,
-                col_span: 1,
-                row_span: 1,
-            },
-            arrange: None,
-            cols: layout::Arrange::TRACKS,
-            rows: layout::Arrange::TRACKS,
-            gap: None,
-            repeat: None,
-            komponent: None,
-            style: Style::default(),
-            children: vec![ResolvedInstance {
-                id: InstanceId::new(id),
-                module: id.to_string(),
-                representation,
-                options: toml::Table::new(),
-                bindings: BTreeMap::new(),
-                style: Style::default(),
-                placement: None,
-                actions: BTreeMap::new(),
-            }],
-        }
+        group(id, cell(col, row), vec![instance(id, id, representation)])
     }
 
     fn grid(groups: Vec<ResolvedGroup>) -> ResolvedArea {
-        ResolvedArea {
-            id: AreaId::new("widgets"),
-            kind: ResolvedAreaKind::Grid {
-                rect: layout::Rect::default(),
-                cell: 80.0,
-                gap: 16.0,
-                anchor: Anchor::TopLeft,
-            },
-            reserve: false,
-            above_fullscreen: false,
-            within: Within::Output,
-            style: Style::default(),
-            visible: None,
-            groups,
-            actions: BTreeMap::new(),
-        }
+        area("widgets", grid_kind(), groups)
     }
 
     struct Counted(Rc<Cell<usize>>);
@@ -3432,24 +3264,19 @@ mod grid_tests {
         let scope = telar::owner_scope();
         let owner = scope.id();
         let builds = Rc::new(Cell::new(0));
-        let app = LayerApp {
-            kind: LayerKind::Desktop,
-            output: Some(SCREEN.to_string()),
-            layer: LiveLayer::new(drawn(vec![
+        let app = LayerApp::standing(
+            LayerKind::Desktop,
+            drawn(vec![
                 widget("dot-a", 0, 0, Representation::WidgetS),
                 widget("dot-b", 2, 0, Representation::WidgetS),
-            ])),
-            config: LiveConfig::new(Arc::new(Config::default())),
-            demands: Rc::new(Demands::new(Layer::Bottom)),
-            screen: Rc::new(Cell::new(Screen {
+            ]),
+            Arc::new(Config::default()),
+            Screen {
                 size: (1200.0, 800.0),
                 reserved: Reserved::default(),
-            })),
-            generation: Generation::default(),
-            shown: ScreenFeed::default(),
-            mapped: MappedFeed::default(),
-            areas: Rc::new(Counted(Rc::clone(&builds))),
-        };
+            },
+            Rc::new(Counted(Rc::clone(&builds))),
+        );
         let mut root = app.root();
         let lay_out = |root: &mut Box<dyn Component>| {
             root.on_event(&telar::Event::WindowResized {
@@ -3504,7 +3331,3 @@ mod grid_tests {
         assert!(!crate::area::moves_only(&was, &padded));
     }
 }
-
-#[cfg(test)]
-#[path = "panel/owned_tests.rs"]
-mod owned_panel_tests;
