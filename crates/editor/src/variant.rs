@@ -83,11 +83,11 @@ pub(crate) fn editing_for(node: &Node) -> Option<WorkspaceMatch> {
     applies_to(node).then(editing).flatten()
 }
 
-fn refusal(layer: LayerKind) -> Option<String> {
+fn refusal(layer: LayerKind) -> Option<util::report::Message> {
     match layer {
         LayerKind::Background | LayerKind::Desktop | LayerKind::Overlay => None,
-        LayerKind::Top => Some(telar::t!("editor.variant.top")),
-        LayerKind::Lock => Some(telar::t!("editor.variant.lock")),
+        LayerKind::Top => Some(util::message!("editor.variant.top")),
+        LayerKind::Lock => Some(util::message!("editor.variant.lock")),
     }
 }
 
@@ -111,7 +111,7 @@ pub fn set(on: bool) -> Result<(), EditError> {
             return Err(EditError::Refused(why));
         }
         if up_on(Some(mode), reconcile::desktop_now).is_none() {
-            return Err(EditError::Refused(telar::t!("editor.variant.unknown")));
+            return Err(EditError::Refused(util::message!("editor.variant.unknown")));
         }
     }
     ONLY.with(|only| {

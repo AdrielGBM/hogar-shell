@@ -21,7 +21,7 @@ use telar::{
 use config::theme::NordTheme;
 use layout::{
     Anchor, Area, AreaId, AreaKind, CardKind, LayerKind, Layout, LayoutOp, Offset, ResolvedArea,
-    ResolvedAreaKind, Route, StackOutputPolicy, Urgency, Within,
+    ResolvedAreaKind, Route, StackFlow, StackOutputPolicy, Urgency, Within,
 };
 use surfaces::card_samples::{self, Launcher, Sample, Shown};
 use surfaces::pinned::{self, Side};
@@ -151,6 +151,7 @@ pub struct Placed {
     pub anchor: Anchor,
     pub offset: Offset,
     pub width: f32,
+    pub flow: StackFlow,
     pub routes: Vec<Route>,
     pub launcher: bool,
     /// The box its geometry is measured in.
@@ -163,6 +164,7 @@ impl Placed {
             anchor,
             offset,
             width,
+            flow,
             routes,
             launcher,
             ..
@@ -176,20 +178,21 @@ impl Placed {
             anchor: *anchor,
             offset: *offset,
             width: *width,
+            flow: *flow,
             routes: routes.clone(),
             launcher: *launcher,
             bounds: desktop.reserved.box_of(area.within, desktop.size),
         })
     }
 
-    /// Where its column is drawn.
-    pub fn column(&self) -> Rect {
-        pinned::column(self.bounds, self.anchor, self.width, self.offset)
+    /// Where its lane is drawn: a column, or a row.
+    pub fn lane(&self) -> Rect {
+        pinned::stack(self.bounds, self.anchor, self.width, self.flow, self.offset)
     }
 
     /// Where its first card is drawn.
     pub fn ghost(&self) -> Rect {
-        ghost(self.column(), self.anchor)
+        first_card(self.lane(), self.anchor, self.flow, self.width)
     }
 }
 
@@ -207,30 +210,55 @@ fn stack_on(desktop: &Desktop, layer: LayerKind, id: &AreaId) -> Result<Placed, 
         .into_iter()
         .find(|placed| placed.layer == layer && placed.id == *id)
         .ok_or_else(|| {
-            EditError::refused(telar::t!("editor.overlay.no_stack", id = id.to_string()))
+            EditError::refused(util::message!(
+                "editor.overlay.no_stack",
+                id = id.to_string()
+            ))
         })
 }
 
-/// The box of a column's first card: as wide as the column, at the end its cards grow from.
-pub fn ghost(column: Rect, anchor: Anchor) -> Rect {
-    let height = GHOST.min(column.height);
+/// The box of a lane's first card: as wide as the lane, at the end its cards grow from.
+pub fn ghost(lane: Rect, anchor: Anchor) -> Rect {
+    let height = GHOST.min(lane.height);
     let y = match pinned::sides(anchor).1 {
-        Side::Start => column.y,
-        Side::Middle => column.y + (column.height - height) / 2.0,
-        Side::End => column.y + column.height - height,
+        Side::Start => lane.y,
+        Side::Middle => lane.y + (lane.height - height) / 2.0,
+        Side::End => lane.y + lane.height - height,
     };
-    Rect::new(column.x, y, column.width, height)
+    Rect::new(lane.x, y, lane.width, height)
+}
+
+/// The box of the first card of a stack of `flow` whose lane is `lane`: a column's is as wide as it, a row's is `width` wide at the end its cards grow from.
+pub fn first_card(lane: Rect, anchor: Anchor, flow: StackFlow, width: f32) -> Rect {
+    let card = ghost(lane, anchor);
+    match flow {
+        StackFlow::Column => card,
+        StackFlow::Row => {
+            let wide = width.min(lane.width);
+            let x = match pinned::sides(anchor).0 {
+                Side::Start => lane.x,
+                Side::Middle => lane.x + (lane.width - wide) / 2.0,
+                Side::End => lane.x + lane.width - wide,
+            };
+            Rect::new(x, card.y, wide, card.height)
+        }
+    }
 }
 
 /// Where a stack `width` wide lands when the box of its first card is let go with its top left corner `at`, inside `bounds`: pinned to the ninth of `bounds` the box's middle is over, and moved off that anchor by as far as the box is from where the anchor alone puts it — each way, not at all within [`SNAP`] of it.
-pub fn landing(bounds: Rect, width: f32, at: (f32, f32)) -> (Anchor, Offset) {
+pub fn landing(bounds: Rect, width: f32, flow: StackFlow, at: (f32, f32)) -> (Anchor, Offset) {
     let height = GHOST.min(bounds.height);
     let x =
         at.0.clamp(bounds.x, (bounds.x + bounds.width - width).max(bounds.x));
     let y =
         at.1.clamp(bounds.y, (bounds.y + bounds.height - height).max(bounds.y));
     let anchor = pinned::anchor_at(bounds, (x + width / 2.0, y + height / 2.0));
-    let natural = ghost(pinned::column(bounds, anchor, width, Offset::ZERO), anchor);
+    let natural = first_card(
+        pinned::stack(bounds, anchor, width, flow, Offset::ZERO),
+        anchor,
+        flow,
+        width,
+    );
     let snapped = |by: f32| match by.abs() < SNAP {
         true => 0.0,
         false => by.round(),
@@ -274,7 +302,9 @@ struct StackFields<'a> {
 fn changed(work: Work) -> Result<Vec<LayoutOp>, EditError> {
     let ops = work.done();
     match ops.is_empty() {
-        true => Err(EditError::refused(telar::t!("editor.overlay.unchanged"))),
+        true => Err(EditError::refused(util::message!(
+            "editor.overlay.unchanged"
+        ))),
         false => Ok(ops),
     }
 }
@@ -301,6 +331,7 @@ pub(crate) fn added(
             anchor: Some(anchor),
             offset: None,
             width: Some(NEW_WIDTH),
+            flow: None,
             output_policy: Some(StackOutputPolicy::Focused),
             routes: Vec::new(),
             launcher: None,
@@ -331,7 +362,7 @@ pub(crate) fn moved(
     changed(work)
 }
 
-/// The stack `id` of `layer` moved [`NUDGE`] further off its anchor the way `direction` points, as long as that moves its column at all.
+/// The stack `id` of `layer` moved [`NUDGE`] further off its anchor the way `direction` points, as long as that moves its lane at all.
 pub(crate) fn nudged(
     layout: &Layout,
     desktop: &Desktop,
@@ -353,7 +384,7 @@ pub(crate) fn nudged(
         },
         ..placed.clone()
     };
-    if further.column() == placed.column() {
+    if further.lane() == placed.lane() {
         return Err(EditError::no_way(id));
     }
     moved(layout, desktop, layer, id, placed.anchor, further.offset)
@@ -512,7 +543,7 @@ fn takes_the_rest(desktop: &Desktop, placed: &Placed) -> bool {
 }
 
 /// Why volume and brightness are not routed to the stack that takes what no route takes: it takes them already, unless another stack's routes name them, and a route of its own would make it take them alone.
-fn catch_all_said(desktop: &Desktop, placed: &Placed) -> String {
+fn catch_all_said(desktop: &Desktop, placed: &Placed) -> util::report::Message {
     let stacks = stacks_of(desktop);
     let osd = layout::RoutedCard {
         kind: CardKind::Osd,
@@ -520,12 +551,12 @@ fn catch_all_said(desktop: &Desktop, placed: &Placed) -> String {
         urgency: None,
     };
     match layout::route_card(&stacks, |stack| &stack.routes, &osd) {
-        Some(other) if other != placed => telar::t!(
+        Some(other) if other != placed => util::message!(
             "editor.overlay.osd_elsewhere",
             name = placed.id.to_string(),
             other = other.id.to_string()
         ),
-        _ => telar::t!("editor.overlay.osd_already", name = placed.id.to_string()),
+        _ => util::message!("editor.overlay.osd_already", name = placed.id.to_string()),
     }
 }
 
@@ -703,7 +734,7 @@ pub(crate) fn try_next() -> Result<(), EditError> {
 pub(crate) fn try_card(kind: Try) -> Result<(), EditError> {
     let mode = mode::current()
         .filter(|mode| mode.layer == LayerKind::Overlay)
-        .ok_or_else(|| EditError::refused(telar::t!("editor.overlay.try.only_here")))?;
+        .ok_or_else(|| EditError::refused(util::message!("editor.overlay.try.only_here")))?;
     let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
     let Some(sample) = kind.sample() else {
         card_samples::toggle_launcher(Launcher {
@@ -719,7 +750,7 @@ pub(crate) fn try_card(kind: Try) -> Result<(), EditError> {
     };
     let stacks = stacks_of(&desktop);
     let Some(stack) = layout::route_card(&stacks, |placed| &placed.routes, &sample.routed()) else {
-        return Err(EditError::refused(telar::t!(
+        return Err(EditError::refused(util::message!(
             "editor.overlay.try.nowhere",
             card = kind.label()
         )));
@@ -851,23 +882,25 @@ pub(crate) fn tool(mode: &Mode) -> Built {
     )?))
 }
 
-/// The sample cards and launcher of the screen `output`, under the stacks' boxes: each stack's column holds the samples [`layout::route_card`] sends it, and the launcher is in the middle of the screen where no stack opens it.
+/// The sample cards and launcher of the screen `output`, under the stacks' boxes: each stack's lane holds the samples [`layout::route_card`] sends it, and the launcher is in the middle of the screen where no stack opens it.
 fn sample_cards(output: String) -> Built {
     let (listing, building, centring) = (output.clone(), output.clone(), output);
-    let columns = ReactiveList::with_style(
+    let lanes = ReactiveList::with_style(
         whole(),
         move || {
             reconcile::desktop(Some(&listing))
                 .map(|desktop| {
                     stacks_of(&desktop)
                         .into_iter()
-                        .map(|placed| (placed.layer, placed.id))
+                        .map(|placed| (placed.layer, placed.id, placed.flow))
                         .collect()
                 })
                 .unwrap_or_default()
         },
-        |held: &(LayerKind, AreaId)| held.clone(),
-        move |(layer, id): (LayerKind, AreaId)| sample_column(&building, layer, id),
+        |held: &(LayerKind, AreaId, StackFlow)| held.clone(),
+        move |(layer, id, flow): (LayerKind, AreaId, StackFlow)| {
+            sample_lane(&building, layer, id, flow)
+        },
     )?;
     let launcher = ReactiveList::with_style(
         whole(),
@@ -886,22 +919,32 @@ fn sample_cards(output: String) -> Built {
         |_: &Launcher| (),
         move |launcher: Launcher| {
             let output = centring.clone();
-            card_samples::centred_launcher(launcher, move || usable(Some(&output)))
+            card_samples::centred_launcher(
+                launcher,
+                move || usable(Some(&output)),
+                modules::launcher::preview_on(&centring),
+            )
         },
     )?;
     Ok(Box::new(passthrough(
         whole(),
-        vec![Box::new(columns), Box::new(launcher)],
+        vec![Box::new(lanes), Box::new(launcher)],
     )?))
 }
 
-fn sample_column(output: &str, layer: LayerKind, id: AreaId) -> Built {
+fn sample_lane(output: &str, layer: LayerKind, id: AreaId, flow: StackFlow) -> Built {
     let node = Node::area(Some(output), layer, &id);
+    let (card, launcher) = (
+        modules::stack::sample::preview_card_on(output),
+        modules::launcher::preview_on(output),
+    );
     let output = output.to_string();
-    card_samples::column(
+    card_samples::lane(
         move || shown_in(&output, layer, &id),
-        move || placed_now(&node).map(|placed| (placed.column(), placed.anchor)),
-        modules::stack::sample::preview_card,
+        move || placed_now(&node).map(|placed| (placed.lane(), placed.anchor)),
+        flow,
+        card,
+        launcher,
     )
 }
 
@@ -1024,6 +1067,7 @@ fn ghost_target(node: Node, frozen: RwSignal<bool>) -> Built {
             let (anchor, offset) = landing(
                 placed.bounds,
                 placed.width,
+                placed.flow,
                 (at.x + point.0 - from.0, at.y + point.1 - from.1),
             );
             let planned = moved(&before, &desktop, placed.layer, &placed.id, anchor, offset);
@@ -1084,12 +1128,13 @@ pub(crate) fn anchor_dots(
     Ok(Box::new(passthrough(whole(), dots)?))
 }
 
-/// A stack's popover rows: its anchor, width and screens, how far it is moved off its anchor, which cards it takes, whether volume and brightness and the launcher appear in it, and its width as a handle on the column.
+/// A stack's popover rows: its anchor, width, flow and screens, how far it is moved off its anchor, which cards it takes, whether volume and brightness and the launcher appear in it, and its width as a handle on the lane.
 fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     let ResolvedAreaKind::Stack {
         anchor,
         offset,
         width,
+        flow,
         output_policy,
         routes,
         launcher,
@@ -1120,6 +1165,18 @@ fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
             wide,
             Range::whole(crate::steps::WIDTHS.0, crate::steps::WIDTHS.1),
         )?,
+    )?);
+    list.extend(chosen(
+        draft,
+        "flow",
+        label!("editor.area.flow"),
+        help("AreaKind::Stack", "flow"),
+        variants("StackFlow"),
+        move |area| match &area.kind {
+            ResolvedAreaKind::Stack { flow: now, .. } => *now,
+            _ => flow,
+        },
+        |area, flow: StackFlow| kind_field!(area, "stack", Stack { flow }, flow),
     )?);
     list.extend(chosen(
         draft,
@@ -1487,19 +1544,19 @@ fn route_block(
     )?))
 }
 
-/// Where the width handle of a column at `column`, pinned at `anchor`, sits when the column is `width` wide.
-pub(crate) fn width_point(column: Rect, anchor: Anchor, width: f32) -> (f32, f32) {
+/// Where the width handle of a lane at `lane`, pinned at `anchor`, sits when the lane is `width` wide.
+pub(crate) fn width_point(lane: Rect, anchor: Anchor, width: f32) -> (f32, f32) {
     let (side, down) = pinned::sides(anchor);
-    let card = ghost(column, pinned::anchor_of(side, down));
+    let card = ghost(lane, pinned::anchor_of(side, down));
     let y = card.y + card.height / 2.0;
     match side {
-        Side::Start => (column.x + width, y),
-        Side::Middle => (column.x + column.width / 2.0 + width / 2.0, y),
-        Side::End => (column.x + column.width - width, y),
+        Side::Start => (lane.x + width, y),
+        Side::Middle => (lane.x + lane.width / 2.0 + width / 2.0, y),
+        Side::End => (lane.x + lane.width - width, y),
     }
 }
 
-/// On the column's side away from where it is pinned across, dragged across: the column is as wide as it is dragged, and one pinned to the middle grows both ways.
+/// On the lane's side away from where it is pinned across, dragged across: the lane is as wide as it is dragged, and one pinned to the middle grows both ways.
 fn width_handle(draft: &AreaDraft, value: RwSignal<f32>) -> Built {
     let anchor: RwSignal<String> = draft
         .shared("anchor")
@@ -1515,19 +1572,19 @@ fn width_handle(draft: &AreaDraft, value: RwSignal<f32>) -> Built {
         pinned::sides(anchor)
     };
     let (reading, placing) = (draft.node.clone(), draft.node.clone());
-    let hd = crate::modes::gesture::HandleDragging::new();
+    let hd = crate::modes::gesture::HandleDragging::gripped(draft.grip());
     let to_value = Rc::new(hd.wrap_to_value(move |x: f32, _y: f32| {
-        let column = surfaces::rects::rect(&reading).unwrap_or_default();
+        let lane = surfaces::rects::rect(&reading).unwrap_or_default();
         match across().0 {
-            Side::Start => x - column.x,
-            Side::Middle => 2.0 * (x - (column.x + column.width / 2.0)).abs(),
-            Side::End => column.x + column.width - x,
+            Side::Start => x - lane.x,
+            Side::Middle => 2.0 * (x - (lane.x + lane.width / 2.0)).abs(),
+            Side::End => lane.x + lane.width - x,
         }
     }));
     let to_point = Rc::new(move |width: f32| {
-        let column = surfaces::rects::rect(&placing).unwrap_or_default();
+        let lane = surfaces::rects::rect(&placing).unwrap_or_default();
         let (side, down) = across();
-        width_point(column, pinned::anchor_of(side, down), width)
+        width_point(lane, pinned::anchor_of(side, down), width)
     });
     telar::handle(
         telar::HandleProps::props()

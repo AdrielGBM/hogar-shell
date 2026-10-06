@@ -55,7 +55,12 @@ one thing they cannot rely on is the stack being up to time them out.
 `[toasts]` — `enabled`, plus `[toasts.events]`. Where a toast appears is not a toast setting: a toast, a
 notification popup and an OSD are one column — the layout's `Stack` area, by default in the overlay layer,
 pinned to the top right — and its place, size and which outputs it appears on are that area's own `anchor`,
-`offset`, `width` and `output_policy`.
+`offset`, `width`, `flow` and `output_policy`.
+
+A stack lays its cards down a column by default. With `flow = "row"` it lays them side by side, each `width` wide,
+growing from the side its anchor names: a left anchor grows right, a right one grows left, and a middle one both ways.
+A row holds only as many cards as fit across its box, or `max_visible` where that is fewer, and the edit mode's
+[Try cards](../customization/edit-modes.md#overlay) follow the flow too.
 
 A screen can have several stacks, and each card goes to one of them by its `routes`: the first stack of the
 screen with a route that takes the card — a card kind (`notification`, `toast`, `osd`), the app a notification

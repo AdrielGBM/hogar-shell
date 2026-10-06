@@ -2,7 +2,7 @@
 id: bars
 kind: surface
 title: Bars
-summary: One per screen edge, all four at once if you like, on every monitor.
+summary: As many as you like on each screen edge, all four at once if you like, on every monitor.
 status: stable
 compositor: any
 config: [shape, modules]
@@ -15,8 +15,8 @@ see_also: [panels, per-monitor, shape, compositor-rules]
 
 ## What it is
 
-A `Bar` area: a strip along one edge, carrying modules in three zones. There is one per edge — top, bottom,
-left, right — and you can have all four at once, on every monitor. Every bar, whichever edge it hugs, is drawn
+A `Bar` area: a strip along one edge, carrying modules in three zones. A screen can have any number of them on each edge — top, bottom,
+left, right — and all four edges at once, on every monitor. Every bar, whichever edge it hugs, is drawn
 inside the shell's **Top** layer window (`hogar-shell-top`) — see [Compositor rules](../../guides/compositor-rules.md)
 for what that means for a rule you write yourself.
 
@@ -78,6 +78,10 @@ modules and how round it is — so a top bar can be one solid strip while a left
 unset follows the theme. See [`BarShape`](../../reference/layout.md) in the layout reference.
 
 `[shape] frame` draws a ring around the screen out of every bar.
+
+A bar's `style` (`fill`, `opacity`, `padding`, a `border`, a `shadow`) paints its strip, so a `border` or `shadow` is
+read only in `bar` mode: in `sections` or `chips` it is reported by `layout check`, and each section or chip carries its
+own. [Layouts](../customization/layouts.md#the-model) says what a style holds.
 
 A bar that stays on screen owns the corners it shares with a vertical bar, so it runs the whole edge. A bar that
 `autohide`s yields them instead: it starts after the reserving bar at its side that stays on screen, so it never

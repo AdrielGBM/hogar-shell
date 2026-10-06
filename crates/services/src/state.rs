@@ -27,6 +27,8 @@ pub struct ShellState {
     pub idle_inhibit: bool,
     /// How many times each desktop-entry id was launched, so the launcher can rank by familiarity.
     pub launch_counts: HashMap<String, u32>,
+    /// The order the user dragged the `windows` strip into, per output, by application id: a window has no identity that outlives the session, so the order is kept by the applications it placed.
+    pub window_order: BTreeMap<String, Vec<String>>,
     /// Which layout the shell draws, by name. Machine state rather than a config key: it is a choice about this installation, not a description of one, and `layout use` is what changes it. `None`, or a name no layout answers to, falls back to the built-in one.
     pub layout: Option<String>,
     /// Typed values the user's layouts, rules and scripts set and read by name (`$name` in an expression), kept across restarts.

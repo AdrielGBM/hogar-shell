@@ -92,7 +92,10 @@ mod tests {
         let mode = Mode {
             layer: LayerKind::Lock,
             output: "DP-1".to_string(),
-            refused: Some("Preview only: this machine cannot lock (no PAM)".to_string()),
+            refused: Some(util::message!(
+                "editor.refused.cannot_lock",
+                reason = "no PAM"
+            )),
         };
         let said = said(&mode, Under::Nothing);
         assert!(said.iter().any(|text| text.contains("no PAM")), "{said:?}");

@@ -127,11 +127,11 @@ hold the idle timers off by hand
 \fBtoggle\fR \fI<module|instance>\fR
 open a module's panel, or close it if it is up; an instance opens the panel the layout gives it, else its module's panel beside it
 .TP
-\fBopen\fR \fI<module>\fR
-open a module's panel (idempotent)
+\fBopen\fR \fI<module|instance>\fR
+open a module's panel, or what `panel toggle` opens for an instance (idempotent)
 .TP
-\fBclose\fR \fI<module>\fR
-close a module's panel
+\fBclose\fR \fI<module|instance>\fR
+close a module's panel, what `panel toggle` opens for an instance, or anything `panel list` names
 .TP
 \fBlist\fR
 which transients are open right now \(em a panel, but also the drawer, popout, tray menu, float, launcher, notification centre or region picker
@@ -496,11 +496,14 @@ report what is wrong with a layout, without applying it
 \fBuse\fR \fI<name>\fR
 draw this layout from now on
 .TP
-\fBundo\fR
-take back the last edit, whatever made it
+\fBundo\fR \fI[n]\fR
+take back the last edit, or the last n, whatever made them
 .TP
-\fBredo\fR
-make the edit that was last taken back again
+\fBredo\fR \fI[n]\fR
+make the edit that was last taken back again, or the last n
+.TP
+\fBhistory\fR
+every edit undo and redo walk through, one per line after how many steps away it is: below 0 back, 0 where the layout is now, above 0 forward
 .TP
 \fBadd\fR \fI<module> <area> [group]\fR
 place a module in an area of the layout being drawn
@@ -512,7 +515,19 @@ take a placed module, or a whole area, out of the layout
 put a placed module in another group, or elsewhere in its own
 .TP
 \fBset\fR \fI<instance|area|area.group> <key> <value...>\fR
-change one property of a placed module, an area's visible, or a group's repeat or parameters.<name>
+change one property of a placed module, an area, a panel or a group: its look (style.<key>, a bar's corners written as its shape.radius), its place in its group (weight, cell.<key>, rect.<key>), any key of an area's kind (a bar's thickness, a stack's flow, a panel's owner), an area's reserve, above_fullscreen or within, a group's arrangement (arrange, cols, rows, gap) or place (col, row, col_span, row_span, zone), an option, a binding, an action or an expression; `unset visible`, `unset repeat`, `unset arrange`, `unset parameters.<name>` and `unset bindings.<key>` take back what a broader level writes
+.TP
+\fBduplicate\fR \fI<id|area.group>\fR
+copy a placed module, a group or an area beside itself, as the editor's Duplicate does
+.TP
+\fBorder\fR \fI<id> <up|down|front|back>\fR
+draw an area over or under the others on its layer, or a child of a free group over or under its siblings
+.TP
+\fBpanel\fR \fI<instance> [\-\-along]\fR
+give a placed module a panel of its own, opened beside it, or along its whole bar with \-\-along
+.TP
+\fBrename\fR \fI<id|area.group> <new>\fR
+give a placed module, an area or a group another id, everywhere the layout names it; refused where a rule, an action or a layout extending this one names the old id
 .TP
 \fBreset\fR \fI<id|layer|all>\fR
 put a part of the layout back to what the layout it extends says, or the built\-in one

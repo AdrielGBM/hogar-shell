@@ -37,19 +37,20 @@ pub use link::SurfaceUpdate;
 pub use lock::{LockHandle, lock_session, lock_supported, session_is_locked};
 pub use lock_notify::{CompositorLock, LOCK_NOTIFIER_INTERFACE, compositor_lock};
 pub use platform::{
-    EventSender, LayerShellPlatform, Subscription, SurfaceHandle, WatchToken, app_watch,
-    background_effect_supported, detached, enumerate_outputs, interval, layer_restack_supported,
-    live_surfaces, on_outputs_changed, open_layer_window, open_reservation, outputs, run_on_start,
-    set_surface_fonts, timeout, unwatch, watch,
+    EventSender, LayerShellPlatform, Subscription, SurfaceHandle, SurfaceRef, WatchToken,
+    app_watch, background_effect_supported, current_surface, detached, enumerate_outputs, interval,
+    layer_restack_supported, live_surfaces, on_outputs_changed, open_layer_window,
+    open_reservation, outputs, run_on_start, set_surface_fonts, timeout, unwatch, watch,
 };
 pub use power::{
     OUTPUT_POWER_INTERFACE, output_power_on, output_power_supported, set_output_power,
 };
 pub use toplevel_control::{
-    ManagedToplevel, ManagedToplevelId, TOPLEVEL_MANAGER_INTERFACE, close as close_toplevel,
-    current as current_managed_toplevels, focus as focus_toplevel, focused as focused_toplevel,
-    set_fullscreen as set_toplevel_fullscreen, set_maximized as set_toplevel_maximized,
-    set_minimized as set_toplevel_minimized, toplevel_control_supported,
+    Area as ToplevelArea, ManagedToplevel, ManagedToplevelId, TOPLEVEL_MANAGER_INTERFACE,
+    close as close_toplevel, current as current_managed_toplevels, focus as focus_toplevel,
+    focused as focused_toplevel, set_fullscreen as set_toplevel_fullscreen,
+    set_maximized as set_toplevel_maximized, set_minimized as set_toplevel_minimized,
+    set_rectangle as set_toplevel_rectangle, toplevel_control_supported,
     watch as watch_managed_toplevels,
 };
 pub use toplevels::{

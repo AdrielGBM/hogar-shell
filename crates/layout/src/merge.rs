@@ -313,6 +313,7 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
                 anchor,
                 offset,
                 width,
+                flow,
                 output_policy,
                 routes,
                 launcher,
@@ -321,6 +322,7 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
                 anchor: over_anchor,
                 offset: over_offset,
                 width: over_width,
+                flow: over_flow,
                 output_policy: over_policy,
                 routes: over_routes,
                 launcher: over_launcher,
@@ -329,6 +331,7 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
             replace_if_set(anchor, over_anchor);
             replace_if_set(offset, over_offset);
             replace_if_set(width, over_width);
+            replace_if_set(flow, over_flow);
             replace_if_set(output_policy, over_policy);
             if !over_routes.is_empty() {
                 *routes = over_routes.clone();

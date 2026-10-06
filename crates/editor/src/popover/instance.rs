@@ -25,7 +25,8 @@ use super::{actions, look};
 
 /// Every row of `draft`'s inspector: what it is drawn as where there is a choice, then each of its options in the order its module declares them.
 pub fn rows(draft: &InstanceDraft) -> Rows {
-    let mut list = container_note(draft)?;
+    let mut list = vec![super::id::row(&draft.node)?];
+    list.extend(container_note(draft)?);
     list.extend(representation(draft)?);
     for field in ui::descriptor::option_fields(&draft.resolved.module) {
         list.push(option(draft, value::path_of(&field.key), &field)?);
@@ -84,7 +85,7 @@ pub(crate) fn closing_rows(draft: &InstanceDraft) -> Rows {
         },
     )?;
     let mut list: Vec<Box<dyn LayoutItem>> = vec![Box::new(look)];
-    if actions::offered(draft.node.layer, None) {
+    if layout::actions::takes_actions(draft.node.layer, None).is_ok() {
         list.extend(actions::rows(draft.actions(), None)?);
     }
     let resetting = draft.clone();

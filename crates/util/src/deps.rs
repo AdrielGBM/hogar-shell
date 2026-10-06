@@ -199,8 +199,8 @@ pub const ALL: &[Entry] = &[
             interfaces: &[platform_wayland::TOPLEVEL_MANAGER_INTERFACE],
         },
         need: Need::Optional,
-        what: "which window has focus, and switching to one — the `activewindow` chip and the launcher's `/` mode",
-        without: "the active-window chip reads as no window and the launcher lists none to switch to",
+        what: "which window has focus, and switching to one — the `activewindow` chip, the `windows` strip and the launcher's `/` mode",
+        without: "the active-window chip reads as no window, the `windows` strip stays empty and the launcher lists none to switch to",
     },
     Entry {
         dep: Dep::OutputPower,

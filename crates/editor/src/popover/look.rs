@@ -1,15 +1,23 @@
 //! The look rows of every popover, one implementation over whatever holds a style ([`Styled`]).
 
 use std::rc::Rc;
+use std::sync::Arc;
 
-use telar::{LayoutError, LayoutItem, Rect, RwSignal, batch, effect};
-
-use layout::{
-    Area, AreaKind, Border, Corners, GroupId, InstanceId, LayoutOp, ResolvedArea, ResolvedAreaKind,
-    Sides, Style,
+use telar::{
+    Color, LayoutError, LayoutItem, LayoutStyle, ReactiveList, Rect, RwSignal, Text, batch,
+    box_item, effect, use_theme,
 };
+
+use config::Config;
+use config::theme::{FontRole, NordTheme};
+
+use layout::restyle::{bar_style, restyle_bar};
+use layout::{
+    Border, Corners, GroupId, InstanceId, LayoutOp, ResolvedArea, ResolvedAreaKind, Sides, Style,
+};
+use surfaces::look::{Holder, draws_plate, fill_of, resting_opacity};
 use surfaces::reconcile::Desktop;
-use surfaces::rects::Node;
+use surfaces::rects::{Node, Part};
 use ui::descriptor::Built;
 
 use crate::written::Written;
@@ -17,6 +25,7 @@ use crate::written::Written;
 use super::area::help;
 use super::draft::{AreaDraft, GroupDraft, InstanceDraft, group_entry};
 use super::handles;
+use super::origin::Provenance;
 use super::rows::{self, Range, Rows, label};
 
 pub(crate) trait Styled: Clone + 'static {
@@ -32,6 +41,23 @@ pub(crate) trait Styled: Clone + 'static {
     fn shared<T: Clone + PartialEq + 'static>(&self, name: &'static str, seed: T) -> RwSignal<T>;
 
     fn marked(&self, keys: &[&'static str], row: Box<dyn LayoutItem>) -> Built;
+
+    /// The signal [`Styled::style`] made for `name` already, where a holder makes a new one each time it is asked.
+    fn current<T: Clone + PartialEq + 'static>(
+        &self,
+        name: &'static str,
+        key: &'static str,
+        read: impl Fn(&Style) -> T + 'static,
+        write: impl Fn(&mut Style, &T) + 'static,
+    ) -> RwSignal<T> {
+        self.style(name, key, read, write)
+    }
+
+    /// What a fill of this holder is drawn as and laid over, read off the screen it is on.
+    fn backing(&self) -> Option<Backing>;
+
+    /// Whether some level writes `key`, what the popover has changed included. Reactive.
+    fn names(&self, key: &'static str) -> bool;
 
     fn node(&self) -> &Node;
 
@@ -79,6 +105,18 @@ impl Styled for AreaDraft {
     fn area_kind(&self) -> &'static str {
         self.kind()
     }
+
+    fn backing(&self) -> Option<Backing> {
+        Some(Backing::new(
+            Arc::clone(&self.config),
+            Rc::clone(&self.resolved),
+            Held::Area,
+        ))
+    }
+
+    fn names(&self, key: &'static str) -> bool {
+        self.writes(&[key]) || self.provenance(&[key]) != Provenance::Default
+    }
 }
 
 impl Styled for GroupDraft {
@@ -116,6 +154,18 @@ impl Styled for GroupDraft {
     fn area_kind(&self) -> &'static str {
         self.area.kind()
     }
+
+    fn backing(&self) -> Option<Backing> {
+        Some(Backing::new(
+            Arc::clone(&self.area.config),
+            Rc::clone(&self.area.resolved),
+            Held::Group,
+        ))
+    }
+
+    fn names(&self, key: &'static str) -> bool {
+        self.writes(&[key]) || self.provenance(&[key]) != Provenance::Default
+    }
 }
 
 impl Styled for InstanceDraft {
@@ -151,6 +201,42 @@ impl Styled for InstanceDraft {
 
     fn area_kind(&self) -> &'static str {
         self.area_kind
+    }
+
+    fn current<T: Clone + PartialEq + 'static>(
+        &self,
+        name: &'static str,
+        key: &'static str,
+        read: impl Fn(&Style) -> T + 'static,
+        write: impl Fn(&mut Style, &T) + 'static,
+    ) -> RwSignal<T> {
+        InstanceDraft::shared(self, name).unwrap_or_else(|| self.style(name, key, read, write))
+    }
+
+    fn backing(&self) -> Option<Backing> {
+        let Part::Instance(group, _) = &self.node.part else {
+            return None;
+        };
+        surfaces::reconcile::with_desktop_now(self.node.output.as_deref(), |desktop| {
+            let area = desktop.resolved.area(self.node.layer, &self.node.area)?;
+            let in_bar = matches!(area.kind, ResolvedAreaKind::Bar { .. });
+            let plate = area
+                .groups
+                .iter()
+                .find(|held| held.id == *group)
+                .filter(|held| draws_plate(held, in_bar))
+                .map(|held| held.style.clone());
+            Some(Backing::new(
+                Arc::clone(&desktop.config),
+                Rc::new(area.clone()),
+                Held::Instance { plate },
+            ))
+        })
+        .flatten()
+    }
+
+    fn names(&self, key: &'static str) -> bool {
+        self.writes(&[key]) || self.provenance(&[key]) != Provenance::Default
     }
 }
 
@@ -201,43 +287,18 @@ impl Styled for BarStyle {
             _ => help("Style", key),
         }
     }
+
+    fn backing(&self) -> Option<Backing> {
+        self.0.backing()
+    }
+
+    fn names(&self, key: &'static str) -> bool {
+        self.0.names(on_bar(key))
+    }
 }
 
 fn on_bar(key: &'static str) -> &'static str {
-    match key {
-        "style.radius" => "shape.radius",
-        _ => key,
-    }
-}
-
-fn bar_style(area: &ResolvedArea) -> Style {
-    let mut style = area.style.clone();
-    if let ResolvedAreaKind::Bar { shape, .. } = &area.kind {
-        style.radius = shape.radius;
-    }
-    style
-}
-
-/// A bar's kind is made a partial entry only when its corners change, so a change to the rest of its style writes nothing else.
-fn restyle_bar(area: &mut Area, change: impl FnOnce(&mut Style)) {
-    let corners = match &area.kind {
-        Some(AreaKind::Bar { shape, .. }) => shape.radius,
-        _ => None,
-    };
-    let mut style = Style {
-        radius: corners,
-        ..area.style.clone()
-    };
-    change(&mut style);
-    if style.radius != corners
-        && let Some(AreaKind::Bar { shape, .. }) = AreaDraft::kind_mut(area, "bar")
-    {
-        shape.radius = style.radius;
-    }
-    area.style = Style {
-        radius: area.style.radius,
-        ..style
-    };
+    layout::restyle::bar_key(key)
 }
 
 /// The style a tool writes without a popover: where a draft of the same node writes it, straight into what a level of the layout writes.
@@ -273,12 +334,20 @@ impl WrittenStyle {
     }
 }
 
+fn read_fill(style: &Style) -> String {
+    style.fill.clone().unwrap_or_default()
+}
+
+fn write_fill(style: &mut Style, token: &str) {
+    style.fill = (!token.is_empty()).then(|| token.to_string());
+}
+
 pub(crate) fn fill(holder: &impl Styled) -> Built {
     let fill = holder.style(
         "style.fill",
         "style.fill",
-        |style| style.fill.clone().unwrap_or_default(),
-        |style, token: &String| style.fill = (!token.is_empty()).then(|| token.clone()),
+        read_fill,
+        |style, token: &String| write_fill(style, token),
     );
     holder.marked(
         &["style.fill"],
@@ -298,13 +367,22 @@ pub(crate) fn opacity(holder: &impl Styled) -> Built {
         "prompt" => layout::FAINTEST_PROMPT,
         _ => 0.0,
     };
+    let backing = holder.backing().map(Rc::new);
+    let theme: NordTheme = use_theme();
+    let resting = backing.clone();
     let opacity = holder.style(
         "style.opacity",
         "style.opacity",
-        |style| style.opacity.unwrap_or(1.0),
+        move |style| {
+            style.opacity.unwrap_or_else(|| {
+                resting.as_ref().map_or(1.0, |backing| {
+                    backing.resting_opacity(style.fill.as_deref(), &theme)
+                })
+            })
+        },
         |style, value: &f32| style.opacity = Some(*value),
     );
-    holder.marked(
+    let row = holder.marked(
         &["style.opacity"],
         rows::number(
             label!("editor.look.opacity"),
@@ -312,7 +390,130 @@ pub(crate) fn opacity(holder: &impl Styled) -> Built {
             opacity,
             Range::new(faintest, 1.0, 0.05),
         )?,
-    )
+    )?;
+    match (holder.area_kind(), backing) {
+        ("prompt", _) | (_, None) => Ok(row),
+        (_, Some(backing)) => rows::together(vec![row, contrast_row(holder, opacity, backing)?]),
+    }
+}
+
+/// How readable the theme's text is on the fill the rows make, live, and a warning under [`config::scheme::MIN_TEXT_CONTRAST`]. Nothing is refused here: only the lock's prompt has to be read.
+fn contrast_row(holder: &impl Styled, opacity: RwSignal<f32>, backing: Rc<Backing>) -> Built {
+    let fill = holder.current(
+        "style.fill",
+        "style.fill",
+        read_fill,
+        |style, token: &String| write_fill(style, token),
+    );
+    let naming = holder.clone();
+    let ratio = move || {
+        let (token, opacity) = (fill.get(), opacity.get());
+        if token.is_empty() {
+            return None;
+        }
+        let style = Style {
+            fill: Some(token),
+            opacity: naming.names("style.opacity").then_some(opacity),
+            ..Style::default()
+        };
+        backing.ratio(&style, &use_theme())
+    };
+    let present = ratio.clone();
+    let shown = ReactiveList::with_style(
+        LayoutStyle::new(),
+        move || present().into_iter().map(|_| true).collect::<Vec<_>>(),
+        |built: &bool| *built,
+        move |_| {
+            let (said, tinted) = (ratio.clone(), ratio.clone());
+            Ok(box_item(Text::new(
+                move || contrast_said(said().unwrap_or_default()),
+                LayoutStyle::new(),
+                move || {
+                    let theme: NordTheme = use_theme();
+                    let tint = match tinted()
+                        .is_some_and(|ratio| !config::scheme::readable_ratio(ratio))
+                    {
+                        true => theme.warning,
+                        false => theme.subtle,
+                    };
+                    theme.text_style(FontRole::Caption, tint)
+                },
+            )?))
+        },
+    )?;
+    Ok(Box::new(shown))
+}
+
+/// What a fill of a holder is drawn as, through the paint its surface draws it with ([`fill_of`]), and what it is laid over: the area's own box under a group's plate, and that plate too under an instance where its group draws one. The bottom is the layer's base, since a wallpaper, a picture or a sibling is not known here.
+pub(crate) struct Backing {
+    config: Arc<Config>,
+    area: Rc<ResolvedArea>,
+    held: Held,
+}
+
+pub(crate) enum Held {
+    Area,
+    Group,
+    /// An instance, over its group's plate where the group draws one.
+    Instance {
+        plate: Option<Style>,
+    },
+}
+
+impl Backing {
+    pub(crate) fn new(config: Arc<Config>, area: Rc<ResolvedArea>, held: Held) -> Self {
+        Self { config, area, held }
+    }
+
+    fn holder(&self) -> Holder<'_> {
+        match self.held {
+            Held::Area => Holder::Area(&self.area),
+            Held::Group => Holder::Plate,
+            Held::Instance { .. } => Holder::Instance(&self.area),
+        }
+    }
+
+    /// The contrast of the theme's text on what the holder draws with `style`, or `None` where that names nothing its box paints.
+    pub(crate) fn ratio(&self, style: &Style, theme: &NordTheme) -> Option<f32> {
+        let fill = fill_of(self.holder(), style, &self.config, theme)?;
+        Some(layout::text_contrast(fill, self.under(theme), theme))
+    }
+
+    pub(crate) fn resting_opacity(&self, fill: Option<&str>, theme: &NordTheme) -> f32 {
+        resting_opacity(self.holder(), fill, &self.config, theme)
+    }
+
+    fn under(&self, theme: &NordTheme) -> Color {
+        let plate = match &self.held {
+            Held::Area => return theme.base,
+            Held::Group => None,
+            Held::Instance { plate } => plate.as_ref(),
+        };
+        let area = self.over(
+            Holder::Area(&self.area),
+            &self.area.style,
+            theme.base,
+            theme,
+        );
+        plate.map_or(area, |plate| self.over(Holder::Plate, plate, area, theme))
+    }
+
+    fn over(&self, holder: Holder<'_>, style: &Style, under: Color, theme: &NordTheme) -> Color {
+        fill_of(holder, style, &self.config, theme)
+            .map_or(under, |fill| layout::laid_over(fill, under))
+    }
+}
+
+pub(crate) fn contrast_said(ratio: f32) -> String {
+    let shown = format!("{ratio:.1}");
+    match config::scheme::readable_ratio(ratio) {
+        true => telar::t!("editor.look.contrast", ratio = shown),
+        false => telar::t!(
+            "editor.look.contrast_low",
+            ratio = shown,
+            least = config::scheme::MIN_TEXT_CONTRAST.to_string()
+        ),
+    }
 }
 
 pub(crate) fn radius(holder: &impl Styled) -> Built {

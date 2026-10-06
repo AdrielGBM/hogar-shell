@@ -12,6 +12,7 @@ pub(crate) mod bindings;
 mod draft;
 mod group;
 pub mod handles;
+pub(crate) mod id;
 pub(crate) mod instance;
 pub(crate) mod look;
 pub(crate) mod origin;
@@ -47,7 +48,7 @@ use rows::label;
 
 pub use actions::Actions;
 pub use area::{help, parsed, spelled};
-pub use draft::{AreaDraft, GroupDraft, InstanceDraft, Settle};
+pub use draft::{AreaDraft, Grip, GroupDraft, InstanceDraft, Settle};
 pub(crate) use draft::{kind_field, kind_read};
 pub use instance::{option, shown};
 pub use origin::Provenance;
@@ -233,7 +234,7 @@ fn open(node: Node) -> Result<(), EditError> {
     if node.layer == LayerKind::Lock
         && editing_here.as_ref().map(|mode| mode.layer) != Some(LayerKind::Lock)
     {
-        return Err(EditError::Refused(telar::t!("editor.popover.lock")));
+        return Err(EditError::Refused(util::message!("editor.popover.lock")));
     }
     let desktop =
         reconcile::desktop(node.output.as_deref()).ok_or_else(|| EditError::gone(&node.area))?;
@@ -479,7 +480,10 @@ fn area_inspector(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
             .map(|(_, tool)| *tool)
             .collect()
     });
-    let mut whole = Inspector::default();
+    let mut whole = Inspector {
+        rows: vec![id::row(&draft.node)?],
+        handles: Vec::new(),
+    };
     for tool in tools {
         let Inspector { rows, handles } = tool(draft)?;
         whole.rows.extend(rows);

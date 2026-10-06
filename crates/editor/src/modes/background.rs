@@ -671,7 +671,7 @@ fn texture_selected(selection: &Selection) -> Result<(), EditError> {
 }
 
 fn no_region() -> EditError {
-    EditError::refused(telar::t!("editor.texture.no_region"))
+    EditError::refused(util::message!("editor.texture.no_region"))
 }
 
 /// Lays a texture over the region `node` names, right above it in the layer, as one undo entry.

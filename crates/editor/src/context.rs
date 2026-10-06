@@ -76,7 +76,7 @@ pub(crate) fn install() {
 pub fn open(asked: Asked) -> Result<(), EditError> {
     let Asked { node, window, at } = asked;
     if node.layer == LayerKind::Lock {
-        return Err(EditError::Refused(telar::t!("editor.menu.lock")));
+        return Err(EditError::Refused(util::message!("editor.menu.lock")));
     }
     let desktop =
         reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
@@ -407,7 +407,7 @@ fn edit_row(node: &Node) -> Option<MenuEntry> {
         "",
         move || {
             if let Err(why) = mode::enter(layer, output.as_deref()) {
-                tracing::info!("{why}");
+                tracing::info!("{}", why.english());
             }
         },
     ))
@@ -537,7 +537,7 @@ pub(crate) fn removal(
             break;
         }
         if round == 2 {
-            return Err(EditError::Refused(telar::t!(
+            return Err(EditError::Refused(util::message!(
                 "editor.menu.still_placed",
                 id = id.to_string()
             )));

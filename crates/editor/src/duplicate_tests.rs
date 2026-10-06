@@ -589,4 +589,37 @@ mod tests {
             "duplicate the group pill",
         );
     }
+
+    /// A copy of the owner of a panel is a chip of its own and the panel stays the original's; one undo takes the copy away and leaves the panel.
+    #[test]
+    fn a_copy_of_a_panels_owner_has_no_panel_of_its_own() {
+        let rig = rig_with("dup-panel-owner", |_| {});
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Top);
+        let clock = bar().instance(&GroupId::new("center"), &InstanceId::new("clock"));
+        crate::panel::give(&clock, crate::panel::Shape::Beside).expect("the panel is given");
+        let given = stored(&rig);
+        assert!(session::select(Selection::Instance(clock)));
+        assert!(ctrl_d());
+
+        let layer = &stored(&rig).outputs[0].layers.top;
+        let panels: Vec<_> = layer
+            .areas
+            .iter()
+            .filter_map(|area| area.kind.as_ref()?.owner().cloned())
+            .collect();
+        assert_eq!(
+            panels,
+            [InstanceId::new("clock")],
+            "one panel, the original's"
+        );
+        let center = layer.areas[0]
+            .groups
+            .iter()
+            .find(|group| group.id.as_str() == "center")
+            .expect("the centre zone");
+        assert_eq!(center.children.len(), 2);
+        assert_ne!(center.children[0].id, center.children[1].id);
+        crate::rig::undoes_to(&rig, &given);
+    }
 }

@@ -15,10 +15,13 @@ see_also: [bars, panels, palettes, widgets]
 
 ## Shape modes
 
-A bar's shape is its own: a `Bar` area's `shape` table in the layout — `mode`, `gap`, `spacing` and `radius`.
+A bar's shape is its own: a `Bar` area's `shape` table in the layout — `mode`, `gap`, `spacing`, `radius` and `fillet`.
 `mode` is `bar`, `sections` or `chips`: one solid strip, the three zones as separate plates, or a plate per
 module. Every module and every surface works in all three, on all four edges; that is a standing rule of the
 project rather than a coincidence.
+
+`fillet` curves the free space into a bar drawn as one strip, at its inner corners; [Bars](../surfaces/bars.md#shapes)
+says where it is drawn.
 
 What a bar leaves unset follows the theme: `spacing` and `radius` are the palette's, `mode` is `bar` and `gap`
 is 0 — an edge-to-edge bar. Floating is opt-in. The built-in layout's bar says `mode = "bar"` and `gap = 0`

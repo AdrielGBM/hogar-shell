@@ -16,6 +16,7 @@ use telar::{
 use layout::{AreaId, Layout, LayoutOp, ResolvedLayer, StoreError};
 use surfaces::rects::{Node, Part};
 use surfaces::{layouts, reconcile};
+use util::report::Message;
 
 use crate::mode;
 
@@ -225,43 +226,47 @@ pub enum EditError {
     /// The shell was started with `--safe-layout`, which refuses every edit (F-10.35).
     Safe,
     /// The layout refused the operations, or the store refused the transaction.
-    Refused(String),
+    Refused(Message),
 }
 
 impl EditError {
-    pub fn refused(why: impl Into<String>) -> Self {
-        Self::Refused(why.into())
+    pub fn refused(why: Message) -> Self {
+        Self::Refused(why)
     }
 
     /// Nothing is selected that the step acts on.
     pub fn nothing() -> Self {
-        Self::refused(telar::t!("editor.refused.nothing"))
+        Self::refused(util::message!("editor.refused.nothing"))
     }
 
     /// The area `id` is no longer on its screen.
     pub fn gone(id: &AreaId) -> Self {
-        Self::refused(telar::t!("editor.refused.gone", id = id.to_string()))
+        Self::refused(util::message!("editor.refused.gone", id = id))
     }
 
     /// The screen the edit is for is no longer drawn on.
     pub fn no_output() -> Self {
-        Self::refused(telar::t!("editor.refused.no_output"))
+        Self::refused(util::message!("editor.refused.no_output"))
     }
 
     /// What `name` names cannot go any further the way it was asked to.
     pub fn no_way(name: impl fmt::Display) -> Self {
-        Self::refused(telar::t!("editor.refused.no_way", name = name.to_string()))
+        Self::refused(util::message!("editor.refused.no_way", name = name))
+    }
+
+    pub fn message(&self) -> Message {
+        match self {
+            Self::Nested => util::message!("editor.draft.nested"),
+            Self::NotOpen => util::message!("editor.draft.not_open"),
+            Self::Safe => StoreError::Safe.message(),
+            Self::Refused(why) => why.clone(),
+        }
     }
 }
 
 impl fmt::Display for EditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Nested => f.write_str(&telar::t!("editor.draft.nested")),
-            Self::NotOpen => f.write_str(&telar::t!("editor.draft.not_open")),
-            Self::Safe => f.write_str(&StoreError::Safe.message().render()),
-            Self::Refused(why) => f.write_str(why),
-        }
+        f.write_str(&self.message().render())
     }
 }
 
@@ -269,7 +274,7 @@ impl std::error::Error for EditError {}
 
 impl From<layout::OpError> for EditError {
     fn from(error: layout::OpError) -> Self {
-        Self::Refused(error.message().render())
+        Self::Refused(error.message())
     }
 }
 
@@ -292,7 +297,7 @@ struct Pending {
     label: RefCell<String>,
     transaction: Transaction<Layout>,
     ops: RefCell<Vec<LayoutOp>>,
-    refused: RefCell<Option<String>>,
+    refused: RefCell<Option<Message>>,
 }
 
 impl Edit {
@@ -400,7 +405,7 @@ impl Pending {
                 "the edit was not recorded: {}",
                 why.english()
             );
-            *self.refused.borrow_mut() = Some(why.render());
+            *self.refused.borrow_mut() = Some(why);
             if let Some(stored) = stored() {
                 DRAFT.with(|draft| draft.set(stored));
             }
@@ -435,20 +440,20 @@ pub fn begin(label: impl Into<String>) -> Result<Edit, EditError> {
 }
 
 /// Takes back the last change, answering with what it was called: the edit still open if there is one — which was never recorded, so reverting it is the whole of the undo — else the last one committed, whichever part of the shell committed it.
-pub fn undo() -> Result<String, String> {
+pub fn undo() -> Result<String, Message> {
     if let Some(edit) = open() {
-        edit.revert().map_err(|why| why.to_string())?;
+        edit.revert().map_err(|why| why.message())?;
         return Ok(edit.label());
     }
-    layouts::undo().map_err(|why| why.render())
+    layouts::undo()
 }
 
 /// Puts back what the last undo took, reverting an edit still open first: the redo was planned against the layout without it.
-pub fn redo() -> Result<String, String> {
+pub fn redo() -> Result<String, Message> {
     if let Some(edit) = open() {
-        edit.revert().map_err(|why| why.to_string())?;
+        edit.revert().map_err(|why| why.message())?;
     }
-    layouts::redo().map_err(|why| why.render())
+    layouts::redo()
 }
 
 /// Which way through the history a key asks to go.
@@ -509,7 +514,7 @@ impl Travelled {
 }
 
 /// Walks `steps` entries through the history — back while negative, forward while positive — each one an ordinary [`undo`] or [`redo`] of its own, so a jump is taken back the way it came, step by step. Answers with the last entry walked over, `None` for a walk of nothing, and stops at the first step refused, with the steps before it taken.
-pub fn travel(steps: isize) -> Result<Option<Travelled>, String> {
+pub fn travel(steps: isize) -> Result<Option<Travelled>, Message> {
     let way = Way::of(steps);
     let mut last = None;
     for _ in 0..steps.unsigned_abs() {
@@ -527,6 +532,6 @@ pub(crate) fn travel_saying(steps: isize) {
     match travel(steps) {
         Ok(Some(travelled)) => mode::confirm(travelled.said()),
         Ok(None) => {}
-        Err(why) => mode::refuse(why),
+        Err(why) => mode::refuse(why.render()),
     }
 }

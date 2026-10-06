@@ -607,8 +607,8 @@ mod tests {
         let item = popover::tree()
             .expect("a popover is open")
             .expect("its tree builds");
-        let column = rects::rect(&node).unwrap_or_default();
-        let handle = crate::modes::overlay::width_point(column, stack.anchor, stack.width);
+        let lane = rects::rect(&node).unwrap_or_default();
+        let handle = crate::modes::overlay::width_point(lane, stack.anchor, stack.width);
         (Screen::of(vec![item]), handle)
     }
 

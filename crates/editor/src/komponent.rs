@@ -122,7 +122,7 @@ pub fn detach(area: &Node, group: &GroupId, name: &str) -> Result<(), EditError>
             desktop.resolved.workspace.as_ref(),
         ),
     )
-    .map_err(|why| EditError::Refused(why.message().render()))?;
+    .map_err(|why| EditError::Refused(why.message()))?;
     crate::context::commit(
         telar::t!("editor.komponent.detached", komponent = name),
         ops,
@@ -151,7 +151,7 @@ pub fn open_save(area: &Node, group: &GroupId) -> Result<(), EditError> {
         .cloned()
         .ok_or_else(|| EditError::gone(&area.area))?;
     if let Some(used) = &drawn.komponent {
-        return Err(EditError::Refused(telar::t!(
+        return Err(EditError::Refused(util::message!(
             "editor.komponent.already",
             komponent = used.id.to_string()
         )));
@@ -247,7 +247,7 @@ pub fn save() {
 fn saved(saving: &Saving) -> Result<(), EditError> {
     let name = saving.name.peek().trim().to_string();
     if !layout::is_komponent_name(&name) {
-        return Err(EditError::Refused(telar::t!(
+        return Err(EditError::Refused(util::message!(
             "editor.komponent.bad_name",
             name = name
         )));
@@ -295,12 +295,9 @@ fn saved(saving: &Saving) -> Result<(), EditError> {
         group = saving.group.to_string(),
         komponent = name
     );
-    surfaces::layouts::with_komponent(
-        id,
-        komponent,
-        |why| EditError::Refused(why.render()),
-        || crate::context::commit(label, ops),
-    )
+    surfaces::layouts::with_komponent(id, komponent, EditError::Refused, || {
+        crate::context::commit(label, ops)
+    })
 }
 
 /// The open card's tree: the name, a switch per value that can be a parameter, why the last Save was refused, and Save and Cancel.
@@ -460,14 +457,14 @@ impl Refusal {
     pub fn english(&self) -> String {
         match self {
             Refusal::Use(why) => why.english(),
-            Refusal::Edit(why) => why.to_string(),
+            Refusal::Edit(why) => why.message().english(),
         }
     }
 
     /// As the editor says it, in the user's language.
     pub fn into_edit(self) -> EditError {
         match self {
-            Refusal::Use(why) => EditError::Refused(why.message().render()),
+            Refusal::Use(why) => EditError::Refused(why.message()),
             Refusal::Edit(why) => why,
         }
     }

@@ -133,26 +133,70 @@ fn pressed(at: Node, rect: Rect) -> Pressed {
 
 /// What `panel toggle <id>` opens: for an instance, what a press on it opens past a bound action — the panel the layout gives it, else its module's panel hung off it — and for a module id its panel, as [`toggle_panel`] does. An instance on the focused screen is found first.
 pub fn toggle_named(id: &str) -> Result<(), String> {
+    match named(id)? {
+        Named::Owned(owner) => {
+            owned::toggle(&owner);
+        }
+        Named::Module(module) => toggle_panel(&module),
+        Named::OffChip(owner, module) => off_chip(&owner, || toggle_panel(&module)),
+    }
+    Ok(())
+}
+
+pub fn open_named(id: &str) -> Result<(), String> {
+    match named(id)? {
+        Named::Owned(owner) => {
+            owned::open(&owner);
+        }
+        Named::Module(module) => open_panel(&module),
+        Named::OffChip(owner, module) => {
+            if !is_panel_open(&module) {
+                off_chip(&owner, || toggle_panel(&module));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn close_named(id: &str) -> Result<(), String> {
+    match named(id) {
+        Ok(Named::Owned(owner)) => owned::close(&owner),
+        Ok(Named::Module(module) | Named::OffChip(_, module)) => close_panel(&module),
+        Err(_) if transient::is_open(id) => transient::close(id),
+        Err(why) => return Err(why),
+    }
+    Ok(())
+}
+
+enum Named {
+    Owned(Owner),
+    Module(String),
+    OffChip(Owner, String),
+}
+
+fn named(id: &str) -> Result<Named, String> {
     let placed = placed_instance(id);
     if let Some((owner, _)) = &placed
-        && owned::toggle(owner)
+        && owned::has(owner)
     {
-        return Ok(());
+        return Ok(Named::Owned(owner.clone()));
     }
     if descriptor::has_panel(id) {
-        toggle_panel(id);
-        return Ok(());
+        return Ok(Named::Module(id.to_string()));
     }
-    let Some((owner, module)) = placed.filter(|(_, module)| descriptor::has_panel(module)) else {
-        return Err(format!("'{id}' has no panel"));
-    };
+    match placed.filter(|(_, module)| descriptor::has_panel(module)) {
+        Some((owner, module)) => Ok(Named::OffChip(owner, module)),
+        None => Err(format!("'{id}' has no panel")),
+    }
+}
+
+fn off_chip(owner: &Owner, open: impl FnOnce()) {
     let chip = crate::rects::instance(owner.output.as_deref(), &owner.instance)
         .map(|(node, slot)| pressed_at(&node).unwrap_or_else(|| pressed(node, slot)));
     match chip {
-        Some(chip) => from_chip(chip, || toggle_panel(&module)),
-        None => toggle_panel(&module),
+        Some(chip) => from_chip(chip, open),
+        None => open(),
     }
-    Ok(())
 }
 
 /// The instance `id` and its module, on the focused screen, else on the first that places it.

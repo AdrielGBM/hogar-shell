@@ -5,7 +5,7 @@ use util::report::Message;
 use crate::library::Library;
 use crate::model::*;
 use crate::ops::Site;
-use crate::resolve::{Level, Resolved, resolve};
+use crate::resolve::{Holder, Level, Resolved, resolve};
 
 /// The expression taken back, and the area it is written under.
 #[derive(Clone, Copy, Debug)]
@@ -22,8 +22,12 @@ pub enum Held<'a> {
     Visible,
     /// The `repeat` of one of its groups.
     Repeat(&'a GroupId),
+    Arrange(&'a GroupId),
     /// What one of its groups sets the parameter `name` of the komponent it uses to.
-    Parameter { group: &'a GroupId, name: &'a str },
+    Parameter {
+        group: &'a GroupId,
+        name: &'a str,
+    },
     /// The binding at `path` of an instance in one of its groups.
     Binding {
         group: &'a GroupId,
@@ -37,6 +41,12 @@ impl Taken<'_> {
         let area = resolved.area(self.layer, self.area)?;
         let group = |id: &GroupId| area.groups.iter().find(|held| held.id == *id);
         let expr = match self.held {
+            Held::Arrange(id) => {
+                group(id)?;
+                return resolved
+                    .level_of(self.layer, Holder::Group(self.area, id), "arrange")
+                    .cloned();
+            }
             Held::Visible => area.visible.as_ref(),
             Held::Repeat(id) => group(id)?.repeat.as_ref(),
             Held::Parameter { group: id, name } => group(id)?
@@ -70,6 +80,7 @@ impl Taken<'_> {
         match self.held {
             Held::Visible => area.visible.is_some(),
             Held::Repeat(id) => group(id).is_some_and(|group| group.repeat.is_some()),
+            Held::Arrange(id) => group(id).is_some_and(Group::writes_arrangement),
             Held::Parameter { group: id, name } => {
                 group(id).is_some_and(|group| group.parameters.contains_key(name))
             }
@@ -106,6 +117,13 @@ impl Taken<'_> {
                 }
                 return;
             }
+            Held::Arrange(id) => {
+                if let Some(group) = group_entry(area, id, unset) {
+                    group.clear_arrangement();
+                    mark(&mut group.unset, Unset::Arrange, unset);
+                }
+                return;
+            }
             Held::Parameter { group: id, name } => {
                 if let Some(group) = group_entry(area, id, unset) {
                     group.parameters.remove(name);
@@ -137,6 +155,9 @@ impl Taken<'_> {
             Held::Visible => util::message!("finding.held.visible", area = self.area),
             Held::Repeat(group) => {
                 util::message!("finding.held.repeat", area = self.area, group = group)
+            }
+            Held::Arrange(group) => {
+                util::message!("finding.held.arrange", area = self.area, group = group)
             }
             Held::Parameter { group, name } => util::message!(
                 "finding.held.parameter",

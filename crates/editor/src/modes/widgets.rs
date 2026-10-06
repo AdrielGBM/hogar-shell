@@ -800,7 +800,7 @@ fn step_size(node: &Node) -> Result<(), EditError> {
     let next = match sizes.iter().position(|size| *size == shown.representation) {
         Some(at) => sizes[(at + 1) % sizes.len()],
         None => *sizes.first().ok_or_else(|| {
-            EditError::refused(telar::t!(
+            EditError::refused(util::message!(
                 "editor.keys.no_size",
                 name = shown.module.clone()
             ))

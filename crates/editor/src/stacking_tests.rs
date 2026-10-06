@@ -383,4 +383,48 @@ mod tests {
             assert!(refusal().contains("free container"), "{id}: {}", refusal());
         }
     }
+
+    /// Stacks overlap each other on the overlay layer, so they restack by key and by menu as free areas do; a container holds its children in an order of its own and has none among the areas.
+    #[test]
+    fn stacks_restack_on_the_overlay_and_a_container_group_has_no_order() {
+        let rig = rig_with("order-stacks", overlapping);
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Overlay);
+        let before = stored(&rig);
+        assert!(tap(
+            Key::Char('N'),
+            ModifiersState {
+                is_shift: true,
+                ..ModifiersState::default()
+            }
+        ));
+        assert_eq!(order_of(&rig, LayerKind::Overlay), ["stack", "stack-2"]);
+        assert_eq!(
+            session::selected(),
+            Selection::Area(area(LayerKind::Overlay, "stack-2"))
+        );
+
+        assert!(tap(Key::Char('['), CTRL));
+        assert_eq!(order_of(&rig, LayerKind::Overlay), ["stack-2", "stack"]);
+        assert_eq!(rig.undo_label().as_deref(), Some("Send backward: stack-2"));
+        assert!(tap(Key::Char('['), CTRL));
+        assert!(
+            refusal().contains("already behind everything"),
+            "{}",
+            refusal()
+        );
+        assert_eq!(session::undo().as_deref(), Ok("Send backward: stack-2"));
+        assert_eq!(order_of(&rig, LayerKind::Overlay), ["stack", "stack-2"]);
+        assert_eq!(session::undo().as_deref(), Ok("Make the stack stack-2"));
+        assert_eq!(stored(&rig), before);
+        mode::leave();
+
+        let _mode = enter(LayerKind::Desktop);
+        let shelf = area(LayerKind::Desktop, "widgets").group(&GroupId::new("shelf"));
+        assert!(session::select(Selection::Group(shelf)));
+        let before = stored(&rig);
+        assert!(tap(Key::Char(']'), CTRL));
+        assert!(!refusal().is_empty(), "a container is told why it has none");
+        assert_eq!(stored(&rig), before);
+    }
 }

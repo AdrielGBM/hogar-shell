@@ -284,6 +284,19 @@ impl Default for ActiveWindowConfig {
     }
 }
 
+/// The `windows` module: one entry per open window. `titles` writes each window's title beside its icon where the strip has the room; off, every entry is the icon alone.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug)]
+#[serde(default)]
+pub struct WindowsConfig {
+    pub titles: bool,
+}
+
+impl Default for WindowsConfig {
+    fn default() -> Self {
+        Self { titles: true }
+    }
+}
+
 /// How a rendered label is cased. Applied after the template, so it works on `{name}` (which Hyprland reports however the user named the workspace) without every template having to spell the casing out.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

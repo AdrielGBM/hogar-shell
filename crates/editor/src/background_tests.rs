@@ -675,6 +675,157 @@ mod tests {
         mode::leave();
     }
 
+    const WASH: telar::Rect = telar::Rect {
+        x: 480.0,
+        y: 0.0,
+        width: 960.0,
+        height: 1080.0,
+    };
+
+    fn two_stops() -> Gradient {
+        Gradient {
+            angle: 90.0,
+            stops: [0.2, 0.8]
+                .into_iter()
+                .map(|at| GradientStop {
+                    at,
+                    color: "blue".to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    /// A texture whose paint and tiling the `*` rule writes, with an entry in the screen's own rule that writes none of it.
+    fn wash_inherited(
+        layout: &mut Layout,
+        image: Option<&str>,
+        gradient: Option<Gradient>,
+        tile: Option<Tile>,
+    ) {
+        let texture = |rect, image: Option<&str>, gradient, tile| Area {
+            id: AreaId::new("wash"),
+            kind: Some(AreaKind::Texture {
+                rect,
+                image: image.map(str::to_string),
+                gradient,
+                tile,
+                blend: None,
+                opacity: None,
+            }),
+            ..Area::default()
+        };
+        layout.outputs[0].layers.background.areas.push(texture(
+            Some(rect(0.25, 0.0, 0.5, 1.0)),
+            image,
+            gradient,
+            tile,
+        ));
+        let mut screen = layout::OutputRule {
+            matches: layout::OutputMatch(SCREEN.to_string()),
+            ..layout::OutputRule::default()
+        };
+        screen
+            .layers
+            .background
+            .areas
+            .push(texture(None, None, None, None));
+        layout.outputs.push(screen);
+    }
+
+    /// Presses a handle of the texture's popover and lets go, either with no travel or dragged by `travel` and cancelled with Esc, then closes the popover: whatever the drag previewed leaves the layout as stored, nothing recorded.
+    fn texture_handle_leaves_the_texture_unwritten(
+        test: &str,
+        edit: impl FnOnce(&mut Layout),
+        handle: impl Fn() -> (f32, f32),
+        travel: Option<(f32, f32)>,
+    ) {
+        let rig = rig_with(test, edit);
+        let _scope = crate::rig::Scope::new();
+        let _host = enter(LayerKind::Background);
+        surfaces::rects::track_spanning(region("wash"), vec![telar::signal(WASH)]);
+        let before = stored(&rig);
+        popover::open_area(region("wash")).expect("the texture's popover opens");
+        let mut card = crate::rig::Card::open();
+        let start = handle();
+        card.route(&crate::rig::press_at(start));
+        if let Some((across, down)) = travel {
+            card.route(&crate::rig::pointer_at((start.0 + 8.0, start.1 + 8.0)));
+            card.route(&crate::rig::pointer_at((start.0 + across, start.1 + down)));
+            assert_ne!(session::draft().peek(), before, "the drag previews");
+            card.escape();
+        }
+        card.route(&crate::rig::release_at(start));
+        surfaces::transient::close(popover::ID);
+
+        assert_eq!(stored(&rig), before);
+        assert_eq!(rig.undo_label(), None, "nothing is recorded");
+    }
+
+    fn sliced_inherited(layout: &mut Layout) {
+        let sliced = Tile::NineSlice {
+            top: 8.0,
+            right: 8.0,
+            bottom: 8.0,
+            left: 8.0,
+        };
+        wash_inherited(layout, Some("/pictures/frame.png"), None, Some(sliced));
+    }
+
+    fn graded_inherited(layout: &mut Layout) {
+        wash_inherited(layout, None, Some(two_stops()), None);
+    }
+
+    #[test]
+    fn a_slice_drag_cancelled_with_esc_leaves_the_slice_unwritten() {
+        let top_cut = || (WASH.x + WASH.width / 2.0, WASH.y + 8.0);
+        texture_handle_leaves_the_texture_unwritten(
+            "background-slice-cancelled",
+            sliced_inherited,
+            top_cut,
+            Some((0.0, 40.0)),
+        );
+        texture_handle_leaves_the_texture_unwritten(
+            "background-slice-press",
+            sliced_inherited,
+            top_cut,
+            None,
+        );
+    }
+
+    #[test]
+    fn an_angle_drag_cancelled_with_esc_leaves_the_gradient_unwritten() {
+        let turning = || texture::Axis::of(WASH, 90.0).end;
+        texture_handle_leaves_the_texture_unwritten(
+            "background-angle-cancelled",
+            graded_inherited,
+            turning,
+            Some((300.0, -300.0)),
+        );
+        texture_handle_leaves_the_texture_unwritten(
+            "background-angle-press",
+            graded_inherited,
+            turning,
+            None,
+        );
+    }
+
+    #[test]
+    fn a_stop_drag_cancelled_with_esc_leaves_the_gradient_unwritten() {
+        let first_stop = || texture::Axis::of(WASH, 90.0).point(0.2);
+        texture_handle_leaves_the_texture_unwritten(
+            "background-stop-cancelled",
+            graded_inherited,
+            first_stop,
+            Some((0.0, 200.0)),
+        );
+        texture_handle_leaves_the_texture_unwritten(
+            "background-stop-press",
+            graded_inherited,
+            first_stop,
+            None,
+        );
+    }
+
     /// A region's and a texture's popovers build, their handles over the item and their rows in the card.
     #[test]
     fn a_regions_and_a_textures_popovers_build() {

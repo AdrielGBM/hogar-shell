@@ -1,4 +1,4 @@
-//! The Actions block of an area's and an instance's popover. A line is written only once it passes the check IPC makes of it ([`layout::grants_trust`], the command table), so a refused line leaves the chain as it was.
+//! The Actions block of an area's and an instance's popover. A line is written only once it passes the check `layout set` makes of it ([`layout::actions::action_from`]), so a refused line leaves the chain as it was.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use telar::{LayoutStyle, ReactiveList, RwSignal, SizeDimension, effect, signal};
 
-use layout::{Action, LayerKind, Trigger};
+use layout::{Action, Trigger};
 use ui::descriptor::Built;
 
 use super::origin::{self, Provenance};
@@ -71,11 +71,10 @@ impl Actions {
 
     /// An empty chain takes the gesture's binding off here and leaves its row, so the line can be typed again.
     pub fn set(&self, trigger: Trigger, text: &str) -> Result<(), String> {
-        let chain = chain_of(text);
-        if let Some(why) = chain.iter().find_map(|line| refusal(line)) {
-            return Err(why);
-        }
-        if chain.is_empty() {
+        let (_, action) =
+            layout::actions::action_from(trigger.as_str(), text, services::command::resolves)
+                .map_err(|why| why.render())?;
+        if action.0.is_empty() {
             self.unbind(trigger);
             if !self
                 .unwritten
@@ -88,7 +87,6 @@ impl Actions {
             return Ok(());
         }
         self.forget(trigger);
-        let action = Action(chain);
         if self
             .written
             .peek_with(|written| written.get(&trigger) == Some(&action))
@@ -167,30 +165,6 @@ impl Actions {
 
 fn key_of(trigger: Trigger) -> String {
     format!("actions.{}", trigger.as_str())
-}
-
-pub fn chain_of(text: &str) -> Vec<String> {
-    text.split(';')
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect()
-}
-
-/// The same refusal IPC gives: trust is the user's alone to give, never a gesture's.
-pub fn refusal(line: &str) -> Option<String> {
-    if layout::grants_trust(line) {
-        return Some(telar::t!("editor.actions.trust", line = line));
-    }
-    if !services::command::resolves(line) {
-        return Some(telar::t!("editor.actions.unknown", line = line));
-    }
-    None
-}
-
-/// The lock screen holds readings, never controls; behind the windows, and on a picture or a texture, there is nothing to press.
-pub fn offered(layer: LayerKind, kind: Option<&str>) -> bool {
-    !matches!(layer, LayerKind::Lock | LayerKind::Background)
-        && !matches!(kind, Some("wallpaper_region" | "texture"))
 }
 
 pub(crate) fn rows(actions: Actions, note: Option<fn() -> String>) -> Rows {

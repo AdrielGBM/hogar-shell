@@ -165,6 +165,14 @@ pub const PAGES: &[Page] = &[
                     telar::Children::default(),
                 )
             }),
+            section!(
+                "windows",
+                ["windows"],
+                || crate::sections::windows::windows(
+                    crate::sections::windows::WindowsProps::props().build(),
+                    telar::Children::default(),
+                )
+            ),
             section!("status_icons", ["status_icons"], || {
                 crate::sections::status_icons::status_icons(
                     crate::sections::status_icons::StatusIconsProps::props().build(),

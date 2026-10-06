@@ -440,7 +440,7 @@ mod tests {
         assert!(Rc::ptr_eq(&reconcile::desktops(), &before));
         dragged.revert().expect("it reverts");
         for walked in [session::undo(), session::redo()] {
-            let refused = walked.expect_err("refused");
+            let refused = walked.expect_err("refused").english();
             assert!(refused.contains("--safe-layout"), "{refused}");
         }
     }

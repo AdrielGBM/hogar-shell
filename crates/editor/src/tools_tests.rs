@@ -827,4 +827,191 @@ mod tests {
             "the grid's own style is untouched"
         );
     }
+
+    /// Esc before a padding drag is let go puts the sides back and records nothing; with Alt only the side dragged moves while the four are linked, and every other press is one entry.
+    #[test]
+    fn a_padding_drag_is_put_back_by_escape_and_alt_isolates_one_side() {
+        let rig = rig("tools-padding-esc");
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Top);
+        let mut screen = bar_with(Tool::Padding);
+        let rect = rect_of(&bar());
+        let before = tools::target::padding_of(&desktop(), &bar()).expect("the bar is drawn");
+
+        let start = Side::Left.point(rect, before[3]);
+        let moved = Side::Left.point(rect, before[3] + 7.0);
+        screen.press(start);
+        screen.to(moved);
+        assert_eq!(
+            tools::target::padding_of(&desktop(), &bar()),
+            Some([before[3] + 7.0; 4]),
+            "linked, all four follow live"
+        );
+        screen.key(NamedKey::Escape);
+        assert_eq!(
+            tools::target::padding_of(&desktop(), &bar()),
+            Some(before),
+            "Esc puts all four back"
+        );
+        screen.release(moved);
+        assert_eq!(rig.undo_label(), None, "and nothing is recorded");
+
+        screen.press(start);
+        screen.alt(true);
+        screen.to(moved);
+        screen.release(moved);
+        screen.alt(false);
+        assert_eq!(
+            written_bar(&rig).style.padding,
+            Some(Sides::each(
+                before[0],
+                before[1],
+                before[2],
+                before[3] + 7.0
+            )),
+            "with Alt only the dragged side moves"
+        );
+        assert_eq!(rig.undo_label().as_deref(), Some("Pad bar-top"));
+    }
+
+    fn written_grid(rig: &Rig) -> Area {
+        stored(rig).outputs[0]
+            .layers
+            .desktop
+            .areas
+            .iter()
+            .find(|area| area.id.as_str() == "widgets")
+            .cloned()
+            .expect("the grid is written")
+    }
+
+    /// An area that is not a bar is rounded and padded through its own `style`, by drag, each one entry in the history.
+    #[test]
+    fn the_desktop_grid_is_rounded_and_padded_through_its_own_style() {
+        let rig = rig("tools-grid-style");
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Desktop);
+        draw(LayerKind::Desktop);
+        assert!(session::select(Selection::Area(grid())));
+        assert!(tap(Key::Char('r'), NONE));
+        let mut screen = Screen::new();
+        let rect = rect_of(&grid());
+        let drawn = tools::target::radius_of(&desktop(), &grid()).expect("the grid is drawn");
+        screen.drag(
+            corner_handle(&grid(), Corner::TopLeft, drawn[0]),
+            Corner::TopLeft.point(rect, 20.0),
+        );
+        assert_eq!(written_grid(&rig).style.radius, Some(Corners::all(20.0)));
+        assert_eq!(
+            rig.undo_label().as_deref(),
+            Some("Round the corners of widgets")
+        );
+
+        assert!(tap(Key::Char('i'), NONE));
+        screen.settle();
+        let held = tools::target::padding_of(&desktop(), &grid()).expect("the grid is drawn");
+        screen.drag(
+            Side::Top.point(rect, held[0]),
+            Side::Top.point(rect, held[0] + 30.0),
+        );
+        assert_eq!(
+            written_grid(&rig).style.padding,
+            Some(Sides::all(held[0] + 30.0))
+        );
+        assert_eq!(rig.undo_label().as_deref(), Some("Pad widgets"));
+        assert_eq!(crate::session::undo().as_deref(), Ok("Pad widgets"));
+        assert_eq!(written_grid(&rig).style.padding, Some(Sides::all(held[0])));
+        assert_eq!(
+            written_grid(&rig).style.radius,
+            Some(Corners::all(20.0)),
+            "one undo takes back one gesture"
+        );
+    }
+
+    /// Corners are offered to everything the layout writes and padding only to what holds something off its edges.
+    #[test]
+    fn the_tools_are_offered_where_they_have_something_to_change() {
+        let _rig = rig("tools-offers");
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Desktop);
+        let area =
+            |layer, id: &str| Selection::Area(Node::area(Some(SCREEN), layer, &AreaId::new(id)));
+        for (layer, id, padding) in [
+            (LayerKind::Desktop, "widgets", true),
+            (LayerKind::Desktop, "centre", true),
+            (LayerKind::Background, "background", false),
+            (LayerKind::Top, "bar-top", true),
+            (LayerKind::Overlay, "stack", false),
+            (LayerKind::Lock, "prompt", false),
+            (LayerKind::Lock, "lock-readings", true),
+        ] {
+            let selection = area(layer, id);
+            assert!(tools::offers(&selection, Tool::Radius), "{id}");
+            assert_eq!(tools::offers(&selection, Tool::Padding), padding, "{id}");
+        }
+        let centre = Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("centre"));
+        let run = centre.group(&GroupId::new("clock"));
+        assert!(tools::offers(&Selection::Group(run.clone()), Tool::Radius));
+        assert!(
+            !tools::offers(&Selection::Group(run.clone()), Tool::Padding),
+            "a loose run holds nothing off its edges"
+        );
+        let widget = Selection::Instance(
+            centre.instance(&GroupId::new("clock"), &InstanceId::new("clock-2")),
+        );
+        assert!(tools::offers(&widget, Tool::Radius));
+        assert!(!tools::offers(&widget, Tool::Padding));
+        assert!(!tools::offers(&Selection::None, Tool::Radius));
+    }
+
+    fn bar_set(edge: config::Edge, mode: config::Shape) -> impl FnOnce(&mut Layout) {
+        move |layout| {
+            let held = &mut layout.outputs[0].layers.top.areas[0];
+            if let Some(AreaKind::Bar {
+                edge: at, shape, ..
+            }) = &mut held.kind
+            {
+                *at = Some(edge);
+                shape.mode = Some(mode);
+            }
+        }
+    }
+
+    /// The radius and padding tools reach a bar's corners and sides on every edge in every shape, as a drag, and write what the bar says of them.
+    #[test]
+    fn the_tools_round_and_pad_a_bar_on_every_edge_in_every_shape() {
+        for mode in [
+            config::Shape::Bar,
+            config::Shape::Sections,
+            config::Shape::Chips,
+        ] {
+            for edge in config::Edge::ALL {
+                let what = format!("{mode:?} {edge:?}");
+                let rig = rig_with(
+                    &format!("tools-edges-{mode:?}-{edge:?}"),
+                    bar_set(edge, mode),
+                );
+                let _owner = Owner::new();
+                let _mode = enter(LayerKind::Top);
+                let mut screen = bar_with(Tool::Radius);
+                let rect = rect_of(&bar());
+                let before = drawn_corners();
+                screen.drag(
+                    corner_handle(&bar(), Corner::TopLeft, before[0]),
+                    Corner::TopLeft.point(rect, 16.0),
+                );
+                assert_eq!(bar_radius(&rig), Some(Corners::all(16.0)), "{what}");
+
+                assert!(tap(Key::Char('i'), NONE), "{what}");
+                screen.settle();
+                let held = tools::target::padding_of(&desktop(), &bar()).expect("the bar is drawn");
+                screen.drag(Side::Top.point(rect, held[0]), Side::Top.point(rect, 10.0));
+                assert_eq!(
+                    written_bar(&rig).style.padding,
+                    Some(Sides::all(10.0)),
+                    "{what}"
+                );
+            }
+        }
+    }
 }

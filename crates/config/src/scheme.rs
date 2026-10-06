@@ -34,7 +34,12 @@ pub const MIN_TEXT_CONTRAST: f32 = 4.5;
 
 /// Whether `text` clears [`MIN_TEXT_CONTRAST`] on `background`. Alpha is ignored, so a translucent background is composed over whatever is under it first.
 pub fn is_readable(text: Color, background: Color) -> bool {
-    text.contrast_ratio(background) >= MIN_TEXT_CONTRAST
+    readable_ratio(text.contrast_ratio(background))
+}
+
+/// Whether a contrast ratio clears [`MIN_TEXT_CONTRAST`]: the one line every judge of text on a fill draws.
+pub fn readable_ratio(ratio: f32) -> bool {
+    ratio >= MIN_TEXT_CONTRAST
 }
 
 /// Whether the scheme is built for a dark or a light desktop.
@@ -909,6 +914,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_ratio_and_a_pair_of_colours_are_judged_by_one_line() {
+        assert!(readable_ratio(MIN_TEXT_CONTRAST));
+        assert!(!readable_ratio(MIN_TEXT_CONTRAST - 0.01));
+        let (white, black) = (Color::rgb(1.0, 1.0, 1.0), Color::rgb(0.0, 0.0, 0.0));
+        assert_eq!(
+            is_readable(white, black),
+            readable_ratio(white.contrast_ratio(black))
+        );
     }
 
     #[test]

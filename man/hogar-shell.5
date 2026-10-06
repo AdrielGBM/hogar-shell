@@ -1264,6 +1264,11 @@ Unset by default.
 .TP
 .B longitude
 Unset by default.
+.SS [windows]
+The `windows` module: one entry per open window. `titles` writes each window's title beside its icon where the strip has the room; off, every entry is the icon alone.
+.TP
+.B titles
+Default: \fBtrue\fR
 .SS [workspaces]
 The `workspaces` module.
 .sp
@@ -1556,7 +1561,10 @@ One of the nine places a stack or a free area can be pinned to.
 How far the column is moved from where its anchor puts it, in logical pixels. It never goes past the edge of the box it is measured in, and always keeps a quarter of that box's height for its cards.
 .TP
 .B width
-How wide a card in this column is, in logical pixels.
+How wide a card in this stack is, in logical pixels.
+.TP
+.B flow
+Which way the cards are laid: down a column, or along a row. A column grows from the top or bottom edge its anchor names, a row from the left or right one, and either grows both ways from the middle. Left out, a column.
 .TP
 .B output_policy
 Which outputs a stack appears on.

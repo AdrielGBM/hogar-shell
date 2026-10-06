@@ -106,5 +106,6 @@ module_options! {
     utilities: UtilitiesConfig,
     visualiser: VisualiserConfig,
     weather: WeatherConfig,
+    windows: WindowsConfig,
     workspaces: WorkspacesConfig,
 }

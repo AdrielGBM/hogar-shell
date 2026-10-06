@@ -13,7 +13,7 @@ mod tests {
     use config::theme::{FontRole, NordTheme};
     use config::{Config, MediaDetail, NotificationDetail};
     use layout::{
-        Area, AreaId, AreaKind, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind,
+        Area, AreaId, AreaKind, Instance, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind,
         SMALLEST_PROMPT, Site, Style,
     };
     use modules::lock::LockLayout;
@@ -940,5 +940,282 @@ mod tests {
             "{rect:?}"
         );
         assert!(rig.undo_label().is_some());
+    }
+
+    fn with_prompt(layout: &Layout, change: impl FnOnce(&mut Area)) -> Layout {
+        let mut changed = layout.clone();
+        let prompt = changed.outputs[0]
+            .layers
+            .lock
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "prompt")
+            .expect("the shipped prompt");
+        change(prompt);
+        changed
+    }
+
+    fn holding(child: Instance) -> layout::Group {
+        layout::Group {
+            id: layout::GroupId::new("inside"),
+            kind: Some(layout::GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 1,
+                row_span: 1,
+            }),
+            children: vec![child],
+            ..layout::Group::default()
+        }
+    }
+
+    fn reading(change: impl FnOnce(&mut Instance)) -> Instance {
+        let mut child = Instance {
+            id: layout::InstanceId::new("inside-clock"),
+            module: Some("clock".to_string()),
+            representation: Some(layout::Representation::WidgetS),
+            ..Instance::default()
+        };
+        change(&mut child);
+        child
+    }
+
+    /// Nothing an edit can do makes the prompt invisible, unreachable, too faint or unreadable — each said in the lock's own words and each kept out of the layout by `kept`, down to the boundary of what is still allowed, and for what the prompt holds as for the prompt itself.
+    #[test]
+    fn the_lock_refuses_a_prompt_that_is_hidden_off_screen_too_small_faint_or_unreadable() {
+        let rig = rig_with("lock-prompt-refusals", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        let before = stored(&rig);
+        let placed = |rect: Rect| {
+            with_prompt(&before, |prompt| {
+                prompt.kind = Some(AreaKind::Prompt { rect: Some(rect) });
+            })
+        };
+        let faded =
+            |opacity: f32| with_prompt(&before, |prompt| prompt.style.opacity = Some(opacity));
+
+        for (name, after) in [
+            ("fully opaque", faded(1.0)),
+            ("the faintest allowed", faded(layout::FAINTEST_PROMPT)),
+            (
+                "the smallest allowed",
+                placed(Rect {
+                    x: 0.4,
+                    y: 0.4,
+                    w: SMALLEST_PROMPT,
+                    h: SMALLEST_PROMPT,
+                }),
+            ),
+            (
+                "flush with the edge",
+                placed(Rect {
+                    x: 0.6,
+                    y: 0.6,
+                    w: 0.4,
+                    h: 0.4,
+                }),
+            ),
+        ] {
+            assert!(refused(&after).is_empty(), "{name}: {:?}", refused(&after));
+            assert!(lock_mode::kept(&before, &after).is_ok(), "{name}");
+        }
+
+        let cases = [
+            (
+                "just under the faintest",
+                faded(layout::FAINTEST_PROMPT - 0.01),
+                "too faint",
+            ),
+            (
+                "a visibility expression",
+                with_prompt(&before, |prompt| {
+                    prompt.visible = Some(layout::Expr("false".to_string()));
+                }),
+                "visibility expression",
+            ),
+            (
+                "past the right edge",
+                placed(Rect {
+                    x: 0.7,
+                    y: 0.4,
+                    w: 0.4,
+                    h: 0.2,
+                }),
+                "does not lie on the output",
+            ),
+            (
+                "just under the smallest",
+                placed(Rect {
+                    x: 0.4,
+                    y: 0.4,
+                    w: SMALLEST_PROMPT - 0.01,
+                    h: 0.2,
+                }),
+                "too small",
+            ),
+            (
+                "a card its text cannot be read on",
+                with_prompt(&before, |prompt| {
+                    prompt.style.fill = Some("text".to_string());
+                }),
+                "WCAG AA",
+            ),
+            (
+                "a group of it too faint",
+                with_prompt(&before, |prompt| {
+                    prompt.groups.push(layout::Group {
+                        style: Style {
+                            opacity: Some(0.5),
+                            ..Style::default()
+                        },
+                        ..holding(reading(|_| {}))
+                    });
+                }),
+                "too faint",
+            ),
+            (
+                "a child of it on an unreadable card",
+                with_prompt(&before, |prompt| {
+                    prompt.groups.push(holding(reading(|child| {
+                        child.style.fill = Some("text".to_string());
+                    })));
+                }),
+                "WCAG AA",
+            ),
+            (
+                "a child of it painted by an expression",
+                with_prompt(&before, |prompt| {
+                    prompt.groups.push(holding(reading(|child| {
+                        child
+                            .bindings
+                            .insert("style.opacity".to_string(), layout::Expr("0.1".to_string()));
+                    })));
+                }),
+                "painted by an expression",
+            ),
+        ];
+        for (name, after, says) in cases {
+            let said = refused(&after).join("\n");
+            assert!(said.contains(says), "{name}: {said:?}");
+            let why = lock_mode::kept(&before, &after).expect_err(name).english();
+            assert!(why.contains("minimal"), "{name}: {why}");
+        }
+    }
+
+    /// `kept` judges what an edit adds: a lock layer that was already refused is not refused again for something else in it, so it can still be fixed one step at a time, but a new fault is.
+    #[test]
+    fn a_lock_layer_already_refused_can_be_fixed_in_steps_and_is_refused_a_new_fault() {
+        let rig = rig_with("lock-fix-in-steps", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        let sound = stored(&rig);
+        let broken = with_prompt(&sound, |prompt| {
+            prompt.style.opacity = Some(0.5);
+            prompt.kind = Some(AreaKind::Prompt {
+                rect: Some(Rect {
+                    x: 0.8,
+                    y: 0.4,
+                    w: 0.4,
+                    h: 0.2,
+                }),
+            });
+        });
+        assert_eq!(refused(&broken).len(), 2, "{:?}", refused(&broken));
+
+        let half_fixed = with_prompt(&broken, |prompt| prompt.style.opacity = Some(0.95));
+        assert!(
+            lock_mode::kept(&broken, &half_fixed).is_ok(),
+            "a step toward a lock layer that holds"
+        );
+        let decorated = with_prompt(&broken, |prompt| prompt.style.shadow = Some(2));
+        assert!(
+            lock_mode::kept(&broken, &decorated).is_ok(),
+            "an edit that adds no fault"
+        );
+        let worse = with_prompt(&broken, |prompt| {
+            prompt.style.fill = Some("text".to_string());
+        });
+        assert!(
+            lock_mode::kept(&broken, &worse).is_err(),
+            "one more fault is one too many"
+        );
+        let untouched = with_readings(&broken, |area| {
+            area.style.shadow = Some(1);
+        });
+        assert!(
+            lock_mode::kept(&broken, &untouched).is_ok(),
+            "an edit to the readings that does not touch what is wrong"
+        );
+    }
+
+    #[test]
+    fn fixing_one_fault_of_a_prompt_with_two_is_not_refused_for_the_message_of_the_other() {
+        let rig = rig_with("lock-fix-quoted-ratio", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        let broken = with_prompt(&stored(&rig), |prompt| {
+            prompt.style.opacity = Some(0.5);
+            prompt.style.fill = Some("text".to_string());
+        });
+        let half_fixed = with_prompt(&broken, |prompt| prompt.style.opacity = Some(0.95));
+        assert!(lock_mode::kept(&broken, &half_fixed).is_ok());
+    }
+
+    /// The shell's own menu belongs to the layers that have a desktop under them; on the lock preview it is refused, says why, and opens nothing.
+    #[test]
+    fn the_shell_menu_is_refused_on_the_lock_preview() {
+        let rig = rig_with("lock-shell-menu", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        draw();
+        let before = stored(&rig);
+
+        let why = crate::shell_menu::open(surfaces::menu::ShellAsked {
+            output: Some(SCREEN.to_string()),
+            at: Some((960.0, 40.0)),
+        })
+        .expect_err("no shell menu over the lock preview");
+        assert!(why.to_string().contains("no context menus"), "{why}");
+        assert!(!transient::is_open(context::ID));
+        assert_eq!(stored(&rig), before);
+        assert_eq!(rig.undo_label(), None);
+    }
+
+    /// A reading on the lock is copied by Ctrl+D as it is on any layer, as one undo entry, and the copy is a reading the lock accepts — the keys offer nothing the lock check would refuse.
+    #[test]
+    fn a_reading_duplicated_on_the_lock_is_one_entry_and_a_lock_the_check_accepts() {
+        let rig = rig_with("lock-duplicate", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        let before = stored(&rig);
+        let clock = Node::area(Some(SCREEN), LayerKind::Lock, &AreaId::new("lock-readings"))
+            .instance(
+                &layout::GroupId::new("clock"),
+                &layout::InstanceId::new("lock-clock"),
+            );
+        assert!(session::select(Selection::Instance(clock)));
+
+        assert!(tap(
+            Key::Char('d'),
+            ModifiersState {
+                is_ctrl: true,
+                ..NONE
+            }
+        ));
+        let after = stored(&rig);
+        let count = |layout: &Layout| {
+            lock_areas(layout)
+                .iter()
+                .flat_map(|area| area.groups.iter())
+                .flat_map(|group| group.children.iter())
+                .count()
+        };
+        assert_eq!(count(&after), count(&before) + 1);
+        assert!(refused(&after).is_empty(), "{:?}", refused(&after));
+        assert_eq!(lock_ids(&after).last().map(String::as_str), Some("prompt"));
+        assert!(rig.undo_label().is_some());
+        session::undo().expect("one entry");
+        assert_eq!(stored(&rig), before);
     }
 }

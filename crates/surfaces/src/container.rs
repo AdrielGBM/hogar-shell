@@ -1157,4 +1157,97 @@ mod kept {
         set_edited(None);
         assert!(!window.shows(&hint), "and the edit mode closing hides it");
     }
+
+    #[test]
+    fn an_empty_pages_container_says_so_only_while_its_layers_edit_mode_is_up() {
+        let empty = grid(container(Arrange::Pages, Vec::new()));
+        let hint = telar::t!("container.empty");
+        let window = Window::of(&empty);
+        assert!(!window.shows(&hint), "not outside edit mode");
+
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Top)));
+        assert!(!window.shows(&hint), "nor in another layer's");
+
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Desktop)));
+        assert!(window.shows(&hint), "but in its own");
+        let drawn = telar::testing::rect_of(&window.tree, &hint).expect("drawn");
+        assert!(inside(&drawn, BOX), "inside the container: {drawn:?}");
+
+        set_edited(None);
+        assert!(!window.shows(&hint), "and the edit mode closing hides it");
+
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Desktop)));
+        let filled = grid(container(
+            Arrange::Pages,
+            vec![child("a", Placement::Weight(1.0))],
+        ));
+        let window = Window::of(&filled);
+        assert!(
+            !window.shows(&hint),
+            "a pages container that holds something says nothing"
+        );
+        set_edited(None);
+    }
+}
+
+#[cfg(test)]
+mod on_the_lock {
+    use super::*;
+
+    use ui::descriptor::{
+        Built, Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef,
+    };
+    use ui::host::{Host, WidgetSize};
+
+    fn empty(_: &Host) -> Built {
+        Ok(Box::new(telar::Container::new(
+            telar::LayoutStyle::new(),
+            Vec::new(),
+        )?))
+    }
+
+    const fn module(id: &'static str, chip: Input, widget: Input) -> ModuleDescriptor {
+        ModuleDescriptor {
+            id,
+            name: id,
+            icon: "circle",
+            category: Category::Info,
+            options: &[],
+            representations: Representations {
+                chip: Some(ChipDef::new(empty, chip)),
+                widget: Some(WidgetDef {
+                    sizes: &WidgetSize::ALL,
+                    build: empty,
+                    input: widget,
+                }),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        }
+    }
+
+    static MODULES: &[ModuleDescriptor] = &[
+        module("reading", Input::ReadOnly, Input::ReadOnly),
+        module("gauge", Input::ReadOnly, Input::Interactive),
+        module("control", Input::Interactive, Input::Interactive),
+    ];
+
+    const ROOMY: Size = Size {
+        width: 400.0,
+        height: 400.0,
+    };
+
+    /// A container's child is fitted to what answers nothing on the lock layer: a reading keeps its widget, a module whose widget answers the pointer falls to its reading chip, and one with nothing that only reads is squeezed to its smallest widget rather than dropped. The owner's session is fitted to the largest that holds.
+    #[test]
+    fn a_container_child_on_the_lock_is_fitted_to_what_only_reads() {
+        ui::descriptor::install(MODULES);
+        let fit = |module, audience| fitted(module, ROOMY, (80.0, 16.0), audience);
+        assert_eq!(fit("reading", Audience::Anyone), Placed::WidgetL);
+        assert_eq!(fit("gauge", Audience::Anyone), Placed::Chip);
+        assert_eq!(fit("control", Audience::Anyone), Placed::Chip);
+        assert_eq!(fit("reading", Audience::Owner), Placed::WidgetL);
+        assert_eq!(fit("gauge", Audience::Owner), Placed::WidgetL);
+        assert_eq!(fit("control", Audience::Owner), Placed::WidgetL);
+    }
 }

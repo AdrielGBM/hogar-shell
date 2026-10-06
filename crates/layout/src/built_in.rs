@@ -148,6 +148,7 @@ fn stack() -> Area {
             anchor: Some(Anchor::TopRight),
             offset: None,
             width: Some(380.0),
+            flow: None,
             output_policy: Some(StackOutputPolicy::Focused),
             routes: Vec::new(),
             launcher: None,

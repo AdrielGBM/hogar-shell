@@ -21,29 +21,13 @@ mod tests {
 
     use crate::context;
     use crate::mode;
-    use crate::rig::{self, SCREEN, rig_with, stored};
+    use crate::rig::{self, SCREEN, Scope, rig_with, stored};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
     const EMPTY: (f32, f32) = (960.0, 40.0);
 
     thread_local! {
         static RAN: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    }
-
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
     }
 
     fn with_desktop_grid(layout: &mut Layout) {
@@ -310,5 +294,65 @@ mod tests {
             assert!(!adds.contains(&other.to_string()), "{layer}: {adds:?}");
             assert!(!adds.is_empty(), "{layer}");
         }
+    }
+
+    /// What the shell menu's rows do, outside a mode and in one: "New container" enters the desktop mode and makes one as a single undo entry, "Add widget…" opens the palette, "Theme…" opens the theme popover, "Undo" takes the container back and "Done" ends the mode.
+    #[test]
+    fn the_shell_menus_rows_enter_the_mode_and_do_what_they_say() {
+        let rig = rig_with("shell-menu-rows", with_desktop_grid);
+        let _scope = Scope::new();
+        let mut window = background_window();
+        let before = stored(&rig);
+
+        click(&mut window, EMPTY, PointerButton::Secondary);
+        context::pick("New container");
+        assert_eq!(
+            mode::current().map(|mode| mode.layer),
+            Some(LayerKind::Desktop)
+        );
+        let groups = |layout: &Layout| layout.outputs[0].layers.desktop.areas[0].groups.len();
+        assert_eq!(groups(&stored(&rig)), groups(&before) + 1);
+        assert!(
+            rig.undo_label()
+                .is_some_and(|label| label.starts_with("Make the container")),
+            "{:?}",
+            rig.undo_label()
+        );
+
+        click(&mut window, EMPTY, PointerButton::Secondary);
+        context::pick("Undo");
+        assert_eq!(
+            stored(&rig),
+            before,
+            "one entry made it and one undo takes it back"
+        );
+
+        click(&mut window, EMPTY, PointerButton::Secondary);
+        context::pick("Add widget…");
+        assert!(transient::is_open(crate::modes::palette::ID));
+        transient::close(crate::modes::palette::ID);
+
+        click(&mut window, EMPTY, PointerButton::Secondary);
+        context::pick("Theme…");
+        assert!(transient::is_open(crate::theme::ID));
+        transient::close(crate::theme::ID);
+
+        click(&mut window, EMPTY, PointerButton::Secondary);
+        context::pick("Done");
+        assert!(mode::current().is_none(), "Done ends the mode");
+    }
+
+    /// Outside a mode "Theme…" enters one first, because the popover is the mode's.
+    #[test]
+    fn the_theme_row_outside_a_mode_enters_the_mode_and_opens_the_popover() {
+        let _rig = rig_with("shell-menu-theme", with_desktop_grid);
+        let _scope = Scope::new();
+        let mut window = background_window();
+
+        click(&mut window, EMPTY, PointerButton::Secondary);
+        context::pick("Theme…");
+        assert!(mode::current().is_some());
+        assert!(transient::is_open(crate::theme::ID));
+        transient::close(crate::theme::ID);
     }
 }

@@ -46,8 +46,8 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | Command | Arguments | What it does |
 | --- | --- | --- |
 | `toggle` | `<module\|instance>` | open a module's panel, or close it if it is up; an instance opens the panel the layout gives it, else its module's panel beside it |
-| `open` | `<module>` | open a module's panel (idempotent) |
-| `close` | `<module>` | close a module's panel |
+| `open` | `<module\|instance>` | open a module's panel, or what `panel toggle` opens for an instance (idempotent) |
+| `close` | `<module\|instance>` | close a module's panel, what `panel toggle` opens for an instance, or anything `panel list` names |
 | `list` |  | which transients are open right now — a panel, but also the drawer, popout, tray menu, float, launcher, notification centre or region picker |
 
 ## `launcher`
@@ -281,12 +281,17 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `show` | `[name]` | print a layout as it is stored |
 | `check` | `[name]` | report what is wrong with a layout, without applying it |
 | `use` | `<name>` | draw this layout from now on |
-| `undo` |  | take back the last edit, whatever made it |
-| `redo` |  | make the edit that was last taken back again |
+| `undo` | `[n]` | take back the last edit, or the last n, whatever made them |
+| `redo` | `[n]` | make the edit that was last taken back again, or the last n |
+| `history` |  | every edit undo and redo walk through, one per line after how many steps away it is: below 0 back, 0 where the layout is now, above 0 forward |
 | `add` | `<module> <area> [group]` | place a module in an area of the layout being drawn |
 | `remove` | `<id>` | take a placed module, or a whole area, out of the layout |
 | `move` | `<id> <group> [index]` | put a placed module in another group, or elsewhere in its own |
-| `set` | `<instance\|area\|area.group> <key> <value...>` | change one property of a placed module, an area's visible, or a group's repeat or parameters.<name> |
+| `set` | `<instance\|area\|area.group> <key> <value...>` | change one property of a placed module, an area, a panel or a group: its look (style.<key>, a bar's corners written as its shape.radius), its place in its group (weight, cell.<key>, rect.<key>), any key of an area's kind (a bar's thickness, a stack's flow, a panel's owner), an area's reserve, above_fullscreen or within, a group's arrangement (arrange, cols, rows, gap) or place (col, row, col_span, row_span, zone), an option, a binding, an action or an expression; `unset visible`, `unset repeat`, `unset arrange`, `unset parameters.<name>` and `unset bindings.<key>` take back what a broader level writes |
+| `duplicate` | `<id\|area.group>` | copy a placed module, a group or an area beside itself, as the editor's Duplicate does |
+| `order` | `<id> <up\|down\|front\|back>` | draw an area over or under the others on its layer, or a child of a free group over or under its siblings |
+| `panel` | `<instance> [--along]` | give a placed module a panel of its own, opened beside it, or along its whole bar with --along |
+| `rename` | `<id\|area.group> <new>` | give a placed module, an area or a group another id, everywhere the layout names it; refused where a rule, an action or a layout extending this one names the old id |
 | `reset` | `<id\|layer\|all>` | put a part of the layout back to what the layout it extends says, or the built-in one |
 | `edit` | `<background\|desktop\|top\|overlay\|lock\|off> [output]` | edit one layer on one screen (the focused one unless named), or stop |
 | `export` | `<bundle-path> [layout]` | write a layout (the one being drawn unless named), the layouts it extends, the komponents it draws and the pictures it shows to a new bundle directory |

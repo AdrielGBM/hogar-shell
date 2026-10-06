@@ -5,6 +5,7 @@ use layout::{
 };
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{Node, Part};
+use util::report::Message;
 
 use crate::keys::Chord;
 use crate::modes::grid::{self, Cells};
@@ -43,7 +44,7 @@ enum Form {
 /// The operations that copy what `node` names on `desktop`'s screen, and the copy: an instance on a grid's or a panel's cells onto the nearest free cells of the same span, any other instance right after itself; a group on cells onto the nearest free cells of its span, one in a zone right after itself, each with what it holds; an area right after itself. Every instance copied gets an id of its own.
 ///
 /// A group or an area is copied from the entry the layout file writes for it wherever that draws the same as the original, so the copy carries no value the file leaves to its default; where the file writes only part of it, the rest inherited, it is copied as the screen shows it.
-pub(crate) fn duplicated(
+pub fn duplicated(
     layout: &Layout,
     desktop: &Desktop,
     node: &Node,
@@ -83,25 +84,25 @@ pub(crate) fn duplicated(
 }
 
 /// Why an area of `kind` is not copied: there is one of it, or its kind covers its layer between them. `None` for the kinds that are.
-pub(crate) fn refusal(kind: &ResolvedAreaKind) -> Option<String> {
+pub(crate) fn refusal(kind: &ResolvedAreaKind) -> Option<Message> {
     match kind {
         ResolvedAreaKind::Bar { .. }
         | ResolvedAreaKind::Stack { .. }
         | ResolvedAreaKind::Texture { .. }
         | ResolvedAreaKind::Free { .. } => None,
-        ResolvedAreaKind::Prompt { .. } => Some(telar::t!("editor.duplicate.prompt")),
-        ResolvedAreaKind::Panel { .. } => Some(telar::t!("editor.duplicate.panel")),
+        ResolvedAreaKind::Prompt { .. } => Some(util::message!("editor.duplicate.prompt")),
+        ResolvedAreaKind::Panel { .. } => Some(util::message!("editor.duplicate.panel")),
         ResolvedAreaKind::WallpaperRegion { .. } => {
-            Some(telar::t!("editor.duplicate.wallpaper_region"))
+            Some(util::message!("editor.duplicate.wallpaper_region"))
         }
-        ResolvedAreaKind::Grid { .. } => Some(telar::t!("editor.duplicate.grid")),
-        ResolvedAreaKind::Dock { .. } => Some(telar::t!("editor.duplicate.dock")),
+        ResolvedAreaKind::Grid { .. } => Some(util::message!("editor.duplicate.grid")),
+        ResolvedAreaKind::Dock { .. } => Some(util::message!("editor.duplicate.dock")),
     }
 }
 
 /// A komponent's file holds its children for every group that uses it, so one of them has no entry of its own to copy.
 fn komponent_child(node: &Node, holding: &ResolvedGroup, komponent: &KomponentId) -> EditError {
-    EditError::refused(telar::t!(
+    EditError::refused(util::message!(
         "editor.duplicate.komponent_child",
         name = steps::name_of(&Selection::of(node.clone())),
         komponent = komponent.to_string(),
@@ -322,7 +323,7 @@ fn cells_near(
     let size = grid::cells_of(shown).unwrap_or(Cells::ONE);
     let room = desktop::room_of(work.desktop, area);
     let spot = grid::free_inside(&grid::taken(area), size, (col, row), room).ok_or_else(|| {
-        EditError::refused(telar::t!(
+        EditError::refused(util::message!(
             "editor.duplicate.no_room",
             name = shown.id.to_string()
         ))
@@ -474,6 +475,7 @@ fn moved(written: Option<AreaKind>, copy: AreaKind) -> AreaKind {
                 anchor,
                 offset,
                 width,
+                flow,
                 output_policy,
                 routes,
                 ..
@@ -483,6 +485,7 @@ fn moved(written: Option<AreaKind>, copy: AreaKind) -> AreaKind {
             anchor,
             offset,
             width,
+            flow,
             output_policy,
             routes,
             launcher: None,
@@ -520,6 +523,7 @@ fn copied_kind(work: &Work, area: &ResolvedArea) -> Result<AreaKind, EditError> 
             anchor,
             offset,
             width,
+            flow,
             output_policy,
             routes,
             ..
@@ -527,6 +531,7 @@ fn copied_kind(work: &Work, area: &ResolvedArea) -> Result<AreaKind, EditError> 
             anchor: Some(anchor),
             offset: Some(offset),
             width: Some(width),
+            flow: Some(flow),
             output_policy: Some(output_policy),
             routes,
             launcher: None,
@@ -555,7 +560,7 @@ fn copied_kind(work: &Work, area: &ResolvedArea) -> Result<AreaKind, EditError> 
             rect: Some(nudged(rect, AREA_NUDGE)),
             anchor: Some(anchor),
         }),
-        other => Err(EditError::Refused(refusal(&other).unwrap_or_default())),
+        other => Err(refusal(&other).map_or_else(EditError::nothing, EditError::Refused)),
     }
 }
 
@@ -572,8 +577,12 @@ fn bar_beside(work: &Work, area: &ResolvedArea) -> Result<AreaKind, EditError> {
         return Err(EditError::nothing());
     };
     let screen = work.screen();
-    let no_room =
-        || EditError::refused(telar::t!("editor.top.no_room", edge = top::edge_name(edge)));
+    let no_room = || {
+        EditError::refused(util::message!(
+            "editor.top.no_room",
+            edge = top::edge_name(edge)
+        ))
+    };
     let span = top::span_of(&screen, area).ok_or_else(no_room)?;
     let (start, end) = top::free_on(&screen, edge, (span.run_start, span.run_length), None)
         .into_iter()

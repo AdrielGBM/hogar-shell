@@ -1354,4 +1354,28 @@ accent = "orange"
             assert_eq!(edge.index(), at, "{edge:?}");
         }
     }
+
+    #[test]
+    fn the_windows_strip_writes_titles_unless_told_not_to() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.windows.titles);
+        assert!(
+            !toml::from_str::<Config>("[windows]\ntitles = false\n")
+                .unwrap()
+                .windows
+                .titles
+        );
+        let written = toml::to_string_pretty(&Config {
+            windows: WindowsConfig { titles: false },
+            ..Config::default()
+        })
+        .unwrap();
+        assert!(
+            !toml::from_str::<Config>(&written)
+                .expect("it parses back")
+                .windows
+                .titles,
+            "{written}"
+        );
+    }
 }

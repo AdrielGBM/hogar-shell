@@ -51,15 +51,15 @@ only from its edit mode.
 
 - **An item's** card is generated from its module's options: each option the module declares gets the row that fits its
   type — a number to scrub, a stepper, a toggle, a swatch, a choice — with the option's own documentation as its
-  explanation. It also has **Drawn as** (the size of the representation, not shown inside a container that arranges its children), the item's
+  explanation. It also has its **Id** (see [Ids and rename](#ids-and-rename)), **Drawn as** (the size of the representation, not shown inside a container that arranges its children), the item's
   [bindings](data-and-rules.md#bindings), its **Look** — fill, corner radius (all four and each corner), opacity, border
   width and colour, shadow; its accent stays an option of its module — its **Actions**, **Reset options and look**,
   which takes its options and its style off where the popover writes, and **Remove**. Inside a container that arranges
   its children a line says its size is the container's to give.
-- **An area's** card has the tools of its kind first — a bar's edge, thickness, length, offset, shape, auto-hide;
+- **An area's** card has its **Id** and the tools of its kind first — a bar's edge, thickness, length, offset, shape, auto-hide;
   a grid's cell size, gap and anchor; a panel's shape (beside its owner, or along its owner's bar), its columns and rows
   (only its depth along a bar), cell size and gap, with a handle on the corner it grows from (or the far side along a
-  bar) that steps whole cells as it is dragged; a stack's anchor, width, routes and screens; a region's picture, fit and transition;
+  bar) that steps whole cells as it is dragged; a stack's anchor, width, flow (a column or a row of cards), routes and screens; a region's picture, fit and transition;
   a texture's paint — and then what every area has:
   - **This workspace only**, which writes the change into that workspace's rule instead (see
     [Layouts](layouts.md#output-rules-and-workspace-rules)), except on the top layer;
@@ -72,11 +72,17 @@ only from its edit mode.
     border width and colour, shadow (its kind's, none, soft, medium or strong) and backdrop. Where nothing writes a
     radius or a padding, its row shows the one drawn, marked default, and writes only once you change it: a panel's
     radius is the theme's beside its owner and square along a bar. A picture or a texture has no border or shadow;
+  - under **Opacity**, while a fill is set, the **contrast** of the theme's text colour on it, which follows the fill,
+    the opacity and the theme as they change and turns to a warning below 4.5:1 (WCAG AA). Nothing is refused; only
+    the lock's prompt, which has its own line, is kept to it. The fill is judged at its opacity over what is behind it,
+    which is only approximated: the layer's base for an area, and the area's own fill over the base for a group or an
+    item. A wallpaper, a picture, a backdrop or the group around an item is not counted. A group's and an item's
+    **Look** has the same line;
   - **Actions**, below;
   - **Behaviour**: whether it keeps windows out of its edge, whether it stays above fullscreen windows — with the note that
     this keeps the screen off direct scanout — and which box it is measured in;
   - **Remove**, on every area but the lock screen's prompt.
-- **A group's** card has its arrangement — a loose run, a column, a row, a grid, free, or **One at a time (Smart Stack)**;
+- **A group's** card has its **Id**, then its arrangement — a loose run, a column, a row, a grid, free, or **One at a time (Smart Stack)**;
   a group in a bar's run is a loose run or one at a time — with the inner grid's columns and rows under a grid and the
   gap between children under any arrangement but one at a time (the plate's own gap, tighter on a bar, until you set
   one); what it repeats over; the parameters of the komponent it draws, each with the komponent's default shown beside it;
@@ -92,6 +98,24 @@ history, and closes the card.
 
 Where the card goes: beside what it customizes, on the side that item faces, and always inside what the bars leave of the
 screen.
+
+### Colours
+
+Every colour row — a fill, a border, a stop, an accent — is one field: a theme token or a `#rrggbb` typed as text, which
+is the value itself, the theme's colours as swatches with the one it names lit, and red, green and blue fields that
+write a hex. Text that is neither writes nothing, and the row says where its value comes from like any other (see
+[Where a value comes from](#where-a-value-comes-from)).
+
+### Ids and rename
+
+The **Id** row of an area's, a group's and an item's card shows the id every other level, rule and script addresses it
+by. Type another and press **Rename**: the shell rewrites every place the layout names it — the other levels, a
+panel's owner, a komponent's children — as one undo entry named for the rename, and selects the item under its new id.
+The card's own changes are kept first, since its rows address the item by the id it is losing, and the card closes. A
+refused rename leaves the id alone and says why under the row: the id is empty or holds a `.`, `/`, `#` or space, it
+is already used, or a `[[rules]]` command, an action line or a layout that extends this one names the old id and
+cannot be rewritten. A child of a komponent has no row, since its id is the komponent's. The same edit from a script
+is [`layout rename`](../../guides/scripting.md#editing-the-layout).
 
 ### Actions
 

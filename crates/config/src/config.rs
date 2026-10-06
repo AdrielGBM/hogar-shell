@@ -41,6 +41,7 @@ pub struct Config {
     pub media: MediaConfig,
     pub lyrics: LyricsConfig,
     pub workspaces: WorkspacesConfig,
+    pub windows: WindowsConfig,
     pub launcher: LauncherConfig,
     pub audio: AudioConfig,
     pub visualiser: VisualiserConfig,

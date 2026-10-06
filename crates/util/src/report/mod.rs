@@ -73,6 +73,16 @@ impl Finding {
         }
     }
 
+    /// Whether `other` is this same fault in the same place, whatever its message quotes: a ratio or a size quoted in a message moves with every edit near it while the fault stays the one it was.
+    pub fn is_same_fault(&self, other: &Finding) -> bool {
+        self.file == other.file
+            && self.key == other.key
+            && match (self.message.key(), other.message.key()) {
+                (Some(said), Some(other_said)) => said == other_said,
+                _ => self.message == other.message,
+            }
+    }
+
     /// `file:line:column`, or the file alone without a span — the prefix compilers print, which is what lets a terminal or an editor that knows it turn the line into a jump to the spot.
     ///
     /// The path is written out where it could disguise the line ([`crate::text::shown`]).
@@ -280,5 +290,25 @@ mod tests {
         );
         telar::set_locale("en");
         assert_eq!(report.summary(), "1 error, 1 warning");
+    }
+
+    #[test]
+    fn a_fault_is_the_same_one_whatever_its_message_quotes() {
+        let found = |key: &str, message: Message| Finding::new("layouts/x.toml", key, message);
+        let unknown = |name: &str| message!("expression.unknown_name", name = name);
+        let mut placed = found("a.b", unknown("x"));
+        placed.span = Some(Span::locate("a = 1\n", 0..1));
+
+        assert!(placed.is_same_fault(&found("a.b", unknown("y"))));
+        assert!(!placed.is_same_fault(&found("a.c", unknown("x"))));
+        assert!(!placed.is_same_fault(&found("a.b", message!("expression.unknown_escape"))));
+        assert!(
+            found("", Message::verbatim("one")).is_same_fault(&found("", Message::verbatim("one")))
+        );
+        assert!(
+            !found("", Message::verbatim("one"))
+                .is_same_fault(&found("", Message::verbatim("two")))
+        );
+        assert!(!placed.is_same_fault(&found("a.b", Message::verbatim("x"))));
     }
 }

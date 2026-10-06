@@ -125,8 +125,8 @@ fn save(args: &Args<'_>) -> Result<String, String> {
     }
     let id = KomponentId::new(name);
     let wanted: Vec<String> = args.iter().skip(2).map(|it| it.to_string()).collect();
-    let (library, layout) = layouts::read(|store| (store.all().clone(), store.active().clone()))
-        .ok_or_else(|| layouts::no_store().english())?;
+    let (library, layout) =
+        super::layout::stored(|store| (store.all().clone(), store.active().clone()))?;
     if library.komponent(&id).is_some() {
         return Err(format!("a komponent called `{id}` exists already"));
     }
@@ -156,14 +156,15 @@ fn save(args: &Args<'_>) -> Result<String, String> {
         komponent,
         |why| why.english(),
         move || {
-            layouts::edit(&label, move |layout, _| {
+            super::layout::edit_layout(&label, move |layout| {
                 let written = Written::area(
                     layout,
                     Some(&site.output.0),
                     site.layer,
                     &area,
                     site.workspace.as_ref(),
-                )?;
+                )
+                .map_err(|why| why.english())?;
                 let mut changed = written.area.clone();
                 let entry = group_entry(&mut changed, &group);
                 *entry = components::used(entry, &uses);
@@ -187,10 +188,9 @@ fn use_komponent(args: &Args<'_>) -> Result<String, String> {
         parameters: parameters(args, 2, zone.as_ref())?,
     };
     let zone = zone.map(|zone| zone_named(zone.value)).transpose()?;
-    let library =
-        layouts::read(|store| store.all().clone()).ok_or_else(|| layouts::no_store().english())?;
+    let library = super::layout::stored(|store| store.all().clone())?;
     let label = format!("Use `{name}` in `{target}`");
-    layouts::edit(&label, move |layout, _| {
+    super::layout::edit_layout(&label, move |layout| {
         let base = layout::reset::base_of(layout, &library);
         let site = site_of(layout, &base, &area)?;
         let (resolved, _) = layout::resolve(layout, &library, &screen_of(&site), None);
@@ -316,11 +316,10 @@ fn chosen(offered: &[Candidate], wanted: &[String]) -> Result<Vec<Candidate>, St
 
 /// Detaches the komponent the group `target` names draws, where the layout being drawn names it.
 fn detach(target: &str) -> Result<String, String> {
-    let library =
-        layouts::read(|store| store.all().clone()).ok_or_else(|| layouts::no_store().english())?;
+    let library = super::layout::stored(|store| store.all().clone())?;
     let label = format!("Detach `{target}`");
     let target = target.to_string();
-    layouts::edit(&label, move |layout, _| {
+    super::layout::edit_layout(&label, move |layout| {
         let (site, area, group) = using(layout, &target)?;
         let screen = screen_of(&site);
         let ops = components::detach(layout, &library, (&site, &area, &group), (&screen, None))
@@ -492,6 +491,37 @@ mod tests {
             "ok took back `Detach `bar-top.center``"
         );
         assert_eq!(center(&store.borrow()).komponent, Some(id));
+    }
+
+    /// A group that draws a komponent takes a look of its own, but its arrangement and its children belong to the komponent's file: `layout set` refuses them and writes nothing.
+    #[test]
+    fn a_group_drawing_a_komponent_takes_a_look_but_not_an_arrangement_over_ipc() {
+        let store = shell("komponent-arrange");
+        dispatch("komponent save bar-top.center clock-pill accent");
+
+        assert_eq!(
+            dispatch("layout set bar-top.center style.shadow 2"),
+            "ok set `style.shadow` on `bar-top.center`"
+        );
+        assert_eq!(center(&store.borrow()).style.shadow, Some(2));
+
+        let before = store.borrow().active().clone();
+        for line in [
+            "layout set bar-top.center arrange pages",
+            "layout set bar-top.center gap 4",
+        ] {
+            let refused = dispatch(line);
+            assert!(
+                refused.starts_with("err ") && refused.contains("draws the komponent `clock-pill`"),
+                "{line}: {refused}"
+            );
+        }
+        let refused = dispatch("layout set bar-top.center/clock style.fill surface");
+        assert!(
+            refused.starts_with("err ") && refused.contains("drawn by the komponent"),
+            "{refused}"
+        );
+        assert_eq!(*store.borrow().active(), before);
     }
 
     fn bar_group(store: &LayoutStore, id: &str) -> Option<layout::Group> {

@@ -17,7 +17,8 @@ use config::policy::Urgency;
 use config::theme::NordTheme;
 use config::{Config, StackConfig};
 use layout::{
-    AreaId, CardKind, LayerKind, ResolvedArea, ResolvedAreaKind, RoutedCard, StackOutputPolicy,
+    AreaId, CardKind, LayerKind, ResolvedArea, ResolvedAreaKind, RoutedCard, StackFlow,
+    StackOutputPolicy,
 };
 use services::hyprland::{self, ActiveWindow, Client};
 use services::notifications::{Notification, SharedSnapshot, Snapshot};
@@ -184,7 +185,7 @@ struct Live {
     osd: Option<OsdKind>,
 }
 
-/// Every card a column could show, unordered: [`column`]'s ordering is a side effect only a drawn column may cause.
+/// Every card a lane could show, unordered: [`lane_cards`]'s ordering is a side effect only a drawn lane may cause.
 fn cards_now(live: &Live, covering: bool, config: &Config) -> Vec<Card> {
     let mut cards: Vec<Card> =
         crate::notifications::popping(&live.snapshot, &config.notifications, covering)
@@ -205,11 +206,14 @@ fn covering(config: &Config) -> bool {
         })
 }
 
-/// A card that has left is not here: the column plays its exit as the list drops it.
-fn column(live: &Live, covering: bool, config: &Config) -> Vec<Card> {
+/// What the lane holds, at most `fits` cards where only so many fit along it. A card that has left is not here: the lane plays its exit as the list drops it.
+fn lane_cards(live: &Live, covering: bool, config: &Config, fits: Option<usize>) -> Vec<Card> {
     let cards = cards_now(live, covering, config);
     let ordered = ARRIVALS.with(|arrivals| arrivals.borrow_mut().order(cards));
-    admit(ordered, config.stack.visible())
+    let capacity = fits.map_or(config.stack.visible(), |fits| {
+        config.stack.visible().min(fits)
+    });
+    admit(ordered, capacity)
 }
 
 /// Which of `ordered` fit on screen, and which wait.
@@ -401,6 +405,7 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
         anchor,
         offset,
         width,
+        flow,
         output_policy,
         ..
     } = &area.kind
@@ -415,7 +420,9 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
     let output = surround.output.map(str::to_string);
     let id = area.id.clone();
     let follows = *output_policy == StackOutputPolicy::Focused;
-    let width = *width;
+    let (width, flow) = (*width, *flow);
+    let gap = card_gap();
+    let (lane, fits) = lane_of(surround.bounds, *anchor, width, flow, *offset, gap);
     util::state::set_context(Column { width });
 
     let snapshot = signal(Arc::new(Snapshot::default()));
@@ -445,10 +452,11 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
             osd: osd.get(),
         };
         let sites = stacks();
-        let cards: Vec<Card> = column(
+        let cards: Vec<Card> = lane_cards(
             &live,
             covering.as_ref().is_some_and(|c| c.get()),
             &built_with,
+            fits,
         )
         .into_iter()
         .filter(|card| landing(card, &sites, &output) == Some(&id))
@@ -464,17 +472,17 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
 
     let theme = use_theme::<NordTheme>();
     let radius = content_radius();
-    let gap = card_gap();
-    let (across, down) = pinned::sides(*anchor);
-    let from_end = down == Side::End;
-    let slide_from = match across {
-        Side::Start => telar::Edge::Left,
-        Side::Middle | Side::End => telar::Edge::Right,
+    let from_end = pinned::grows_from(*anchor, flow) == Side::End;
+    let slide_from = match (flow, pinned::keeps_to(*anchor, flow)) {
+        (StackFlow::Column, Side::Start) => telar::Edge::Left,
+        (StackFlow::Column, _) => telar::Edge::Right,
+        (StackFlow::Row, Side::Start) => telar::Edge::Top,
+        (StackFlow::Row, _) => telar::Edge::Bottom,
     };
     let tween = config.animation.tween_ms(200, 2_000);
     // The transition is set once the list has built, so what it holds then appears settled, and only a card arriving after that slides in.
     let drawn = ReactiveList::with_style(
-        LayoutStyle::new().flex_column(),
+        pinned::flowing(LayoutStyle::new(), flow),
         move || here.get().then_some(()).into_iter().collect(),
         |_: &()| (),
         move |()| -> Built {
@@ -483,45 +491,66 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
             let list = ReactiveList::keyed(
                 move || cards(),
                 Card::slot,
-                move |card: ReadSignal<Card>| row(card, &row_config, theme, radius, gap, from_end),
-            )?
+                move |card: ReadSignal<Card>| {
+                    slot(card, &row_config, theme, radius, gap, flow, from_end)
+                },
+            )?;
+            let list = match flow {
+                StackFlow::Column => list,
+                StackFlow::Row => list.as_row(),
+            }
             .with_transition(Transition::slide(slide_from, TRAVEL, tween))
             .animate_layout(tween);
             Ok(Box::new(list))
         },
     )?;
 
-    let placed = pinned::column(surround.bounds, *anchor, width, *offset);
-    let justify = match down {
-        Side::Start => telar::JustifyContent::START,
-        Side::Middle => telar::JustifyContent::CENTER,
-        Side::End => telar::JustifyContent::END,
-    };
     Ok(Box::new(surfaces::area::empty_space(
         area,
         surround,
         surfaces::area::dressed(
             &area.style,
             &surround.theme,
-            surfaces::area::at(placed)
-                .flex_column()
-                .justify_content(justify),
+            pinned::lane_style(surfaces::area::at(lane), *anchor, flow),
             vec![Box::new(drawn)],
         )?,
         surfaces::area::is_filled(&area.style, &surround.theme),
     )))
 }
 
-/// Sideways, matching the swipe, so a card that arrives along the same axis reads as the same object.
+/// The lane a stack lays its cards along inside `bounds`, and how many cards it has room for along it where that is the cap: a column runs as long as `[stack] max_visible` lets it.
+fn lane_of(
+    bounds: telar::Rect,
+    anchor: layout::Anchor,
+    width: f32,
+    flow: StackFlow,
+    offset: layout::Offset,
+    gap: f32,
+) -> (telar::Rect, Option<usize>) {
+    let lane = pinned::stack(bounds, anchor, width, flow, offset);
+    let fits = (flow == StackFlow::Row).then(|| cards_that_fit(lane.width, width, gap));
+    (lane, fits)
+}
+
+/// What a quotient of lane over slot may fall short of a whole number by, from the rounding of the lane's own arithmetic, and still count as that number of cards.
+const FIT_TOLERANCE: f32 = 1e-4;
+
+/// How many cards of `width` a row lane `length` long holds, each in a slot `gap` wider than its card. A row is capped at it, since a card that did not fit would be drawn past the end of its lane, and so past the edge of the screen.
+fn cards_that_fit(length: f32, width: f32, gap: f32) -> usize {
+    (((length / (width + gap)) + FIT_TOLERANCE).floor() as usize).max(1)
+}
+
+/// Across the lane, from the edge the stack keeps its cards to, so a card arriving moves along the axis it is swiped away on.
 const TRAVEL: f32 = 28.0;
 
 /// One card slot: whatever card that slot now holds, built again when its contents change and kept when only its place does.
-fn row(
+fn slot(
     card: ReadSignal<Card>,
     config: &Arc<Config>,
     theme: NordTheme,
     radius: f32,
     gap: f32,
+    flow: StackFlow,
     from_end: bool,
 ) -> Built {
     let config = Arc::clone(config);
@@ -531,12 +560,21 @@ fn row(
         Card::key,
         move |card: Card| build(card, &config, theme, radius),
     )?;
+    Ok(Box::new(Container::new(
+        slot_style(gap, flow, from_end),
+        vec![Box::new(content)],
+    )?))
+}
+
+/// A slot carries its gap to the next card itself, on the side away from where the lane grows from, so a card leaving takes its gap with it as it goes.
+fn slot_style(gap: f32, flow: StackFlow, from_end: bool) -> LayoutStyle {
     let style = LayoutStyle::new().flex_column();
-    let style = match from_end {
-        true => style.padding_top(gap),
-        false => style.padding_bottom(gap),
-    };
-    Ok(Box::new(Container::new(style, vec![Box::new(content)])?))
+    match (flow, from_end) {
+        (StackFlow::Column, true) => style.padding_top(gap),
+        (StackFlow::Column, false) => style.padding_bottom(gap),
+        (StackFlow::Row, true) => style.padding_left(gap),
+        (StackFlow::Row, false) => style.padding_right(gap),
+    }
 }
 
 fn build(
@@ -752,7 +790,170 @@ mod tests {
             ],
             ..Live::default()
         };
-        assert_eq!(column(&live, false, &config).len(), 2);
+        assert_eq!(lane_cards(&live, false, &config, None).len(), 2);
+    }
+
+    #[test]
+    fn a_row_holds_as_many_slots_as_its_lane_fits_and_at_least_one() {
+        let (width, gap) = (300.0, 8.0);
+        for cards in 1..=5usize {
+            let slots = cards as f32 * (width + gap);
+            assert_eq!(cards_that_fit(slots, width, gap), cards, "exactly {cards}");
+            assert_eq!(
+                cards_that_fit(slots - 0.5, width, gap),
+                (cards - 1).max(1),
+                "half a pixel short of {cards}"
+            );
+        }
+        assert_eq!(
+            cards_that_fit(0.0, width, gap),
+            1,
+            "a lane too short still shows one"
+        );
+    }
+
+    #[test]
+    fn a_lane_that_fits_its_cards_exactly_keeps_the_last_one_despite_rounding() {
+        let (width, gap) = (320.1_f32, 8.7_f32);
+        let lane = 5.0 * width + 5.0 * gap;
+        assert!(
+            (lane / (width + gap)).floor() < 5.0,
+            "the plain quotient loses a card here"
+        );
+        assert_eq!(cards_that_fit(lane, width, gap), 5);
+        assert_eq!(cards_that_fit(lane - 0.5, width, gap), 4);
+    }
+
+    const SCREEN: telar::Rect = telar::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+    };
+
+    /// The lane of a row pinned to `anchor` and moved by `offset`, and where its cards land when it is full: as many as [`cards_that_fit`] lets in, laid out in the lane and slots [`area`] lays them out in.
+    fn full_row(anchor: layout::Anchor, offset: layout::Offset) -> (telar::Rect, Vec<telar::Rect>) {
+        const WIDTH: f32 = 380.0;
+        const GAP: f32 = 12.0;
+        telar::reset_layout_runtime();
+        let fill = NordTheme::new().accent;
+        let (lane, fits) = lane_of(SCREEN, anchor, WIDTH, StackFlow::Row, offset, GAP);
+        let from_end = pinned::grows_from(anchor, StackFlow::Row) == Side::End;
+        let slots: Vec<Box<dyn LayoutItem>> = (0..fits.expect("a row is capped"))
+            .map(|_| -> Box<dyn LayoutItem> {
+                let card = telar::StyledContainer::new(
+                    LayoutStyle::new().width(WIDTH).height(80.0),
+                    move |_| telar::RectStyle::filled(fill, 0.0),
+                    Vec::new(),
+                )
+                .expect("a card");
+                Box::new(
+                    Container::new(
+                        slot_style(GAP, StackFlow::Row, from_end),
+                        vec![Box::new(card)],
+                    )
+                    .expect("a slot"),
+                )
+            })
+            .collect();
+        let row = Container::new(pinned::flowing(LayoutStyle::new(), StackFlow::Row), slots)
+            .expect("a row");
+        let lane_box = Container::new(
+            pinned::lane_style(surfaces::area::at(lane), anchor, StackFlow::Row),
+            vec![Box::new(row)],
+        )
+        .expect("a lane");
+        let page = Container::new(
+            LayoutStyle::new().width(SCREEN.width).height(SCREEN.height),
+            vec![Box::new(lane_box)],
+        )
+        .expect("a screen");
+        let root = page.layout_node();
+        let tree = telar::ComponentList::new(page);
+        telar::compute_layout(
+            root,
+            telar::AvailableSpace::Definite(SCREEN.width),
+            telar::AvailableSpace::Definite(SCREEN.height),
+        )
+        .expect("the row lays out");
+        let cards = tree
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                telar::DrawCommand::Rect { rect, .. } => Some(*rect),
+                _ => None,
+            })
+            .collect();
+        (lane, cards)
+    }
+
+    /// A full row never runs past the edge of the screen, wherever its anchor pins it and however far its offset moves it: what it lets in is counted against its lane, which the anchor and the offset have already shortened, not against the whole screen.
+    #[test]
+    fn a_full_row_stays_inside_its_lane_wherever_it_is_pinned_and_moved() {
+        use layout::{Anchor, Offset};
+        let room = |offset| lane_of(SCREEN, Anchor::Bottom, 380.0, StackFlow::Row, offset, 12.0).1;
+        assert!(
+            room(Offset { x: 600.0, y: 0.0 }) < room(Offset::ZERO),
+            "a centred row moved towards an edge has less room than one left in the middle"
+        );
+        assert_eq!(
+            lane_of(
+                SCREEN,
+                Anchor::Bottom,
+                380.0,
+                StackFlow::Column,
+                Offset::ZERO,
+                12.0
+            )
+            .1,
+            None,
+            "a column is capped by max_visible alone"
+        );
+        for (anchor, offset) in [
+            (Anchor::Bottom, Offset { x: 600.0, y: 0.0 }),
+            (Anchor::Bottom, Offset { x: -600.0, y: 0.0 }),
+            (Anchor::Center, Offset { x: 300.0, y: 50.0 }),
+            (Anchor::Top, Offset::ZERO),
+            (Anchor::BottomLeft, Offset { x: 500.0, y: 0.0 }),
+            (Anchor::BottomRight, Offset { x: -700.0, y: 0.0 }),
+        ] {
+            let (lane, cards) = full_row(anchor, offset);
+            assert!(!cards.is_empty(), "{anchor:?}");
+            for card in &cards {
+                assert!(
+                    card.x >= lane.x && card.x + card.width <= lane.x + lane.width,
+                    "{anchor:?} moved by {offset:?}: {card:?} runs out of its lane {lane:?}"
+                );
+                assert!(card.x >= 0.0 && card.x + card.width <= SCREEN.width);
+            }
+        }
+    }
+
+    #[test]
+    fn a_row_shows_no_more_cards_than_fit_and_no_more_than_the_stack_allows() {
+        let toasts = |count: usize| Live {
+            toasts: [
+                toaster::Event::Vpn,
+                toaster::Event::Dnd,
+                toaster::Event::GameMode,
+            ][..count]
+                .iter()
+                .map(|event| Toast::sample(*event, "i", "t", ""))
+                .collect(),
+            ..Live::default()
+        };
+        let allowing = |max_visible: u32| Config {
+            stack: StackConfig {
+                max_visible,
+                ..StackConfig::default()
+            },
+            ..Config::starter()
+        };
+        let live = toasts(3);
+        assert_eq!(lane_cards(&live, false, &allowing(5), Some(2)).len(), 2);
+        assert_eq!(lane_cards(&live, false, &allowing(5), Some(9)).len(), 3);
+        assert_eq!(lane_cards(&live, false, &allowing(2), Some(9)).len(), 2);
+        assert_eq!(lane_cards(&live, false, &allowing(5), None).len(), 3);
     }
 
     const SCREENS: [&str; 2] = ["DP-1", "HDMI-A-1"];

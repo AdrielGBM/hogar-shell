@@ -19,7 +19,7 @@ use ui::scale::elevation;
 use crate::area::{BACKDROP_BLUR, Surround, empty_space, padded, panel_cells};
 use crate::expressions::{self, Expressions};
 use crate::layer_window::{Blur, LayerWindowContext, Reserved, blur_of};
-use crate::look::{self, Look, Rest};
+use crate::look::{self, Look};
 use crate::panel_area::{BarSite, PanelShape, place};
 use crate::reconcile::{with_desktop, with_desktop_now};
 use crate::rects::{self, Node, Part};
@@ -186,6 +186,10 @@ pub fn owns_panel(node: &Node) -> bool {
 
 pub fn is_open(owner: &Owner) -> bool {
     transient::is_open(&owner.id())
+}
+
+pub fn has(owner: &Owner) -> bool {
+    found_now(owner).is_some()
 }
 
 /// Toggles the panel `owner` has, answering whether it has one.
@@ -390,6 +394,5 @@ fn panel_box(owner: &Owner, found: &Found, screen: &Screen) -> Built {
 /// The panel's own style laid over what a panel rests on: the theme's surface at `[theme] opacity`, square along a bar and at the theme's radius anywhere else.
 fn look_of(panel: &ResolvedArea, along: bool, config: &Config, theme: &NordTheme) -> Look {
     let radius = look::rest_radius(&panel.kind, along, config).largest();
-    let rest = Rest::on_surface(theme, config.opacity(), radius);
-    Look::of_instance(&panel.style, None, theme, rest).unwrap_or_else(|| Look::resting(rest))
+    Look::sheet(&panel.style, config, theme, radius)
 }

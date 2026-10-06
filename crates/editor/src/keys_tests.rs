@@ -653,6 +653,7 @@ mod tests {
                 anchor: Some(Anchor::Center),
                 offset: None,
                 width: Some(480.0),
+                flow: None,
                 output_policy: None,
                 routes: Vec::new(),
                 launcher: None,
@@ -1195,5 +1196,35 @@ mod tests {
             keys::spell(&[Chord::char('z').ctrl().shift(), Chord::char('y').ctrl()]),
             "Ctrl+Shift+Z, Ctrl+Y"
         );
+    }
+
+    /// Every mode's key list carries the keys that stand in for the new pointer tools — duplicate, order, the quick bar, the radius and padding tools and their link — and the overlay's `t` for trying cards, each with a chord.
+    #[test]
+    fn every_modes_key_list_carries_the_keys_of_the_new_tools() {
+        let _owner = Owner::new();
+        let _rig = rig_with("keys-new-tools", |_| {});
+        for layer in LayerKind::ALL {
+            let _host = enter(layer);
+            let lines = keys::help_rows(layer);
+            let mut wanted = vec![
+                telar::t!("editor.keys.op.duplicate"),
+                telar::t!("editor.keys.op.restack"),
+                telar::t!("editor.quick.key"),
+                telar::t!("editor.keys.op.radius-tool"),
+                telar::t!("editor.keys.op.padding-tool"),
+                telar::t!("editor.keys.op.link-four"),
+            ];
+            if layer == LayerKind::Overlay {
+                wanted.push(telar::t!("editor.keys.op.cards-try"));
+            }
+            for what in wanted {
+                let line = lines.iter().find(|line| line.what == what);
+                assert!(
+                    line.is_some_and(|line| !line.keys.is_empty()),
+                    "{layer}: {what:?} in {lines:?}"
+                );
+            }
+            mode::leave();
+        }
     }
 }

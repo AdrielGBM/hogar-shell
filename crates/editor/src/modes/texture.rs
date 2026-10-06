@@ -710,7 +710,7 @@ impl Parts {
             .into_iter()
             .map(|(side, max, cursor)| {
                 let (reading, placing) = (self.draft.clone(), self.draft.clone());
-                let hd = crate::modes::gesture::HandleDragging::new();
+                let hd = crate::modes::gesture::HandleDragging::gripped(self.draft.grip());
                 telar::handle(
                     telar::HandleProps::props()
                         .value(self.insets[side])
@@ -823,7 +823,7 @@ impl Parts {
     /// The handle at the end of the axis that turns it, snapping to 45° while Shift is held.
     fn angle_handle(&self) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let (reading, placing) = (self.clone(), self.clone());
-        let hd = crate::modes::gesture::HandleDragging::new();
+        let hd = crate::modes::gesture::HandleDragging::gripped(self.draft.grip());
         telar::handle(
             telar::HandleProps::props()
                 .value(self.angle)
@@ -857,7 +857,11 @@ impl Parts {
         };
         let painted = where_now.clone();
         let dragged = self.clone();
-        let transaction = Transaction::new(gradient);
+        let grip = self.draft.grip();
+        let (keeping, dropping, holding) = (grip.clone(), grip.clone(), grip);
+        let transaction = Transaction::new(gradient)
+            .on_commit(move |_, _| keeping.release())
+            .on_revert(move |_| dropping.put_back());
         let face = StyledContainer::new(
             LayoutStyle::new()
                 .absolute()
@@ -913,6 +917,7 @@ impl Parts {
                 Some((x - STOP / 2.0, y - STOP / 2.0))
             },
             move |origin: &(f32, f32), (x, y)| {
+                holding.hold();
                 if chosen.peek() != index {
                     chosen.set(index);
                 }
@@ -977,7 +982,7 @@ pub(crate) fn nine_slice(
     };
     let node = selection.node().expect("a target has a node");
     if matches!(paint, Paint::Gradient(_)) {
-        return Err(EditError::Refused(telar::t!(
+        return Err(EditError::Refused(util::message!(
             "editor.texture.no_image",
             name = node.area.to_string()
         )));

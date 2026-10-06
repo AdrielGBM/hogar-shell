@@ -54,13 +54,11 @@ edits the workspace that is up alone. `?` lists them all.
 ### Containers
 
 A container is a group that lays its widgets out in its own cells as a `row`, a `column`, a `grid` or `free`
-(`arrange`, with each child's `weight`, `cell` or `rect`). Shift+N, or "Container" at the top of the palette, makes an
-empty one on the largest span still free near the selection. Let a widget go anywhere over a container and it joins it
-where the pointer is; drag a child inside to reorder it, move it to another cell or place it (a free child snaps to its
-siblings unless Alt is held), or out to make it a widget of its own again at its smallest size. The selected child's
-handle — at the end of a row's or column's child, at the corner of a grid's or free one's — sets its weight, span or
-box, and Shift+arrows and Ctrl+arrows do the same by key; Alt+↑ selects the container. A child's menu has "Customize the
-container…" (its arrangement, inner grid and gap) and "Take out of the container".
+(`arrange`, with each child's `weight`, `cell` or `rect`). It covers exactly the cells it is placed on, rests on a plate
+its `style` can restyle, and draws each child at the largest of its module's sizes (S, M or L) that fits the child's
+share, or as a chip once none does, so a child's `representation` is not read inside one. [Layouts](../customization/layouts.md#the-model)
+says what a style holds; making one, dropping widgets into it and setting a child's weight, span or box is under
+[Edit modes](../customization/edit-modes.md#desktop).
 
 Outside edit mode each child is its own: it answers its own presses, wheel and menu. A child whose share holds no
 widget is drawn as its chip, in the same chip shell a bar gives it and pressed the same way — what the layout binds

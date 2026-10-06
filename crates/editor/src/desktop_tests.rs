@@ -458,7 +458,7 @@ mod tests {
             },
         );
         assert!(
-            matches!(&refused, Err(session::EditError::Refused(why)) if why.contains("readings only")),
+            matches!(&refused, Err(session::EditError::Refused(why)) if why.english().contains("readings only")),
             "{refused:?}"
         );
     }
@@ -1030,9 +1030,9 @@ mod tests {
     fn what_only_a_mode_does_says_so_outside_one() {
         let _rig = rig_with("desktop-no-mode", |_| {});
         let _owner = Owner::new();
-        let needs = Err(crate::session::EditError::Refused(
-            "Only an edit mode can do this".to_string(),
-        ));
+        let needs = Err(crate::session::EditError::Refused(util::message!(
+            "editor.refused.no_mode"
+        )));
         assert_eq!(palette::open(), needs);
         assert_eq!(desktop::create_grid(), needs);
         assert_eq!(crate::modes::top::create_on(config::Edge::Bottom), needs);

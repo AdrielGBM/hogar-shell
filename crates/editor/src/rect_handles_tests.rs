@@ -626,4 +626,37 @@ mod tests {
         screen.drag(from, to);
         assert_ne!(stored_rect(&rig, LayerKind::Desktop, "centre"), before);
     }
+
+    /// Esc before a texture's corner or body is let go puts the texture back exactly and records nothing.
+    #[test]
+    fn escape_mid_drag_puts_a_rectangle_back_from_a_corner_and_from_a_body() {
+        let wash = rect(0.3, 0.3, 0.2, 0.2);
+        let rig = rig_with("rect-escape", |layout| textured(layout, wash));
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Background);
+        let node = area(LayerKind::Background, "wash");
+        select(&node);
+        let before = stored(&rig);
+        let mut screen = background_screen();
+        let corner = corner_of(&node, Corner::BottomRight);
+        let body = (0.4 * SIZE.0, 0.4 * SIZE.1);
+        for (what, from, to) in [
+            ("corner", corner, (corner.0 + 120.0, corner.1 + 90.0)),
+            ("body", body, (body.0 - 150.0, body.1 + 60.0)),
+        ] {
+            screen.move_to(from);
+            screen.button(from, true);
+            screen.move_to((from.0 + 10.0, from.1 + 10.0));
+            screen.move_to(to);
+            assert_ne!(session::draft().peek(), before, "{what} previews first");
+            screen.send(Event::KeyPressed {
+                key: Key::Named(NamedKey::Escape),
+                modifiers: ModifiersState::default(),
+            });
+            screen.button(to, false);
+            assert_eq!(session::draft().peek(), before, "{what}: Esc puts it back");
+            assert_eq!(stored(&rig), before, "{what}");
+            assert_eq!(rig.undo_label(), None, "{what}: nothing is recorded");
+        }
+    }
 }

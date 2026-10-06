@@ -35,6 +35,8 @@ type Reseed = Rc<dyn Fn(&ResolvedArea)>;
 
 type Take = Rc<dyn Fn(&mut Area)>;
 
+type Capture = Rc<dyn Fn() -> Box<dyn Fn()>>;
+
 /// One value the controls of an area share.
 struct Shared<T: 'static> {
     value: RwSignal<T>,
@@ -68,7 +70,10 @@ pub struct AreaDraft {
     /// The keys Reset has taken back so far, which a change of where the popover writes takes back there too.
     taken_off: Rc<RefCell<Vec<(String, Take)>>>,
     resetting: Resetting,
-    /// Moved once a Reset has made its writes, which ends it.
+    /// Set while a cancelled drag puts the copy and every value back as it found them, so no value writes itself into the copy on the way.
+    putting_back: Rc<Cell<bool>>,
+    captures: Rc<RefCell<Vec<Capture>>>,
+    /// Moved once a Reset or a put-back has made its writes, which ends it.
     reset_done: RwSignal<u64>,
     /// What the shared values belong to: the popover, so they outlive a rebuild of its rows.
     owner: Option<OwnerId>,
@@ -117,6 +122,8 @@ impl AreaDraft {
             reseeds: Rc::default(),
             taken_off: Rc::default(),
             resetting: Rc::default(),
+            putting_back: Rc::default(),
+            captures: Rc::default(),
             reset_done: signal(0),
             owner: telar::current_owner(),
         };
@@ -126,11 +133,16 @@ impl AreaDraft {
     }
 
     fn end_each_reset(&self) {
-        let (resetting, done) = (Rc::clone(&self.resetting), self.reset_done);
+        let (resetting, putting_back, done) = (
+            Rc::clone(&self.resetting),
+            Rc::clone(&self.putting_back),
+            self.reset_done,
+        );
         // A flush runs effects in the order they were scheduled, so this runs after everything a Reset's own writes set off directly, which still see the Reset under way, however the writes were batched.
         effect(move || {
             done.with(|_| ());
             resetting.borrow_mut().take();
+            putting_back.set(false);
         });
     }
 
@@ -158,7 +170,9 @@ impl AreaDraft {
                 workspace.as_ref(),
             ) {
                 Ok(written) => draft.retarget(written),
-                Err(why) => tracing::info!("the popover's change stays where it was: {why}"),
+                Err(why) => {
+                    tracing::info!("the popover's change stays where it was: {}", why.english())
+                }
             }
         });
     }
@@ -265,9 +279,9 @@ impl AreaDraft {
         }
     }
 
-    /// Whether a Reset is putting values where the area now draws them, read by what keeps one value in step with another so it does not take that for a change of the other. It stays so until whatever its writes set off directly has run.
+    /// Whether a Reset is putting values where the area now draws them, or a cancelled drag where it found them, read by what keeps one value in step with another so it does not take that for a change of the other. It stays so until whatever its writes set off directly has run.
     pub fn is_resetting(&self) -> bool {
-        self.resetting.borrow().is_some()
+        self.resetting.borrow().is_some() || self.putting_back.get()
     }
 
     /// `row` with what [`super::origin::marked`] adds for a value written at any of `keys`: where it comes from, and a Reset while the popover's level writes it.
@@ -325,14 +339,19 @@ impl AreaDraft {
         let writing = Rc::clone(&write);
         let started = seed();
         let from = Rc::new(RefCell::new(started.clone()));
-        let (resetting, put) = (Rc::clone(&self.resetting), Rc::clone(&from));
+        let (resetting, putting_back, put) = (
+            Rc::clone(&self.resetting),
+            Rc::clone(&self.putting_back),
+            Rc::clone(&from),
+        );
         let value = telar::with_owner(self.owner, || {
             bound(started, move |value| {
-                let put_back = resetting
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|names| names.contains(&name))
-                    && *value == *put.borrow();
+                let put_back = putting_back.get()
+                    || resetting
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&name))
+                        && *value == *put.borrow();
                 if !put_back {
                     update(area, |held| writing(held, value))
                 }
@@ -342,6 +361,14 @@ impl AreaDraft {
         self.values
             .borrow_mut()
             .insert(name, Box::new(Shared { value, from }));
+        self.captures.borrow_mut().push(Rc::new(move || {
+            let then = value.peek();
+            Box::new(move || {
+                if value.peek_with(|now| *now != then) {
+                    value.set(then.clone());
+                }
+            })
+        }));
         self.replays
             .borrow_mut()
             .push(Rc::new(move |area: &mut Area| {
@@ -400,6 +427,13 @@ impl AreaDraft {
         value
     }
 
+    pub fn grip(&self) -> Grip {
+        Grip {
+            draft: self.clone(),
+            found: Rc::default(),
+        }
+    }
+
     /// The value called `name`, if a control has made one of that type.
     pub fn shared<T: 'static>(&self, name: &str) -> Option<RwSignal<T>> {
         self.values
@@ -448,6 +482,57 @@ impl AreaDraft {
             drawn,
             Rc::new(move |key: &str| standing.provenance(&[key])),
         )
+    }
+}
+
+/// The copy and every value of an area's popover as a handle's drag found them, from its first move until it is kept or cancelled. Putting each value back where it was would write it into the copy, pinning a key the layout left unset, so a cancelled drag puts the copy back whole instead.
+#[derive(Clone)]
+pub struct Grip {
+    draft: AreaDraft,
+    found: Rc<RefCell<Option<Found>>>,
+}
+
+struct Found {
+    area: Area,
+    restores: Vec<Box<dyn Fn()>>,
+}
+
+impl Grip {
+    /// Takes hold of the copy and the values as they are now, unless the drag already has: called on each move, before the move writes anything.
+    pub fn hold(&self) {
+        let mut found = self.found.borrow_mut();
+        if found.is_none() {
+            let restores = self
+                .draft
+                .captures
+                .borrow()
+                .iter()
+                .map(|capture| capture())
+                .collect();
+            *found = Some(Found {
+                area: self.draft.area.peek(),
+                restores,
+            });
+        }
+    }
+
+    pub fn release(&self) {
+        self.found.borrow_mut().take();
+    }
+
+    pub fn put_back(&self) {
+        let Some(Found { area, restores }) = self.found.borrow_mut().take() else {
+            return;
+        };
+        let draft = &self.draft;
+        draft.putting_back.set(true);
+        for restore in &restores {
+            restore();
+        }
+        if draft.area.peek_with(|now| *now != area) {
+            draft.area.set(area);
+        }
+        draft.reset_done.update(|count| *count += 1);
     }
 }
 
@@ -706,7 +791,9 @@ impl InstanceDraft {
                 workspace.as_ref(),
             ) {
                 Ok(written) => draft.retarget(written.instance(&group, &id.template())),
-                Err(why) => tracing::info!("the popover's change stays where it was: {why}"),
+                Err(why) => {
+                    tracing::info!("the popover's change stays where it was: {}", why.english())
+                }
             }
         });
     }
@@ -1110,13 +1197,14 @@ fn settled(
     ops
 }
 
-/// A signal starting at `seed` whose every later change is handed to `write`.
+/// A signal starting at `seed` whose every later change is handed to `write`: setting it to the value it already holds is no change.
 fn bound<T: Clone + PartialEq + 'static>(seed: T, write: impl Fn(&T) + 'static) -> RwSignal<T> {
     let value = signal(seed);
-    let seeded = Cell::new(false);
+    let held: RefCell<Option<T>> = RefCell::new(None);
     effect(move || {
         let now = value.get();
-        if seeded.replace(true) {
+        let before = held.borrow_mut().replace(now.clone());
+        if before.is_some_and(|before| before != now) {
             write(&now);
         }
     });
@@ -1162,6 +1250,7 @@ fn blank(kind: &str) -> Option<AreaKind> {
             anchor: None,
             offset: None,
             width: None,
+            flow: None,
             output_policy: None,
             routes: Vec::new(),
             launcher: None,

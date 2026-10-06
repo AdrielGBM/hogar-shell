@@ -454,7 +454,7 @@ fn strip(mode: &Mode) -> Built {
         IndicatorProps::props()
             .layer(mode.layer)
             .output(mode.output.clone())
-            .refused(mode.refused.clone())
+            .refused(mode.refused.as_ref().map(util::report::Message::render))
             .build(),
         Children::default(),
     )?;

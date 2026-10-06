@@ -19,7 +19,7 @@ mod tests {
     use crate::host::{self, BOTTOM_EDGE_CLEARANCE, Under};
     use crate::keys::{self, Press};
     use crate::mode::{self};
-    use crate::rig::{Rig, SCREEN, enter, rig};
+    use crate::rig::{Rig, SCREEN, Scope, enter, rig};
     use crate::{context, history, session};
 
     const WIDTH: f32 = 1920.0;
@@ -27,22 +27,6 @@ mod tests {
 
     fn page() -> LayoutStyle {
         LayoutStyle::new().width(WIDTH).height(HEIGHT)
-    }
-
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
     }
 
     /// The host of the mode that is up, laid out over the whole screen as its window lays it out, the pointer followed as the window follows it.

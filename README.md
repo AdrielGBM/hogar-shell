@@ -12,13 +12,13 @@ therefore the window-info panel, the window count behind a workspace pill and th
 
 ## What it does
 
-**Bars.** One per screen edge, all four at once if you like, on every monitor. Three shapes — a single `bar`,
+**Bars.** As many as you like on each screen edge, all four at once if you like, on every monitor. Three shapes — a single `bar`,
 grouped `sections`, or individual `chips` — arranged per output in a layout file.
 
 **Modules.** `activewindow` `battery` `bluetooth` `brightness` `clock` `cpu` `dashboard` `gpu` `kblayout`
 `launcher` `lockstatus` `logo` `media` `memory` `mic` `mixer` `netspeed` `network` `notes` `notifications` `session`
 `settings` `spacer` `statusicons` `temperature` `tray` `user` `utilities` `visualiser` `volume` `weather` `windowinfo`
-`workspaces`.
+`windows` `workspaces`.
 
 **Surfaces.** Drawers anchored to the chip that opened them, floats centred on screen, hover popouts, OSDs, a
 full-screen launcher, a notification centre, a session-lock screen, a per-monitor wallpaper layer, and in-shell

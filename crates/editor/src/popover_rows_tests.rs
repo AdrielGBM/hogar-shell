@@ -4,10 +4,7 @@
 mod tests {
     use std::cell::RefCell;
 
-    use telar::{
-        ComponentList, Container, Event, Key, LayoutItem, LayoutStyle, ModifiersState, NamedKey,
-        Rect, signal,
-    };
+    use telar::{Event, Key, ModifiersState, Rect, signal};
 
     use layout::{
         Area, AreaId, AreaKind, Arrange, Border, Corners, GroupId, GroupKind, InstanceId,
@@ -18,109 +15,9 @@ mod tests {
     use surfaces::rects::{self, Node};
     use ui::host::Audience;
 
-    use crate::popover::{self, Provenance, actions};
-    use crate::rig::{Rig, SCREEN, bar, face, rig_with};
+    use crate::popover::{self, Provenance};
+    use crate::rig::{Card, Rig, SCREEN, Scope, bar, face, rig_with};
     use crate::session;
-
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            surfaces::transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
-    }
-
-    struct Card {
-        tree: ComponentList,
-        node: telar::NodeId,
-    }
-
-    impl Card {
-        fn open() -> Self {
-            let item = popover::tree()
-                .expect("a popover is open")
-                .expect("its tree builds");
-            let page = LayoutStyle::new().width(1920.0).height(1080.0);
-            let root = Container::new(page, vec![item]).expect("a page");
-            let node = root.layout_node();
-            let card = Self {
-                tree: ComponentList::new(root),
-                node,
-            };
-            card.lay_out();
-            card
-        }
-
-        fn lay_out(&self) {
-            crate::rig::lay_out(self.node, (1920.0, 1080.0));
-        }
-
-        fn route(&mut self, event: &Event) {
-            telar::observe_keyboard(event);
-            if !telar::dispatch_overlays(event) {
-                self.tree.on_event(event);
-            }
-            self.lay_out();
-        }
-
-        fn texts(&self) -> Vec<(String, Rect)> {
-            let mut found = Vec::new();
-            telar::for_each_with_matrix(&self.tree.commands(), |command, [a, b, c, d, e, f]| {
-                if let telar::DrawCommand::Text { text, rect, .. } = command {
-                    found.push((
-                        text.to_string(),
-                        Rect::new(
-                            a * rect.x + c * rect.y + e,
-                            b * rect.x + d * rect.y + f,
-                            rect.width,
-                            rect.height,
-                        ),
-                    ));
-                }
-            });
-            found
-        }
-
-        fn shows(&self, wanted: &str) -> bool {
-            self.texts().iter().any(|(text, _)| text == wanted)
-        }
-
-        fn press(&mut self, wanted: &str) {
-            let frame = crate::rig::card_of(&self.tree);
-            let over = (frame.x + frame.width / 2.0, frame.y + frame.height / 2.0);
-            let find = |card: &Card| {
-                card.texts()
-                    .into_iter()
-                    .find(|(text, _)| text == wanted)
-                    .map(|(_, rect)| rect)
-                    .unwrap_or_else(|| panic!("{wanted:?} is drawn: {:?}", card.texts()))
-            };
-            for _ in 0..80 {
-                let Some(pixels) = crate::rig::wheel_toward(frame, find(self)) else {
-                    break;
-                };
-                self.route(&crate::rig::wheel_at(over, pixels));
-            }
-            let at = find(self);
-            for event in crate::rig::click_at((at.x + at.width / 2.0, at.y + at.height / 2.0)) {
-                self.route(&event);
-            }
-        }
-
-        fn escape(&mut self) {
-            self.route(&Event::KeyPressed {
-                key: Key::Named(NamedKey::Escape),
-                modifiers: ModifiersState::default(),
-            });
-        }
-    }
 
     fn widgets() -> Node {
         Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("widgets"))
@@ -616,36 +513,6 @@ mod tests {
         assert_eq!(rig.undo_label().as_deref(), Some("Customize clock"));
     }
 
-    #[test]
-    fn actions_are_offered_only_where_something_can_be_pressed() {
-        assert!(actions::offered(LayerKind::Top, Some("bar")));
-        assert!(actions::offered(LayerKind::Desktop, Some("grid")));
-        assert!(actions::offered(LayerKind::Desktop, None));
-        assert!(!actions::offered(LayerKind::Lock, Some("grid")));
-        assert!(!actions::offered(LayerKind::Lock, None));
-        assert!(!actions::offered(LayerKind::Background, Some("free")));
-        assert!(!actions::offered(
-            LayerKind::Desktop,
-            Some("wallpaper_region")
-        ));
-        assert!(!actions::offered(LayerKind::Desktop, Some("texture")));
-        telar::set_locale("en");
-        services::command::set_runner(|_| String::new(), |line| line.starts_with("launcher"));
-        assert_eq!(actions::refusal("launcher toggle"), None);
-        assert_eq!(
-            actions::refusal("frobnicate").as_deref(),
-            Some("`frobnicate` is not a command this shell has")
-        );
-        assert!(
-            actions::refusal("layout trust nord --all")
-                .is_some_and(|why| why.contains("trust is yours to give"))
-        );
-        assert_eq!(
-            actions::chain_of(" launcher toggle ;; panel toggle clock ; "),
-            ["launcher toggle", "panel toggle clock"]
-        );
-    }
-
     /// Where a group, an instance or a bar writes no radius or padding, its rows read what the screen draws and are marked default, and nothing is written until one is changed.
     #[test]
     fn rows_read_the_radius_and_padding_drawn_where_none_is_written() {
@@ -737,5 +604,195 @@ mod tests {
         let card = Card::open();
         assert!(!card.shows("Size"), "{:?}", card.texts());
         popover::close();
+    }
+
+    fn contrast_line(card: &Card) -> Option<String> {
+        card.lay_out();
+        card.texts()
+            .into_iter()
+            .map(|(text, _)| text)
+            .find(|text| text.starts_with("Text is "))
+    }
+
+    /// A fill under text says how readable the theme's text is on it, live, and warns under AA without refusing anything; with no fill there is nothing to say.
+    #[test]
+    fn a_fill_under_text_shows_its_contrast_and_warns_below_aa() {
+        let _rig = grid_rig("rows-fill-contrast");
+        let _scope = Scope::new();
+        place_grid();
+        let held = widgets().instance(&GroupId::new("shelf"), &InstanceId::new("shelf-clock"));
+        let shelf = widgets().group(&GroupId::new("shelf"));
+        for open in [
+            Box::new(|| popover::open_area(widgets())) as Box<dyn Fn() -> _>,
+            Box::new(move || popover::open_for(&session::Selection::Group(shelf.clone()))),
+            Box::new(move || popover::open_instance(held.clone())),
+        ] {
+            open().expect("the popover opens");
+            let card = Card::open();
+            assert_eq!(contrast_line(&card), None, "no fill, nothing to judge");
+
+            value::<String>("style.fill").set("yellow".to_string());
+            let line = contrast_line(&card).expect("a fill is judged");
+            assert!(line.contains("WCAG AA"), "yellow is warned about: {line}");
+
+            value::<String>("style.fill").set("base".to_string());
+            let line = contrast_line(&card).expect("a fill is judged");
+            assert!(!line.contains("WCAG AA"), "a dark fill is not: {line}");
+
+            value::<String>("style.fill").set(String::new());
+            assert_eq!(contrast_line(&card), None);
+            popover::close();
+        }
+    }
+
+    fn dock_styled(style: layout::Style) -> std::rc::Rc<layout::ResolvedArea> {
+        std::rc::Rc::new(layout::ResolvedArea {
+            id: layout::AreaId::new("dock"),
+            kind: layout::ResolvedAreaKind::Dock {
+                edge: config::Edge::Bottom,
+                thickness: 40.0,
+            },
+            reserve: false,
+            above_fullscreen: false,
+            within: layout::Within::Output,
+            style,
+            visible: None,
+            groups: Vec::new(),
+            actions: Default::default(),
+        })
+    }
+
+    fn filled(fill: &str, opacity: Option<f32>) -> layout::Style {
+        layout::Style {
+            fill: Some(fill.to_string()),
+            opacity,
+            ..layout::Style::default()
+        }
+    }
+
+    /// A fill is judged as its surface draws it: an opacity takes the place of the alpha its colour names, a group's plate rests at the plate's opacity, and an instance is laid over its group's plate where the group draws one.
+    #[test]
+    fn a_fill_is_judged_as_its_surface_draws_it() {
+        use crate::popover::look::{Backing, Held};
+        use layout::{color_of, laid_over, text_contrast};
+
+        let config = std::sync::Arc::new(config::Config::default());
+        let theme = config.resolve_theme();
+        let backing = |held| {
+            Backing::new(
+                std::sync::Arc::clone(&config),
+                dock_styled(layout::Style::default()),
+                held,
+            )
+        };
+
+        let area = backing(Held::Area);
+        let opaque = area
+            .ratio(&filled("#ebcb8b80", Some(1.0)), &theme)
+            .expect("a fill is judged");
+        assert_eq!(
+            opaque,
+            text_contrast(color_of("#ebcb8b", &theme), theme.base, &theme),
+            "an opacity of 1 is opaque, whatever alpha the colour names"
+        );
+        assert_eq!(
+            area.ratio(&filled("#ebcb8b80", None), &theme),
+            Some(text_contrast(
+                color_of("#ebcb8b80", &theme),
+                theme.base,
+                &theme
+            )),
+            "with no opacity the colour's own alpha shows"
+        );
+
+        let group = backing(Held::Group);
+        let plate = ui::scale::plate::OPACITY;
+        assert_eq!(
+            group.ratio(&filled("yellow", None), &theme),
+            Some(text_contrast(
+                color_of("yellow", &theme).with_alpha(plate),
+                theme.base,
+                &theme
+            )),
+            "a plate names no opacity and rests at the plate's"
+        );
+        assert_eq!(group.resting_opacity(Some("yellow"), &theme), plate);
+        assert_eq!(backing(Held::Area).resting_opacity(None, &theme), 1.0);
+
+        let style = filled("yellow", Some(0.4));
+        let on_plate = backing(Held::Instance {
+            plate: Some(filled("red", Some(0.5))),
+        });
+        let under = laid_over(color_of("red", &theme).with_alpha(0.5), theme.base);
+        assert_eq!(
+            on_plate.ratio(&style, &theme),
+            Some(text_contrast(
+                color_of("yellow", &theme).with_alpha(0.4),
+                under,
+                &theme
+            )),
+            "an instance is laid over its group's plate"
+        );
+        assert_ne!(
+            on_plate.ratio(&style, &theme),
+            backing(Held::Instance { plate: None }).ratio(&style, &theme)
+        );
+
+        let prompt = layout::Style::default();
+        assert_eq!(
+            layout::prompt_contrast(&prompt, &theme),
+            text_contrast(layout::prompt_card(&prompt, &theme), theme.base, &theme),
+            "the lock and validation judge the prompt by one helper"
+        );
+    }
+
+    fn type_into(card: &mut Card, typed: &str) {
+        let ctrl = ModifiersState {
+            is_ctrl: true,
+            ..ModifiersState::default()
+        };
+        card.route(&Event::KeyPressed {
+            key: Key::Char('a'),
+            modifiers: ctrl,
+        });
+        for ch in typed.chars() {
+            card.route(&Event::KeyPressed {
+                key: Key::Char(ch),
+                modifiers: ModifiersState::default(),
+            });
+        }
+    }
+
+    /// The fill's colour field takes a theme token or a hex typed into it, writes each as it is typed, ignores what is neither, and Esc puts the whole popover back.
+    #[test]
+    fn the_colour_field_is_typed_into_and_writes_a_token_or_a_hex() {
+        let rig = grid_rig("rows-colour-typed");
+        let _scope = Scope::new();
+        place_grid();
+        let shelf = widgets().group(&GroupId::new("shelf"));
+        popover::open_for(&session::Selection::Group(shelf)).expect("the group's popover opens");
+        let mut card = Card::open();
+        let fill = || group_on_screen("shelf").expect("the shelf").style.fill;
+
+        card.press("token or #hex");
+        type_into(&mut card, "base");
+        assert_eq!(fill().as_deref(), Some("base"), "a token is written");
+        type_into(&mut card, "#ff8800");
+        assert_eq!(fill().as_deref(), Some("#ff8800"), "so is a hex");
+        type_into(&mut card, "not a colour");
+        assert_eq!(
+            fill().as_deref(),
+            Some("#ff8800"),
+            "what is neither is not written over it"
+        );
+        card.escape();
+        assert_eq!(
+            fill().as_deref(),
+            Some("#ff8800"),
+            "the first Esc leaves the field"
+        );
+        card.escape();
+        assert_eq!(fill(), None, "the next puts the popover back");
+        assert_eq!(rig.undo_label(), None);
     }
 }

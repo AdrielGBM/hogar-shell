@@ -33,7 +33,7 @@ mod tests {
     use crate::mode::{self};
     use crate::popover;
     use crate::popover::handles::{Corner, NEAREST};
-    use crate::rig::{Rig, SCREEN, bar, face, rig, rig_prepared, rig_with};
+    use crate::rig::{Rig, SCREEN, Scope, bar, face, rig, rig_prepared, rig_with};
     use crate::session::{self, Selection};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
@@ -71,20 +71,9 @@ mod tests {
     }];
 
     /// An owner for what a test builds, disposed when the test ends.
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+    fn scope() -> Scope {
+        ui::descriptor::install(PROBES);
+        Scope::new()
     }
 
     fn clock() -> Node {
@@ -352,7 +341,7 @@ mod tests {
     #[test]
     fn a_secondary_press_on_the_bar_customizes_it_live_and_escape_or_a_click_outside_decides() {
         let rig = rig("menu-dec3");
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         let mut bar_tree = built(&resolved(LayerKind::Top, "bar-top"), Audience::Owner);
         let strip = rects::rect(&bar()).expect("the bar is registered where it was laid out");
@@ -415,7 +404,7 @@ mod tests {
     #[test]
     fn the_menu_opens_on_the_screen_at_every_corner_and_edge() {
         let _rig = rig("menu-corners");
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         let (right, bottom) = (SIZE.0 - 1.0, SIZE.1 - 1.0);
         let asked = [
@@ -459,7 +448,7 @@ mod tests {
     #[test]
     fn right_click_opens_a_chips_menu_on_every_edge_and_in_every_shape_mode() {
         let _rig = rig("menu-edges");
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         for edge in Edge::ALL {
             for mode in [Shape::Bar, Shape::Sections, Shape::Chips] {
@@ -498,7 +487,7 @@ mod tests {
     #[test]
     fn an_instances_menu_offers_its_actions_and_the_layout_rows() {
         let _rig = rig_with("menu-rows", with_top_grid);
-        let _scope = Scope::new();
+        let _scope = scope();
         opened(clock(), (900.0, 17.0));
         assert_eq!(
             context::rows(),
@@ -595,7 +584,7 @@ mod tests {
     #[test]
     fn a_chip_is_offered_no_move_to_another_layer() {
         let _rig = rig_with("menu-own-layer", with_desktop_grid);
-        let _scope = Scope::new();
+        let _scope = scope();
         opened(clock(), (900.0, 17.0));
         let rows = context::rows();
         assert!(rows.iter().any(|row| row == "Remove"), "{rows:?}");
@@ -606,7 +595,7 @@ mod tests {
     #[test]
     fn remove_takes_the_instance_out_and_undo_puts_it_back() {
         let rig = rig("menu-remove");
-        let _scope = Scope::new();
+        let _scope = scope();
         let before = written(&rig, "clock");
         opened(clock(), (900.0, 17.0));
         context::pick("Remove");
@@ -628,7 +617,7 @@ mod tests {
                 }
             }
         });
-        let _scope = Scope::new();
+        let _scope = scope();
         opened(clock(), (900.0, 17.0));
         assert_eq!(context::rows(), ["Remove", "Reset", "Edit Top…"]);
         context::pick("Reset");
@@ -645,7 +634,7 @@ mod tests {
     #[test]
     fn nothing_on_the_lock_layer_offers_a_menu() {
         let _rig = rig("menu-lock");
-        let _scope = Scope::new();
+        let _scope = scope();
         let reading = Node::area(Some(SCREEN), LayerKind::Lock, &AreaId::new("lock-readings"));
         assert!(surfaces::menu::on(reading.clone(), Audience::Owner).is_none());
         assert!(surfaces::menu::on(bar(), Audience::Anyone).is_none());
@@ -691,7 +680,7 @@ mod tests {
     #[test]
     fn the_menu_key_opens_the_selected_items_menu_and_the_keyboard_picks_from_it() {
         let _rig = rig("menu-key");
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         crate::rig::open_mode(LayerKind::Top);
         assert!(session::select(Selection::Instance(clock())));
@@ -740,7 +729,7 @@ mod tests {
     #[test]
     fn a_menu_offers_the_modes_own_rows_only_in_that_mode() {
         let _rig = rig_with("menu-modes", with_desktop_grid);
-        let _scope = Scope::new();
+        let _scope = scope();
         let area = |layer, id: &str| Node::area(Some(SCREEN), layer, &AreaId::new(id));
         let cases: [(LayerKind, &str, &[&str], &[&str]); 4] = [
             (
@@ -867,7 +856,7 @@ mod tests {
                 }
             }
         });
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         let mut bar_tree = built(&resolved(LayerKind::Top, "bar-top"), Audience::Owner);
         let chip = rects::rect(&clock()).expect("the clock is laid out");
@@ -1041,7 +1030,7 @@ mod tests {
     #[test]
     fn a_komponent_is_added_to_the_zone_of_a_bar_picked_from_its_menu() {
         let rig = with_pill("bar-komponent-pointer");
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         top_mode();
         let before = rig.store.borrow().active().clone();
@@ -1088,7 +1077,7 @@ mod tests {
     #[test]
     fn a_komponent_is_added_to_a_bar_from_the_keyboard() {
         let rig = with_pill("bar-komponent-keys");
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         top_mode();
         assert!(session::select(Selection::Area(bar())));
@@ -1102,7 +1091,12 @@ mod tests {
             .position(|row| row == "Add komponent")
             .expect("the bar's menu offers it");
         let mut menu = window.menu();
-        for _ in 0..=at {
+        let redo = context::rows()
+            .iter()
+            .position(|row| row == "Redo")
+            .expect("the menu has a redo");
+        let stops_before = at - usize::from(redo < at);
+        for _ in 0..=stops_before {
             route(&mut menu, &named(NamedKey::ArrowDown));
         }
         route(&mut menu, &named(NamedKey::ArrowRight));
@@ -1130,7 +1124,7 @@ mod tests {
     #[test]
     fn a_bar_offers_no_komponent_where_the_library_has_none() {
         let _rig = rig("bar-komponent-none");
-        let _scope = Scope::new();
+        let _scope = scope();
         opened(bar(), (400.0, 17.0));
         assert!(!context::rows().contains(&"Add komponent".to_string()));
     }
@@ -1172,7 +1166,7 @@ mod tests {
                 store.set_trust(trust);
             },
         );
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         let before = rig.store.borrow().active().clone();
         let face = bar().instance(
@@ -1247,7 +1241,7 @@ mod tests {
         let rig = rig_prepared("held-move", with_held_clock, |store| {
             imported(store, "layouts/mine.toml")
         });
-        let _scope = Scope::new();
+        let _scope = scope();
         opened(clock(), (900.0, 17.0));
         context::pick("Move to the top layer as widget");
 
@@ -1296,7 +1290,7 @@ mod tests {
                 .expect("the user's layout over it");
             imported(store, "layouts/shared.toml");
         });
-        let _scope = Scope::new();
+        let _scope = scope();
         let before = rig.store.borrow().active().clone();
         opened(clock(), (900.0, 17.0));
         context::pick("Move to the top layer as widget");
@@ -1318,7 +1312,7 @@ mod tests {
         let rig = rig_prepared("held-save", with_held_clock, |store| {
             imported(store, "layouts/mine.toml")
         });
-        let _scope = Scope::new();
+        let _scope = scope();
         let window = Window::new();
         let before = rig.store.borrow().active().clone();
         let mut bar_tree = built(&resolved(LayerKind::Top, "bar-top"), Audience::Owner);
@@ -1346,5 +1340,62 @@ mod tests {
         let store = rig.store.borrow();
         assert!(store.all().komponents.is_empty(), "nothing saved");
         assert_eq!(store.active(), &before, "nothing changed");
+    }
+
+    /// The history is not pointer-only either: the menu key opens the menu, and the arrows reach "History" and walk to an entry.
+    #[test]
+    fn the_history_is_walked_to_an_entry_from_the_keyboard() {
+        let rig = rig("menu-history-keys");
+        let _scope = scope();
+        let window = Window::new();
+        crate::rig::open_mode(LayerKind::Top);
+        let started = crate::rig::stored(&rig);
+        for (label, group, id) in [
+            ("Remove Clock", "center", "clock"),
+            ("Remove Workspaces", "start", "workspaces"),
+        ] {
+            let spot = layout::Spot {
+                site: layout::Site::everywhere(LayerKind::Top),
+                area: AreaId::new("bar-top"),
+                group: GroupId::new(group),
+            };
+            context::commit(
+                label.to_string(),
+                vec![layout::LayoutOp::DeleteInstance {
+                    spot,
+                    id: InstanceId::new(id),
+                }],
+            )
+            .expect("the edit commits");
+        }
+        assert!(session::select(Selection::Area(bar())));
+        assert!(keys::press_as(
+            &Key::Named(NamedKey::ContextMenu),
+            ModifiersState::default(),
+            Press::First
+        ));
+        let at = context::rows()
+            .iter()
+            .position(|row| row == "History")
+            .expect("the menu has the history");
+        let mut menu = window.menu();
+        let redo = context::rows()
+            .iter()
+            .position(|row| row == "Redo")
+            .expect("the menu has a redo");
+        let stops_before = at - usize::from(redo < at);
+        for _ in 0..=stops_before {
+            route(&mut menu, &named(NamedKey::ArrowDown));
+        }
+        route(&mut menu, &named(NamedKey::ArrowRight));
+        route(&mut menu, &named(NamedKey::ArrowDown));
+        route(&mut menu, &named(NamedKey::Enter));
+        assert_eq!(
+            crate::rig::stored(&rig),
+            started,
+            "the first entry of the history is where it began"
+        );
+        assert!(!transient::is_open(context::ID), "picking closes the menu");
+        mode::leave();
     }
 }

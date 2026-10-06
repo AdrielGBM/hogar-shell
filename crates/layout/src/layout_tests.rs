@@ -1271,6 +1271,38 @@ mod tests {
         );
     }
 
+    /// An area's, a group's and an instance's id are held to the one rule a rename is held to: each separator an address or a command line reads is reported wherever an id holds it.
+    #[test]
+    fn validation_reports_every_id_a_rename_refuses() {
+        for (id, mark) in [("a.b", '.'), ("a/b", '/'), ("a#1", '#'), ("a b", ' ')] {
+            let refusal = id_refusal(id);
+            assert_eq!(refusal, Some(IdRefusal::Separator(mark)));
+            let said = refusal.map(|refusal| refusal.message(id));
+            for (written, holds) in [
+                ("bar-top", "areas"),
+                ("start", "groups"),
+                ("clock-1", "children"),
+            ] {
+                let text =
+                    ONE_BAR.replace(&format!("id = \"{written}\""), &format!("id = \"{id}\""));
+                let report = validate(&layout(&text), &Modules);
+                assert!(
+                    report.errors.iter().any(|f| {
+                        f.key.ends_with(&format!("{holds}.{id}"))
+                            && f.message.key() == said.as_ref().and_then(|said| said.key())
+                    }),
+                    "`{id}` as one of the {holds}: {}",
+                    report.render()
+                );
+            }
+        }
+        assert_eq!(id_refusal("bar-top_2"), None);
+        assert_eq!(
+            id_refusal("bar\u{202e}"),
+            Some(IdRefusal::Hidden('\u{202e}'))
+        );
+    }
+
     #[test]
     fn two_instances_may_not_share_an_id() {
         let parsed = layout(&format!(
@@ -1487,6 +1519,7 @@ mod tests {
                 anchor: Some(Anchor::BottomRight),
                 offset: Some(Offset { x: -12.0, y: 24.0 }),
                 width: Some(360.0),
+                flow: Some(StackFlow::Row),
                 output_policy: Some(StackOutputPolicy::Focused),
                 routes: vec![Route::default()],
                 launcher: Some(true),
@@ -1966,6 +1999,53 @@ mod tests {
             report.findings().any(|f| f.span.is_some()),
             "and points at where it is written"
         );
+    }
+
+    #[test]
+    fn a_value_a_kind_refuses_is_reported_with_its_key_and_value() {
+        let text = r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "notifications"
+            kind = "stack"
+            flow = "diagonal"
+            width = 320
+        "#;
+        let report = validate::check_unknown_keys(text, &LayoutId::new("test"));
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        let finding = &report.errors[0];
+        assert!(finding.key.ends_with("areas.notifications.flow"));
+        let message = finding.message.english();
+        assert!(message.contains("flow = \"diagonal\""), "{message}");
+        assert_eq!(finding.span.as_ref().map(|span| span.line), Some(8));
+    }
+
+    #[test]
+    fn a_kind_no_area_has_is_reported_where_it_is_written() {
+        let text = "id = \"test\"\n[[outputs]]\nmatch = \"*\"\n[[outputs.layers.top.areas]]\nid = \"x\"\nkind = \"bogus\"\n";
+        let report = validate::check_unknown_keys(text, &LayoutId::new("test"));
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        assert!(report.errors[0].key.ends_with("areas.x.kind"));
+        assert_eq!(
+            report.errors[0].span.as_ref().map(|span| span.line),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn a_level_with_no_kind_is_not_a_refused_value() {
+        let text = r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            reserve = false
+        "#;
+        let report = validate::check_unknown_keys(text, &LayoutId::new("test"));
+        assert!(report.is_clean(), "{}", report.render());
     }
 
     #[test]
@@ -4286,6 +4366,38 @@ mod tests {
         }
     }
 
+    /// A stack lays its cards down a column unless it says `flow = "row"`, and a monitor rule changes the flow without restating the rest.
+    #[test]
+    fn a_stack_flows_down_a_column_unless_it_says_row() {
+        let parsed = layout(
+            r#"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.overlay.areas]]
+            id = "cards"
+            kind = "stack"
+            anchor = "bottom"
+            width = 300
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.overlay.areas]]
+            id = "cards"
+            kind = "stack"
+            flow = "row"
+            "#,
+        );
+        let flow_on = |output: &str| match alone(&parsed, output)
+            .layer(LayerKind::Overlay)
+            .and_then(|layer| layer.areas.first())
+            .map(|area| area.kind.clone())
+        {
+            Some(ResolvedAreaKind::Stack { flow, anchor, .. }) => (flow, anchor),
+            other => panic!("a stack, not {other:?}"),
+        };
+        assert_eq!(flow_on("eDP-1"), (StackFlow::Column, Anchor::Bottom));
+        assert_eq!(flow_on("DP-1"), (StackFlow::Row, Anchor::Bottom));
+    }
+
     /// F-2.8: a card goes to the first stack with a route that takes it, and a stack with no routes takes the rest — the first of them, wherever it is in the order — while a stack whose routes take nothing of the card's never sees it.
     #[test]
     fn a_card_goes_to_the_first_route_that_takes_it_and_else_to_the_first_stack_with_none() {
@@ -4931,6 +5043,78 @@ mod tests {
             .english();
         assert!(
             refused.contains("nothing gives `visible` of `bar`"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn an_arrangement_is_taken_back_where_it_is_laid_over_every_writer() {
+        let base = layout(
+            r#"
+            id = "base"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            anchor = "center"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            arrange = "row"
+            gap = 4
+            "#,
+        );
+        let mine = layout(
+            r#"
+            id = "mine"
+            extends = "base"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            gap = 8
+            "#,
+        );
+        let every = ["*".to_string()];
+        let (widgets, group) = (AreaId::new("widgets"), GroupId::new("box"));
+        let taken = Taken {
+            layer: LayerKind::Desktop,
+            area: &widgets,
+            held: Held::Arrange(&group),
+        };
+        let written = |own, unset| {
+            Ok(TakeBack {
+                site: Site::everywhere(LayerKind::Desktop),
+                own,
+                unset,
+            })
+        };
+
+        let known = Library::of_layouts([base.clone(), mine.clone()]);
+        assert_eq!(
+            crate::taking_back(&mine, &known, &every, taken),
+            written(true, true),
+            "its own `gap` deleted, and the inherited arrangement under it taken back"
+        );
+        let alone = Library::of_layouts([base.clone()]);
+        assert_eq!(
+            crate::taking_back(&base, &alone, &every, taken),
+            written(true, false)
+        );
+
+        let mut loose = base.clone();
+        loose.outputs[0].layers.desktop.areas[0].groups[0].clear_arrangement();
+        let refused =
+            crate::taking_back(&loose, &Library::of_layouts([loose.clone()]), &every, taken)
+                .expect_err("nothing arranges the box")
+                .english();
+        assert!(
+            refused.contains("nothing gives the `arrange` of `widgets.box`"),
             "{refused}"
         );
     }
@@ -7339,6 +7523,23 @@ stacked = true
         }
     }
 
+    /// A copy of a repeated child opens no panel: resolution keeps a panel for the child as written, so one owned by `battery-1#2` is reported rather than left to be dropped without a word.
+    #[test]
+    fn a_copy_of_a_repeated_instance_owns_no_panel() {
+        let parsed = with_owners(&panel("panel-x", "owner = \"battery-1#2\""));
+        let report = validate(&parsed, &Modules);
+        assert!(
+            finding_at(
+                &report,
+                "outputs.*.layers.top.areas.panel-x.owner",
+                "finding.panel_owner_missing"
+            ),
+            "{}",
+            report.render()
+        );
+        assert_eq!(panel_of(&alone(&parsed, "DP-1"), "panel-x"), None);
+    }
+
     /// Nothing inside a panel opens another one, so a panel of an instance in a panel is reported and only the outer one is drawn.
     #[test]
     fn nothing_inside_a_panel_opens_another() {
@@ -8043,5 +8244,1017 @@ stacked = true
             None
         );
         assert_eq!(assembled.layers, resolved.layers);
+    }
+
+    #[test]
+    fn a_translucent_fill_is_judged_as_it_looks_over_what_is_under_it() {
+        use telar::Color;
+        let under = Color::rgb(0.0, 0.0, 0.0);
+        let white = Color::rgb(1.0, 1.0, 1.0);
+        assert_eq!(laid_over(white.with_alpha(1.0), under), white);
+        assert_eq!(laid_over(white.with_alpha(0.0), under), under);
+        let half = laid_over(white.with_alpha(0.5), under);
+        assert_eq!((half.r, half.g, half.b, half.a), (0.5, 0.5, 0.5, 1.0));
+        let tinted = laid_over(Color::rgb(1.0, 0.0, 0.0).with_alpha(0.25), white);
+        assert_eq!((tinted.r, tinted.g, tinted.b), (1.0, 0.75, 0.75));
+
+        let theme = theme();
+        let opaque = text_contrast(theme.surface, theme.base, &theme);
+        assert_eq!(
+            opaque,
+            theme.text.contrast_ratio(theme.surface),
+            "an opaque fill is measured as it is"
+        );
+        let faint = text_contrast(theme.surface.with_alpha(0.1), theme.base, &theme);
+        assert_eq!(
+            faint,
+            theme
+                .text
+                .contrast_ratio(laid_over(theme.surface.with_alpha(0.1), theme.base)),
+        );
+        assert_eq!(
+            text_contrast(theme.text.with_alpha(0.0), theme.base, &theme),
+            theme.text.contrast_ratio(theme.base),
+            "a fully transparent fill is the backdrop alone"
+        );
+        assert!(
+            text_contrast(theme.text, theme.base, &theme) < 1.01,
+            "the text colour on itself cannot be read"
+        );
+    }
+
+    #[test]
+    fn free_children_with_no_rect_step_down_and_start_over_after_eight() {
+        let children: String = (1..=10).map(|n| child(&format!("clock-{n}"), "")).collect();
+        let free = container("arrange = \"free\"", &children);
+        let steps: Vec<(f32, f32)> =
+            placements_of(group_of(&alone(&free, "DP-1"), LayerKind::Desktop, "box"))
+                .into_iter()
+                .map(|placement| match placement {
+                    Some(Placement::Rect(rect)) => (rect.x, rect.y),
+                    other => panic!("a rect, not {other:?}"),
+                })
+                .collect();
+        for (index, (x, y)) in steps.iter().enumerate() {
+            let expected = 0.05 * (index % 8) as f32;
+            assert!(
+                (x - expected).abs() < 1e-6 && (y - expected).abs() < 1e-6,
+                "child {index}: {steps:?}"
+            );
+        }
+        assert_eq!(steps[8], steps[0], "the ninth starts over");
+        assert_eq!(steps[9], steps[1]);
+    }
+
+    #[test]
+    fn a_monitor_rule_moves_one_child_by_cell_or_rect_and_leaves_the_rest() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "grid-box"
+            place = "cell"
+            col = 0
+            row = 0
+            arrange = "grid"
+            cols = 3
+            rows = 3
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            cell = { col = 2, row = 0, col_span = 1, row_span = 2 }
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-2"
+            module = "clock"
+            cell = { col = 0, row = 0 }
+            [[outputs.layers.desktop.areas.groups]]
+            id = "free-box"
+            place = "cell"
+            col = 4
+            row = 0
+            arrange = "free"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-3"
+            module = "clock"
+            rect = { x = 0.0, y = 0.0, w = 0.5, h = 0.5 }
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-4"
+            module = "clock"
+            rect = { x = 0.5, y = 0.5, w = 0.5, h = 0.5 }
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "grid-box"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-2"
+            cell = { col = 1, row = 1 }
+            [[outputs.layers.desktop.areas.groups]]
+            id = "free-box"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-4"
+            rect = { x = 0.25, y = 0.25, w = 0.75, h = 0.75 }
+            "#,
+        );
+        assert!(validate(&parsed, &Modules).is_clean());
+        let on = |output: &str, group: &str| {
+            placements_of(group_of(&alone(&parsed, output), LayerKind::Desktop, group))
+        };
+        let tall = ChildCell {
+            col: 2,
+            row: 0,
+            col_span: 1,
+            row_span: 2,
+        };
+        assert_eq!(
+            on("DP-1", "grid-box"),
+            [
+                Some(Placement::Cell(tall)),
+                Some(Placement::Cell(ChildCell::at(1, 1)))
+            ]
+        );
+        assert_eq!(
+            on("HDMI-A-1", "grid-box"),
+            [
+                Some(Placement::Cell(tall)),
+                Some(Placement::Cell(ChildCell::at(0, 0)))
+            ]
+        );
+        let rect = |x: f32, y: f32, size: f32| {
+            Some(Placement::Rect(Rect {
+                x,
+                y,
+                w: size,
+                h: size,
+            }))
+        };
+        assert_eq!(
+            on("DP-1", "free-box"),
+            [rect(0.0, 0.0, 0.5), rect(0.25, 0.25, 0.75)]
+        );
+        assert_eq!(
+            on("HDMI-A-1", "free-box"),
+            [rect(0.0, 0.0, 0.5), rect(0.5, 0.5, 0.5)]
+        );
+    }
+
+    #[test]
+    fn a_style_key_is_judged_on_each_holder_it_is_written_on() {
+        let holders = [
+            (
+                "areas.widgets.style",
+                "style = { shadow = 4, border = { width = nan } }",
+                "",
+                "",
+                2,
+            ),
+            (
+                "groups.box.style",
+                "",
+                "style = { shadow = 4, border = { width = nan }, padding = [1, 2, -3, 4] }",
+                "",
+                3,
+            ),
+            (
+                "children.clock-1.style",
+                "",
+                "",
+                "style = { shadow = 4, border = { width = nan }, backdrop = \"blur\" }",
+                3,
+            ),
+        ];
+        for (at, area, group, instance, errors) in holders {
+            let parsed = layout(&format!(
+                r#"
+                id = "test"
+                [[outputs]]
+                match = "*"
+                [[outputs.layers.desktop.areas]]
+                id = "widgets"
+                kind = "grid"
+                {area}
+                [[outputs.layers.desktop.areas.groups]]
+                id = "box"
+                place = "cell"
+                col = 0
+                row = 0
+                {group}
+                [[outputs.layers.desktop.areas.groups.children]]
+                id = "clock-1"
+                module = "clock"
+                {instance}
+                "#
+            ));
+            let report = validate(&parsed, &Modules);
+            for key in ["shadow", "border.width"] {
+                assert!(
+                    report
+                        .findings()
+                        .any(|f| f.key.ends_with(&format!("{at}.{key}"))),
+                    "{at}.{key}: {}",
+                    report.render()
+                );
+            }
+            assert_eq!(report.errors.len(), errors, "{at}: {}", report.render());
+        }
+    }
+
+    #[test]
+    fn the_deepest_shadow_and_a_zero_fillet_are_drawn_without_complaint() {
+        let styled = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            shape = { fillet = 0 }
+            style = { shadow = 3, border = { width = 0 } }
+            "#,
+        );
+        assert!(validate(&styled, &Modules).is_clean());
+        let resolved = alone(&styled, "DP-1");
+        let bar = resolved
+            .area(LayerKind::Top, &AreaId::new("bar-top"))
+            .expect("the bar resolves");
+        assert_eq!(bar.style.shadow, Some(3));
+        assert!(matches!(
+            &bar.kind,
+            ResolvedAreaKind::Bar { shape, .. } if shape.fillet == Some(0.0)
+        ));
+    }
+
+    #[test]
+    fn a_stack_keeps_the_flow_it_was_given_when_a_rule_restates_it_without_one() {
+        let parsed = layout(
+            r#"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.overlay.areas]]
+            id = "cards"
+            kind = "stack"
+            anchor = "bottom"
+            width = 300
+            flow = "row"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.overlay.areas]]
+            id = "cards"
+            kind = "stack"
+            width = 200
+            "#,
+        );
+        match alone(&parsed, "DP-1")
+            .layer(LayerKind::Overlay)
+            .and_then(|layer| layer.areas.first())
+            .map(|area| area.kind.clone())
+        {
+            Some(ResolvedAreaKind::Stack { flow, width, .. }) => {
+                assert_eq!((flow, width), (StackFlow::Row, 200.0));
+            }
+            other => panic!("a stack, not {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod rename {
+    use config::RuleConfig;
+
+    use crate::ops::{Named, Outside, Reference, RenameError, apply_all, named, rename};
+    use crate::*;
+
+    const FAMILY: &str = r#"
+        id = "mine"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        [[outputs.layers.top.areas.groups]]
+        id = "end"
+        place = "zone"
+        zone = "end"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "battery"
+        module = "battery"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "clock"
+        module = "clock"
+        [[outputs.layers.top.areas.groups]]
+        id = "pill"
+        place = "zone"
+        zone = "start"
+        komponent = "battery-pill"
+        [[outputs.layers.top.areas]]
+        id = "panel-battery"
+        kind = "panel"
+        owner = "battery"
+        [[outputs.layers.top.areas]]
+        id = "panel-pill"
+        kind = "panel"
+        owner = "bar-top.pill/level"
+        [[outputs]]
+        match = "DP-1"
+        [[outputs.layers.top.areas]]
+        id = "bar-top"
+        thickness = 40
+        remove = ["pill"]
+        [[outputs.layers.top.areas.groups]]
+        id = "end"
+        remove = ["battery"]
+        [[outputs]]
+        match = "HDMI-*"
+        [outputs.layers.top]
+        remove = ["bar-top"]
+    "#;
+
+    fn family() -> Layout {
+        toml::from_str(FAMILY).expect("the layout parses")
+    }
+
+    fn renamed(layout: &Layout, named: &Named, to: &str) -> Result<Vec<LayoutOp>, RenameError> {
+        rename(
+            layout,
+            Outside {
+                known: &Library::of_layouts([layout.clone()]),
+                rules: &[],
+            },
+            named,
+            to,
+        )
+    }
+
+    fn top_area(id: &str) -> Named {
+        Named::Area {
+            layer: LayerKind::Top,
+            id: AreaId::new(id),
+        }
+    }
+
+    fn instance(id: &str) -> Named {
+        Named::Instance(InstanceId::new(id))
+    }
+
+    fn written(layout: &Layout) -> String {
+        toml::to_string(layout).expect("the layout serializes")
+    }
+
+    /// Applies `ops` and checks that one undo puts the layout back exactly.
+    fn applied(layout: &Layout, ops: &[LayoutOp]) -> Layout {
+        let mut after = layout.clone();
+        let undo = apply_all(&mut after, ops).expect("the rename applies");
+        let mut back = after.clone();
+        apply_all(&mut back, &undo).expect("the undo applies");
+        assert_eq!(&back, layout, "one undo puts every reference back");
+        after
+    }
+
+    #[test]
+    fn renaming_an_instance_rewrites_the_panel_it_owns_and_every_level_that_names_it() {
+        let mine = family();
+        let ops = renamed(&mine, &instance("battery"), "power").expect("the rename is planned");
+        assert_eq!(ops.len(), 1, "one operation, so one undo entry");
+        let after = applied(&mine, &ops);
+        assert!(named(&after, "battery").is_empty(), "{}", written(&after));
+        let panel = &after.outputs[0].layers.top.areas[1];
+        assert_eq!(panel.id.as_str(), "panel-battery");
+        assert_eq!(
+            panel.kind.as_ref().and_then(AreaKind::owner),
+            Some(&InstanceId::new("power"))
+        );
+        assert_eq!(
+            after.outputs[1].layers.top.areas[0].groups[0].remove,
+            [InstanceId::new("power")]
+        );
+        let (resolved, _) = resolve(&after, &Library::default(), "eDP-1", None);
+        assert!(
+            resolved
+                .area(LayerKind::Top, &AreaId::new("panel-battery"))
+                .is_some(),
+            "the panel still opens from its owner"
+        );
+    }
+
+    #[test]
+    fn renaming_an_area_reaches_every_level_and_the_komponent_children_its_panels_open_from() {
+        let mine = family();
+        let ops = renamed(&mine, &top_area("bar-top"), "bar-main").expect("the rename is planned");
+        let after = applied(&mine, &ops);
+        assert_eq!(after.outputs[0].layers.top.areas[0].id.as_str(), "bar-main");
+        assert_eq!(after.outputs[1].layers.top.areas[0].id.as_str(), "bar-main");
+        assert_eq!(
+            after.outputs[2].layers.top.remove,
+            [AreaId::new("bar-main")]
+        );
+        assert_eq!(
+            after.outputs[0].layers.top.areas[2]
+                .kind
+                .as_ref()
+                .and_then(AreaKind::owner),
+            Some(&InstanceId::new("bar-main.pill/level"))
+        );
+    }
+
+    #[test]
+    fn renaming_a_group_reaches_the_remove_of_every_level_and_the_komponent_children_it_draws() {
+        let mine = family();
+        let pill = Named::Group {
+            layer: LayerKind::Top,
+            area: AreaId::new("bar-top"),
+            id: GroupId::new("pill"),
+        };
+        let ops = renamed(&mine, &pill, "charge").expect("the rename is planned");
+        let after = applied(&mine, &ops);
+        assert_eq!(
+            after.outputs[0].layers.top.areas[0].groups[1].id.as_str(),
+            "charge"
+        );
+        assert_eq!(
+            after.outputs[1].layers.top.areas[0].remove,
+            [GroupId::new("charge")]
+        );
+        assert_eq!(
+            after.outputs[0].layers.top.areas[2]
+                .kind
+                .as_ref()
+                .and_then(AreaKind::owner),
+            Some(&InstanceId::new("bar-top.charge/level"))
+        );
+    }
+
+    #[test]
+    fn an_action_line_naming_the_id_refuses_the_rename_with_that_line() {
+        let mut mine = family();
+        mine.outputs[0].layers.top.areas[0].groups[0].children[1]
+            .actions
+            .insert(Trigger::Press, Action(vec!["panel toggle battery".into()]));
+        let rules = [RuleConfig {
+            id: "low".into(),
+            run: vec!["toast show battery.low".into(), "toast show Battery".into()],
+            ..RuleConfig::default()
+        }];
+        let refused = rename(
+            &mine,
+            Outside {
+                known: &Library::of_layouts([mine.clone()]),
+                rules: &rules,
+            },
+            &instance("battery"),
+            "power",
+        );
+        let Err(RenameError::Referenced { id, references }) = &refused else {
+            panic!("refused for what names it: {refused:?}");
+        };
+        assert_eq!(id, "battery");
+        assert_eq!(
+            references,
+            &[
+                Reference::Rule {
+                    rule: "low".into(),
+                    line: "toast show battery.low".into(),
+                },
+                Reference::Action {
+                    file: "layouts/mine.toml".into(),
+                    key:
+                        "outputs.*.layers.top.areas.bar-top.groups.end.children.clock.actions.press"
+                            .into(),
+                    line: "panel toggle battery".into(),
+                },
+            ]
+        );
+        let said = refused.unwrap_err().message().english();
+        assert!(said.contains("`panel toggle battery`"), "{said}");
+    }
+
+    #[test]
+    fn an_id_a_layout_it_extends_writes_is_renamed_there_not_on_one_monitor() {
+        let mut base = family();
+        base.id = LayoutId::new("base");
+        let mine: Layout = toml::from_str(
+            r#"
+            id = "mine"
+            extends = "base"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            thickness = 48
+            [[outputs.layers.top.areas.groups]]
+            id = "extra"
+            place = "zone"
+            zone = "centre"
+            "#,
+        )
+        .expect("the layout parses");
+        let known = Library::of_layouts([base.clone(), mine.clone()]);
+        let outside = Outside {
+            known: &known,
+            rules: &[],
+        };
+        assert_eq!(
+            rename(&mine, outside, &top_area("bar-top"), "bar-main"),
+            Err(RenameError::Inherited {
+                id: "bar-top".into(),
+                layout: LayoutId::new("base"),
+            })
+        );
+        let extra = Named::Group {
+            layer: LayerKind::Top,
+            area: AreaId::new("bar-top"),
+            id: GroupId::new("extra"),
+        };
+        assert!(
+            rename(&mine, outside, &extra, "middle").is_ok(),
+            "a group this layout writes in an inherited area is its own to rename"
+        );
+        assert_eq!(
+            rename(&base, outside, &instance("clock"), "time"),
+            Ok(vec![instance("clock").renamed_to("time")]),
+            "a layout extending this one that never names the id is left alone"
+        );
+        assert_eq!(
+            rename(&base, outside, &top_area("bar-top"), "bar-main"),
+            Err(RenameError::Referenced {
+                id: "bar-top".into(),
+                references: vec![Reference::Extending(LayoutId::new("mine"))],
+            })
+        );
+    }
+
+    #[test]
+    fn the_new_id_is_readable_unique_where_the_old_one_was_and_holds_no_separator() {
+        let mine = family();
+        assert_eq!(
+            renamed(&mine, &instance("battery"), ""),
+            Err(RenameError::Empty)
+        );
+        assert!(matches!(
+            renamed(&mine, &instance("battery"), "bat\u{200b}tery"),
+            Err(RenameError::Refused {
+                refusal: IdRefusal::Hidden('\u{200b}'),
+                ..
+            })
+        ));
+        for (spelled, mark) in [
+            ("bat.tery", '.'),
+            ("bat/tery", '/'),
+            ("bat#1", '#'),
+            ("bat tery", ' '),
+        ] {
+            assert_eq!(
+                renamed(&mine, &instance("battery"), spelled),
+                Err(RenameError::Refused {
+                    name: spelled.to_string(),
+                    refusal: IdRefusal::Separator(mark),
+                }),
+            );
+        }
+        assert_eq!(
+            renamed(&mine, &instance("battery"), "clock"),
+            Err(RenameError::Taken(instance("clock")))
+        );
+        assert_eq!(
+            renamed(&mine, &top_area("bar-top"), "panel-battery"),
+            Err(RenameError::Taken(top_area("panel-battery")))
+        );
+        assert!(
+            renamed(&mine, &top_area("bar-top"), "clock").is_ok(),
+            "an area's id is unique among the areas of its layer alone"
+        );
+        assert_eq!(
+            renamed(&mine, &instance("battery"), "battery"),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            renamed(&mine, &instance("nobody"), "somebody"),
+            Err(RenameError::Op(OpError::NoInstance(InstanceId::new(
+                "nobody"
+            ))))
+        );
+    }
+
+    #[test]
+    fn the_operation_refuses_a_name_the_layout_already_holds_so_its_undo_stays_exact() {
+        let mut mine = family();
+        let taken = apply_all(&mut mine, &[instance("battery").renamed_to("clock")]);
+        assert_eq!(taken, Err(OpError::Taken("clock".into())));
+        assert_eq!(mine, family());
+        let missing = apply_all(&mut mine, &[top_area("nowhere").renamed_to("somewhere")]);
+        assert_eq!(missing, Err(OpError::NoArea(AreaId::new("nowhere"))));
+    }
+
+    #[test]
+    fn a_command_line_s_word_finds_what_it_names() {
+        let mine = family();
+        assert_eq!(named(&mine, "battery"), [instance("battery")]);
+        assert_eq!(named(&mine, "bar-top"), [top_area("bar-top")]);
+        let end = vec![Named::Group {
+            layer: LayerKind::Top,
+            area: AreaId::new("bar-top"),
+            id: GroupId::new("end"),
+        }];
+        assert_eq!(named(&mine, "end"), end);
+        assert_eq!(named(&mine, "bar-top.end"), end);
+        assert!(named(&mine, "nothing").is_empty());
+    }
+
+    const WORKSPACED: &str = r#"
+        [[outputs.workspaces]]
+        match = "web"
+        [[outputs.workspaces.layers.top.areas]]
+        id = "panel-copy"
+        kind = "panel"
+        owner = "battery#2"
+        [[outputs.workspaces.layers.top.areas]]
+        id = "bar-top"
+        [[outputs.workspaces.layers.top.areas.groups]]
+        id = "end"
+        remove = ["battery"]
+        [[outputs.workspaces.layers.top.areas.groups.children]]
+        id = "battery"
+        module = "battery"
+    "#;
+
+    #[test]
+    fn a_workspace_rule_follows_an_instance_rename_and_the_panel_of_a_copy_stays_out_of_it() {
+        let mine: Layout =
+            toml::from_str(&format!("{FAMILY}{WORKSPACED}")).expect("the layout parses");
+        let ops = renamed(&mine, &instance("battery"), "power").expect("the rename is planned");
+        let after = applied(&mine, &ops);
+        assert!(named(&after, "battery").is_empty(), "{}", written(&after));
+        let rule = &after.outputs[2].workspaces[0].layers.top;
+        assert_eq!(
+            rule.areas[0].kind.as_ref().and_then(AreaKind::owner),
+            Some(&InstanceId::new("battery#2")),
+            "a copy owns no panel, so the rename leaves what names one as it was and validation keeps reporting it"
+        );
+        assert_eq!(rule.areas[1].groups[0].remove, [InstanceId::new("power")]);
+        assert_eq!(rule.areas[1].groups[0].children[0].id.as_str(), "power");
+    }
+
+    #[test]
+    fn a_rename_reaches_only_the_layer_and_the_area_it_names() {
+        let mine: Layout = toml::from_str(
+            r#"
+            id = "mine"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "shared"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            [[outputs.layers.top.areas.groups]]
+            id = "end"
+            place = "zone"
+            zone = "end"
+            [[outputs.layers.top.areas]]
+            id = "other"
+            kind = "bar"
+            edge = "bottom"
+            thickness = 32
+            [[outputs.layers.top.areas.groups]]
+            id = "end"
+            place = "zone"
+            zone = "end"
+            [[outputs.layers.desktop.areas]]
+            id = "shared"
+            kind = "grid"
+            "#,
+        )
+        .expect("the layout parses");
+
+        let area = Named::Area {
+            layer: LayerKind::Top,
+            id: AreaId::new("shared"),
+        };
+        let after = applied(&mine, &renamed(&mine, &area, "main").expect("planned"));
+        assert_eq!(after.outputs[0].layers.top.areas[0].id.as_str(), "main");
+        assert_eq!(
+            after.outputs[0].layers.desktop.areas[0].id.as_str(),
+            "shared",
+            "an area of another layer is another area"
+        );
+
+        let group = Named::Group {
+            layer: LayerKind::Top,
+            area: AreaId::new("other"),
+            id: GroupId::new("end"),
+        };
+        let after = applied(&mine, &renamed(&mine, &group, "finish").expect("planned"));
+        let groups = |index: usize| {
+            after.outputs[0].layers.top.areas[index].groups[0]
+                .id
+                .clone()
+        };
+        assert_eq!(groups(1).as_str(), "finish");
+        assert_eq!(
+            groups(0).as_str(),
+            "end",
+            "a group of another area is another group"
+        );
+    }
+
+    #[test]
+    fn an_action_of_a_komponent_the_layout_uses_refuses_the_rename_with_its_file() {
+        let mine = family();
+        let komponent: Komponent = toml::from_str(
+            r#"
+            [[children]]
+            id = "level"
+            module = "battery"
+            actions = { press = ["panel toggle battery"] }
+            "#,
+        )
+        .expect("the komponent parses");
+        let known = Library::of_layouts([mine.clone()]).with_komponent("battery-pill", komponent);
+        let refused = rename(
+            &mine,
+            Outside {
+                known: &known,
+                rules: &[],
+            },
+            &instance("battery"),
+            "power",
+        );
+        let Err(RenameError::Referenced { references, .. }) = &refused else {
+            panic!("refused for what names it: {refused:?}");
+        };
+        assert_eq!(
+            references,
+            &[Reference::Action {
+                file: "components/battery-pill.toml".into(),
+                key: "children.level.actions.press".into(),
+                line: "panel toggle battery".into(),
+            }]
+        );
+        let said = refused.unwrap_err().message().english();
+        assert!(said.contains("components/battery-pill.toml"), "{said}");
+    }
+
+    #[test]
+    fn a_line_only_names_an_id_as_a_whole_word() {
+        let mine = family();
+        let rules = [RuleConfig {
+            id: "other".into(),
+            run: vec![
+                "toast show batteryx".into(),
+                "toast show xbattery".into(),
+                "toast show my-battery".into(),
+                "toast show \"battery\"".into(),
+                "layout set clock.battery=1".into(),
+            ],
+            ..RuleConfig::default()
+        }];
+        let refused = rename(
+            &mine,
+            Outside {
+                known: &Library::of_layouts([mine.clone()]),
+                rules: &rules,
+            },
+            &instance("battery"),
+            "power",
+        );
+        let Err(RenameError::Referenced { references, .. }) = refused else {
+            panic!("a rule names it: {refused:?}");
+        };
+        let lines: Vec<&str> = references
+            .iter()
+            .filter_map(|reference| match reference {
+                Reference::Rule { line, .. } => Some(line.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            ["toast show \"battery\"", "layout set clock.battery=1"],
+            "`batteryx` and `xbattery` are other words"
+        );
+        let me = [RuleConfig {
+            id: "quiet".into(),
+            run: vec!["toast show batteryx".into(), "toast show xbattery".into()],
+            ..RuleConfig::default()
+        }];
+        assert!(
+            rename(
+                &mine,
+                Outside {
+                    known: &Library::of_layouts([mine.clone()]),
+                    rules: &me,
+                },
+                &instance("battery"),
+                "power",
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_rename_a_layout_extending_this_one_would_miss_is_refused_for_each_of_them() {
+        let base = family();
+        let ext = |id: &str, area: &str| -> Layout {
+            toml::from_str(&format!(
+                r#"
+                id = "{id}"
+                extends = "mine"
+                [[outputs]]
+                match = "DP-1"
+                [[outputs.layers.top.areas]]
+                id = "{area}"
+                "#
+            ))
+            .expect("the layout parses")
+        };
+        let known = Library::of_layouts([base.clone(), ext("a", "bar-top"), ext("b", "bar-top")]);
+        let Err(RenameError::Referenced { references, .. }) = rename(
+            &base,
+            Outside {
+                known: &known,
+                rules: &[],
+            },
+            &top_area("bar-top"),
+            "bar-main",
+        ) else {
+            panic!("both layouts name the area");
+        };
+        assert_eq!(
+            references,
+            [
+                Reference::Extending(LayoutId::new("a")),
+                Reference::Extending(LayoutId::new("b"))
+            ]
+        );
+        let known = Library::of_layouts([base.clone(), ext("a", "bar-top"), ext("c", "other")]);
+        let Err(RenameError::Referenced { references, .. }) = rename(
+            &base,
+            Outside {
+                known: &known,
+                rules: &[],
+            },
+            &top_area("bar-top"),
+            "bar-main",
+        ) else {
+            panic!("one layout names the area");
+        };
+        assert_eq!(references, [Reference::Extending(LayoutId::new("a"))]);
+    }
+
+    #[test]
+    fn a_panel_owner_is_rewritten_only_when_the_whole_area_or_group_it_names_is_renamed() {
+        let mine: Layout = toml::from_str(
+            r#"
+            id = "mine"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            [[outputs.layers.top.areas.groups]]
+            id = "pill"
+            place = "zone"
+            zone = "start"
+            komponent = "battery-pill"
+            [[outputs.layers.top.areas.groups]]
+            id = "pillar"
+            place = "zone"
+            zone = "end"
+            komponent = "battery-pill"
+            [[outputs.layers.top.areas]]
+            id = "bar-2"
+            kind = "bar"
+            edge = "bottom"
+            thickness = 32
+            [[outputs.layers.top.areas.groups]]
+            id = "pill"
+            place = "zone"
+            zone = "start"
+            komponent = "battery-pill"
+            [[outputs.layers.top.areas]]
+            id = "panel-a"
+            kind = "panel"
+            owner = "bar.pill/level"
+            [[outputs.layers.top.areas]]
+            id = "panel-b"
+            kind = "panel"
+            owner = "bar.pillar/level"
+            [[outputs.layers.top.areas]]
+            id = "panel-c"
+            kind = "panel"
+            owner = "bar-2.pill/level"
+            "#,
+        )
+        .expect("the layout parses");
+        let owners = |layout: &Layout| -> Vec<String> {
+            layout.outputs[0].layers.top.areas[2..]
+                .iter()
+                .map(|area| {
+                    area.kind
+                        .as_ref()
+                        .and_then(AreaKind::owner)
+                        .map(ToString::to_string)
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
+
+        let pill = Named::Group {
+            layer: LayerKind::Top,
+            area: AreaId::new("bar"),
+            id: GroupId::new("pill"),
+        };
+        let after = applied(&mine, &renamed(&mine, &pill, "dot").expect("planned"));
+        assert_eq!(
+            owners(&after),
+            ["bar.dot/level", "bar.pillar/level", "bar-2.pill/level"]
+        );
+
+        let after = applied(
+            &mine,
+            &renamed(&mine, &top_area("bar"), "main").expect("planned"),
+        );
+        assert_eq!(
+            owners(&after),
+            ["main.pill/level", "main.pillar/level", "bar-2.pill/level"]
+        );
+    }
+
+    #[test]
+    fn every_refusal_names_what_it_refused_in_its_own_words() {
+        let mine = family();
+        let said = |named: &Named, to: &str| {
+            renamed(&mine, named, to)
+                .expect_err("refused")
+                .message()
+                .english()
+        };
+        let battery = instance("battery");
+        assert!(said(&battery, "").contains("empty"));
+        let space = said(&battery, "bat tery");
+        assert!(
+            space.contains("`bat tery`") && space.contains('␠'),
+            "{space}"
+        );
+        assert!(said(&battery, "bat.tery").contains("`.`"));
+        assert!(said(&battery, "bat\u{200b}tery").contains("U+200B"));
+        let taken = said(&battery, "clock");
+        assert!(
+            taken.contains("instance") && taken.contains("`clock`"),
+            "{taken}"
+        );
+        let taken = said(&top_area("bar-top"), "panel-battery");
+        assert!(
+            taken.contains("area") && taken.contains("`panel-battery`"),
+            "{taken}"
+        );
+        let end = Named::Group {
+            layer: LayerKind::Top,
+            area: AreaId::new("bar-top"),
+            id: GroupId::new("end"),
+        };
+        let taken = said(&end, "pill");
+        assert!(
+            taken.contains("`bar-top`") && taken.contains("group") && taken.contains("`pill`"),
+            "{taken}"
+        );
+        assert!(said(&instance("nobody"), "somebody").contains("`nobody`"));
+
+        let mut base = family();
+        base.id = LayoutId::new("base");
+        let child = Layout {
+            id: LayoutId::new("child"),
+            extends: Some(LayoutId::new("base")),
+            outputs: base.outputs.clone(),
+            ..Layout::default()
+        };
+        let inherited = rename(
+            &child,
+            Outside {
+                known: &Library::of_layouts([base]),
+                rules: &[],
+            },
+            &instance("battery"),
+            "power",
+        )
+        .expect_err("refused")
+        .message()
+        .english();
+        assert!(
+            inherited.contains("layouts/base.toml") && inherited.contains("`battery`"),
+            "{inherited}"
+        );
     }
 }

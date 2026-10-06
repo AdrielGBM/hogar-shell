@@ -17,7 +17,8 @@ const INNER_TRACKS: f32 = 12.0;
 const WIDEST_SPAN: f32 = 12.0;
 
 pub(crate) fn inspector(draft: &GroupDraft) -> Result<Inspector, LayoutError> {
-    let mut list = area::variant_rows(&draft.area.node)?;
+    let mut list = vec![super::id::row(&draft.area.node)?];
+    list.extend(area::variant_rows(&draft.area.node)?);
     if draft.resolved.komponent.is_none() {
         list.extend(arrangement(draft)?);
     }

@@ -10,7 +10,9 @@ mod tests {
 
     use std::time::{Duration, Instant};
 
-    use layout::{Anchor, AreaId, CardKind, LayerKind, Offset, Route, RoutedCard, Urgency};
+    use layout::{
+        Anchor, AreaId, CardKind, LayerKind, Offset, Route, RoutedCard, StackFlow, Urgency,
+    };
     use surfaces::card_samples::{self, Shown};
     use surfaces::pinned;
     use surfaces::reconcile;
@@ -20,7 +22,7 @@ mod tests {
     use crate::keys::Direction;
     use crate::mode::{self};
     use crate::modes::overlay::{self, Placed, stacks_of};
-    use crate::rig::{Rig, SCREEN, enter, rig_with, tap};
+    use crate::rig::{Card, Rig, SCREEN, enter, pointer_at, press_at, release_at, rig_with, tap};
     use crate::session::{self, Edit, Selection};
     use crate::{context, popover};
 
@@ -255,11 +257,11 @@ mod tests {
             stack("stack-2").expect("the centred stack"),
             stack("stack").expect("the corner stack"),
         );
-        let (middle, column) = (centre.bounds.x + centre.bounds.width / 2.0, centre.column());
-        assert_eq!(column.x + column.width / 2.0, middle, "centred");
-        let corner_column = corner.column();
+        let (middle, lane) = (centre.bounds.x + centre.bounds.width / 2.0, centre.lane());
+        assert_eq!(lane.x + lane.width / 2.0, middle, "centred");
+        let corner_lane = corner.lane();
         assert_eq!(
-            corner_column.x + corner_column.width,
+            corner_lane.x + corner_lane.width,
             corner.bounds.x + corner.bounds.width - surfaces::transient::DEFAULT_GAP,
             "in the corner"
         );
@@ -394,8 +396,12 @@ mod tests {
             let edit = Edit::new(telar::t!("editor.overlay.moved", name = id.to_string()));
             edit.begin().expect("the drag starts");
             for (dx, dy) in [(-300.0, 0.0), (-700.0, 380.0)] {
-                let (anchor, offset) =
-                    overlay::landing(before.bounds, before.width, (card.x + dx, card.y + dy));
+                let (anchor, offset) = overlay::landing(
+                    before.bounds,
+                    before.width,
+                    before.flow,
+                    (card.x + dx, card.y + dy),
+                );
                 let at = edit
                     .transaction()
                     .before()
@@ -492,22 +498,34 @@ mod tests {
     /// A first card let go where an anchor alone would put it, or near enough, lands exactly on that anchor; let go further off, it keeps the distance as its offset — on every anchor.
     #[test]
     fn a_dropped_stack_snaps_to_the_anchor_it_is_let_go_near() {
-        for anchor in Anchor::ALL {
-            let natural =
-                overlay::ghost(pinned::column(WHOLE, anchor, 380.0, Offset::ZERO), anchor);
+        for (flow, anchor) in [StackFlow::Column, StackFlow::Row]
+            .into_iter()
+            .flat_map(|flow| Anchor::ALL.into_iter().map(move |anchor| (flow, anchor)))
+        {
+            let natural = overlay::first_card(
+                pinned::stack(WHOLE, anchor, 380.0, flow, Offset::ZERO),
+                anchor,
+                flow,
+                380.0,
+            );
             let (landed, offset) =
-                overlay::landing(WHOLE, 380.0, (natural.x + 10.0, natural.y - 12.0));
+                overlay::landing(WHOLE, 380.0, flow, (natural.x + 10.0, natural.y - 12.0));
             assert_eq!(
                 (landed, offset),
                 (anchor, Offset::ZERO),
-                "{anchor:?}: near enough snaps"
+                "{flow:?} {anchor:?}: near enough snaps"
             );
         }
         let corner = overlay::ghost(
             pinned::column(WHOLE, Anchor::TopRight, 380.0, Offset::ZERO),
             Anchor::TopRight,
         );
-        let (landed, offset) = overlay::landing(WHOLE, 380.0, (corner.x - 100.0, corner.y + 60.0));
+        let (landed, offset) = overlay::landing(
+            WHOLE,
+            380.0,
+            StackFlow::Column,
+            (corner.x - 100.0, corner.y + 60.0),
+        );
         assert_eq!(landed, Anchor::TopRight);
         assert_eq!(offset, Offset { x: -100.0, y: 60.0 });
         let placed = Placed {
@@ -516,6 +534,7 @@ mod tests {
             anchor: landed,
             offset,
             width: 380.0,
+            flow: StackFlow::Column,
             routes: Vec::new(),
             launcher: false,
             bounds: WHOLE,
@@ -525,9 +544,9 @@ mod tests {
             (corner.x - 100.0, corner.y + 60.0),
             "and is drawn where it was let go"
         );
-        let (middle, _) = overlay::landing(WHOLE, 380.0, (800.0, 500.0));
+        let (middle, _) = overlay::landing(WHOLE, 380.0, StackFlow::Column, (800.0, 500.0));
         assert_eq!(middle, Anchor::Center);
-        let (bottom, _) = overlay::landing(WHOLE, 380.0, (760.0, 2000.0));
+        let (bottom, _) = overlay::landing(WHOLE, 380.0, StackFlow::Column, (760.0, 2000.0));
         assert_eq!(bottom, Anchor::Bottom, "past the screen is at its edge");
     }
 
@@ -680,7 +699,7 @@ mod tests {
         assert_eq!(sample_kinds(), vec![(CardKind::Osd, None)]);
     }
 
-    /// A sample stays up as long as the real card of its kind would under the edited screen's config: the column's `[stack] timeout_ms`, but a critical notification under `critical_sticky` until `critical_max_secs`, for as long as the mode is up where that is `0`.
+    /// A sample stays up as long as the real card of its kind would under the edited screen's config: the stack's `[stack] timeout_ms`, but a critical notification under `critical_sticky` until `critical_max_secs`, for as long as the mode is up where that is `0`.
     #[test]
     fn a_sample_lives_as_long_as_the_config_keeps_its_card_up() {
         let mut config = config::Config::default();
@@ -739,5 +758,131 @@ mod tests {
         only_volume_everywhere();
         assert!(overlay::try_card(overlay::Try::Toast).is_err());
         assert!(card_samples::samples().peek().is_empty());
+    }
+
+    /// The flow row of a stack's popover turns its column into a row, previewed live; closing keeps it as one undo entry and Esc puts it back with nothing recorded.
+    #[test]
+    fn a_stacks_flow_row_makes_it_a_row_and_escape_takes_it_back() {
+        let rig = rig_with("overlay-flow", |_| {});
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Overlay);
+        let flow = || stack("stack").map(|placed| placed.flow);
+        assert_eq!(flow(), Some(StackFlow::Column));
+
+        popover::open_area(node("stack")).expect("its popover opens");
+        let _tree = laid();
+        popover::shared::<String>("flow")
+            .expect("the stack's flow")
+            .set("row".to_string());
+        assert_eq!(flow(), Some(StackFlow::Row), "previewed as it is chosen");
+        assert!(tap(Key::Named(telar::NamedKey::Escape), NONE));
+        assert_eq!(flow(), Some(StackFlow::Column), "Esc puts it back");
+        assert_eq!(rig.undo_label(), None);
+
+        popover::open_area(node("stack")).expect("its popover opens");
+        let _tree = laid();
+        popover::shared::<String>("flow")
+            .expect("the stack's flow")
+            .set("row".to_string());
+        popover::close();
+        assert_eq!(flow(), Some(StackFlow::Row));
+        assert_eq!(rig.undo_label().as_deref(), Some("Customize stack"));
+        assert_eq!(session::undo().as_deref(), Ok("Customize stack"));
+        assert_eq!(flow(), Some(StackFlow::Column));
+    }
+
+    /// A stack's menu sends any sample from its "Try cards" rows, as the strip button and `t` do: a preview in the stack the card is routed to, never a layout edit.
+    #[test]
+    fn a_stacks_try_cards_menu_sends_a_sample_and_leaves_the_layout_alone() {
+        let rig = rig_with("overlay-try-menu", |_| {});
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Overlay);
+        let before = crate::rig::stored(&rig);
+        context::open(surfaces::menu::Asked {
+            node: node("stack"),
+            window: LayerKind::Overlay,
+            at: None,
+        })
+        .expect("the stack's menu opens");
+        assert_eq!(
+            context::sub_rows("Try cards"),
+            [
+                "Sample notification",
+                "Sample critical notification",
+                "Sample toast",
+                "Sample volume OSD",
+                "Sample launcher"
+            ]
+        );
+        context::pick("Sample toast");
+        assert_eq!(shown("stack"), vec![(CardKind::Toast, None)]);
+        assert_eq!(rig.undo_label(), None);
+        assert_eq!(crate::rig::stored(&rig), before);
+
+        context::open(surfaces::menu::Asked {
+            node: node("stack"),
+            window: LayerKind::Overlay,
+            at: None,
+        })
+        .expect("the stack's menu opens");
+        context::pick("Sample launcher");
+        assert!(card_samples::launcher().peek().is_some());
+        assert_eq!(crate::rig::stored(&rig), before);
+    }
+
+    /// Presses the width handle of a stack whose width the layout never wrote, moves the pointer `travel` px along (and Escapes if `cancel`), lets go and closes the popover: the layout is as stored, and nothing is recorded.
+    fn width_handle_leaves_the_width_unwritten(test: &str, travel: Option<f32>, cancel: bool) {
+        let rig = rig_with(test, |layout| {
+            let mut screen = layout::OutputRule {
+                matches: layout::OutputMatch(SCREEN.to_string()),
+                ..layout::OutputRule::default()
+            };
+            screen.layers.overlay.areas.push(layout::Area {
+                id: AreaId::new("stack"),
+                kind: Some(layout::AreaKind::Stack {
+                    anchor: None,
+                    offset: None,
+                    width: None,
+                    flow: None,
+                    output_policy: None,
+                    routes: Vec::new(),
+                    launcher: None,
+                }),
+                ..layout::Area::default()
+            });
+            layout.outputs.push(screen);
+        });
+        let _owner = Owner::new();
+        let lane = telar::Rect::new(1500.0, 40.0, 420.0, 1000.0);
+        surfaces::rects::track_spanning(node("stack"), vec![telar::signal(lane)]);
+        let before = crate::rig::stored(&rig);
+        let wide = stack("stack").expect("the stack").width;
+        popover::open_area(node("stack")).expect("its popover opens");
+        let mut card = Card::open();
+        let start = overlay::width_point(lane, Anchor::TopRight, wide);
+
+        card.route(&press_at(start));
+        if let Some(travel) = travel {
+            card.route(&pointer_at((start.0 - travel, start.1)));
+            assert_ne!(session::draft().peek(), before, "the drag previews");
+        }
+        if cancel {
+            card.escape();
+        }
+        card.route(&release_at(start));
+        transient::close(popover::ID);
+
+        assert_eq!(crate::rig::stored(&rig), before);
+        assert_eq!(undo_label(&rig), None, "nothing is recorded");
+    }
+
+    #[test]
+    fn a_width_drag_cancelled_with_esc_leaves_the_width_unwritten() {
+        width_handle_leaves_the_width_unwritten("overlay-width-cancelled", Some(60.0), true);
+    }
+
+    #[test]
+    fn a_press_on_the_width_handle_without_travel_writes_nothing() {
+        width_handle_leaves_the_width_unwritten("overlay-width-press", None, false);
     }
 }

@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use telar::{
@@ -79,8 +79,12 @@ type SourceSink = Rc<RefCell<Vec<RegistrationToken>>>;
 
 thread_local! {
     static LOOP_HANDLE: RefCell<Option<LoopHandle<'static, Driver>>> = const { RefCell::new(None) };
-    // Where `interval`/`watch` file their registration tokens while a surface's handler runs, so the driver can drop them with that surface. `None` outside a surface (app-level setup), where sources are process-lived.
-    static CURRENT_SOURCES: RefCell<Option<SourceSink>> = const { RefCell::new(None) };
+    static CURRENT: RefCell<Current> = const {
+        RefCell::new(Current {
+            sources: None,
+            surface: None,
+        })
+    };
     // Surfaces opened on the UI thread (layer windows and reservation strips); the driver drains and mounts them.
     static DYN_QUEUE: Pending = const { Pending(RefCell::new(Vec::new())) };
     // App-level setup to run once on the driver thread after the loop is up (see `run_on_start`).
@@ -97,9 +101,40 @@ thread_local! {
     static APP_LEVEL: Cell<bool> = const { Cell::new(false) };
 }
 
+/// What a surface whose handler is running puts in scope, and nothing outside one. `sources` is where `interval`/`watch` file their registration tokens, so the driver can drop them with that surface; outside a surface (app-level setup) sources are process-lived.
+struct Current {
+    sources: Option<SourceSink>,
+    surface: Option<wl_surface::WlSurface>,
+}
+
+/// A request naming one of the shell's surfaces is only valid on the connection that surface lives on, so a watcher that has to name one speaks over this rather than over a connection of its own.
+static SHELL_CONNECTION: Mutex<Option<Connection>> = Mutex::new(None);
+
+pub(crate) fn shell_connection() -> Option<Connection> {
+    SHELL_CONNECTION
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
+
+fn set_shell_connection(connection: Option<Connection>) {
+    *SHELL_CONNECTION
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = connection;
+    crate::toplevel_control::follow_shell_connection();
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SurfaceRef(pub(crate) wl_surface::WlSurface);
+
+/// The surface whose content is being built or driven right now; `None` outside a surface pass.
+pub fn current_surface() -> Option<SurfaceRef> {
+    CURRENT.with(|current| current.borrow().surface.clone().map(SurfaceRef))
+}
+
 /// Files `token` against the surface currently being driven, so its teardown removes the source, and against the reactive owner building it, so a part of the tree rebuilt inside a surface that stays takes its sources with it. Outside a surface the token is dropped: app-level sources (the config watcher) live as long as the process.
 fn track_source(token: RegistrationToken) {
-    let sink = CURRENT_SOURCES.with(|s| s.borrow().clone());
+    let sink = CURRENT.with(|current| current.borrow().sources.clone());
     if let Some(sink) = &sink {
         sink.borrow_mut().push(token);
     }
@@ -151,11 +186,20 @@ impl Drop for Pending {
     }
 }
 
-/// Runs the handler closure with the current surface's sink installed, which is where `interval`/`watch` file their registration tokens so the surface's timers and channels die with it. Restored afterwards.
-fn with_current<R>(sources: &SourceSink, f: impl FnOnce() -> R) -> R {
-    CURRENT_SOURCES.with(|s| *s.borrow_mut() = Some(Rc::clone(sources)));
+/// Runs the handler closure with a surface in scope: its sink, which is where `interval`/`watch` file their registration tokens so the surface's timers and channels die with it, and the surface itself, which [`current_surface`] answers with. What was in scope before is restored afterwards.
+fn with_current<R>(
+    sources: &SourceSink,
+    surface: Option<&wl_surface::WlSurface>,
+    f: impl FnOnce() -> R,
+) -> R {
+    let previous = CURRENT.with(|current| {
+        current.replace(Current {
+            sources: Some(Rc::clone(sources)),
+            surface: surface.cloned(),
+        })
+    });
     let result = f();
-    CURRENT_SOURCES.with(|s| *s.borrow_mut() = None);
+    CURRENT.with(|current| *current.borrow_mut() = previous);
     result
 }
 
@@ -164,8 +208,9 @@ fn resume_handler<W: Window>(
     handler: &mut dyn EventHandler<W>,
     window: &W,
     sources: &SourceSink,
+    surface: Option<&wl_surface::WlSurface>,
 ) -> bool {
-    with_current(sources, || {
+    with_current(sources, surface, || {
         handler.new_events();
         let resumed = handler.on_resume(window);
         handler.about_to_wait();
@@ -175,7 +220,7 @@ fn resume_handler<W: Window>(
 
 /// Stops a surface's renderer, joining its thread, and keeps the handler with its app and tree.
 fn suspend_handler<W: Window>(handler: &mut dyn EventHandler<W>, sources: &SourceSink) {
-    with_current(sources, || handler.on_suspend());
+    with_current(sources, None, || handler.on_suspend());
 }
 
 /// Repeats `callback` every `period` on the shared loop. Bound to the surface that registered it: when that surface is torn down, or the reactive owner that registered it is disposed, the timer is removed with it, so a rebuilt tree never stacks a second ticker on the first.
@@ -314,11 +359,11 @@ where
     P: FnOnce(EventSender<T>) + Send + 'static,
     F: FnMut(T) + 'static,
 {
-    let surface = CURRENT_SOURCES.with(|s| s.borrow_mut().take());
+    let sources = CURRENT.with(|current| current.borrow_mut().sources.take());
     let lived = APP_LEVEL.with(|app| app.replace(true));
     let token = watch(producer, on_event);
     APP_LEVEL.with(|app| app.set(lived));
-    CURRENT_SOURCES.with(|s| *s.borrow_mut() = surface);
+    CURRENT.with(|current| current.borrow_mut().sources = sources);
     token
 }
 
@@ -720,8 +765,9 @@ impl SurfaceEntry {
             loop_handle.remove(token);
         }
         let sources = Rc::clone(&self.sources);
+        let surface = self.shell.wl_surface().clone();
         if let Some(handler) = self.handler.as_mut() {
-            with_current(&sources, || handler.remount(window));
+            with_current(&sources, Some(&surface), || handler.remount(window));
         }
     }
 }
@@ -1006,6 +1052,23 @@ where
 {
     let conn = Connection::connect_to_env()
         .map_err(|e| PlatformError(format!("wayland connect failed: {e}")))?;
+    set_shell_connection(Some(conn.clone()));
+    let driven = drive(conn, configs, shutdown, surfaces, factory);
+    set_shell_connection(None);
+    driven
+}
+
+fn drive<H, F>(
+    conn: Connection,
+    configs: HashMap<SurfaceId, LayerConfig>,
+    shutdown: Option<Arc<AtomicBool>>,
+    surfaces: Vec<(SurfaceId, WindowConfig)>,
+    factory: F,
+) -> Result<(), PlatformError>
+where
+    H: EventHandler<LayerWindow> + 'static,
+    F: Fn(SurfaceId) -> H + 'static,
+{
     let (globals, event_queue) = registry_queue_init::<Driver>(&conn)
         .map_err(|e| PlatformError(format!("registry init failed: {e}")))?;
     let qh = event_queue.handle();
@@ -1229,13 +1292,14 @@ where
             let rebuild =
                 entry.link.as_ref().is_some_and(|link| link.take_rebuild()) && entry.mounted;
 
+            let surface = entry.shell.wl_surface().clone();
             if !entry.resumed {
                 let sources = Rc::clone(&entry.sources);
                 let handler = entry
                     .handler
                     .as_mut()
                     .expect("rendering surface has a handler");
-                let ok = resume_handler(handler.as_mut(), &window, &sources);
+                let ok = resume_handler(handler.as_mut(), &window, &sources, Some(&surface));
                 if !ok {
                     tracing::error!("layer surface on_resume failed (renderer init)");
                     remove.push(index);
@@ -1254,7 +1318,7 @@ where
 
             let sources = Rc::clone(&entry.sources);
             let events = std::mem::take(&mut entry.events);
-            entry.timeout = with_current(&sources, || {
+            entry.timeout = with_current(&sources, Some(&surface), || {
                 let handler = entry
                     .handler
                     .as_mut()
@@ -1310,7 +1374,7 @@ where
 pub(crate) fn tear_down(mut entry: SurfaceEntry, loop_handle: &LoopHandle<'static, Driver>) {
     if let Some(mut handler) = entry.handler.take() {
         let sources = Rc::clone(&entry.sources);
-        with_current(&sources, || handler.on_suspend());
+        with_current(&sources, None, || handler.on_suspend());
     }
     for token in entry.sources.borrow_mut().drain(..) {
         loop_handle.remove(token);
@@ -2259,14 +2323,14 @@ mod tests {
         );
         let sources = SourceSink::default();
         let draw = |handler: &mut BoxedCountingHandler| {
-            with_current(&sources, || {
+            with_current(&sources, None, || {
                 handler.new_events();
                 handler.on_redraw(&window);
                 handler.about_to_wait();
             });
         };
 
-        assert!(resume_handler(handler.as_mut(), &window, &sources));
+        assert!(resume_handler(handler.as_mut(), &window, &sources, None));
         draw(&mut handler);
         assert!(
             handler.last_frame_rgba().is_some(),
@@ -2301,7 +2365,7 @@ mod tests {
             "the tree changing while hidden asks the hidden window for no frame"
         );
 
-        assert!(resume_handler(handler.as_mut(), &window, &sources));
+        assert!(resume_handler(handler.as_mut(), &window, &sources, None));
         assert_eq!(roots.get(), 1, "showing the window built no second tree");
         assert_eq!(
             local.get().map(|signal| signal.peek()),

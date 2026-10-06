@@ -133,6 +133,7 @@ pub fn reference() -> Layout {
                 anchor: Some(Anchor::TopRight),
                 offset: Some(Offset { x: 0.0, y: 48.0 }),
                 width: Some(380.0),
+                flow: Some(StackFlow::Column),
                 output_policy: Some(StackOutputPolicy::Focused),
                 routes: vec![Route {
                     kind: Some(CardKind::Notification),

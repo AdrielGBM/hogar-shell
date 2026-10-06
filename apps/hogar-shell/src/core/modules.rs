@@ -8,7 +8,7 @@ use config::{
     DashboardConfig, GeneralConfig, GpuConfig, LauncherConfig, LockStatusConfig, MediaConfig,
     NetworkConfig, NotificationsConfig, PathsConfig, RecorderConfig, StackConfig,
     StatusIconsConfig, TemperatureConfig, TrayConfig, UtilitiesConfig, VisualiserConfig,
-    WeatherConfig, WorkspacesConfig,
+    WeatherConfig, WindowsConfig, WorkspacesConfig,
 };
 use ui::descriptor::{
     ActionDef, Built, CardDef, Category, ChipDef, Input, ModuleDescriptor, OptionsType, PanelDef,
@@ -731,6 +731,29 @@ pub static MODULES: &[ModuleDescriptor] = &[
                 modules::windowinfo::window_panel,
                 Input::Interactive,
             )),
+            ..Representations::NONE
+        },
+        actions: &[],
+        sources: &[],
+    },
+    // Self-managed and interactive at every size: each entry takes its own press and the strip its own drags.
+    ModuleDescriptor {
+        id: "windows",
+        name: "Windows",
+        icon: "app-window",
+        category: Category::Windows,
+        options: &[OptionsType::of::<WindowsConfig>()],
+        representations: Representations {
+            chip: Some(
+                ChipDef::new(modules::windows::strip, Input::Interactive)
+                    .self_managed()
+                    .elastic(),
+            ),
+            widget: Some(WidgetDef {
+                sizes: EVERY_SIZE,
+                build: modules::windows::strip,
+                input: Input::Interactive,
+            }),
             ..Representations::NONE
         },
         actions: &[],

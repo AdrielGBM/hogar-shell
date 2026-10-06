@@ -207,7 +207,7 @@ fn edge_strip(output: &str, layer: LayerKind, strip: Strip, frozen: RwSignal<boo
     };
     let edit = Edit::new(telar::t!(
         "editor.top.new_bar",
-        edge = top::edge_name(strip.edge)
+        edge = top::edge_name(strip.edge).render()
     ));
     let previewing = edit.clone();
     let (planning, selecting) = (output.to_string(), output.to_string());

@@ -165,7 +165,8 @@ A column that notification, toast and OSD cards are routed into.
 | --- | --- |
 | `anchor` | One of the nine places a stack or a free area can be pinned to. |
 | `offset` | How far the column is moved from where its anchor puts it, in logical pixels. It never goes past the edge of the box it is measured in, and always keeps a quarter of that box's height for its cards. |
-| `width` | How wide a card in this column is, in logical pixels. |
+| `width` | How wide a card in this stack is, in logical pixels. |
+| `flow` | Which way the cards are laid: down a column, or along a row. A column grows from the top or bottom edge its anchor names, a row from the left or right one, and either grows both ways from the middle. Left out, a column. |
 | `output_policy` | Which outputs a stack appears on. |
 | `routes` | Which cards land here. A card goes to the first stack on its output with a route that takes it; a stack with no routes takes what no route on that output takes, the first such stack taking all of it. |
 | `launcher` | Whether the launcher opens here, at this column's anchor and offset, rather than in the middle of the screen. The first stack on an output that says so is the one used. |

@@ -256,7 +256,9 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         list.extend(look::edges(draft)?);
     }
     list.extend(style_backdrop(draft)?);
-    if actions::offered(draft.node.layer, Some(draft.kind())) {
+    if layout::actions::takes_actions(draft.node.layer, Some(&draft.resolved.kind.unwritten()))
+        .is_ok()
+    {
         list.extend(actions::rows(
             draft.actions(),
             Some(|| telar::t!("editor.actions.between")),

@@ -70,6 +70,7 @@ mod tests {
                 anchor: Some(layout::Anchor::TopRight),
                 offset: None,
                 width: Some(380.0),
+                flow: None,
                 output_policy: None,
                 routes: Vec::new(),
                 launcher: None,

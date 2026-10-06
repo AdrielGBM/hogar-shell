@@ -75,7 +75,7 @@ edit. `lock` is refused while the session is locked.
   | Keys | Does |
   | --- | --- |
   | Arrows (and `h` `j` `k` `l` under `[keynav] vim`) | select the nearest thing of the same depth that way |
-  | Home / End | select the first or the last |
+  | Home / End (and `g` / `G` under `[keynav] vim`) | select the first or the last |
   | Alt+Down / Alt+Up | select what is inside / what holds it |
   | Tab / Shift+Tab | next or previous area |
   | Enter | [customize](popovers.md) the selection |
@@ -94,6 +94,7 @@ edit. `lock` is refused while the session is locked.
   | `?` or F1 | list the keys of this mode |
 
   A held key is one undo entry however long the keyboard repeats it, and is previewed until you let go.
+  No tool takes `h`, `j`, `k`, `l`, `g` or `G`, which `[keynav] vim` keeps for moving the selection.
   A focused control — a handle, a quick bar button — answers its own keys first, and the mode's keys get what it leaves.
 - **Copies and stacking order.** Duplicate (Ctrl+D, or the menu) gives every instance it copies an id of its own, and a
   copied komponent use stays a use of that komponent. What there is one of or that tiles its layer is refused with why:
@@ -231,7 +232,7 @@ put it at the end of the zone of the selected chip. See
 ### Overlay
 
 Stacks: Shift+N makes one, dragging pins it to the ninth of the screen you let go over (or Shift+arrows step its anchor), Alt+Shift+arrows
-move it a few pixels off the anchor, Ctrl+arrows change its width. Its popover holds the routes — which cards it takes by
+move it a few pixels off the anchor, Ctrl+arrows change its width. Its popover holds the flow (a column or a row of cards), the routes — which cards it takes by
 kind, app and urgency — and the screens it appears on. A card goes to the first stack on its screen with a route that
 takes it, and a stack with no routes takes whatever nothing else takes, so a critical stack in the middle and a corner for
 the rest are two stacks. `v` shows volume and brightness in a stack, and Shift+O opens the launcher there. `t` (or **Try cards** in a

@@ -10,28 +10,12 @@ mod tests {
     use config::theme::NordTheme;
     use layout::{Area, AreaId, Expr, LayerKind, Layout, OutputMatch, OutputRule};
     use surfaces::rects::{self};
-    use surfaces::transient;
 
     use crate::popover;
-    use crate::rig::{SCREEN, bar, rig_with};
+    use crate::rig::{SCREEN, Scope, bar, rig_with};
 
     const SCREEN_WIDTH: f32 = 1920.0;
     const SCREEN_HEIGHT: f32 = 1080.0;
-
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
-    }
 
     struct Screen {
         tree: ComponentList,

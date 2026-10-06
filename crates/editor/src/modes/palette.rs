@@ -66,7 +66,7 @@ impl Pick {
     pub(crate) fn widget(&self) -> Result<(&str, Representation), EditError> {
         match self {
             Pick::Module(module, Some(size)) => Ok((module, *size)),
-            Pick::Module(module, None) => Err(EditError::refused(telar::t!(
+            Pick::Module(module, None) => Err(EditError::refused(util::message!(
                 "editor.desktop.no_widget",
                 module = module.clone()
             ))),
@@ -317,7 +317,7 @@ fn has_grid(output: &str, layer: LayerKind) -> bool {
 pub(crate) fn open() -> Result<(), EditError> {
     let mode = crate::mode::required()?;
     if mode.layer == LayerKind::Overlay && !has_grid(&mode.output, mode.layer) {
-        return Err(EditError::refused(telar::t!("editor.palette.no_grid")));
+        return Err(EditError::refused(util::message!("editor.palette.no_grid")));
     }
     crate::host::close_transients();
     let (output, layer) = (mode.output.clone(), mode.layer);
@@ -753,7 +753,7 @@ impl Carrying {
 fn carry(edit: &Edit, carrying: &Carrying, point: (f32, f32), layer: LayerKind) {
     let aimed = carrying.aim_at(point);
     let shown = match &aimed {
-        None => Err(EditError::refused(telar::t!("editor.palette.nowhere"))),
+        None => Err(EditError::refused(util::message!("editor.palette.nowhere"))),
         Some((spot, _, _)) => edit
             .transaction()
             .before()
@@ -862,7 +862,7 @@ fn on_cells(
         .map(|(ops, group)| (ops, made(group))),
         Pick::Container => container::on_grid(layout, desktop, layer, area, (Some(at), (0, 0)))
             .map(|(ops, group)| (ops, made(group))),
-        Pick::Plate => Err(EditError::refused(telar::t!(
+        Pick::Plate => Err(EditError::refused(util::message!(
             "editor.palette.plate_off_bar"
         ))),
         Pick::Stack => Err(EditError::nothing()),
@@ -906,7 +906,7 @@ fn on_bar(
         .map(|(ops, group)| (ops, made(group))),
         Pick::Plate => container::in_bar(layout, desktop, layer, &landing.area, landing.zone)
             .map(|(ops, group)| (ops, made(group))),
-        Pick::Container => Err(EditError::refused(telar::t!(
+        Pick::Container => Err(EditError::refused(util::message!(
             "editor.palette.container_on_bar"
         ))),
         Pick::Stack => Err(EditError::nothing()),
@@ -988,7 +988,7 @@ pub(crate) fn put_near(pick: &Pick, layer: LayerKind) -> Result<(), EditError> {
     let mode = crate::mode::required()?;
     let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
     let (area, zone) = container::bar_near(&desktop, layer)
-        .ok_or_else(|| EditError::refused(telar::t!("editor.container.no_bar")))?;
+        .ok_or_else(|| EditError::refused(util::message!("editor.container.no_bar")))?;
     place(
         pick,
         &Spot::Bar(ChipLanding {

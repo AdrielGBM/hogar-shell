@@ -315,7 +315,10 @@ impl<'a> Plan<'a> {
         let tiles = self.tiles(id)?;
         let tile = tile(&tiles, id)?;
         let (kept, taken) = split(tile.rect, cut, at).ok_or_else(|| {
-            EditError::refused(telar::t!("editor.region.too_small", name = id.to_string()))
+            EditError::refused(util::message!(
+                "editor.region.too_small",
+                name = id.to_string()
+            ))
         })?;
         let mut work = self.work();
         let ResolvedAreaKind::WallpaperRegion {
@@ -537,7 +540,7 @@ pub fn tiles_of(resolved: &layout::Resolved, layer: LayerKind) -> Vec<Tile> {
 }
 
 fn no_neighbour(id: &AreaId) -> EditError {
-    EditError::refused(telar::t!(
+    EditError::refused(util::message!(
         "editor.region.no_neighbour",
         name = id.to_string()
     ))

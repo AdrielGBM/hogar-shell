@@ -16,6 +16,7 @@ pub(crate) mod top;
 pub(crate) mod widgets;
 
 pub use desktop::{Adding, added};
+pub use lock::kept as lock_kept;
 pub use palette::offered;
 
 pub(crate) fn install() {

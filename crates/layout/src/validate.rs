@@ -285,14 +285,14 @@ fn check_prompt_style(style: &Style, at: &str, file: &str, theme: &NordTheme, re
     }
     // Only a fill the layout chose is judged: the theme's own surface is what the minimal lock draws too, so refusing it would fall back to the same card.
     if style.fill.is_some() {
-        let card = prompt_backdrop(style, theme);
-        if !scheme::is_readable(theme.text, card) {
+        let ratio = prompt_contrast(style, theme);
+        if !scheme::readable_ratio(ratio) {
             report.error(Finding::new(
                 file,
                 format!("{at}.style.fill"),
                 util::message!(
                     "finding.prompt_contrast",
-                    ratio = format!("{:.1}", theme.text.contrast_ratio(card)),
+                    ratio = format!("{ratio:.1}"),
                     needed = scheme::MIN_TEXT_CONTRAST
                 ),
             ));
@@ -404,6 +404,7 @@ fn check_rule_keys(rule: &toml_edit::Table, at: &str, text: &str, file: &str, re
                 file,
                 report,
             );
+            report_invalid_kind_values(area, &at, text, file, report);
 
             let Some(groups) = area.get("groups").and_then(|it| it.as_array_of_tables()) else {
                 continue;
@@ -424,6 +425,58 @@ fn check_rule_keys(rule: &toml_edit::Table, at: &str, text: &str, file: &str, re
                     report,
                 );
             }
+        }
+    }
+}
+
+/// Reports each key of an area's kind whose value the kind refuses, and the `kind` itself where no kind has that name. The model reads an area's kind through a flattened, optional field, which turns any such refusal into "no kind", so the key and the value are found again here, one key at a time, against the kind's own deserializer.
+fn report_invalid_kind_values(
+    area: &toml_edit::Table,
+    at: &str,
+    text: &str,
+    file: &str,
+    report: &mut Report,
+) {
+    let Some(name) = area.get("kind").and_then(|it| it.as_str()) else {
+        return;
+    };
+    let (_, allowed, _) = keys_in(area, "Area", "AreaKind");
+    let mut refuse = |key: &str, item: &toml_edit::Item, why: &str| {
+        let value = item
+            .clone()
+            .into_value()
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let mut finding = Finding::new(
+            file,
+            format!("{at}.{key}"),
+            util::message!(
+                "finding.invalid_value",
+                key = key,
+                value = value.trim(),
+                holder = Holding::Area.named(name),
+                why = why
+            ),
+        );
+        finding.span = item
+            .span()
+            .map(|bytes| util::report::Span::locate(text, bytes));
+        report.error(finding);
+    };
+    if let Err(error) = toml::from_str::<AreaKind>(&format!("kind = {name:?}")) {
+        refuse("kind", &area["kind"], error.message());
+        return;
+    }
+    for key in allowed {
+        let Some(item) = area.get(key) else {
+            continue;
+        };
+        let Ok(value) = item.clone().into_value() else {
+            continue;
+        };
+        let alone = format!("kind = {name:?}\n{key} = {value}");
+        if let Err(error) = toml::from_str::<AreaKind>(&alone) {
+            refuse(key, item, error.message());
         }
     }
 }
@@ -1153,30 +1206,6 @@ fn check_layer_ids(
                     }
                 }
                 for instance in &group.children {
-                    if instance.id.as_str().contains(KOMPONENT_MARK) {
-                        report.error(Finding::new(
-                            file,
-                            format!(
-                                "{at}.layers.{kind}.areas.{}.groups.{}.children.{}",
-                                area.id, group.id, instance.id
-                            ),
-                            util::message!("finding.komponent_mark", mark = KOMPONENT_MARK),
-                        ));
-                    }
-                    if instance.id.as_str().contains(COPY_MARK) {
-                        report.error(Finding::new(
-                            file,
-                            format!(
-                                "{at}.layers.{kind}.areas.{}.groups.{}.children.{}",
-                                area.id, group.id, instance.id
-                            ),
-                            util::message!(
-                                "finding.copy_mark",
-                                mark = COPY_MARK,
-                                example = format!("{}{COPY_MARK}0", instance.id.template())
-                            ),
-                        ));
-                    }
                     let place = (kind, area.id.clone(), group.id.clone());
                     // A later rule naming the instance where an earlier one placed it refines it; anywhere else it is a second instance under the same id.
                     let elsewhere = *instances
@@ -2263,24 +2292,6 @@ pub fn validate_komponent(
     let mut ids = BTreeSet::new();
     for child in &komponent.children {
         let at = format!("children.{}", child.id);
-        for (mark, message) in [
-            (
-                COPY_MARK,
-                util::message!(
-                    "finding.copy_mark",
-                    mark = COPY_MARK,
-                    example = format!("{}{COPY_MARK}0", child.id.template())
-                ),
-            ),
-            (
-                KOMPONENT_MARK,
-                util::message!("finding.komponent_mark", mark = KOMPONENT_MARK),
-            ),
-        ] {
-            if child.id.as_str().contains(mark) {
-                report.error(Finding::new(&file, at.clone(), message));
-            }
-        }
         if !child.id.is_empty() && !ids.insert(child.id.clone()) {
             report.error(Finding::new(
                 &file,

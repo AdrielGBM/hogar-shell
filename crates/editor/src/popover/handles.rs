@@ -180,9 +180,10 @@ pub struct Four {
     pub most: f32,
 }
 
-/// What a corner or side handle tells whoever drives its edit: every move of a drag with all four values as it leaves them, a drag let go, each arrow pressed on it with all four as the arrow leaves them, and a drag dropped, once it has put back what it moved besides its own value. And the colour it is drawn in, transparent for the theme's accent.
+/// What a corner or side handle tells whoever drives its edit: a drag taking hold, every move of a drag with all four values as it leaves them, a drag let go, each arrow pressed on it with all four as the arrow leaves them, and a drag dropped, once it has put back what it moved besides its own value. And the colour it is drawn in, transparent for the theme's accent.
 #[derive(Clone)]
 pub struct Ends {
+    pub grabbed: Rc<dyn Fn()>,
     pub moved: Rc<dyn Fn([f32; 4])>,
     pub kept: Rc<dyn Fn()>,
     pub stepped: Rc<dyn Fn([f32; 4])>,
@@ -193,6 +194,7 @@ pub struct Ends {
 impl Default for Ends {
     fn default() -> Self {
         Self {
+            grabbed: Rc::new(|| {}),
             moved: Rc::new(|_| {}),
             kept: Rc::new(|| {}),
             stepped: Rc::new(|_| {}),
@@ -246,7 +248,7 @@ fn corners(
                 .iter()
                 .map(|corner| {
                     let clamped = built.value(clamp_name(*corner), || false, |_, _| {});
-                    corner_handle(&built.node, *corner, four, clamped, Ends::default())
+                    corner_handle(&built.node, *corner, four, clamped, gripped(&built))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Box::new(crate::host::passthrough(crate::host::whole(), handles)?) as _)
@@ -256,6 +258,17 @@ fn corners(
         crate::host::whole(),
         vec![Box::new(rebuilt)],
     )?)])
+}
+
+fn gripped(draft: &AreaDraft) -> Ends {
+    let grip = draft.grip();
+    let (holding, keeping, dropping) = (grip.clone(), grip.clone(), grip);
+    Ends {
+        grabbed: Rc::new(move || holding.hold()),
+        kept: Rc::new(move || keeping.release()),
+        dropped: Rc::new(move || dropping.put_back()),
+        ..Ends::default()
+    }
 }
 
 /// One corner's handle over the box `node` is drawn at: a drag rounds all four corners to where it is while they are linked, and only its own when they are not or Alt is held, and one pulled near enough the corner squares it off. Letting go keeps it, and Esc or the other button puts all four back as they were.
@@ -462,12 +475,16 @@ fn four_handle(
             }
         });
     let reading = node.clone();
-    let (to_value, limit, moved) = (geometry.to_value, geometry.limit, ends.moved);
+    let (to_value, limit, moved, grabbed) =
+        (geometry.to_value, geometry.limit, ends.moved, ends.grabbed);
     let to_value = dragging.wrap_to_value(move |x, y| {
-        let mut held = grab.get().unwrap_or_else(|| Grab {
-            prior: values.map(|value| value.peek()),
-            at: (x, y),
-            travelled: false,
+        let mut held = grab.get().unwrap_or_else(|| {
+            grabbed();
+            Grab {
+                prior: values.map(|value| value.peek()),
+                at: (x, y),
+                travelled: false,
+            }
         });
         held.travelled |= (x - held.at.0).hypot(y - held.at.1) >= gesture::THRESHOLD;
         grab.set(Some(held));
@@ -597,7 +614,7 @@ fn thickness(
             Edge::Right => (rect.x + rect.width - thickness, cy),
         }
     });
-    along_or_across(value, to_value, to_point, THICKNESS, across(edge))
+    along_or_across(draft, value, to_value, to_point, THICKNESS, across(edge))
 }
 
 /// On the end of the bar its offset is measured from, dragged along its edge: the whole bar slides.
@@ -628,6 +645,7 @@ fn offset(
         false => draft.screen.0,
     };
     along_or_across(
+        draft,
         value,
         to_value,
         to_point,
@@ -664,6 +682,7 @@ fn length(
         false => draft.screen.0,
     };
     along_or_across(
+        draft,
         value,
         to_value,
         to_point,
@@ -702,7 +721,7 @@ fn gap(
             Edge::Right => (origin - gap, cy),
         }
     });
-    along_or_across(value, to_value, to_point, GAP, across(edge))
+    along_or_across(draft, value, to_value, to_point, GAP, across(edge))
 }
 
 fn across(edge: Edge) -> Cursor {
@@ -720,16 +739,25 @@ fn along(edge: Edge) -> Cursor {
 }
 
 fn along_or_across(
+    draft: &AreaDraft,
     value: RwSignal<f32>,
     to_value: Rc<dyn Fn(f32, f32) -> f32>,
     to_point: Rc<dyn Fn(f32) -> (f32, f32)>,
     range: Range,
     cursor: Cursor,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let grip = draft.grip();
+    let (keeping, dropping) = (grip.clone(), grip.clone());
+    let transaction = Transaction::new(value)
+        .on_commit(move |_, _| keeping.release())
+        .on_revert(move |_| dropping.put_back());
     telar::handle(
         telar::HandleProps::props()
-            .value(value)
-            .to_value(to_value)
+            .transaction(transaction)
+            .to_value(Rc::new(move |x, y| {
+                grip.hold();
+                to_value(x, y)
+            }))
             .to_point(to_point)
             .min(range.min)
             .max(range.max)

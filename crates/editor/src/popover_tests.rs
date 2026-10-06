@@ -28,7 +28,7 @@ mod tests {
     use crate::popover::place::{GAP, card_at};
     use crate::popover::value::{Step, get, path_of, set, unset};
     use crate::popover::{self, Provenance};
-    use crate::rig::{Rig, SCREEN, bar, holding_alt, rig, rig_with};
+    use crate::rig::{Card, Rig, SCREEN, Scope, bar, holding_alt, rig, rig_with};
     use crate::session;
 
     const BAR: Rect = Rect {
@@ -37,21 +37,6 @@ mod tests {
         width: 1920.0,
         height: 34.0,
     };
-
-    /// An owner for what a test builds, disposed when the test ends: left alive, the trees it mounted would still answer the signals they read while the thread's storage is torn down.
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            telar::dispose_owner(self.0.id());
-        }
-    }
 
     /// Where the bar is on screen, as its window would register it once built.
     fn place_bar() {
@@ -215,6 +200,81 @@ mod tests {
         route(&mut tree, &key(NamedKey::Escape));
         assert_eq!(popover::current(), None);
         route(&mut tree, &release(start));
+    }
+
+    #[test]
+    fn a_corner_drag_cancelled_with_esc_leaves_the_corners_unwritten() {
+        let rig = rig("popover-corner-cancelled");
+        let _scope = Scope::new();
+        place_bar();
+        let before = crate::rig::stored(&rig);
+        popover::open_area(bar()).expect("the bar's popover opens");
+        let mut tree = laid();
+        let start = Corner::TopRight.point(BAR, corner(Corner::TopRight).peek().max(NEAREST));
+
+        route(&mut tree, &press(start));
+        route(&mut tree, &to((start.0 - 5.0, start.1 + 5.0)));
+        assert_ne!(session::draft().peek(), before, "the drag previews");
+        route(&mut tree, &key(NamedKey::Escape));
+        route(&mut tree, &release(start));
+        transient::close(popover::ID);
+
+        assert_eq!(crate::rig::stored(&rig), before);
+        assert_eq!(rig.undo_label(), None, "nothing is recorded");
+    }
+
+    /// A press on a handle that never travels is a click, not a drag: it writes nothing, whichever handle it is.
+    #[test]
+    fn a_press_on_a_handle_without_travel_writes_nothing() {
+        let rig = rig("popover-press-without-travel");
+        let _scope = Scope::new();
+        place_bar();
+        let before = crate::rig::stored(&rig);
+        for name in ["corner", "length", "thickness", "offset", "gap"] {
+            popover::open_area(bar()).expect("the bar's popover opens");
+            let mut tree = laid();
+            let at = match name {
+                "corner" => {
+                    let radii = CORNERS.map(|at| corner(at).peek());
+                    handle_point(BAR, Corner::TopRight, radii, NEAREST)
+                }
+                "length" => (BAR.width, BAR.height / 2.0),
+                "thickness" => (BAR.width / 2.0, BAR.height),
+                "offset" => (0.0, BAR.height / 2.0),
+                _ => (BAR.width / 2.0, 0.0),
+            };
+            let at = (at.0 - 2.0, at.1 + 2.0);
+            route(&mut tree, &press(at));
+            route(&mut tree, &release(at));
+            transient::close(popover::ID);
+            assert!(
+                crate::rig::stored(&rig) == before,
+                "the {name} handle wrote"
+            );
+            assert_eq!(rig.undo_label(), None, "the {name} handle recorded");
+        }
+    }
+
+    /// Dragging the length handle turns the bar's fill off; cancelling the drag puts both back.
+    #[test]
+    fn a_length_drag_cancelled_with_esc_leaves_the_bar_filling_its_edge() {
+        let rig = rig("popover-length-cancelled");
+        let _scope = Scope::new();
+        place_bar();
+        let before = crate::rig::stored(&rig);
+        popover::open_area(bar()).expect("the bar's popover opens");
+        let mut tree = laid();
+        let start = (BAR.width, BAR.height / 2.0);
+
+        route(&mut tree, &press(start));
+        route(&mut tree, &to((start.0 - 400.0, start.1)));
+        assert_ne!(session::draft().peek(), before, "the drag previews");
+        route(&mut tree, &key(NamedKey::Escape));
+        route(&mut tree, &release(start));
+        transient::close(popover::ID);
+
+        assert_eq!(crate::rig::stored(&rig), before);
+        assert_eq!(rig.undo_label(), None, "nothing is recorded");
     }
 
     /// F-7: a click outside keeps what the popover changed as one entry in the history, and undoing it puts the bar back.
@@ -437,44 +497,13 @@ mod tests {
         texts(tree).iter().any(|(text, _)| text == wanted)
     }
 
-    /// The open popover's tree with the node it is laid out from, laid out again after every event as its window lays it out.
-    struct Card {
-        tree: ComponentList,
-        node: telar::NodeId,
-    }
-
-    impl Card {
-        fn open() -> Self {
-            let item = popover::tree()
-                .expect("a popover is open")
-                .expect("its tree builds");
-            let page = LayoutStyle::new().width(1920.0).height(1080.0);
-            let root = Container::new(page, vec![item]).expect("a page");
-            let node = root.layout_node();
-            let card = Self {
-                tree: ComponentList::new(root),
-                node,
-            };
-            card.lay_out();
-            card
-        }
-
-        fn lay_out(&self) {
-            crate::rig::lay_out(self.node, (1920.0, 1080.0));
-        }
-
-        fn route(&mut self, event: &Event) {
-            route(&mut self.tree, event);
-            self.lay_out();
-        }
-    }
-
     /// Turns the wheel over the card until `wanted` is among the rows it shows, then clicks the first `pressed` drawn below it.
     fn press_below(card: &mut Card, wanted: &str, pressed: &str) {
         let frame = crate::rig::card_of(&card.tree);
         let over = (frame.x + frame.width / 2.0, frame.y + frame.height / 2.0);
         for _ in 0..80 {
-            let row = texts(&card.tree)
+            let row = card
+                .texts()
                 .into_iter()
                 .find(|(text, _)| text == wanted)
                 .map(|(_, rect)| rect)
@@ -484,7 +513,7 @@ mod tests {
             };
             card.route(&crate::rig::wheel_at(over, pixels));
         }
-        let found = texts(&card.tree);
+        let found = card.texts();
         let above = found
             .iter()
             .find(|(text, _)| text == wanted)
@@ -592,7 +621,7 @@ mod tests {
         let draft = popover::area_draft().expect("an area's popover");
         assert_eq!(draft.provenance(&["style.fill"]), Provenance::Here);
         assert!(draft.writes(&["style.fill"]));
-        assert!(shows(&card.tree, "Set here"));
+        assert!(card.shows("Set here"));
 
         press_below(&mut card, "Fill", "Reset");
         let fill = popover::shared::<String>("style.fill").expect("the fill row");
@@ -917,7 +946,7 @@ mod tests {
         let mut card = Card::open();
         let line = format!("From outputs.* in {}", rule(&rig, "*", None).file());
         let said = |card: &Card| {
-            texts(&card.tree)
+            card.texts()
                 .iter()
                 .filter(|(text, _)| *text == line)
                 .count()

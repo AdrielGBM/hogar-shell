@@ -1,22 +1,16 @@
 #[cfg(test)]
 mod tests {
 
-    use telar::{
-        ComponentList, Container, DrawCommand, Key, LayoutItem, LayoutStyle, ModifiersState,
-        NamedKey, NodeId, Rect,
-    };
+    use telar::{Key, ModifiersState, NamedKey};
 
     use config::Config;
     use layout::{AreaId, LayerKind};
-    use surfaces::menu::Pointed;
     use surfaces::{reconcile, transient};
 
     use crate::mode::{self};
     use crate::modes::lock as lock_mode;
-    use crate::rig::{SCREEN, enter, rig, rig_with, tap};
+    use crate::rig::{Card, SCREEN, enter, rig, rig_with, stored, tap};
     use crate::theme::{self, Controls, Look};
-
-    const SIZE: (f32, f32) = (1920.0, 1080.0);
 
     const NONE: ModifiersState = ModifiersState {
         is_shift: false,
@@ -25,15 +19,22 @@ mod tests {
         is_meta: false,
     };
 
+    static RUNNING_FILE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct Owner {
         _scope: telar::OwnerGuard,
+        _file: std::sync::MutexGuard<'static, ()>,
     }
 
     impl Owner {
         fn new() -> Self {
+            let file = RUNNING_FILE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             theme::pending().set(None);
             Self {
                 _scope: telar::owner_scope(),
+                _file: file,
             }
         }
     }
@@ -47,71 +48,15 @@ mod tests {
         }
     }
 
-    /// The popover as the transient draws it, laid out over the screen, the pointer followed as its window follows it.
-    struct Card {
-        tree: ComponentList,
-        root: NodeId,
-        controls: Controls,
-    }
-
-    impl Card {
-        fn open() -> Self {
-            theme::open().expect("it opens in a mode");
-            assert!(transient::is_open(theme::ID));
-            let config = Config::default();
-            let start = Look::of(&config);
-            let controls = Controls::of(&start, &config);
-            let card = theme::card(SCREEN, &start, controls).expect("the card builds");
-            let page = Container::new(LayoutStyle::new().width(SIZE.0).height(SIZE.1), vec![card])
-                .expect("a screen");
-            let root = page.layout_node();
-            Self {
-                tree: ComponentList::new(Pointed::new(Box::new(page))),
-                root,
-                controls,
-            }
-        }
-
-        fn settle(&self) {
-            crate::rig::lay_out(self.root, (SIZE.0, SIZE.1));
-        }
-
-        fn texts(&self) -> Vec<(String, Rect)> {
-            self.settle();
-            let mut found = Vec::new();
-            telar::for_each_with_matrix(&self.tree.commands(), |command, [a, b, c, d, e, f]| {
-                if let DrawCommand::Text { text, rect, .. } = command {
-                    let at = Rect::new(
-                        a * rect.x + c * rect.y + e,
-                        b * rect.x + d * rect.y + f,
-                        rect.width,
-                        rect.height,
-                    );
-                    found.push((text.to_string(), at));
-                }
-            });
-            found
-        }
-
-        fn said(&self) -> Vec<String> {
-            self.texts().into_iter().map(|(text, _)| text).collect()
-        }
-
-        fn press(&mut self, wanted: &str) {
-            let rect = self
-                .texts()
-                .into_iter()
-                .find(|(text, _)| text == wanted)
-                .map(|(_, rect)| rect)
-                .unwrap_or_else(|| panic!("{wanted:?} is drawn: {:?}", self.said()));
-            let at = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
-            for event in crate::rig::move_and_click(at) {
-                if !telar::dispatch_overlays(&event) {
-                    self.tree.on_event(&event);
-                }
-                self.settle();
-            }
-        }
+    /// The popover as the transient draws it, with the controls it was built with.
+    fn opened() -> (Card, Controls) {
+        theme::open().expect("it opens in a mode");
+        assert!(transient::is_open(theme::ID));
+        let config = Config::default();
+        let start = Look::of(&config);
+        let controls = Controls::of(&start, &config);
+        let card = theme::card(SCREEN, &start, controls).expect("the card builds");
+        (Card::of(card), controls)
     }
 
     fn shown_radius() -> f32 {
@@ -151,16 +96,16 @@ mod tests {
         let before = running_file();
         let _host = enter(LayerKind::Top);
         let was = shown_radius();
-        let card = Card::open();
+        let (_card, controls) = opened();
 
-        card.controls.radius.set(was + 7.0);
+        controls.radius.set(was + 7.0);
         assert_eq!(shown_radius(), was + 7.0);
         assert_eq!(
             theme::pending().peek().and_then(|look| look.radius),
             Some((was + 7.0) as u32)
         );
-        card.controls.opacity.set(0.6);
-        card.controls.font.set(1.2);
+        controls.opacity.set(0.6);
+        controls.font.set(1.2);
         let shown = reconcile::desktop_now(Some(SCREEN))
             .expect("the screen is drawn")
             .config;
@@ -182,9 +127,9 @@ mod tests {
         let _host = enter(LayerKind::Top);
         let was = shown_radius();
 
-        let card = Card::open();
-        card.controls.radius.set(was + 5.0);
-        card.controls.name.set("rose-pine".to_string());
+        let (_card, controls) = opened();
+        controls.radius.set(was + 5.0);
+        controls.name.set("rose-pine".to_string());
         assert_eq!(shown_radius(), was + 5.0);
         assert!(tap(Key::Named(NamedKey::Escape), NONE));
         assert!(!transient::is_open(theme::ID));
@@ -201,10 +146,10 @@ mod tests {
         );
         assert_eq!(running_file(), before);
 
-        let mut card = Card::open();
-        card.controls.radius.set(was + 3.0);
+        let (mut card, controls) = opened();
+        controls.radius.set(was + 3.0);
         assert_eq!(shown_radius(), was + 3.0);
-        card.press("Cancel (Esc)");
+        card.click_on("Cancel (Esc)");
         assert!(!transient::is_open(theme::ID));
         assert_eq!(theme::pending().peek(), None);
         assert_eq!(shown_radius(), was);
@@ -271,12 +216,53 @@ mod tests {
         assert!(lock_mode::falls_back_with(&config, &dawn.on(&config)).is_some());
 
         let _host = enter(LayerKind::Top);
-        let card = Card::open();
+        let (card, controls) = opened();
         let warned = |said: Vec<String>| said.iter().any(|line| line.contains("would fall back"));
         assert!(!warned(card.said()), "{:?}", card.said());
-        card.controls.name.set("rose-pine-dawn".to_string());
+        controls.name.set("rose-pine-dawn".to_string());
         assert!(warned(card.said()), "{:?}", card.said());
-        card.controls.name.set("nord".to_string());
+        controls.name.set("nord".to_string());
         assert!(!warned(card.said()), "{:?}", card.said());
+    }
+
+    struct Restore(std::path::PathBuf, Option<String>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            match &self.1 {
+                Some(kept) => {
+                    let _ = std::fs::write(&self.0, kept);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&self.0);
+                }
+            }
+        }
+    }
+
+    /// Done keeps what the popover chose: it is written into the config, nothing of it enters the layout's undo history, and the layout itself is as it was.
+    #[test]
+    fn done_writes_the_theme_and_the_layouts_history_is_untouched() {
+        let rig = rig("theme-done");
+        let _owner = Owner::new();
+        let _restore = Restore(Config::default_path(), running_file());
+        let _host = enter(LayerKind::Top);
+        let layout = stored(&rig);
+        let was = shown_radius();
+
+        let (mut card, controls) = opened();
+        controls.radius.set(was + 6.0);
+        card.click_on("Done");
+
+        assert!(!transient::is_open(theme::ID));
+        let kept = Config::load(&Config::default_path()).expect("the config is written");
+        assert_eq!(kept.theme.radius, Some((was + 6.0) as u32));
+        assert_eq!(
+            rig.undo_label(),
+            None,
+            "the theme is outside the undo history"
+        );
+        assert_eq!(stored(&rig), layout);
+        assert!(mode::current().is_some(), "and the mode stays up");
     }
 }

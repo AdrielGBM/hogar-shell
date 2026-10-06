@@ -4,9 +4,12 @@
 
 use std::sync::Arc;
 
-use platform_wayland::{EventSender, Interest, ManagedToplevel, ManagedToplevelId};
+use platform_wayland::{
+    EventSender, Interest, ManagedToplevel, ManagedToplevelId, SurfaceRef, ToplevelArea,
+};
 
 use util::broadcast::{Broadcast, Service};
+use util::deps::{self, Dep, Presence};
 
 static WINDOWS: Service<Vec<ManagedToplevel>> = Service::new("hogar-shell-windows", run);
 
@@ -46,4 +49,25 @@ pub fn focus(id: ManagedToplevelId) -> bool {
 /// Asks a window to close — the same request its own close button makes, so an application with unsaved work gets to put up its dialog rather than losing it.
 pub fn close(id: ManagedToplevelId) -> bool {
     platform_wayland::close_toplevel(id)
+}
+
+/// Raises and focuses a window, bringing it back first when it is minimised: not every compositor restores a minimised window it is asked to focus.
+pub fn activate(window: &ManagedToplevel) -> bool {
+    if window.minimized {
+        platform_wayland::set_toplevel_minimized(window.id, false);
+    }
+    platform_wayland::focus_toplevel(window.id)
+}
+
+pub fn set_rectangle(
+    id: ManagedToplevelId,
+    surface: &SurfaceRef,
+    area: Option<ToplevelArea>,
+) -> bool {
+    platform_wayland::set_toplevel_rectangle(id, surface, area)
+}
+
+/// Sends once whether the compositor is known not to implement the protocol. A compositor that cannot be asked counts as one that does: nothing is wrong that the user could fix.
+pub fn subscribe_unsupported(tx: EventSender<bool>) {
+    tx.send(deps::probe(Dep::ToplevelManagement) == Presence::Absent);
 }

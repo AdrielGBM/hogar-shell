@@ -4,19 +4,16 @@ use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 use telar::{
-    AlignItems, Border, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
-    ReactiveList, ReadSignal, Rect, RectStyle, RwSignal, SizeDimension, StyledContainer, Text,
-    box_item, detached, signal, use_theme,
+    AlignItems, JustifyContent, LayoutStyle, ReactiveList, ReadSignal, Rect, RectStyle, RwSignal,
+    StyledContainer, detached, signal,
 };
 
 use config::Config;
-use config::theme::{FontRole, NordTheme};
-use layout::{Anchor, CardKind, RoutedCard, Urgency};
-use ui::chrome::{card_gap, content_radius, panel_fill};
+use layout::{Anchor, CardKind, RoutedCard, StackFlow, Urgency};
+use ui::chrome::card_gap;
 use ui::descriptor::Built;
-use ui::scale::space;
 
-use crate::pinned::{self, Side};
+use crate::pinned;
 
 /// How long the real card `sample` stands for stays up under `config`: whatever the column holds goes after `[stack] timeout_ms`, but a critical notification under `[notifications] critical_sticky` waits to be dealt with, up to `critical_max_secs` (`None`, for as long as the mode is up, where that is `0`).
 pub fn lifetime(sample: &Sample, config: &Config) -> Option<Duration> {
@@ -186,21 +183,21 @@ pub fn clear() {
     });
 }
 
-/// A stack's column of samples, laid out where `place` says the column is — its box and the anchor it is pinned to, read again whenever they change — with what `shown` lists in it, in that order, each sample drawn by `draw`. It paints nothing of its own and takes nothing from the pointer.
-pub fn column(
+/// A stack's lane of samples, laid out as `flow` says where `place` says the stack is — its lane and the anchor it is pinned to, read again whenever they change — with what `shown` lists in it, in that order, each sample drawn by `draw` and the launcher by `draw_launcher`. It paints nothing of its own and takes nothing from the pointer.
+pub fn lane(
     shown: impl Fn() -> Vec<Shown> + 'static,
     place: impl Fn() -> Option<(Rect, Anchor)> + 'static,
+    flow: StackFlow,
     draw: impl Fn(&Sample) -> Built + 'static,
+    draw_launcher: impl Fn(&Launcher) -> Built + 'static,
 ) -> Built {
-    let theme = use_theme::<NordTheme>();
-    let radius = content_radius();
     let list = ReactiveList::with_style(
-        LayoutStyle::new().flex_column().gap(card_gap()),
+        pinned::flowing(LayoutStyle::new(), flow).gap(card_gap()),
         shown,
         Shown::key,
         move |item: Shown| match item {
             Shown::Card(sample) => draw(&sample),
-            Shown::Launcher(launcher) => launcher_card(&launcher, theme, radius),
+            Shown::Launcher(launcher) => draw_launcher(&launcher),
         },
     )?;
     Ok(Box::new(
@@ -210,18 +207,9 @@ pub fn column(
             vec![Box::new(list)],
         )?
         .input_transparent()
-        .styled_by(move || {
-            let Some((column, anchor)) = place() else {
-                return LayoutStyle::new().absolute().width(0.0).height(0.0);
-            };
-            let justify = match pinned::sides(anchor).1 {
-                Side::Start => JustifyContent::START,
-                Side::Middle => JustifyContent::CENTER,
-                Side::End => JustifyContent::END,
-            };
-            crate::area::at(column)
-                .flex_column()
-                .justify_content(justify)
+        .styled_by(move || match place() {
+            Some((lane, anchor)) => pinned::lane_style(crate::area::at(lane), anchor, flow),
+            None => LayoutStyle::new().absolute().width(0.0).height(0.0),
         }),
     ))
 }
@@ -230,13 +218,13 @@ pub fn column(
 pub fn centred_launcher(
     launcher: Launcher,
     bounds: impl Fn() -> Rect + 'static,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let theme = use_theme::<NordTheme>();
+    draw_launcher: impl Fn(&Launcher) -> Built,
+) -> Built {
     Ok(Box::new(
         StyledContainer::new(
             LayoutStyle::new(),
             |_| RectStyle::default(),
-            vec![launcher_card(&launcher, theme, content_radius())?],
+            vec![draw_launcher(&launcher)?],
         )?
         .input_transparent()
         .styled_by(move || {
@@ -245,74 +233,5 @@ pub fn centred_launcher(
                 .justify_content(JustifyContent::CENTER)
                 .align_items(AlignItems::CENTER)
         }),
-    ))
-}
-
-fn text(
-    said: String,
-    theme: NordTheme,
-    role: FontRole,
-    tint: fn(&NordTheme) -> telar::Color,
-    weight: u16,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    Ok(box_item(Text::new(
-        move || said.clone(),
-        LayoutStyle::new(),
-        move || {
-            theme
-                .text_style(role, tint(&theme))
-                .with_font_weight(weight)
-                .with_clamp(2, true)
-        },
-    )?))
-}
-
-fn launcher_card(
-    launcher: &Launcher,
-    theme: NordTheme,
-    radius: f32,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let search = StyledContainer::new(
-        LayoutStyle::new()
-            .padding_all(space::lg())
-            .width(SizeDimension::Percent(1.0)),
-        move |_| RectStyle::filled(theme.overlay, radius),
-        vec![text(
-            launcher.search.clone(),
-            theme,
-            FontRole::Body,
-            |theme| theme.subtle,
-            400,
-        )?],
-    )?;
-    let mut rows: Vec<Box<dyn LayoutItem>> = vec![Box::new(search)];
-    for app in &launcher.apps {
-        rows.push(text(
-            app.clone(),
-            theme,
-            FontRole::Body,
-            |theme| theme.text,
-            400,
-        )?);
-    }
-    Ok(Box::new(
-        Container::new(
-            LayoutStyle::new()
-                .flex_column()
-                .gap(space::sm())
-                .padding_all(space::xl())
-                .width(SizeDimension::Percent(1.0)),
-            rows,
-        )
-        .and_then(|inner| {
-            StyledContainer::new(
-                LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-                move |_| {
-                    RectStyle::filled(panel_fill(), radius)
-                        .with_border(Border::uniform(theme.highlight_med, 1.0))
-                },
-                vec![Box::new(inner)],
-            )
-        })?,
     ))
 }

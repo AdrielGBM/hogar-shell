@@ -1168,13 +1168,19 @@ fn arranged(
         }
         // A stack is the one child of the box its placement gives the group, so it is packed where the group would be: a dock's end zone packs it to the end instead of it stretching across the run.
         None => match group.is_pages() {
-            true => vec![ChildSlot::stat(smart_stack(
-                key,
-                &group.children,
-                LayoutStyle::new().flex_column(),
-                surround,
-                move |instance, surround| build(instance, surround),
-            )?)],
+            true => {
+                let stack = ChildSlot::stat(smart_stack(
+                    key,
+                    &group.children,
+                    LayoutStyle::new().flex_column(),
+                    surround,
+                    move |instance, surround| build(instance, surround),
+                )?);
+                match group.children.is_empty() {
+                    true => vec![stack, empty_hint_slot(surround, || true)],
+                    false => vec![stack],
+                }
+            }
             false => group
                 .children
                 .iter()
@@ -1200,10 +1206,8 @@ fn arranged(
     Ok(node)
 }
 
-/// What a group paints behind its children: a container its plate always, and any other group one only where its style asks for one.
 fn plate_of(group: &ResolvedGroup, theme: NordTheme) -> Option<Look> {
-    (container::arranges(group) || !group.style.is_empty())
-        .then(|| Look::plate(&group.style, &theme, false))
+    look::draws_plate(group, false).then(|| Look::plate(&group.style, &theme, false))
 }
 
 /// A group's own box around `slots`, painted as `plate` says, kept in step with `follows`.
@@ -1642,21 +1646,7 @@ fn contained(
         },
         0.0,
     );
-    let (output, layer, theme) = (
-        surround.output.map(str::to_string),
-        surround.layer,
-        surround.theme,
-    );
-    let hint = telar::fragment(
-        move || {
-            let shown =
-                shares.with(Vec::is_empty) && expressions::is_edited(output.as_deref(), layer);
-            shown.then_some(()).into_iter().collect()
-        },
-        |_: &()| (),
-        move |()| empty_hint(theme),
-        0.0,
-    );
+    let hint = empty_hint_slot(surround, move || shares.with(Vec::is_empty));
     let follows = move || held.with(|now| on_cells(now, gap));
     let node = group_box(
         on_cells(group, gap),
@@ -1666,6 +1656,24 @@ fn contained(
     )?;
     rects::track(at.group(&group.id), node.layout_node());
     Ok(node)
+}
+
+/// The hint a group draws over its box while `empty` holds and its layer's edit mode is up.
+fn empty_hint_slot(surround: Surround, empty: impl Fn() -> bool + 'static) -> ChildSlot {
+    let (output, layer, theme) = (
+        surround.output.map(str::to_string),
+        surround.layer,
+        surround.theme,
+    );
+    telar::fragment(
+        move || {
+            let shown = empty() && expressions::is_edited(output.as_deref(), layer);
+            shown.then_some(()).into_iter().collect()
+        },
+        |_: &()| (),
+        move |()| empty_hint(theme),
+        0.0,
+    )
 }
 
 fn empty_hint(theme: NordTheme) -> Built {

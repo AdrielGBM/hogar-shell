@@ -62,10 +62,15 @@ hogar-shell layout use <name>                  # draw this layout from now on
 hogar-shell layout add <module> <area> [group] # place a module in an area of the layout being drawn
 hogar-shell layout remove <id>                 # take a placed module, or a whole area, out
 hogar-shell layout move <id> <group> [index]   # put a placed module in another group, or elsewhere in its own
-hogar-shell layout set <instance|area|area.group> <key> <value...> # change one property of a placed module, an area's visible, or a group's repeat or parameters.<name>
+hogar-shell layout set <instance|area|area.group> <key> <value...> # change one property: the keys are below
+hogar-shell layout duplicate <id|area.group>   # copy a placed module, a group or an area beside itself
+hogar-shell layout order <id> <up|down|front|back> # draw an area, or a child of a free group, over or under the others
+hogar-shell layout panel <instance> [--along]  # give a placed module a panel of its own, beside it or along its bar
+hogar-shell layout rename <id|area.group> <new> # give a module, an area or a group another id, everywhere the layout names it
 hogar-shell layout reset <id|layer|all>        # put a part back to what the layout it extends says, or the built-in one
-hogar-shell layout undo                        # take back the last edit, whatever made it
-hogar-shell layout redo                        # make the edit that was last taken back again
+hogar-shell layout undo [n]                    # take back the last edit, or the last n, whatever made them
+hogar-shell layout redo [n]                    # make the last edit taken back again, or the last n
+hogar-shell layout history                     # every edit undo and redo walk through
 hogar-shell layout edit <layer|off> [output]   # edit one layer on one screen, or stop
 hogar-shell layout export <bundle-path> [name] # write a layout and what it needs to a new directory
 hogar-shell layout import <bundle-path>        # add a bundle's layouts, komponents and pictures; waits up to 60 s and prints the outcome
@@ -75,20 +80,54 @@ hogar-shell layout trust --dialog              # open the dialog that answers fo
 
 `list`, `show`, `check` and `export` read the files and answer in your terminal, so they work when the shell will not start. `show` and `check` with no name mean the built-in layout, not the one being drawn. Every other verb is answered by the running shell.
 
-What `layout set` takes as its key:
+What `layout set` takes as its key. The first word names a placed module, an area or a group (`<area>.<group>`, or
+the group's own id where only one area has it); an id that several of them share names the first, in that order,
+that takes the key:
 
 | Of | Key | Sets |
 | --- | --- | --- |
 | an instance | `module`, `representation` | what it shows and how big it is drawn |
 | an instance | `options.<key>` | one option, the value read as TOML where it parses as TOML and as text otherwise (`options.show_date true`) |
 | an instance | `bindings.<key>` | an [expression](../features/customization/data-and-rules.md#bindings) that drives an option, or `accent` |
-| an instance | `actions.<gesture>` | a chain of command lines separated by `;` (`actions.press "panel toggle battery; var set seen true"`); `press`, `long_press`, `scroll_up`, `scroll_down`, `middle` or `secondary` |
+| an instance or an area | `actions.<gesture>` | a chain of command lines separated by `;` (`actions.press "panel toggle battery; var set seen true"`); `press`, `long_press`, `scroll_up`, `scroll_down`, `middle` or `secondary` |
+| an instance | `weight`, `cell`, `cell.<key>`, `rect`, `rect.<key>` | where it sits in a `row` or `column`, `grid` or `free` group (`cell.col 2`, `cell {col = 0, row = 1, col_span = 2}`, `rect.x 0.5`) |
 | an instance | `unset bindings.<key>` | takes back a binding a broader level wrote |
+| an instance, an area or a group | `style.<key>` | its look: `style.fill`, `style.radius`, `style.opacity`, `style.padding`, `style.border.width`, `style.border.color`, `style.shadow`, and on an area `style.backdrop` (`style.radius [8, 8, 0, 0]`); a bar's `style.radius` is written as its `shape.radius`, as the editor writes it |
 | an area | `visible`, `unset visible` | the expression that decides whether it is drawn |
-| a group (`<area>.<group>`) | `repeat`, `unset repeat` | the list its children are drawn once per item of |
+| an area | any key of its kind (`thickness`, `shape.gap`, `flow`, `offset`, `rect.x`, `owner`, `cols`, …) | its geometry, as the [layout file](../reference/layout.md) names it for that kind: a bar's edge and shape, a stack's flow and routes, a panel's owner and cells; an area only a layout it extends writes gets an entry naming its kind and that key alone |
+| an area | `reserve`, `above_fullscreen`, `within` | whether it keeps windows off its edge, whether it stays over a fullscreen window, and which box it is measured in |
+| a group | `arrange`, `cols`, `rows`, `gap` | how it lays its children out: `column`, `row`, `grid`, `free` or `pages`, and a `grid` group's tracks |
+| a group | `col`, `row`, `col_span`, `row_span`, `zone` | where it sits: its cells on a grid or a panel, or its zone on a bar |
+| a group | `unset arrange` | takes back an arrangement a broader level wrote, with its `cols`, `rows` and `gap`, so the group is a loose run again |
+| a group | `repeat`, `unset repeat` | the list its children are drawn once per item of |
 | a group | `parameters.<name>`, `unset parameters.<name>` | what a [komponent](../features/customization/bundles.md#komponents) parameter reads |
 
-An expression is checked the way the editor checks it, so a typo is refused with a caret under it rather than written. An action line has to be a command the shell has, and the lock layer takes none.
+An expression is checked the way the editor checks it, so a typo is refused with a caret under it rather than written.
+Any other value is refused where `layout check` would report it at that key — a colour that is neither `#rrggbb`,
+`#rrggbbaa` nor a theme token, a `weight` in a group that is not a `row` or a `column`, an arrangement a bar's zone
+does not take — and so is anything that would make a locked screen fall back to the minimal lock, as the lock's edit mode refuses it. An
+action is checked as the editor's Actions rows check it, in the same order: the lock layer and the pictures behind
+the desktop take none, the gesture has to be one of those above, and each line has to be a command the shell has
+and never `layout trust`. A colour is written lowercased, as the editor's colour rows write it.
+`unset` is written where it takes back what every screen draws; where a level it cannot be laid over still writes
+the key, it is refused naming that level.
+
+`duplicate`, `order` and `panel` do what the edit modes' Duplicate, Order and Panel do, on the focused screen
+where it draws the id and on the first screen that does otherwise. `duplicate` takes an instance, a group as
+`<area>.<group>` or an area, and answers with the copy's id. `order` moves a free area, a texture or a card stack
+over or under the others of its layer, or a child of a `free` group over or under its siblings: `up` and `down` a
+step, `front` and `back` all the way. `panel` gives an instance a panel of its own, opened beside it, or along the
+whole bar it is in with `--along`; `panel toggle`, `panel open` and `panel close` take the instance's id to reach it.
+
+`layout history` prints one line per entry: how many steps away it is — below 0 back, 0 where the layout is now,
+above 0 forward — then a tab and what the edit was. `layout undo 3` and `layout redo 3` walk that many at once, and
+are refused when the history holds fewer. A walk refused part way says which steps it took before it stopped,
+and why.
+
+`layout rename` rewrites every level of the layout that names the id, and what names it by id — a panel's owner, a
+komponent child — with it. It never rewrites a line that runs a command, so a `[[rules]]` command, an action or a
+layout extending this one that names the old id keeps it, and the rename is refused with each of them listed; an
+id the layout it extends names too is refused as well, since it is that layout's to rename.
 
 The komponents have a target of their own:
 
@@ -104,7 +143,7 @@ hogar-shell komponent detach <area.group>                    # turn a use back i
 `save` and `detach` refuse to copy a command, address or line that came with an imported bundle and that you have not accepted into a file of your own,
 and say which `layout trust` line accepts it.
 
-Every edit — `add`, `remove`, `move`, `set`, `reset` — is one transaction, so `layout undo` takes back one
+Every edit — `add`, `remove`, `move`, `set`, `duplicate`, `order`, `panel`, `rename`, `reset` — is one transaction, so `layout undo` takes back one
 command whatever else made the edit before it: a gesture, a popover, or another line of a script.
 
 `layout edit` is not an edit itself: it opens the edit mode of one layer — `background`, `desktop`, `top`,

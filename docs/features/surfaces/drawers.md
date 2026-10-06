@@ -33,7 +33,10 @@ layout gives such a chip opens on the same side by the same rule, so the two nev
 Opened with no chip in hand — `hogar-shell panel toggle`, a keybind — there is nothing to follow, and the drawer
 falls back to the module's first chip on the focused screen, else its first anywhere, else the middle of the
 screen. `hogar-shell panel toggle <instance>` names a chip, and opens off that one. An auto-hidden bar stays out
-while a drawer of one of its chips is open.
+while a drawer, or a layout panel, opened from one of its chips is open.
+
+A drawer opened from a chip inside another panel is that panel's child, not the next drawer in turn: the panel stays
+open under it, and Esc or a press outside closes the child first. See [Panels](panels.md#what-closes-one).
 
 ## Where it lives
 

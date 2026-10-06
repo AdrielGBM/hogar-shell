@@ -6,14 +6,17 @@
 //!
 //! **What a verb refuses is as much the point as what it does.** A module nothing answers to, a representation it cannot be drawn as, an area that holds no instances, a control placed on the lock layer: each is a message naming what there is instead of an edit that draws a placeholder the user then has to find.
 
+mod keys;
+mod verbs;
+
 use std::collections::BTreeSet;
 
 use layout::ops::{areas_at, placement_of, site_of_area, sites};
 use layout::reset::Target as Aim;
 use layout::{
-    Action, Area, AreaId, AreaKind, BUILT_IN, Catalogue, Expr, Group, GroupId, GroupKind, Instance,
+    Area, AreaId, AreaKind, BUILT_IN, Catalogue, Expr, Group, GroupId, GroupKind, Instance,
     InstanceId, LayerKind, Layout, LayoutId, LayoutOp, LayoutStore, Library, NOMINAL_OUTPUT,
-    Representation, Site, Spot, Trigger,
+    Representation, Site, Spot,
 };
 
 use super::args::{Args, arg};
@@ -51,15 +54,21 @@ pub(crate) const LAYOUT: Target = Target {
         },
         Command {
             name: "undo",
-            args: "",
-            help: "take back the last edit, whatever made it",
-            run: |_| undo(),
+            args: "[n]",
+            help: "take back the last edit, or the last n, whatever made them",
+            run: verbs::undo,
         },
         Command {
             name: "redo",
+            args: "[n]",
+            help: "make the edit that was last taken back again, or the last n",
+            run: verbs::redo,
+        },
+        Command {
+            name: "history",
             args: "",
-            help: "make the edit that was last taken back again",
-            run: |_| redo(),
+            help: "every edit undo and redo walk through, one per line after how many steps away it is: below 0 back, 0 where the layout is now, above 0 forward",
+            run: verbs::history,
         },
         Command {
             name: "add",
@@ -82,8 +91,32 @@ pub(crate) const LAYOUT: Target = Target {
         Command {
             name: "set",
             args: "<instance|area|area.group> <key> <value...>",
-            help: "change one property of a placed module, an area's visible, or a group's repeat or parameters.<name>",
+            help: "change one property of a placed module, an area, a panel or a group: its look (style.<key>, a bar's corners written as its shape.radius), its place in its group (weight, cell.<key>, rect.<key>), any key of an area's kind (a bar's thickness, a stack's flow, a panel's owner), an area's reserve, above_fullscreen or within, a group's arrangement (arrange, cols, rows, gap) or place (col, row, col_span, row_span, zone), an option, a binding, an action or an expression; `unset visible`, `unset repeat`, `unset arrange`, `unset parameters.<name>` and `unset bindings.<key>` take back what a broader level writes",
             run: set,
+        },
+        Command {
+            name: "duplicate",
+            args: "<id|area.group>",
+            help: "copy a placed module, a group or an area beside itself, as the editor's Duplicate does",
+            run: verbs::duplicate,
+        },
+        Command {
+            name: "order",
+            args: "<id> <up|down|front|back>",
+            help: "draw an area over or under the others on its layer, or a child of a free group over or under its siblings",
+            run: verbs::order,
+        },
+        Command {
+            name: "panel",
+            args: "<instance> [--along]",
+            help: "give a placed module a panel of its own, opened beside it, or along its whole bar with --along",
+            run: verbs::panel,
+        },
+        Command {
+            name: "rename",
+            args: "<id|area.group> <new>",
+            help: "give a placed module, an area or a group another id, everywhere the layout names it; refused where a rule, an action or a layout extending this one names the old id",
+            run: verbs::rename,
         },
         Command {
             name: "reset",
@@ -130,9 +163,14 @@ fn edit(args: &[&str]) -> Result<String, String> {
     let layer = LayerKind::from_name(which).ok_or_else(|| {
         format!("'{which}' is not a layer (try: background, desktop, top, overlay, lock, off)")
     })?;
-    let mode = editor::mode::enter(layer, args.get(1).copied())?;
+    let mode = editor::mode::enter(layer, args.get(1).copied()).map_err(|why| why.english())?;
     Ok(match mode.refused {
-        Some(why) => format!("previewing {} on {}: {why}", mode.layer, mode.output),
+        Some(why) => format!(
+            "previewing {} on {}: {}",
+            mode.layer,
+            mode.output,
+            why.english()
+        ),
         None => format!("editing {} on {}", mode.layer, mode.output),
     })
 }
@@ -266,16 +304,24 @@ pub(super) fn current_config() -> std::sync::Arc<config::Config> {
     })
 }
 
-fn undo() -> Result<String, String> {
-    layouts::undo()
-        .map(|label| format!("took back `{label}`"))
-        .map_err(|why| why.english())
+pub(super) fn edit_layout<R>(
+    label: &str,
+    plan: impl FnOnce(&Layout) -> Result<(Vec<LayoutOp>, R), String>,
+) -> Result<R, String> {
+    let before = stored(|store| store.active().clone())?;
+    let (ops, said) = plan(&before)?;
+    editor::modes::lock_kept(&before, &landed(&before, &ops)?).map_err(|why| why.english())?;
+    layouts::edit(label, move |_, _| Ok((ops, said)))
 }
 
-fn redo() -> Result<String, String> {
-    layouts::redo()
-        .map(|label| format!("made `{label}` again"))
-        .map_err(|why| why.english())
+pub(super) fn stored<T>(read: impl FnOnce(&LayoutStore) -> T) -> Result<T, String> {
+    layouts::read(read).ok_or_else(|| layouts::no_store().english())
+}
+
+fn landed(layout: &Layout, ops: &[LayoutOp]) -> Result<Layout, String> {
+    let mut after = layout.clone();
+    layout::ops::apply_all(&mut after, ops).map_err(|why| why.message().english())?;
+    Ok(after)
 }
 
 /// Places a module in an area, at the end of one of its groups.
@@ -289,7 +335,7 @@ fn add(args: &[&str]) -> Result<String, String> {
     known_module(&module)?;
     let label = format!("Add `{module}`");
     let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         let at = area_in(layout, &area)?;
         let found = area_of(layout, &at, &area)?;
         if !found.kind.as_ref().is_some_and(holds_instances) {
@@ -348,7 +394,7 @@ fn remove(id: &str) -> Result<String, String> {
     let area = AreaId::new(id);
     let label = format!("Remove `{id}`");
     let id = id.to_string();
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         if let Some(at) = placement_of(layout, &instance) {
             return Ok((
                 vec![LayoutOp::DeleteInstance {
@@ -386,7 +432,7 @@ fn move_instance(args: &[&str]) -> Result<String, String> {
     };
 
     let label = format!("Move `{instance}`");
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         let from = placement_of(layout, &instance)
             .ok_or_else(|| nothing_called(layout, instance.as_str()))?;
         let to = group_named(layout, &group)?;
@@ -424,7 +470,7 @@ pub(super) fn show_in_region(
 ) -> Result<String, String> {
     let source = picture.display().to_string();
     let label = format!("Show {source} in `{id}`");
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         let site = match &output {
             Some(output) => region_for(layout, &id, output)?,
             None => area_in(layout, &id)?,
@@ -477,9 +523,7 @@ fn region_for(layout: &Layout, id: &AreaId, output: &str) -> Result<Site, String
         })
 }
 
-/// Changes one property of something the layout places. Of a placed module: which module it shows, how big it is drawn, one of its options, one bound expression, what a gesture on it runs, or a binding it takes back from a broader level (`unset bindings.<key>`, DEC-26). Of an area, whether it is shown (`<area> visible <expr>`, `<area> unset visible`); of a group, what it repeats over (`<area>.<group> repeat <expr>`, `<area>.<group> unset repeat`) and what it sets a parameter of the komponent it draws to (`<area>.<group> parameters.<name> <expr>`, `<area>.<group> unset parameters.<name>`). The value is the rest of the line as written.
-///
-/// The key says what the first argument names, so an id an area, a group and a module share is never ambiguous: `visible`, `repeat` and `parameters.<name>` are not properties of a module.
+/// The key says what the first argument names: an id a placed module, an area and a group share names the first of them, in that order, that takes the key.
 fn set(args: &Args<'_>) -> Result<String, String> {
     let target = arg(args, 0, "instance")?;
     let key = arg(args, 1, "key")?.to_string();
@@ -505,8 +549,18 @@ fn set(args: &Args<'_>) -> Result<String, String> {
             "`{instance}` is drawn by the komponent its group uses: set what the use reads with `layout set <area>.<group> parameters.<name> <expr>`, edit the komponent's file, or `komponent detach` the group"
         ));
     }
+    let (active, known) = stored(|store| (store.active().clone(), store.all().clone()))?;
+    let base = layout::reset::base_of(&active, &known);
+    match keys::aimed(&[&active, &base], target, &key)? {
+        keys::Aimed::Instance(instance) => set_instance(instance, key, value),
+        keys::Aimed::Area(area) => keys::set_area(area, key, value),
+        keys::Aimed::Group(area, group) => keys::set_group((area, group), key, value),
+    }
+}
+
+fn set_instance(instance: InstanceId, key: String, value: String) -> Result<String, String> {
     let label = format!("Set `{key}` on `{instance}`");
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         let at = placement_of(layout, &instance)
             .ok_or_else(|| nothing_called(layout, instance.as_str()))?;
         let mut changed = spot_of(layout, &at.spot)?.children[at.index].clone();
@@ -518,14 +572,13 @@ fn set(args: &Args<'_>) -> Result<String, String> {
             &at.spot.group,
         );
         apply_key(&mut changed, &key, &value, (at.spot.site.layer, &locals))?;
-        Ok((
-            vec![LayoutOp::SetInstance {
-                spot: at.spot.clone(),
-                id: instance.clone(),
-                instance: Box::new(changed),
-            }],
-            format!("set `{key}` on `{instance}`"),
-        ))
+        let ops = vec![LayoutOp::SetInstance {
+            spot: at.spot.clone(),
+            id: instance.clone(),
+            instance: Box::new(changed),
+        }];
+        keys::unreported_instance(layout, &ops, &instance, &key)?;
+        Ok((ops, format!("set `{key}` on `{instance}`")))
     })
 }
 
@@ -534,7 +587,7 @@ fn unset_binding(target: &str, path: String) -> Result<String, String> {
     let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
     let instance = InstanceId::new(target);
     let label = format!("Unset `bindings.{path}` on `{instance}`");
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         let base = layout::reset::base_of(layout, &known);
         let (placed, at) = [layout, &base]
             .into_iter()
@@ -562,7 +615,7 @@ fn unset_binding(target: &str, path: String) -> Result<String, String> {
     })
 }
 
-/// An expression an area or a group holds — its `visible`, its `repeat`, or what it sets a komponent parameter to — and what `set` does to it: gives it, or takes back what a broader level gives it.
+/// An expression an area or a group holds — its `visible`, its `repeat`, or what it sets a komponent parameter to — and what `set` does to it: gives it, or takes back what a broader level gives it. A group's arrangement is taken back the same way.
 struct Expression {
     held: layout::Unset,
     written: Option<String>,
@@ -575,7 +628,9 @@ impl Expression {
             "visible" => (Unset::Visible, Some(value.to_string())),
             "repeat" => (Unset::Repeat, Some(value.to_string())),
             "unset" => match Unset::from(value) {
-                held @ (Unset::Visible | Unset::Repeat | Unset::Parameter(_)) => (held, None),
+                held @ (Unset::Visible | Unset::Repeat | Unset::Arrange | Unset::Parameter(_)) => {
+                    (held, None)
+                }
                 _ => return None,
             },
             _ => match Unset::from(key) {
@@ -601,7 +656,7 @@ fn set_expression(target: &str, expression: Expression) -> Result<String, String
     };
     let label = format!("{verb} `{}` on `{target}`", expression.held);
     let target = target.to_string();
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         let base = layout::reset::base_of(layout, &known);
         let (area, group) = match expression.is_area() {
             true => (AreaId::new(&target), None),
@@ -643,6 +698,7 @@ fn set_expression(target: &str, expression: Expression) -> Result<String, String
                     (Some(group), layout::Unset::Parameter(name)) => {
                         layout::Held::Parameter { group, name }
                     }
+                    (Some(group), layout::Unset::Arrange) => layout::Held::Arrange(group),
                     (Some(group), _) => layout::Held::Repeat(group),
                 },
             };
@@ -665,7 +721,8 @@ fn set_expression(target: &str, expression: Expression) -> Result<String, String
             site.layer,
             &area,
             site.workspace.as_ref(),
-        )?;
+        )
+        .map_err(|why| why.english())?;
         let mut changed = written.area.clone();
         match &group {
             None => {
@@ -717,6 +774,13 @@ fn taking_back(
                 held.repeat = None;
             }
             take_back(&mut held.unset, &layout::Unset::Repeat, at.unset);
+        }
+        layout::Held::Arrange(group) => {
+            let held = group_entry(&mut changed, group);
+            if at.own {
+                held.clear_arrangement();
+            }
+            take_back(&mut held.unset, &layout::Unset::Arrange, at.unset);
         }
         layout::Held::Parameter { group, name } => {
             let held = group_entry(&mut changed, group);
@@ -863,40 +927,10 @@ fn apply_key(
                 .retain(|taken| *taken != layout::Unset::binding(path));
         }
         Some(("actions", trigger)) => {
-            let trigger = Trigger::from_name(trigger).ok_or_else(|| {
-                format!(
-                    "'{trigger}' is not a gesture ({})",
-                    named(&Trigger::ALL, |it| it.as_str())
-                )
-            })?;
-            if layer == LayerKind::Lock {
-                return Err(
-                    "the lock layer holds readings, never controls, so a gesture cannot run anything there"
-                        .to_string(),
-                );
-            }
-            let chain: Vec<String> = value
-                .split(';')
-                .map(|line| line.trim().to_string())
-                .filter(|line| !line.is_empty())
-                .collect();
-            for line in &chain {
-                if !super::resolves(line) {
-                    return Err(format!("`{line}` is not a command this shell has"));
-                }
-                if layout::grants_trust(line) {
-                    return Err(format!(
-                        "`{line}` would trust a bundle from a gesture, and trust is yours to give: run `layout trust` yourself"
-                    ));
-                }
-            }
-            instance.actions.insert(trigger, Action(chain));
+            let (trigger, action) = keys::bound(layer, None, trigger, value)?;
+            instance.actions.insert(trigger, action);
         }
-        _ => {
-            return Err(format!(
-                "'{key}' is not a property of a placed module (module, representation, options.<key>, bindings.<key>, actions.<gesture>, unset)"
-            ));
-        }
+        _ => keys::instance_key(instance, key, value)?,
     }
     Ok(())
 }
@@ -942,7 +976,7 @@ fn reset(target: &str) -> Result<String, String> {
     let label = format!("Reset `{target}`");
     let target = target.to_string();
     let known = layouts::read(|store| store.all().clone()).unwrap_or_default();
-    layouts::edit(&label, move |layout, _| {
+    edit_layout(&label, move |layout| {
         let base = layout::reset::base_of(layout, &known);
         let (area, instance) = (AreaId::new(&target), InstanceId::new(&target));
         let aimed = match target.as_str() {
@@ -1073,7 +1107,7 @@ pub(super) fn inherited_group_named(
 }
 
 /// How the group `group` of `area` is laid out, as the first of `layouts` that says.
-fn group_kind(layouts: &[&Layout], area: &AreaId, group: &GroupId) -> Option<GroupKind> {
+pub(super) fn group_kind(layouts: &[&Layout], area: &AreaId, group: &GroupId) -> Option<GroupKind> {
     layouts.iter().find_map(|layout| {
         sites(layout)
             .flat_map(|(_, layer)| layer.areas.iter())
@@ -1570,7 +1604,7 @@ mod tests {
             "the region names its own picture now"
         );
 
-        undo().expect("the edit comes back out");
+        verbs::undo(&Args::of("")).expect("the edit comes back out");
         assert_eq!(
             source_of(&store.borrow(), "background"),
             None,
@@ -1636,13 +1670,16 @@ mod tests {
             vec!["workspaces"],
             vec!["workspaces"],
         ] {
-            undo().expect("every edit comes back out");
+            verbs::undo(&Args::of("")).expect("every edit comes back out");
             assert_eq!(run_of(&store.borrow(), "start"), expected);
         }
-        assert!(undo().is_err(), "and then there is nothing left to undo");
+        assert!(
+            verbs::undo(&Args::of("")).is_err(),
+            "and then there is nothing left to undo"
+        );
         assert_eq!(run_of(&store.borrow(), "end"), ["notes"]);
 
-        redo().expect("forward again");
+        verbs::redo(&Args::of("")).expect("forward again");
         assert_eq!(run_of(&store.borrow(), "end"), ["notes", "battery"]);
     }
 
@@ -1679,10 +1716,13 @@ mod tests {
         assert_eq!(run_of(&store.borrow(), "center"), Vec::<String>::new());
         assert_eq!(panels(&store.borrow()), 0, "the panel went with its owner");
 
-        undo().expect("one undo");
+        verbs::undo(&Args::of("")).expect("one undo");
         assert_eq!(run_of(&store.borrow(), "center"), ["clock"]);
         assert_eq!(panels(&store.borrow()), 1, "and brought both back");
-        assert!(undo().is_err(), "the removal was one edit");
+        assert!(
+            verbs::undo(&Args::of("")).is_err(),
+            "the removal was one edit"
+        );
     }
 
     fn written_area(store: &LayoutStore, id: &str) -> Area {
@@ -1747,13 +1787,16 @@ mod tests {
             "Unset `visible`",
             "Set `visible`",
         ] {
-            let undone = undo().expect("every edit comes back out");
+            let undone = verbs::undo(&Args::of("")).expect("every edit comes back out");
             assert!(undone.contains(expected), "{undone} undoes `{expected}`");
         }
         let widgets = written_area(&store.borrow(), "widgets");
         assert_eq!(widgets.visible, None);
         assert!(widgets.unset.is_empty());
-        assert!(undo().is_err(), "five edits, five entries");
+        assert!(
+            verbs::undo(&Args::of("")).is_err(),
+            "five edits, five entries"
+        );
     }
 
     /// A refused line writes nothing and leaves no undo entry: an expression that does not check, a repeat that is no list, a grid cell, an area or group nothing is called, and `unset` of a key that is not one.
@@ -1998,7 +2041,6 @@ mod tests {
     /// `layout edit` is the mode switch (F-10.33): a line the shell answers, which names what it takes, refuses what is not a layer or not a screen, and says so when there was nothing to switch off.
     #[test]
     fn the_edit_verb_reads_a_layer_and_a_screen() {
-        telar::set_locale("en");
         for line in [
             "layout edit desktop",
             "layout edit lock DP-1",
@@ -2023,7 +2065,6 @@ mod tests {
     /// F-10.35: the recovery flag refuses every edit, and a mode is one waiting to happen, so no layer's mode opens under it.
     #[test]
     fn the_edit_verb_is_refused_under_the_safe_layout() {
-        telar::set_locale("en");
         let dir = util::paths::isolated_root()
             .expect("a test process resolves under its scratch root")
             .join("layout-verbs-safe-edit");
@@ -2041,8 +2082,8 @@ mod tests {
     #[test]
     fn an_edit_with_no_running_shell_says_what_is_missing_rather_than_answering_ok() {
         for refused in [
-            undo(),
-            redo(),
+            verbs::undo(&Args::of("")),
+            verbs::redo(&Args::of("")),
             add(&["clock", "bar-top"]),
             remove("clock"),
             move_instance(&["clock", "end"]),
@@ -2124,13 +2165,10 @@ mod tests {
         let store = shell_with("controls-ban", "mine");
         let readings = AreaId::new("lock-readings");
         let mine = store.borrow().active().clone();
-        let desktop = surfaces::reconcile::Desktop {
-            output: Some("DP-1".to_string()),
-            config: std::sync::Arc::new(config::Config::default()),
-            resolved: layout::resolve(&mine, store.borrow().all(), "DP-1", None).0,
-            reserved: Default::default(),
-            size: (1920.0, 1080.0),
-        };
+        let desktop = crate::test_support::desktop(
+            "DP-1",
+            layout::resolve(&mine, store.borrow().all(), "DP-1", None).0,
+        );
         let mut controls = 0;
         for module in crate::core::modules::MODULES {
             for representation in Representation::ALL {
@@ -2286,7 +2324,7 @@ mod tests {
             "the output rule's own bar is untouched"
         );
 
-        undo().expect("the removal comes back out");
+        verbs::undo(&Args::of("")).expect("the removal comes back out");
         assert_eq!(in_games(&store.borrow()), ["games-battery"]);
         assert!(
             nothing_called(store.borrow().active(), "nothing-at-all")
@@ -2339,8 +2377,1101 @@ mod tests {
         assert_eq!(store.borrow().active().outputs[0].layers.lock, shipped);
 
         for _ in 0..4 {
-            undo().expect("each reset comes back out");
+            verbs::undo(&Args::of("")).expect("each reset comes back out");
         }
         assert_eq!(lock_ids(&store.borrow()), ["lock-readings", "prompt"]);
+    }
+
+    fn on_screen(store: &LayoutStore) {
+        crate::test_support::publish(
+            "DP-1",
+            layout::resolve(store.active(), store.all(), "DP-1", None).0,
+        );
+    }
+
+    fn built_in_as(id: &str) -> Layout {
+        let mut mine = layout::built_in();
+        mine.id = LayoutId::new(id);
+        mine
+    }
+
+    fn desktop_area<'a>(layout: &'a mut Layout, id: &str) -> &'a mut Area {
+        layout.outputs[0]
+            .layers
+            .desktop
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == id)
+            .expect("the shipped desktop area")
+    }
+
+    fn with_box(id: &str) -> Layout {
+        let mut mine = built_in_as(id);
+        let child = |id: &str, module: &str, representation| Instance {
+            id: InstanceId::new(id),
+            module: Some(module.to_string()),
+            representation: Some(representation),
+            ..Instance::default()
+        };
+        desktop_area(&mut mine, "widgets").groups.push(Group {
+            id: GroupId::new("box"),
+            kind: Some(GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 4,
+                row_span: 2,
+            }),
+            children: vec![
+                child("box-clock", "clock", Representation::WidgetM),
+                child("box-battery", "battery", Representation::WidgetS),
+            ],
+            ..Group::default()
+        });
+        mine
+    }
+
+    fn with_owned_panel() -> Layout {
+        let mut mine = built_in_as("mine");
+        mine.outputs[0].layers.top.areas.push(Area {
+            id: AreaId::new("panel-clock"),
+            kind: Some(AreaKind::Panel {
+                owner: Some(InstanceId::new("clock")),
+                along: None,
+                cols: None,
+                rows: None,
+                cell: None,
+                gap: None,
+            }),
+            ..Area::default()
+        });
+        mine
+    }
+
+    fn refuses_each(store: &std::rc::Rc<std::cell::RefCell<LayoutStore>>, lines: &[(&str, &str)]) {
+        let before = toml::to_string(store.borrow().active()).expect("serializes");
+        let entries = store.borrow().history().undo.len();
+        for (line, says) in lines {
+            let refused = set(&Args::of(line)).expect_err(line);
+            assert!(refused.contains(says), "{line}: {refused}");
+        }
+        assert_eq!(
+            toml::to_string(store.borrow().active()).expect("serializes"),
+            before,
+            "a refused line writes nothing"
+        );
+        assert_eq!(store.borrow().history().undo.len(), entries);
+    }
+
+    #[test]
+    fn style_keys_are_set_on_an_area_a_group_and_a_placed_module() {
+        let store = shell_holding("style", "mine", &with_box("mine"), &[]);
+
+        set(&Args::of("widgets style.fill surface")).expect("an area's fill");
+        set(&Args::of("box style.radius [4, 4, 0, 0]")).expect("a group's corners");
+        set(&Args::of("clock style.border.width 2")).expect("a module's border");
+        set(&Args::of("clock style.border.color #ff0000")).expect("and its colour");
+
+        let widgets = written_area(&store.borrow(), "widgets");
+        assert_eq!(widgets.style.fill.as_deref(), Some("surface"));
+        assert_eq!(
+            widgets.style.padding,
+            Some(layout::Sides::all(48.0)),
+            "what the style held stays"
+        );
+        assert_eq!(
+            written_group(&store.borrow(), "widgets", "box")
+                .style
+                .radius,
+            Some(layout::Corners::each(4.0, 4.0, 0.0, 0.0))
+        );
+        let border = written_clock(&store.borrow())
+            .style
+            .border
+            .expect("a border");
+        assert_eq!(
+            (border.width, border.color.as_deref()),
+            (Some(2.0), Some("#ff0000"))
+        );
+
+        refuses_each(
+            &store,
+            &[
+                ("clock style.fill nocolour", "not a colour"),
+                ("clock style.padding 4", "no padding of its own"),
+                ("box style.backdrop blur", "only an area has a backdrop"),
+                ("widgets style.shadow 9", "steps 0 to 3"),
+                ("widgets style.opacity much", "`style.opacity`"),
+                ("widgets style.nope 1", "nope"),
+            ],
+        );
+        for _ in 0..4 {
+            verbs::undo(&Args::of("")).expect("each line is one edit");
+        }
+        assert!(verbs::undo(&Args::of("")).is_err());
+    }
+
+    #[test]
+    fn a_group_is_arranged_and_its_children_placed_over_ipc() {
+        let store = shell_holding("arrange", "mine", &with_box("mine"), &[]);
+
+        set(&Args::of("box arrange grid")).expect("a container");
+        set(&Args::of("widgets.box cols 3")).expect("its columns");
+        set(&Args::of("box gap 6")).expect("its gap");
+        set(&Args::of("box-clock cell.col 2")).expect("a child's column");
+        set(&Args::of(
+            "box-battery cell {col = 0, row = 1, col_span = 2}",
+        ))
+        .expect("a whole cell");
+
+        let held = written_group(&store.borrow(), "widgets", "box");
+        assert_eq!(
+            (held.arrange, held.cols, held.gap),
+            (Some(layout::Arrange::Grid), Some(3), Some(6.0))
+        );
+        let cell = |id: &str| {
+            held.children
+                .iter()
+                .find(|child| child.id.as_str() == id)
+                .and_then(|child| child.cell)
+        };
+        assert_eq!(cell("box-clock"), Some(layout::ChildCell::at(2, 0)));
+        assert_eq!(
+            cell("box-battery"),
+            Some(layout::ChildCell {
+                col: 0,
+                row: 1,
+                col_span: 2,
+                row_span: 1,
+            })
+        );
+
+        refuses_each(
+            &store,
+            &[
+                ("box-clock weight 2", "`weight` shares out"),
+                ("box-clock rect.x 0.5", "`rect` places a child"),
+                ("box-clock cell.nope 1", "nope"),
+                ("box arrange diagonal", "diagonal"),
+                ("bar-top.end arrange row", "`pages` and nothing else"),
+                ("widgets arrange row", "not a key of the area `widgets`"),
+                (
+                    "box-clock arrange row",
+                    "not a key of the placed module `box-clock`",
+                ),
+            ],
+        );
+
+        set(&Args::of("box unset arrange")).expect("a loose run again");
+        let held = written_group(&store.borrow(), "widgets", "box");
+        assert_eq!(
+            (held.arrange, held.cols, held.gap, held.unset),
+            (None, None, None, Vec::new()),
+            "its own arrangement is deleted, and nothing under it gives one"
+        );
+        assert!(
+            verbs::undo(&Args::of(""))
+                .expect("one edit")
+                .contains("Unset `arrange`")
+        );
+    }
+
+    #[test]
+    fn an_inherited_arrangement_is_taken_back_with_a_partial_entry() {
+        let mut parent = with_box("parent");
+        let held = desktop_area(&mut parent, "widgets")
+            .groups
+            .last_mut()
+            .expect("the box");
+        held.arrange = Some(layout::Arrange::Row);
+        held.gap = Some(4.0);
+        let mine = extending(vec![layout::OutputRule::default()]);
+        let store = shell_holding("arrange-inherited", "mine", &mine, &[&parent]);
+
+        set(&Args::of("widgets.box unset arrange")).expect("an inherited arrangement");
+        let held = written_group(&store.borrow(), "widgets", "box");
+        assert_eq!(held.unset, [layout::Unset::Arrange]);
+        assert!(
+            held.kind.is_none() && held.children.is_empty() && !held.writes_arrangement(),
+            "and nothing else"
+        );
+        let resolved =
+            layout::resolve(store.borrow().active(), store.borrow().all(), "DP-1", None).0;
+        let drawn = resolved
+            .area(LayerKind::Desktop, &AreaId::new("widgets"))
+            .and_then(|area| area.groups.iter().find(|group| group.id.as_str() == "box"))
+            .expect("the box is still drawn");
+        assert_eq!((drawn.arrange, drawn.gap), (None, None));
+
+        set(&Args::of("widgets.box arrange column")).expect("arranged again");
+        let held = written_group(&store.borrow(), "widgets", "box");
+        assert_eq!(
+            (held.arrange, held.unset),
+            (Some(layout::Arrange::Column), Vec::new()),
+            "writing an arrangement drops the unset that took one back"
+        );
+    }
+
+    #[test]
+    fn a_panel_s_own_keys_are_set_over_ipc() {
+        let store = shell_holding("panel-keys", "mine", &with_owned_panel(), &[]);
+
+        set(&Args::of("panel-clock cols 3")).expect("its columns");
+        set(&Args::of("panel-clock along true")).expect("along its bar");
+        set(&Args::of("panel-clock cell 56")).expect("its cells");
+        set(&Args::of("panel-clock style.shadow 2")).expect("and its look");
+        let panel = written_area(&store.borrow(), "panel-clock");
+        let Some(AreaKind::Panel {
+            owner,
+            along,
+            cols,
+            cell,
+            ..
+        }) = panel.kind
+        else {
+            panic!("still a panel: {:?}", panel.kind);
+        };
+        assert_eq!(
+            (owner.as_ref().map(InstanceId::as_str), along, cols, cell),
+            (Some("clock"), Some(true), Some(3), Some(56.0))
+        );
+        assert_eq!(panel.style.shadow, Some(2));
+
+        refuses_each(
+            &store,
+            &[
+                ("panel-clock cols three", "`cols`"),
+                ("panel-clock owner nobody", "`nobody` is not an instance"),
+                (
+                    "panel-clock weight 2",
+                    "not a key of the area `panel-clock`",
+                ),
+                ("widgets cols 3", "not a key of the area `widgets`"),
+            ],
+        );
+    }
+
+    #[test]
+    fn an_area_takes_actions_where_the_editor_offers_them() {
+        let store = shell_with("area-actions", "mine");
+
+        set(&Args::of(
+            "widgets actions.press panel toggle clock; var set seen true",
+        ))
+        .expect("a desktop area");
+        assert_eq!(
+            written_area(&store.borrow(), "widgets")
+                .actions
+                .get(&layout::Trigger::Press),
+            Some(&layout::Action(vec![
+                "panel toggle clock".to_string(),
+                "var set seen true".to_string(),
+            ]))
+        );
+
+        refuses_each(
+            &store,
+            &[
+                (
+                    "background actions.press panel toggle clock",
+                    "a picture or a texture",
+                ),
+                (
+                    "lock-readings actions.press panel toggle clock",
+                    "readings, never controls",
+                ),
+                (
+                    "widgets actions.press layout trust nord --all 0123456789abcdef",
+                    "trust is yours to give",
+                ),
+                ("widgets actions.press no such command", "not a command"),
+                ("widgets actions.poke panel toggle clock", "not a gesture"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_set_that_would_make_the_lock_fall_back_is_refused_over_ipc() {
+        let store = shell_with("lock-guard", "mine");
+
+        refuses_each(
+            &store,
+            &[
+                (
+                    "prompt style.fill text",
+                    "the lock would fall back to the minimal one",
+                ),
+                ("prompt style.opacity 0.5", "0.9"),
+            ],
+        );
+        set(&Args::of("prompt style.fill surface")).expect("a card the prompt reads on");
+        assert_eq!(
+            written_area(&store.borrow(), "prompt")
+                .style
+                .fill
+                .as_deref(),
+            Some("surface")
+        );
+    }
+
+    #[test]
+    fn duplicate_copies_beside_the_original_as_the_editor_does() {
+        let store = shell_with("duplicate", "mine");
+        assert_eq!(
+            verbs::duplicate(&Args::of("clock")).expect_err("no screen is drawn"),
+            "There is no screen to edit"
+        );
+        on_screen(&store.borrow());
+
+        assert_eq!(
+            super::super::dispatch("layout duplicate clock"),
+            "ok duplicated `clock` as `clock-3`"
+        );
+        assert_eq!(run_of(&store.borrow(), "center"), ["clock", "clock-3"]);
+
+        on_screen(&store.borrow());
+        let refused = verbs::duplicate(&Args::of("widgets")).expect_err("a grid");
+        assert!(refused.contains("not the whole grid"), "{refused}");
+        let refused = verbs::duplicate(&Args::of("prompt")).expect_err("the prompt");
+        assert!(!refused.is_empty());
+        let refused = verbs::duplicate(&Args::of("nothing-at-all")).expect_err("nothing");
+        assert!(refused.contains("nothing on screen"), "{refused}");
+
+        verbs::undo(&Args::of("")).expect("one edit");
+        assert_eq!(run_of(&store.borrow(), "center"), ["clock"]);
+    }
+
+    fn desktop_ids(store: &LayoutStore) -> Vec<String> {
+        store.active().outputs[0]
+            .layers
+            .desktop
+            .areas
+            .iter()
+            .map(|area| area.id.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn order_moves_an_area_over_and_under_the_others_on_its_layer() {
+        let mut mine = built_in_as("mine");
+        for (id, x) in [("pad-a", 0.1), ("pad-b", 0.2)] {
+            mine.outputs[0].layers.desktop.areas.push(Area {
+                id: AreaId::new(id),
+                kind: Some(AreaKind::Free {
+                    rect: Some(layout::Rect {
+                        x,
+                        y: 0.1,
+                        w: 0.3,
+                        h: 0.3,
+                    }),
+                    anchor: None,
+                }),
+                ..Area::default()
+            });
+        }
+        let store = shell_holding("order", "mine", &mine, &[]);
+        on_screen(&store.borrow());
+
+        assert_eq!(
+            verbs::order(&Args::of("pad-b back")),
+            Ok("moved `pad-b` back".to_string())
+        );
+        assert_eq!(
+            desktop_ids(&store.borrow()),
+            ["widgets", "pad-b", "centre", "pad-a"]
+        );
+
+        on_screen(&store.borrow());
+        let refused = verbs::order(&Args::of("pad-b down")).expect_err("behind everything already");
+        assert!(refused.contains("already behind everything"), "{refused}");
+        let refused = verbs::order(&Args::of("widgets up")).expect_err("a grid tiles its layer");
+        assert!(refused.contains("Only free areas"), "{refused}");
+        let refused = verbs::order(&Args::of("pad-a sideways")).expect_err("no such way");
+        assert!(refused.contains("up, down, front, back"), "{refused}");
+
+        assert!(
+            super::super::dispatch("layout order pad-b up").starts_with("ok "),
+            "one step forward"
+        );
+        assert_eq!(
+            desktop_ids(&store.borrow()),
+            ["widgets", "centre", "pad-b", "pad-a"]
+        );
+        verbs::undo(&Args::of("2")).expect("both edits");
+        assert_eq!(
+            desktop_ids(&store.borrow()),
+            ["widgets", "centre", "pad-a", "pad-b"]
+        );
+    }
+
+    #[test]
+    fn a_placed_module_is_given_a_panel_of_its_own_over_ipc() {
+        let store = shell_with("give-panel", "mine");
+        on_screen(&store.borrow());
+
+        assert_eq!(
+            verbs::panel(&Args::of("clock --along")),
+            Ok("gave `clock` the panel `clock-panel`".to_string())
+        );
+        let Some(AreaKind::Panel { owner, along, .. }) =
+            written_area(&store.borrow(), "clock-panel").kind
+        else {
+            panic!("a panel");
+        };
+        assert_eq!(
+            (owner.as_ref().map(InstanceId::as_str), along),
+            (Some("clock"), Some(true))
+        );
+
+        on_screen(&store.borrow());
+        let refused = verbs::panel(&Args::of("clock")).expect_err("it has one");
+        assert!(refused.contains("already"), "{refused}");
+        let refused = verbs::panel(&Args::of("widgets")).expect_err("an area");
+        assert!(refused.contains("not a placed module"), "{refused}");
+        let refused = verbs::panel(&Args::of("lock-clock")).expect_err("the lock");
+        assert!(refused.contains("only shows readings"), "{refused}");
+        let refused = verbs::panel(&Args::of("clock-2 --along")).expect_err("not in a bar");
+        assert!(refused.contains("needs a bar"), "{refused}");
+
+        verbs::undo(&Args::of("")).expect("one edit");
+        assert!(
+            !layout::ops::sites(store.borrow().active())
+                .flat_map(|(_, layer)| layer.areas.iter())
+                .any(|area| area.id.as_str() == "clock-panel")
+        );
+    }
+
+    #[test]
+    fn history_lists_every_step_and_undo_and_redo_walk_several() {
+        let _store = shell_with("history", "mine");
+        assert_eq!(
+            verbs::history(&Args::of("")),
+            Ok("0\tAt the start".to_string())
+        );
+
+        add(&["battery", "bar-top", "end"]).expect("an edit");
+        set(&Args::of("battery options.critical_level 15")).expect("another");
+        move_instance(&["battery", "start", "0"]).expect("and another");
+
+        assert_eq!(
+            verbs::undo(&Args::of("2")),
+            Ok(
+                "took back `Move `battery``, `Set `options.critical_level` on `battery``"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            verbs::history(&Args::of("")),
+            Ok([
+                "-1\tAt the start",
+                "0\tAdd `battery`",
+                "1\tSet `options.critical_level` on `battery`",
+                "2\tMove `battery`",
+            ]
+            .join("\n"))
+        );
+        assert_eq!(
+            verbs::undo(&Args::of("5")),
+            Err("the history holds 1 of the 5 edits asked for".to_string())
+        );
+        assert!(
+            verbs::undo(&Args::of("0"))
+                .unwrap_err()
+                .contains("number of edits")
+        );
+        assert!(
+            verbs::redo(&Args::of("many"))
+                .unwrap_err()
+                .contains("number of edits")
+        );
+
+        assert_eq!(
+            verbs::redo(&Args::of("2")),
+            Ok(
+                "made `Set `options.critical_level` on `battery``, `Move `battery`` again"
+                    .to_string()
+            )
+        );
+        assert!(
+            verbs::redo(&Args::of("")).is_err(),
+            "nothing is left to redo"
+        );
+        assert!(
+            verbs::history(&Args::of(""))
+                .unwrap()
+                .ends_with("0\tMove `battery`")
+        );
+    }
+
+    #[test]
+    fn rename_gives_an_id_another_everywhere_the_layout_names_it() {
+        let store = shell_holding("rename", "mine", &with_owned_panel(), &[]);
+
+        assert_eq!(
+            super::super::dispatch("layout rename clock time"),
+            "ok renamed `clock` to `time`"
+        );
+        assert_eq!(run_of(&store.borrow(), "center"), ["time"]);
+        let Some(AreaKind::Panel { owner, .. }) = written_area(&store.borrow(), "panel-clock").kind
+        else {
+            panic!("a panel");
+        };
+        assert_eq!(
+            owner.as_ref().map(InstanceId::as_str),
+            Some("time"),
+            "and the panel it owns follows it"
+        );
+        verbs::rename(&Args::of("bar-top.end tail")).expect("a group");
+        assert_eq!(run_of(&store.borrow(), "tail"), ["notes"]);
+
+        let before = toml::to_string(store.borrow().active()).expect("serializes");
+        for (line, says) in [
+            ("notes workspaces", "already called `workspaces`"),
+            ("notes my notes", "an id holds no"),
+            ("time time", "called `time` already"),
+            ("nothing-at-all else", "nothing in this layout"),
+            ("notes", "missing argument <new>"),
+        ] {
+            let refused = verbs::rename(&Args::of(line)).expect_err(line);
+            assert!(refused.contains(says), "{line}: {refused}");
+        }
+        assert_eq!(
+            toml::to_string(store.borrow().active()).expect("serializes"),
+            before
+        );
+
+        verbs::undo(&Args::of("2")).expect("two edits");
+        assert_eq!(run_of(&store.borrow(), "center"), ["clock"]);
+        assert_eq!(run_of(&store.borrow(), "end"), ["notes"]);
+    }
+
+    #[test]
+    fn rename_refuses_an_id_an_action_still_names() {
+        let mut mine = built_in_as("mine");
+        let notes = mine.outputs[0].layers.top.areas[0].groups[2]
+            .children
+            .first_mut()
+            .expect("the bar's notes");
+        notes.actions.insert(
+            layout::Trigger::Press,
+            layout::Action(vec!["panel toggle clock".to_string()]),
+        );
+        let store = shell_holding("rename-referenced", "mine", &mine, &[]);
+        let before = toml::to_string(store.borrow().active()).expect("serializes");
+
+        let refused = verbs::rename(&Args::of("clock time")).expect_err("an action names it");
+        assert!(
+            refused.contains("keeps its name") && refused.contains("panel toggle clock"),
+            "{refused}"
+        );
+        assert_eq!(
+            toml::to_string(store.borrow().active()).expect("serializes"),
+            before
+        );
+    }
+
+    #[test]
+    fn no_verb_hides_fades_or_unseats_the_prompt_and_a_look_that_keeps_it_is_kept() {
+        let store = shell_with("lock-verbs", "mine");
+        on_screen(&store.borrow());
+
+        refuses_each(
+            &store,
+            &[
+                (
+                    "prompt visible false",
+                    "never given a visibility expression",
+                ),
+                ("prompt style.opacity 0.1", "0.9"),
+                ("prompt style.fill text", "the lock would fall back"),
+            ],
+        );
+        for refused in [
+            verbs::order(&Args::of("prompt front")),
+            verbs::order(&Args::of("prompt back")),
+            verbs::duplicate(&Args::of("prompt")),
+            verbs::panel(&Args::of("prompt")),
+        ] {
+            assert!(refused.is_err(), "{refused:?}");
+        }
+        assert_eq!(
+            lock_ids(&store.borrow()).last().map(String::as_str),
+            Some("prompt")
+        );
+
+        set(&Args::of("prompt style.border.width 3")).expect("a border");
+        set(&Args::of("prompt style.shadow 3")).expect("a shadow");
+        set(&Args::of("prompt style.radius 24")).expect("rounder corners");
+        set(&Args::of("prompt style.padding [4, 8, 4, 8]")).expect("its own padding");
+        let prompt = written_area(&store.borrow(), "prompt");
+        assert_eq!(
+            (
+                prompt.style.shadow,
+                prompt.style.border.and_then(|it| it.width)
+            ),
+            (Some(3), Some(3.0))
+        );
+        assert_eq!(
+            lock_ids(&store.borrow()).last().map(String::as_str),
+            Some("prompt")
+        );
+        for _ in 0..4 {
+            verbs::undo(&Args::of("")).expect("each line is one edit");
+        }
+        assert_eq!(
+            written_area(&store.borrow(), "prompt").style,
+            layout::Style::default()
+        );
+    }
+
+    #[test]
+    fn a_reading_on_the_lock_is_styled_over_ipc_but_never_given_an_action_or_a_panel() {
+        let store = shell_with("lock-readings-verbs", "mine");
+        on_screen(&store.borrow());
+
+        set(&Args::of("lock-clock style.shadow 2")).expect("a reading's shadow");
+        set(&Args::of("lock-clock style.border.width 1")).expect("a reading's border");
+        set(&Args::of("lock-readings style.fill surface")).expect("the readings' card");
+        refuses_each(
+            &store,
+            &[
+                (
+                    "lock-clock actions.press panel toggle clock",
+                    "readings, never controls",
+                ),
+                (
+                    "lock-readings actions.press panel toggle clock",
+                    "readings, never controls",
+                ),
+            ],
+        );
+        let refused = verbs::panel(&Args::of("lock-clock")).expect_err("the lock");
+        assert!(refused.contains("only shows readings"), "{refused}");
+        let said = verbs::duplicate(&Args::of("lock-clock")).expect("a reading is copied");
+        assert!(said.starts_with("duplicated `lock-clock`"), "{said}");
+        assert!(
+            written_area(&store.borrow(), "lock-readings")
+                .actions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_look_set_on_an_inherited_part_is_a_partial_entry_that_leaves_the_parent_s_look_alone() {
+        let parent = with_box("parent");
+        let mine = extending(vec![layout::OutputRule::default()]);
+        let store = shell_holding("style-partial", "mine", &mine, &[&parent]);
+
+        set(&Args::of("widgets style.fill surface")).expect("an inherited area");
+        set(&Args::of("widgets.box style.shadow 1")).expect("an inherited group");
+
+        let widgets = written_area(&store.borrow(), "widgets");
+        assert_eq!(
+            widgets.style,
+            layout::Style {
+                fill: Some("surface".to_string()),
+                ..layout::Style::default()
+            },
+            "only what was set, not the padding the parent writes"
+        );
+        assert!(widgets.kind.is_none(), "the geometry stays the parent's");
+        let held = written_group(&store.borrow(), "widgets", "box");
+        assert_eq!(held.style.shadow, Some(1));
+        assert!(held.kind.is_none());
+        assert!(held.children.is_empty(), "the children stay the parent's");
+
+        let resolved =
+            layout::resolve(store.borrow().active(), store.borrow().all(), "DP-1", None).0;
+        let drawn = resolved
+            .area(LayerKind::Desktop, &AreaId::new("widgets"))
+            .expect("the grid is still drawn");
+        assert_eq!(drawn.style.fill.as_deref(), Some("surface"));
+        assert_eq!(drawn.style.padding, Some(layout::Sides::all(48.0)));
+        let held = drawn
+            .groups
+            .iter()
+            .find(|group| group.id.as_str() == "box")
+            .expect("the box is still drawn");
+        assert_eq!(
+            (held.style.shadow, held.children.len()),
+            (Some(1), 2),
+            "with the parent's children"
+        );
+    }
+
+    fn box_children(store: &LayoutStore) -> Vec<String> {
+        written_group(store, "widgets", "box")
+            .children
+            .iter()
+            .map(|child| child.id.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_free_child_is_ordered_among_its_siblings_and_a_group_is_duplicated_over_ipc() {
+        let store = shell_holding(
+            "order-child-duplicate-group",
+            "mine",
+            &with_box("mine"),
+            &[],
+        );
+        set(&Args::of("box arrange free")).expect("a free group");
+        set(&Args::of(
+            "box-clock rect {x = 0.0, y = 0.0, w = 0.6, h = 0.6}",
+        ))
+        .expect("a rect");
+        set(&Args::of(
+            "box-battery rect {x = 0.3, y = 0.3, w = 0.6, h = 0.6}",
+        ))
+        .expect("a rect");
+        on_screen(&store.borrow());
+
+        assert_eq!(
+            verbs::order(&Args::of("box-clock front")),
+            Ok("moved `box-clock` front".to_string())
+        );
+        assert_eq!(box_children(&store.borrow()), ["box-battery", "box-clock"]);
+        on_screen(&store.borrow());
+        let refused = verbs::order(&Args::of("box-clock up")).expect_err("already on top");
+        assert!(refused.contains("already"), "{refused}");
+        assert_eq!(box_children(&store.borrow()), ["box-battery", "box-clock"]);
+        verbs::undo(&Args::of("")).expect("one edit");
+        assert_eq!(box_children(&store.borrow()), ["box-clock", "box-battery"]);
+
+        on_screen(&store.borrow());
+        let groups = |store: &LayoutStore| {
+            store.active().outputs[0]
+                .layers
+                .desktop
+                .areas
+                .iter()
+                .find(|area| area.id.as_str() == "widgets")
+                .map_or(0, |area| area.groups.len())
+        };
+        let before = groups(&store.borrow());
+        let said =
+            verbs::duplicate(&Args::of("widgets.box")).expect("a group is copied beside itself");
+        assert!(
+            said.starts_with("duplicated `widgets.box` as `widgets."),
+            "{said}"
+        );
+        assert_eq!(groups(&store.borrow()), before + 1);
+        let ids: Vec<String> = store.borrow().active().outputs[0]
+            .layers
+            .desktop
+            .areas
+            .iter()
+            .flat_map(|area| area.groups.iter())
+            .flat_map(|group| group.children.iter())
+            .map(|child| child.id.to_string())
+            .collect();
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "every copy has an id of its own: {ids:?}"
+        );
+        verbs::undo(&Args::of("")).expect("one edit");
+        assert_eq!(groups(&store.borrow()), before);
+    }
+
+    #[test]
+    fn unsetting_an_arrangement_the_layout_overrides_deletes_its_own_and_names_the_one_under_it() {
+        let mut parent = with_box("parent");
+        let held = desktop_area(&mut parent, "widgets")
+            .groups
+            .last_mut()
+            .expect("the box");
+        held.arrange = Some(layout::Arrange::Row);
+        held.gap = Some(4.0);
+        let mine = extending(vec![layout::OutputRule::default()]);
+        let store = shell_holding("arrange-overridden", "mine", &mine, &[&parent]);
+
+        set(&Args::of("widgets.box arrange column")).expect("overridden");
+        set(&Args::of("widgets.box gap 6")).expect("its gap");
+        set(&Args::of("widgets.box unset arrange")).expect("taken back");
+
+        let held = written_group(&store.borrow(), "widgets", "box");
+        assert_eq!(
+            (held.arrange, held.cols, held.gap, held.unset.clone()),
+            (None, None, None, vec![layout::Unset::Arrange]),
+            "its own is deleted and the one under it is named"
+        );
+        let resolved =
+            layout::resolve(store.borrow().active(), store.borrow().all(), "DP-1", None).0;
+        let drawn = resolved
+            .area(LayerKind::Desktop, &AreaId::new("widgets"))
+            .and_then(|area| area.groups.iter().find(|group| group.id.as_str() == "box"))
+            .expect("the box is still drawn");
+        assert_eq!((drawn.arrange, drawn.gap), (None, None));
+    }
+
+    #[test]
+    fn a_key_nothing_takes_and_a_malformed_look_are_refused_with_nothing_written() {
+        let store = shell_holding("keys-refused", "mine", &with_box("mine"), &[]);
+
+        refuses_each(
+            &store,
+            &[
+                ("box nope 1", "not a key `layout set` takes"),
+                ("box style.padding [1, 2, 3]", "`style.padding`"),
+                ("box style.radius [1, 2]", "`style.radius`"),
+                ("box style.border.color nocolour", "not a colour"),
+                ("box style.border.width wide", "`style.border.width`"),
+                ("box cols many", "`cols`"),
+                ("box gap -", "`gap`"),
+                ("nothing-at-all style.shadow 1", "nothing"),
+            ],
+        );
+    }
+
+    fn written_child(store: &LayoutStore, id: &str) -> Instance {
+        written_group(store, "widgets", "box")
+            .children
+            .into_iter()
+            .find(|child| child.id.as_str() == id)
+            .expect("the child")
+    }
+
+    #[test]
+    fn a_child_is_weighted_in_a_row_and_given_a_rect_in_a_free_group_over_ipc() {
+        let store = shell_holding("child-weight-rect", "mine", &with_box("mine"), &[]);
+
+        set(&Args::of("box arrange row")).expect("a row");
+        set(&Args::of("box-clock weight 2.5")).expect("a share of the row");
+        assert_eq!(
+            written_child(&store.borrow(), "box-clock").weight,
+            Some(2.5)
+        );
+        refuses_each(
+            &store,
+            &[
+                ("box-clock weight heavy", "`weight`"),
+                ("box-clock rect.x 0.1", "`rect` places a child"),
+                ("box-clock cell.col 1", "`cell` places a child"),
+            ],
+        );
+
+        set(&Args::of("box arrange free")).expect("a free group");
+        set(&Args::of(
+            "box-clock rect {x = 0.1, y = 0.2, w = 0.5, h = 0.4}",
+        ))
+        .expect("a whole rect");
+        set(&Args::of("box-battery rect.w 0.25")).expect("one side of a rect");
+        let clock = written_child(&store.borrow(), "box-clock")
+            .rect
+            .expect("a rect");
+        assert_eq!((clock.x, clock.y, clock.w, clock.h), (0.1, 0.2, 0.5, 0.4));
+        let battery = written_child(&store.borrow(), "box-battery")
+            .rect
+            .expect("a rect");
+        assert_eq!(battery.w, 0.25);
+        assert_eq!(
+            (battery.x, battery.y, battery.h),
+            (0.0, 0.0, 1.0),
+            "what was not given is the whole box's"
+        );
+        refuses_each(
+            &store,
+            &[
+                ("box-battery weight 2", "`weight` shares out"),
+                ("box-clock cell.col 1", "`cell` places a child"),
+                ("box-clock rect.w wide", "`rect.w`"),
+            ],
+        );
+
+        for _ in 0..3 {
+            verbs::undo(&Args::of("")).expect("each line is one edit");
+        }
+        assert!(
+            written_child(&store.borrow(), "box-clock").rect.is_none(),
+            "undo takes the rect back"
+        );
+    }
+
+    #[test]
+    fn every_reply_is_english_whatever_language_the_shell_speaks() {
+        telar::set_locale("es");
+        let store = shell_with("english", "mine");
+        surfaces::reconcile::publish(&[]);
+
+        assert_eq!(
+            verbs::duplicate(&Args::of("clock")),
+            Err("There is no screen to edit".to_string())
+        );
+        assert_eq!(
+            verbs::history(&Args::of("")),
+            Ok("0\tAt the start".to_string())
+        );
+        let nowhere = edit(&["top", "VGA-9"]).unwrap_err();
+        assert!(nowhere.contains("is not a screen"), "{nowhere}");
+
+        on_screen(&store.borrow());
+        refuses_each(
+            &store,
+            &[
+                ("prompt style.fill text", "the lock would fall back"),
+                ("widgets actions.poke launcher toggle", "is not a gesture"),
+                (
+                    "lock-readings actions.press launcher toggle",
+                    "readings, never controls",
+                ),
+            ],
+        );
+        for (refused, says) in [
+            (verbs::order(&Args::of("widgets up")), "Only free areas"),
+            (verbs::panel(&Args::of("lock-clock")), "only shows readings"),
+            (verbs::duplicate(&Args::of("widgets")), "not the whole grid"),
+        ] {
+            let refused = refused.expect_err(says);
+            assert!(refused.contains(says), "{refused}");
+        }
+        telar::set_locale("en");
+    }
+
+    fn written_shape(store: &LayoutStore) -> layout::BarShape {
+        match written_area(store, "bar-top").kind {
+            Some(AreaKind::Bar { shape, .. }) => shape,
+            other => panic!("a bar: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_bar_s_look_is_written_as_the_editor_writes_it() {
+        let store = shell_with("bar-look", "mine");
+
+        set(&Args::of("bar-top style.radius 8")).expect("a bar's corners");
+        assert_eq!(
+            written_shape(&store.borrow()).radius,
+            Some(layout::Corners::all(8.0))
+        );
+        assert_eq!(written_area(&store.borrow(), "bar-top").style.radius, None);
+
+        set(&Args::of("bar-top style.fill #AABBCC")).expect("a hex fill");
+        set(&Args::of("clock style.border.color Surface")).expect("a token");
+        assert_eq!(
+            written_area(&store.borrow(), "bar-top")
+                .style
+                .fill
+                .as_deref(),
+            Some("#aabbcc"),
+            "lowercased, as the editor's colour row writes it"
+        );
+        assert_eq!(
+            written_clock(&store.borrow())
+                .style
+                .border
+                .and_then(|border| border.color),
+            Some("surface".to_string())
+        );
+        refuses_each(
+            &store,
+            &[
+                ("bar-top style.fill #abc", "not a colour"),
+                (
+                    "bar-top style.border {color = \"nocolour\"}",
+                    "not a colour",
+                ),
+            ],
+        );
+
+        verbs::undo(&Args::of("3")).expect("three edits");
+        assert_eq!(written_shape(&store.borrow()).radius, None);
+    }
+
+    #[test]
+    fn every_key_of_an_area_s_kind_and_a_group_s_place_is_set_over_ipc() {
+        let store = shell_holding("kind-keys", "mine", &with_box("mine"), &[]);
+
+        set(&Args::of("stack flow row")).expect("the stack's flow");
+        set(&Args::of("stack offset {x = 8, y = 16}")).expect("its offset");
+        set(&Args::of("stack launcher true")).expect("the launcher opens there");
+        set(&Args::of("stack within output")).expect("where it is measured");
+        set(&Args::of("stack above_fullscreen true")).expect("over fullscreen");
+        let stack = written_area(&store.borrow(), "stack");
+        let Some(AreaKind::Stack {
+            flow,
+            launcher,
+            width,
+            ..
+        }) = stack.kind
+        else {
+            panic!("still a stack: {:?}", stack.kind);
+        };
+        assert_eq!(
+            (flow, launcher, width),
+            (Some(layout::StackFlow::Row), Some(true), Some(380.0))
+        );
+        assert_eq!(
+            (stack.within, stack.above_fullscreen),
+            (Some(layout::Within::Output), Some(true))
+        );
+
+        set(&Args::of("bar-top thickness 40")).expect("a bar's thickness");
+        set(&Args::of("bar-top shape.gap 6")).expect("its float");
+        set(&Args::of("bar-top reserve false")).expect("whether it reserves");
+        set(&Args::of("centre rect.x 0.25")).expect("a free area's place");
+        set(&Args::of("widgets.box col_span 2")).expect("a cell group's span");
+        set(&Args::of("centre.clock zone end")).expect("a zone group's zone");
+        let bar = written_area(&store.borrow(), "bar-top");
+        assert_eq!(bar.reserve, Some(false));
+        assert!(
+            matches!(bar.kind, Some(AreaKind::Bar { thickness: Some(40.0), shape, .. }) if shape.gap == Some(6.0))
+        );
+        assert!(matches!(
+            written_area(&store.borrow(), "centre").kind,
+            Some(AreaKind::Free { rect: Some(rect), .. }) if rect.x == 0.25 && rect.w == 1.0
+        ));
+        assert_eq!(
+            written_group(&store.borrow(), "widgets", "box").kind,
+            Some(GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 2,
+                row_span: 2
+            })
+        );
+        assert_eq!(
+            written_group(&store.borrow(), "centre", "clock").kind,
+            Some(GroupKind::Zone {
+                zone: layout::Zone::End
+            })
+        );
+
+        refuses_each(
+            &store,
+            &[
+                ("stack flow sideways", "`flow`"),
+                ("stack thickness 3", "not a key of the area `stack`"),
+                ("bar-top flow row", "not a key of the area `bar-top`"),
+                (
+                    "widgets.box zone end",
+                    "not a key of the group `widgets.box`",
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_kind_key_of_an_inherited_area_is_a_partial_entry_naming_its_kind() {
+        let parent = built_in_as("parent");
+        let mine = extending(vec![layout::OutputRule::default()]);
+        let store = shell_holding("kind-partial", "mine", &mine, &[&parent]);
+
+        set(&Args::of("stack flow row")).expect("an inherited stack");
+        assert_eq!(
+            written_area(&store.borrow(), "stack").kind,
+            Some(AreaKind::Stack {
+                anchor: None,
+                offset: None,
+                width: None,
+                flow: Some(layout::StackFlow::Row),
+                output_policy: None,
+                routes: Vec::new(),
+                launcher: None,
+            }),
+            "only the flow, the rest still the parent's"
+        );
     }
 }

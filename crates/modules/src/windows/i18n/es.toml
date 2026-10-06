@@ -1,0 +1,3 @@
+[windows]
+none = "No hay ventanas abiertas"
+unsupported = "Este compositor no enumera sus ventanas (wlr-foreign-toplevel-management)"

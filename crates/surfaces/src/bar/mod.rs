@@ -312,9 +312,9 @@ fn zones_of(groups: &[ResolvedGroup]) -> Zones<'_> {
         groups
             .iter()
             .filter(|group| matches!(group.kind, GroupKind::Zone { zone } if zone == wanted))
-            .flat_map(|group| match group.style.is_empty() {
-                true => held_by(group),
-                false => vec![Slot::Plated(group)],
+            .flat_map(|group| match crate::look::draws_plate(group, true) {
+                false => held_by(group),
+                true => vec![Slot::Plated(group)],
             })
             .collect()
     };
@@ -406,14 +406,34 @@ impl StripPaint {
     fn of(config: &Config, style: &Style, theme: &NordTheme) -> Self {
         Self {
             fill: style.fill_color(theme),
-            alpha: style
-                .opacity
-                .unwrap_or_else(|| config.opacity())
-                .clamp(0.0, 1.0),
+            alpha: strip_opacity(config, style),
             padding: style.padding,
             outline: Look::area(style, theme),
         }
     }
+}
+
+/// The opacity a bar whose style is `style` paints its strip and rests its chips at.
+pub(crate) fn strip_opacity(config: &Config, style: &Style) -> f32 {
+    style
+        .opacity
+        .unwrap_or_else(|| config.opacity())
+        .clamp(0.0, 1.0)
+}
+
+/// The colour a bar of `shape` fills its strip with when its style is `style`.
+pub(crate) fn strip_colour(
+    config: &Config,
+    shape: BarShape,
+    style: &Style,
+    theme: &NordTheme,
+) -> Color {
+    strip_fill(
+        config,
+        bar_shape(config, shape).mode,
+        StripPaint::of(config, style, theme),
+        theme.base,
+    )
 }
 
 /// A `fill` of the area's own paints the strip in any mode; under `[shape] frame` every bar fills its strip flat to make the ring; otherwise only `bar` mode has a background, so in `sections` and `chips` a press between chips belongs to the window underneath ([`painted_chrome`]).

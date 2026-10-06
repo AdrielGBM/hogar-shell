@@ -11,6 +11,7 @@ use telar::{
 use layout::LayoutOp;
 use surfaces::rects::Node;
 
+use crate::popover::Grip;
 use crate::session::Edit;
 
 /// How far the pointer travels before a press becomes a drag, so a press on a target that also drags still only presses.
@@ -74,12 +75,22 @@ fn ended() {
 /// The drag state of one handle: [`dragging`] is set by its first move and cleared as its transaction ends, whichever way, so the handle drags again without being rebuilt.
 pub(crate) struct HandleDragging {
     moving: Rc<Cell<bool>>,
+    grip: Option<Grip>,
 }
 
 impl HandleDragging {
     pub(crate) fn new() -> Self {
         Self {
             moving: Rc::new(Cell::new(false)),
+            grip: None,
+        }
+    }
+
+    /// A handle of an area's popover: its drag takes hold of the draft with its first move and, cancelled, puts the draft back whole rather than writing each value back.
+    pub(crate) fn gripped(grip: Grip) -> Self {
+        Self {
+            grip: Some(grip),
+            ..Self::new()
         }
     }
 
@@ -89,7 +100,11 @@ impl HandleDragging {
         X: 'static,
     {
         let moving = self.moving.clone();
+        let grip = self.grip.clone();
         move |x, y| {
+            if let Some(grip) = &grip {
+                grip.hold();
+            }
             if !moving.replace(true) {
                 started();
             }
@@ -107,9 +122,20 @@ impl HandleDragging {
 
     pub(crate) fn transaction(&self, value: RwSignal<f32>) -> Transaction<f32> {
         let (committed, reverted) = (self.on_end_fn(), self.on_end_fn());
+        let (keeping, dropping) = (self.grip.clone(), self.grip.clone());
         Transaction::new(value)
-            .on_commit(move |_, _| committed())
-            .on_revert(move |_| reverted())
+            .on_commit(move |_, _| {
+                committed();
+                if let Some(grip) = &keeping {
+                    grip.release();
+                }
+            })
+            .on_revert(move |_| {
+                reverted();
+                if let Some(grip) = &dropping {
+                    grip.put_back();
+                }
+            })
     }
 }
 

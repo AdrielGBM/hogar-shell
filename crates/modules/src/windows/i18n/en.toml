@@ -1,0 +1,3 @@
+[windows]
+none = "No open windows"
+unsupported = "This compositor does not list its windows (wlr-foreign-toplevel-management)"

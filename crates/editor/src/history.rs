@@ -4,6 +4,7 @@ use telar::MenuEntry;
 
 use layout::{History, LayoutStore};
 use surfaces::layouts;
+use util::report::Message;
 
 use crate::session;
 
@@ -47,30 +48,33 @@ pub fn current() -> History {
 
 /// `history` as the list shows it.
 pub fn lines_of(history: &History) -> Vec<Line> {
+    steps_of(history)
+        .map(|(steps, label)| Line {
+            label: label.map_or_else(|| start().render(), str::to_string),
+            hint: hint(steps),
+            now: steps == 0,
+            ahead: steps > 0,
+            steps,
+        })
+        .collect()
+}
+
+pub fn steps_of(history: &History) -> impl Iterator<Item = (isize, Option<&str>)> {
     let back = history.undo.len() as isize;
-    let at = |steps: isize, label: String, ahead: bool| Line {
-        label,
-        hint: hint(steps),
-        now: steps == 0,
-        ahead,
-        steps,
-    };
-    let mut lines = vec![at(-back, telar::t!("editor.history.start"), false)];
-    lines.extend(
-        history
-            .undo
-            .iter()
-            .enumerate()
-            .map(|(index, label)| at(index as isize + 1 - back, label.clone(), false)),
-    );
-    lines.extend(
-        history
-            .redo
-            .iter()
-            .enumerate()
-            .map(|(index, label)| at(index as isize + 1, label.clone(), true)),
-    );
-    lines
+    std::iter::once(None)
+        .chain(
+            history
+                .undo
+                .iter()
+                .chain(&history.redo)
+                .map(|label| Some(label.as_str())),
+        )
+        .zip(-back..)
+        .map(|(label, steps)| (steps, label))
+}
+
+pub fn start() -> Message {
+    util::message!("editor.history.start")
 }
 
 fn hint(steps: isize) -> String {

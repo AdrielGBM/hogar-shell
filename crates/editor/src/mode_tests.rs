@@ -101,7 +101,7 @@ mod tests {
         for restack in [true, false] {
             for output in both {
                 let entered = mode::enter_as(layer, Some(output), &compositor(restack))
-                    .unwrap_or_else(|why| panic!("{layer} on {output}: {why}"));
+                    .unwrap_or_else(|why| panic!("{layer} on {output}: {}", why.english()));
                 assert_eq!(mode::current(), Some(entered.clone()));
                 assert!(
                     shell.windows().is_open(Some(output), LayerKind::Overlay),
@@ -249,8 +249,9 @@ mod tests {
             locked: true,
             ..compositor(true)
         };
-        let refused =
-            mode::enter_as(LayerKind::Lock, Some(LEFT), &locked).expect_err("refused while locked");
+        let refused = mode::enter_as(LayerKind::Lock, Some(LEFT), &locked)
+            .expect_err("refused while locked")
+            .english();
         assert!(refused.contains("unlocked"), "{refused}");
         assert_eq!(mode::current(), None);
         assert!(!transient::is_open(&format!("edit:{LEFT}")));
@@ -279,8 +280,8 @@ mod tests {
         assert!(
             entered
                 .refused
-                .as_deref()
-                .is_some_and(|why| why.contains("ext-session-lock-v1")),
+                .as_ref()
+                .is_some_and(|why| why.english().contains("ext-session-lock-v1")),
             "{entered:?}"
         );
         mode::leave();
@@ -312,7 +313,8 @@ mod tests {
         );
         for layer in LayerKind::ALL {
             let refused = mode::enter_as(layer, Some(LEFT), &compositor(true))
-                .expect_err("the recovery flag refuses every mode");
+                .expect_err("the recovery flag refuses every mode")
+                .english();
             assert!(refused.contains("--safe-layout"), "{refused}");
         }
         assert_eq!(mode::current(), None);
@@ -323,7 +325,8 @@ mod tests {
     fn a_screen_the_shell_does_not_draw_on_is_refused_by_name() {
         let _shell = shell_on(&[LEFT]);
         let refused = mode::enter_as(LayerKind::Top, Some("VGA-9"), &compositor(true))
-            .expect_err("not a screen");
+            .expect_err("not a screen")
+            .english();
         assert!(
             refused.contains("VGA-9") && refused.contains(LEFT),
             "{refused}"

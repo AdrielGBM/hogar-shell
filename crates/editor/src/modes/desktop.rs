@@ -115,7 +115,7 @@ fn grid_of(work: &Work, id: &AreaId) -> Result<ResolvedArea, EditError> {
     let area = work.area(work.layer, id)?;
     match area.kind.places_on_cells() {
         true => Ok(area),
-        false => Err(EditError::refused(telar::t!(
+        false => Err(EditError::refused(util::message!(
             "editor.desktop.not_a_grid",
             id = id.to_string()
         ))),
@@ -458,19 +458,22 @@ pub(crate) fn fresh(
     representation: Representation,
 ) -> Result<Instance, EditError> {
     let descriptor = ui::descriptor::find(module).ok_or_else(|| {
-        EditError::refused(telar::t!("editor.desktop.unknown_module", module = module))
+        EditError::refused(util::message!(
+            "editor.desktop.unknown_module",
+            module = module
+        ))
     })?;
     let input = descriptor
         .input(surfaces::area::representation(representation))
         .ok_or_else(|| {
-            EditError::refused(telar::t!(
+            EditError::refused(util::message!(
                 "editor.desktop.cannot_draw",
                 name = descriptor.name,
                 size = representation.as_str()
             ))
         })?;
     if !placeable(input, work.layer) {
-        return Err(EditError::refused(telar::t!(
+        return Err(EditError::refused(util::message!(
             "editor.desktop.lock_readings",
             name = descriptor.name
         )));

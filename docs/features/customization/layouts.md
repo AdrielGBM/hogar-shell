@@ -44,7 +44,7 @@ An **area** has a `kind` that says what it is, and the keys of that kind follow 
 | `bar` | A strip along one edge, in three zones (`start`, `center`, `end`). Several per edge are fine. | yes |
 | `dock` | A strip that sizes itself to its contents, like the audio visualiser's. | yes |
 | `grid` | Cells that widgets are placed into by explicit coordinates. | yes |
-| `stack` | A column that notification, toast and volume cards land in. | yes |
+| `stack` | A column or a row that notification, toast and volume cards land in, by its `flow`. | yes |
 | `free` | A rectangle placed by hand. | yes |
 | `panel` | A box one instance, its `owner`, opens and closes, sized in cells like a grid. | yes |
 | `wallpaper_region` | A rectangle with a picture of its own. | no |
@@ -84,6 +84,13 @@ the check.
 Ids are what everything addresses. An area's id is unique on its layer, a group's within its area, and an instance's
 across the whole layout — `clock`, then `clock-2` — which is what IPC, the editor and [rules](data-and-rules.md#rules)
 use to name a thing. Two areas on a layer, or two instances in a layout, with one id is an error.
+
+An id can be changed afterwards: the **Id** row of a popover and `layout rename` give an area, a group or an instance
+another one, rewriting every level of the layout that names it, and a panel's `owner` and a komponent's children with
+it, as one undo entry. An id holds no `.`, `/`, `#` or space, and one the layout or a layout it extends already uses
+is refused. A rename is also refused, with what names the old id, while a `[[rules]]` command, an
+action line or a layout extending this one still does, since none of those is rewritten, and for an id a layout it
+extends names too, which is that layout's to rename. See [Popovers](popovers.md#ids-and-rename).
 
 The built-in layout is the smallest usable desktop: a top bar with the workspaces, the clock and the notes chip; a clock face
 in the middle of the desktop; the stack notifications arrive in, top right; and a lock layer with the clock, who is
@@ -286,8 +293,8 @@ What a reading may show on the lock screen, and how expressions are evaluated th
 | `layout list`, `layout show [name]` | The layouts on disk, and one as it is stored. With no name, `show` and `check` mean the built-in layout, not the one being drawn. |
 | `layout use <name>` | Draw this layout from now on. |
 | `layout check [name]` | Everything wrong with a layout, without applying it. |
-| `layout add`, `remove`, `move`, `set`, `reset` | Edit the layout being drawn; each is one transaction. |
-| `layout undo`, `layout redo` | Take back or redo the last edit, whatever made it. |
+| `layout add`, `remove`, `move`, `set`, `duplicate`, `order`, `panel`, `rename`, `reset` | Edit the layout being drawn; each is one transaction. |
+| `layout undo [n]`, `layout redo [n]`, `layout history` | Take back or redo the last edit or the last n, whatever made them, and list what they walk through. |
 | `layout edit <layer\|off> [output]` | Open or close an [edit mode](edit-modes.md). |
 | `layout export`, `layout import`, `layout trust` | Share a layout as a [bundle](bundles.md): `export` writes one, `import` reads one (and waits for the outcome, up to a minute), `trust` answers for what an imported bundle runs. |
 

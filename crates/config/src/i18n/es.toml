@@ -8,6 +8,7 @@ unknown_theme = "no hay ningún tema llamado '{name}', así que se usa nord"
 unknown_accent = "no hay ningún acento llamado '{name}', así que se usa el acento propio de la paleta"
 unknown_token = "no hay ningún color llamado '{name}', así que este color no se aplica"
 [option]
+titles = "Mostrar los títulos"
 variant = "Variante"
 accent = "Acento"
 open = "Se abre como"

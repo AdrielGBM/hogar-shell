@@ -79,6 +79,60 @@ pub const COPY_MARK: char = '#';
 /// What separates where a komponent is used from the id one of its children has in the komponent: `bar-top.end/battery` is the child `battery` of the komponent the group `end` of `bar-top` uses. Refused in a written id, so a komponent's child can never share an id with an instance of the layout.
 pub const KOMPONENT_MARK: char = '/';
 
+/// What separates an area's id from one of its groups' in an address: `bar-top.end`.
+pub const GROUP_MARK: char = '.';
+
+/// Why a text cannot be written as an area's, a group's or an instance's id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdRefusal {
+    /// A character a person cannot read as itself ([`util::text::hides`]).
+    Hidden(char),
+    /// A character an address or a command line reads as the end of a part: [`GROUP_MARK`], [`KOMPONENT_MARK`], [`COPY_MARK`] or whitespace.
+    Separator(char),
+}
+
+impl IdRefusal {
+    pub fn message(self, id: &str) -> util::report::Message {
+        match self {
+            IdRefusal::Hidden(c) => util::message!(
+                "finding.unreadable_name",
+                name = id,
+                code = format!("{:04X}", u32::from(c))
+            ),
+            IdRefusal::Separator(COPY_MARK) => util::message!(
+                "finding.copy_mark",
+                mark = COPY_MARK,
+                example = format!("{}{COPY_MARK}0", InstanceId::new(id).template())
+            ),
+            IdRefusal::Separator(KOMPONENT_MARK) => {
+                util::message!("finding.komponent_mark", mark = KOMPONENT_MARK)
+            }
+            IdRefusal::Separator(mark) => {
+                let mark = match mark {
+                    ' ' => "␠".to_string(),
+                    other => other.to_string(),
+                };
+                util::message!("finding.id_separator", name = id, mark = mark)
+            }
+        }
+    }
+}
+
+/// Whether `c` ends a part of an address or a word of a command line, and so can never be part of an id.
+pub fn is_id_separator(c: char) -> bool {
+    c.is_whitespace() || matches!(c, GROUP_MARK | KOMPONENT_MARK | COPY_MARK)
+}
+
+/// Why `id` cannot be written as an id, or `None` where it can. One rule for an area, a group and an instance alike, since each is a part of the same address (`bar-top.end/battery#2`) and each is a word on a command line.
+pub fn id_refusal(id: &str) -> Option<IdRefusal> {
+    if let Some(c) = id.chars().find(|c| util::text::hides(*c)) {
+        return Some(IdRefusal::Hidden(c));
+    }
+    id.chars()
+        .find(|c| is_id_separator(*c))
+        .map(IdRefusal::Separator)
+}
+
 impl InstanceId {
     /// The child `child` of the komponent the group `group` of `area` uses, as it is drawn: two uses of one komponent never share an id, because no two groups share an address.
     pub fn in_komponent(area: &AreaId, group: &GroupId, child: &InstanceId) -> Self {
@@ -550,9 +604,12 @@ pub enum AreaKind {
         /// How far the column is moved from where its anchor puts it, in logical pixels. It never goes past the edge of the box it is measured in, and always keeps a quarter of that box's height for its cards.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<Offset>,
-        /// How wide a card in this column is, in logical pixels.
+        /// How wide a card in this stack is, in logical pixels.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<f32>,
+        /// Which way the cards are laid: down a column, or along a row. A column grows from the top or bottom edge its anchor names, a row from the left or right one, and either grows both ways from the middle. Left out, a column.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        flow: Option<StackFlow>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output_policy: Option<StackOutputPolicy>,
         /// Which cards land here. A card goes to the first stack on its output with a route that takes it; a stack with no routes takes what no route on that output takes, the first such stack taking all of it.
@@ -794,6 +851,17 @@ pub struct Offset {
 
 impl Offset {
     pub const ZERO: Offset = Offset { x: 0.0, y: 0.0 };
+}
+
+/// Which way a stack lays its cards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StackFlow {
+    /// One card under another, each as wide as the stack's `width`.
+    #[default]
+    Column,
+    /// Side by side, each as wide as the stack's `width`.
+    Row,
 }
 
 /// Which outputs a stack appears on.
@@ -1319,16 +1387,24 @@ pub fn prompt_card(style: &Style, theme: &NordTheme) -> Color {
     fill.with_alpha(style.opacity.unwrap_or(1.0).clamp(FAINTEST_PROMPT, 1.0))
 }
 
-/// What the prompt's text is read against: its card over the lock's own opaque background, which is the colour a translucent card actually shows.
-pub fn prompt_backdrop(style: &Style, theme: &NordTheme) -> Color {
-    let card = prompt_card(style, theme);
-    let under = theme.base;
-    let mix = |over: f32, back: f32| over * card.a + back * (1.0 - card.a);
+/// `over` as it looks on top of the opaque `under`: its alpha mixed in, the way a translucent fill actually shows.
+pub fn laid_over(over: Color, under: Color) -> Color {
+    let mix = |above: f32, below: f32| above * over.a + below * (1.0 - over.a);
     Color::rgb(
-        mix(card.r, under.r),
-        mix(card.g, under.g),
-        mix(card.b, under.b),
+        mix(over.r, under.r),
+        mix(over.g, under.g),
+        mix(over.b, under.b),
     )
+}
+
+/// The contrast ratio of the theme's text colour on `fill`, translucent or not, over the opaque `under`: how a fill under text is judged, in the lock's prompt and in a look block alike.
+pub fn text_contrast(fill: Color, under: Color, theme: &NordTheme) -> f32 {
+    theme.text.contrast_ratio(laid_over(fill, under))
+}
+
+/// The contrast of the prompt's text on its card laid over the lock's own opaque background, which is the colour a translucent card actually shows: what validation refuses and the lock's rows say.
+pub fn prompt_contrast(style: &Style, theme: &NordTheme) -> f32 {
+    text_contrast(prompt_card(style, theme), theme.base, theme)
 }
 
 /// The faintest a prompt may be drawn. Below this the field a user has to type into disappears into the wallpaper behind it.

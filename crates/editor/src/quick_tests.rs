@@ -509,6 +509,90 @@ mod tests {
         assert_ne!((other.x, other.y), (moved.x, moved.y));
     }
 
+    #[test]
+    fn the_keyboard_presses_remove_as_one_undo_entry_and_hands_the_keyboard_back() {
+        let rig = rig("quick-remove-keys");
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Top);
+        let mut screen = selecting(LayerKind::Top, clock());
+        let before = stored(&rig);
+        assert!(screen.dot());
+        assert!(screen.key(NamedKey::End));
+        assert_eq!(shown().last(), Some(&Button::Remove));
+        assert_eq!(quick::keyboard(), Some(shown().len() - 1));
+        assert!(screen.key(NamedKey::Enter));
+        assert_eq!(rig.undo_label().as_deref(), Some("Remove Clock"));
+        assert_ne!(stored(&rig), before);
+        assert_eq!(
+            quick::keyboard(),
+            None,
+            "the removed thing takes the bar with it"
+        );
+        rig::undoes_to(&rig, &before);
+    }
+
+    #[test]
+    fn dot_again_hands_the_keyboard_back_and_with_nothing_selected_it_takes_none() {
+        let _rig = rig("quick-dot");
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Top);
+        draw(LayerKind::Top);
+        session::clear_selection();
+        let mut screen = Screen::new();
+        screen.dot();
+        assert_eq!(quick::keyboard(), None, "nothing selected, no bar to take");
+
+        assert!(session::select(Selection::Instance(clock())));
+        assert!(screen.dot());
+        assert_eq!(quick::keyboard(), Some(0));
+        assert!(screen.key(NamedKey::ArrowRight));
+        assert_eq!(quick::keyboard(), Some(1));
+        assert!(screen.dot());
+        assert_eq!(
+            quick::keyboard(),
+            None,
+            "the key that took the bar gives it back"
+        );
+        assert_eq!(session::selected(), Selection::Instance(clock()));
+    }
+
+    #[test]
+    fn each_kind_of_selection_is_offered_the_buttons_it_takes() {
+        let _rig = rig("quick-offered");
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Top);
+        draw(LayerKind::Top);
+        let offered = |node: Node| {
+            assert!(session::select(Selection::of(node)));
+            shown()
+        };
+        assert_eq!(
+            offered(clock()),
+            [
+                Button::Customize,
+                Button::Panel,
+                Button::Radius,
+                Button::Remove
+            ]
+        );
+        let zone = offered(bar().group(&GroupId::new("center")));
+        assert!(zone.contains(&Button::Radius), "{zone:?}");
+        assert!(
+            !zone.contains(&Button::Padding),
+            "a loose run has none: {zone:?}"
+        );
+        assert!(!zone.contains(&Button::Panel), "{zone:?}");
+        assert_eq!(
+            offered(bar()),
+            [
+                Button::Customize,
+                Button::Radius,
+                Button::Padding,
+                Button::Remove
+            ]
+        );
+    }
+
     /// Where the grip put the bar lasts as long as the mode: leaving it and coming back finds the bar where it lies by default.
     #[test]
     fn the_grip_moves_the_bar_until_the_mode_changes() {

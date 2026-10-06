@@ -338,6 +338,111 @@ mod tests {
         }
     }
 
+    fn bar_in(edge: Edge, mode: config::Shape) -> ResolvedArea {
+        let mut area = bar(edge);
+        let ResolvedAreaKind::Bar { shape, .. } = &mut area.kind else {
+            unreachable!("a bar");
+        };
+        shape.mode = Some(mode);
+        area
+    }
+
+    fn show_sized(layer: LayerKind, areas: Vec<ResolvedArea>, size: (u32, u32)) -> Shown {
+        telar::reset_layout_runtime();
+        let config = quiet();
+        config::set_output_config(SCREEN, Arc::clone(&config));
+        set_theme(config.resolve_theme());
+        ui::descriptor::install(PROBES);
+        transient::close_all();
+        let resolved = resolved(layer, areas);
+        crate::reconcile::publish(&[Desktop {
+            output: Some(SCREEN.to_string()),
+            config: Arc::clone(&config),
+            resolved: resolved.clone(),
+            reserved: Reserved::of(&resolved, &config),
+            size: (size.0 as f32, size.1 as f32),
+        }]);
+        let app = LayerApp::standing(
+            layer,
+            WindowAreas::of(&resolved, layer),
+            Arc::clone(&config),
+            Screen {
+                size: (size.0 as f32, size.1 as f32),
+                reserved: Reserved::of(&resolved, &config),
+            },
+            Rc::new(crate::area::ShellAreas),
+        );
+        let tree = telar::testing::mount(app.root(), size.0, size.1);
+        let shown = Shown { app, tree, layer };
+        shown.frame();
+        shown
+    }
+
+    /// Beside its owner or along its bar, on every edge and monitor, in `bar`, `sections` and `chips`, a panel opens on the screen, clear of the bar and of its owner, and an `along` one runs the bar's whole length.
+    #[test]
+    fn a_panel_opens_clear_of_its_bar_on_every_edge_shape_and_monitor() {
+        for size in [(1920, 1080), (1080, 1920)] {
+            let screen = Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32);
+            for mode in [
+                config::Shape::Bar,
+                config::Shape::Sections,
+                config::Shape::Chips,
+            ] {
+                for edge in Edge::ALL {
+                    for along in [false, true] {
+                        let what = format!("{edge:?} {mode:?} along={along} on {size:?}");
+                        let scope = telar::owner_scope();
+                        let owner_scope = scope.id();
+                        let shown = show_sized(
+                            LayerKind::Top,
+                            vec![bar_in(edge, mode), panel(along)],
+                            size,
+                        );
+                        assert!(crate::panel::open_owned(&owner()), "{what}: it has one");
+                        shown.frame();
+                        let rect = shown.panel_rect();
+                        let chip = shown.owner_rect();
+                        let strip = crate::rects::rect(&Node::area(
+                            Some(SCREEN),
+                            LayerKind::Top,
+                            &AreaId::new("bar"),
+                        ))
+                        .expect("the bar is drawn");
+                        assert!(inside(&rect, screen), "{what}: {rect:?} is off the screen");
+                        assert!(
+                            !overlaps(&rect, strip),
+                            "{what}: {rect:?} covers the bar at {strip:?}"
+                        );
+                        if along {
+                            let (length, whole) = match edge.is_vertical() {
+                                true => (rect.height, strip.height),
+                                false => (rect.width, strip.width),
+                            };
+                            assert_eq!(length, whole, "{what}: along the whole bar");
+                        } else {
+                            assert!(
+                                !overlaps(&rect, chip),
+                                "{what}: {rect:?} covers its owner at {chip:?}"
+                            );
+                            let (owner_at, from, to) = match edge.is_vertical() {
+                                true => (centre(chip).1, rect.y, rect.y + rect.height),
+                                false => (centre(chip).0, rect.x, rect.x + rect.width),
+                            };
+                            assert!(
+                                from - 0.5 <= owner_at && owner_at <= to + 0.5,
+                                "{what}: {rect:?} is not beside its owner at {chip:?}"
+                            );
+                        }
+                        transient::close_all();
+                        drop(shown);
+                        drop(scope);
+                        telar::dispose_owner(owner_scope);
+                    }
+                }
+            }
+        }
+    }
+
     /// A desktop widget's panel opens below it, or above it where there is no room below, and opening or closing it repaints nothing outside its own box.
     #[test]
     fn a_desktop_widget_s_panel_opens_and_closes_repainting_only_its_own_box() {

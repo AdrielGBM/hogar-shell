@@ -41,13 +41,14 @@ not repeated here.
 | [Volume](modules/volume.md) | The default output's level and mute. | `pw-dump`, `wpctl` |
 | [Weather](modules/weather.md) | The sky and the temperature where you are, as a widget; not yet placeable on its own. | — |
 | [Window info](modules/windowinfo.md) | What the compositor knows about the focused window, and four things to do to it. **(Hyprland only)** | `ext-image-copy-capture`, `wlr-screencopy` |
+| [Windows](modules/windows.md) | Every open window as one entry on a strip — a taskbar. | `wlr-foreign-toplevel-management` |
 | [Workspaces](modules/workspaces.md) | Which workspaces the bar shows, and what each pill says. **(Hyprland only)** | `ext-workspace` |
 
 ## Surfaces — where the shell draws
 
 | Page | What it is | Needs |
 | --- | --- | --- |
-| [Bars](surfaces/bars.md) | One per screen edge, all four at once if you like, on every monitor. | `wlr-layer-shell` |
+| [Bars](surfaces/bars.md) | As many as you like on each screen edge, all four at once if you like, on every monitor. | `wlr-layer-shell` |
 | [Drawers](surfaces/drawers.md) | A panel anchored to the chip that opened it. | `wlr-layer-shell` |
 | [Floats](surfaces/floats.md) | A panel as a free-standing, centred window with a title bar and close button. | `wlr-layer-shell` |
 | [Launcher](surfaces/launcher.md) | A full-screen modal that owns the keyboard: applications, actions, a calculator, schemes, wallpapers and the windows already open. | `wlr-layer-shell`, `qalc`, `wlr-foreign-toplevel-management` |

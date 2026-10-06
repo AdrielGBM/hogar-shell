@@ -628,7 +628,7 @@ mod tests {
 
         bind(&[(layout::Trigger::Press, "launcher toggle")]);
         match join() {
-            Err(EditError::Refused(why)) => assert!(why.contains("press"), "{why}"),
+            Err(EditError::Refused(why)) => assert!(why.english().contains("press"), "{why:?}"),
             other => panic!("the two presses disagree, so the join is refused: {other:?}"),
         }
         assert!(
@@ -1011,9 +1011,7 @@ mod tests {
         assert!(!variant::allowed(LayerKind::Top));
         assert_eq!(
             variant::set(true),
-            Err(EditError::Refused(
-                "Bars reserve space, which a workspace rule may not change, so the top layer has no workspace variants".to_string()
-            ))
+            Err(EditError::Refused(util::message!("editor.variant.top")))
         );
         assert_eq!(variant::active(), None, "so no popover offers it");
         mode::leave();

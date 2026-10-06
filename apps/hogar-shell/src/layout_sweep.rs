@@ -44,6 +44,7 @@ fn seed_world(edge: Edge, mode: Shape, extra: Option<&str>) {
     set_theme(config.resolve_theme());
     config::set_config(config);
     crate::install_hooks();
+    services::windows::seed(open_windows());
 }
 
 /// The layout one combination measures: the one the shell ships, with its bar moved to the edge under test and drawn in `mode`, plus `extra` placed at the end of it.
@@ -525,6 +526,134 @@ fn an_unknown_module_holds_a_chips_place_on_every_edge_and_shape() {
     );
 }
 
+fn open_windows() -> Vec<platform_wayland::ManagedToplevel> {
+    [
+        (1, "kitty", "nvim — resolve.rs", true, false),
+        (2, "firefox", "Firefox", false, false),
+        (3, "org.gnome.Nautilus", "Files", false, true),
+    ]
+    .into_iter()
+    .map(
+        |(id, app_id, title, activated, minimized)| platform_wayland::ManagedToplevel {
+            id: platform_wayland::ManagedToplevelId::from_raw(id),
+            title: title.to_string(),
+            app_id: app_id.to_string(),
+            activated,
+            minimized,
+            ..platform_wayland::ManagedToplevel::default()
+        },
+    )
+    .collect()
+}
+
+#[test]
+fn the_windows_strip_lays_each_window_along_its_bar_on_every_edge_and_shape() {
+    let mut wrong = Vec::new();
+    sweep_with("windows", |entry, edge, mode, measured| {
+        if entry.component_name != "bar" {
+            return;
+        }
+        let commands = match measured {
+            Ok(commands) => commands,
+            Err(e) => {
+                wrong.push(format!(
+                    "{edge:?}/{mode:?}: the bar failed to lay out — {e}"
+                ));
+                return;
+            }
+        };
+        let strip = surfaces::preview::bar_strip().expect("the previewed layout has a bar");
+        let (rest, active) = modules::windows::fills(
+            config::config()
+                .expect("the sweep published a config")
+                .resolve_theme(),
+        );
+        let entries: Vec<(Rect, bool)> = commands
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::Rect { rect, style } if style.fill == Some(Paint::Solid(rest)) => {
+                    Some((*rect, false))
+                }
+                DrawCommand::Rect { rect, style } if style.fill == Some(Paint::Solid(active)) => {
+                    Some((*rect, true))
+                }
+                _ => None,
+            })
+            .collect();
+        if entries.len() != open_windows().len() {
+            wrong.push(format!(
+                "{edge:?}/{mode:?}: {} entries for {} windows",
+                entries.len(),
+                open_windows().len()
+            ));
+            return;
+        }
+        if entries.iter().filter(|(_, focused)| *focused).count() != 1 {
+            wrong.push(format!(
+                "{edge:?}/{mode:?}: the focused window is not the one entry on the accent"
+            ));
+        }
+        let along = |rect: &Rect| match edge.is_vertical() {
+            true => (rect.y, rect.height, rect.x, rect.width),
+            false => (rect.x, rect.width, rect.y, rect.height),
+        };
+        for pair in entries.windows(2) {
+            let (start, length, across, _) = along(&pair[0].0);
+            let (next, _, next_across, _) = along(&pair[1].0);
+            if next < start + length - SLACK || (next_across - across).abs() > SLACK {
+                wrong.push(format!(
+                    "{edge:?}/{mode:?}: {:?} and {:?} are not one after the other along the bar",
+                    pair[0].0, pair[1].0
+                ));
+            }
+        }
+        for (rect, _) in &entries {
+            let inside = rect.x >= strip.x - SLACK
+                && rect.y >= strip.y - SLACK
+                && rect.x + rect.width <= strip.x + strip.width + SLACK
+                && rect.y + rect.height <= strip.y + strip.height + SLACK;
+            if !inside {
+                wrong.push(format!(
+                    "{edge:?}/{mode:?}: an entry at {rect:?} is off the {strip:?} bar"
+                ));
+            }
+        }
+        let titled = entries
+            .iter()
+            .filter(|(rect, _)| {
+                under_transform(&commands).iter().any(|(command, at)| {
+                    let DrawCommand::Text {
+                        rect: text,
+                        text: written,
+                        ..
+                    } = command
+                    else {
+                        return false;
+                    };
+                    let drawn = in_surface_space(*text, *at);
+                    !written.is_empty()
+                        && drawn.x >= rect.x - SLACK
+                        && drawn.x <= rect.x + rect.width + SLACK
+                        && drawn.y >= rect.y - SLACK
+                        && drawn.y <= rect.y + rect.height + SLACK
+                })
+            })
+            .count();
+        let expected = if edge.is_vertical() { 0 } else { entries.len() };
+        if titled != expected {
+            wrong.push(format!(
+                "{edge:?}/{mode:?}: {titled} of {} entries carry a title, where {expected} should",
+                entries.len()
+            ));
+        }
+    });
+    assert!(
+        wrong.is_empty(),
+        "the windows strip did not hold its windows along the bar:\n  {}",
+        wrong.join("\n  ")
+    );
+}
+
 /// Sub-pixel slack, for the same reason [`COLLAPSED`] has some: layout lands a fraction under a whole pixel routinely, and the question asked is whether a rect is claimed, not whether the arithmetic is exact.
 const SLACK: f32 = 0.5;
 
@@ -764,6 +893,27 @@ fn containers() -> Vec<layout::ResolvedGroup> {
         .collect()
 }
 
+/// A container that shows one child at a time, on the first 4 × 4 cells of its grid, holding two widgets of different sizes.
+fn pages_container() -> layout::ResolvedGroup {
+    use layout::{Arrange, GroupKind, Representation as Placed};
+    layout::ResolvedGroup {
+        id: layout::GroupId::new("container-pages"),
+        arrange: Some(Arrange::Pages),
+        ..group(
+            GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 4,
+                row_span: 4,
+            },
+            vec![
+                instance("clock", Placed::WidgetM),
+                instance("visualiser", Placed::WidgetL),
+            ],
+        )
+    }
+}
+
 fn area_of(
     id: String,
     kind: layout::ResolvedAreaKind,
@@ -783,7 +933,7 @@ fn area_of(
     }
 }
 
-fn every_area() -> Vec<layout::ResolvedArea> {
+fn every_area(mode: Shape) -> Vec<layout::ResolvedArea> {
     use layout::{Anchor, GroupKind, Representation as Placed, ResolvedAreaKind, Zone};
     let chips = || {
         vec![
@@ -824,7 +974,10 @@ fn every_area() -> Vec<layout::ResolvedArea> {
                 thickness: 34.0,
                 length: layout::Extent::Fill,
                 offset: 0.0,
-                shape: layout::BarShape::default(),
+                shape: layout::BarShape {
+                    mode: Some(mode),
+                    ..layout::BarShape::default()
+                },
                 autohide: None,
             },
             chips(),
@@ -849,38 +1002,35 @@ fn every_area() -> Vec<layout::ResolvedArea> {
             },
             widget(),
         ));
-        areas.push(area_of(
-            format!("stack-{anchor:?}"),
-            ResolvedAreaKind::Stack {
-                anchor,
-                offset: layout::Offset::ZERO,
-                width: 380.0,
-                output_policy: layout::StackOutputPolicy::Here,
-                routes: Vec::new(),
-                launcher: false,
-            },
-            Vec::new(),
-        ));
         let outward = |side: surfaces::pinned::Side| match side {
             surfaces::pinned::Side::Start => -4000.0,
             surfaces::pinned::Side::Middle | surfaces::pinned::Side::End => 4000.0,
         };
         let (across, down) = surfaces::pinned::sides(anchor);
-        areas.push(area_of(
-            format!("stack-{anchor:?}-pushed-off"),
-            ResolvedAreaKind::Stack {
+        for flow in [layout::StackFlow::Column, layout::StackFlow::Row] {
+            let stack = |offset| ResolvedAreaKind::Stack {
                 anchor,
-                offset: layout::Offset {
-                    x: outward(across),
-                    y: outward(down),
-                },
+                offset,
                 width: 380.0,
+                flow,
                 output_policy: layout::StackOutputPolicy::Here,
                 routes: Vec::new(),
                 launcher: false,
-            },
-            Vec::new(),
-        ));
+            };
+            areas.push(area_of(
+                format!("stack-{flow:?}-{anchor:?}"),
+                stack(layout::Offset::ZERO),
+                Vec::new(),
+            ));
+            areas.push(area_of(
+                format!("stack-{flow:?}-{anchor:?}-pushed-off"),
+                stack(layout::Offset {
+                    x: outward(across),
+                    y: outward(down),
+                }),
+                Vec::new(),
+            ));
+        }
     }
     areas.push(area_of(
         "containers".into(),
@@ -909,6 +1059,26 @@ fn every_area() -> Vec<layout::ResolvedArea> {
         },
         styled_containers,
     ));
+    let mut styled_pages = pages_container();
+    styled_pages.style = styled("accent", 2);
+    for child in &mut styled_pages.children {
+        child.style = styled("red", 3);
+    }
+    for (id, container) in [
+        ("paged-container", pages_container()),
+        ("styled-paged-container", styled_pages),
+    ] {
+        areas.push(area_of(
+            id.into(),
+            ResolvedAreaKind::Grid {
+                rect: layout::Rect::default(),
+                cell: 80.0,
+                gap: 16.0,
+                anchor: Anchor::TopLeft,
+            },
+            vec![container],
+        ));
+    }
     for edge in Edge::ALL {
         let mut groups = chips();
         for group in &mut groups {
@@ -1037,7 +1207,15 @@ fn measure_area(
     area: &layout::ResolvedArea,
     size: (f32, f32),
 ) -> Result<Vec<DrawCommand>, LayoutError> {
-    let built = built_area(area, size)?;
+    measure_area_beside(area, &[], size)
+}
+
+fn measure_area_beside(
+    area: &layout::ResolvedArea,
+    beside: &[layout::ResolvedArea],
+    size: (f32, f32),
+) -> Result<Vec<DrawCommand>, LayoutError> {
+    let built = built_area_beside(area, beside, size)?;
     let page = || LayoutStyle::new().width(size.0).height(size.1);
     let root_node = new_container(page(), &[built.layout_node()])?;
     let tree = ComponentList::new(Container::new(page(), vec![built])?);
@@ -1054,23 +1232,32 @@ fn built_area(
     area: &layout::ResolvedArea,
     size: (f32, f32),
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    built_area_beside(area, &[], size)
+}
+
+fn built_area_beside(
+    area: &layout::ResolvedArea,
+    beside: &[layout::ResolvedArea],
+    size: (f32, f32),
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let config = config::config().expect("the sweep published a config");
     let resolved = layout::Resolved::of(
         "SWEPT-1",
         [(
             layout::LayerKind::Desktop,
             layout::ResolvedLayer {
-                areas: vec![area.clone()],
+                areas: std::iter::once(area.clone())
+                    .chain(beside.iter().cloned())
+                    .collect(),
             },
         )],
     );
-    surfaces::reconcile::publish(&[surfaces::reconcile::Desktop {
-        output: Some("SWEPT-1".into()),
-        config: Arc::clone(&config),
-        resolved: resolved.clone(),
-        reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
+    surfaces::reconcile::publish(&[crate::test_support::measured(
+        "SWEPT-1",
+        Arc::clone(&config),
+        resolved.clone(),
         size,
-    }]);
+    )]);
     let surround = surfaces::area::Surround {
         config: &config,
         theme: config.resolve_theme(),
@@ -1095,7 +1282,7 @@ fn every_area_kind_lays_out_on_screen_on_every_edge_anchor_and_monitor() {
     let mut faults = Vec::new();
     for mode in MODES {
         for size in MONITORS {
-            for area in every_area() {
+            for area in every_area(mode) {
                 reset_layout_runtime();
                 seed_world(Edge::Top, mode, None);
                 surfaces::area::set_stack_builder(modules::stack::area);
@@ -1163,6 +1350,7 @@ fn no_container_draws_past_its_box() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut cases = containers();
+    cases.push(pages_container());
     cases.extend(
         [(12, 4), (6, 2), (6, 1), (3, 1), (1, 1)].map(|(cols, rows)| shrinking_row(cols, rows)),
     );
@@ -1555,6 +1743,15 @@ fn bar_on(
     autohide: Option<layout::AutoHide>,
     fillet: Option<f32>,
 ) -> layout::ResolvedArea {
+    bar_in(None, edge, autohide, fillet)
+}
+
+fn bar_in(
+    mode: Option<Shape>,
+    edge: Edge,
+    autohide: Option<layout::AutoHide>,
+    fillet: Option<f32>,
+) -> layout::ResolvedArea {
     area_of(
         format!("bar-{edge:?}"),
         layout::ResolvedAreaKind::Bar {
@@ -1563,6 +1760,7 @@ fn bar_on(
             length: layout::Extent::Fill,
             offset: 0.0,
             shape: layout::BarShape {
+                mode,
                 fillet,
                 ..layout::BarShape::default()
             },
@@ -1914,6 +2112,302 @@ fn a_styled_bar_draws_its_plates_and_chips_inside_its_strip_on_every_edge_and_sh
     assert!(
         faults.is_empty(),
         "{} styled bar(s) drew outside their strip:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
+/// The concave pieces a fillet of `radius` drew: each a square of that side painted as a radial ramp from clear to a colour, with that colour.
+fn notch_pieces(commands: &[DrawCommand], radius: f32) -> Vec<(Rect, telar::Color)> {
+    under_transform(commands)
+        .into_iter()
+        .filter_map(|(command, at)| {
+            let DrawCommand::Rect { rect, style } = command else {
+                return None;
+            };
+            let Some(Paint::Gradient(gradient)) = style.fill else {
+                return None;
+            };
+            match gradient.kind {
+                telar::GradientKind::Radial { radius: r, .. } if r == radius => Some((
+                    in_surface_space(*rect, at),
+                    gradient.stops.active().last()?.color,
+                )),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// **A fillet is drawn where a bar owns a corner, and only in `bar`**: on every edge, in every mode and on every monitor, a bar that hides itself carries a piece at each inner end, a steady horizontal bar carries one at each corner a reserving vertical bar leaves it, a vertical bar or a bar alone carries none, and `sections` and `chips` carry none at all. Each piece is on the screen and in the colour of the strip it grows out of.
+#[test]
+fn a_fillet_is_drawn_where_a_bar_owns_a_corner_and_in_bar_mode_only() {
+    const RADIUS: f32 = 12.0;
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let hide = Some(layout::AutoHide {
+        peek: 2.0,
+        on_hover: true,
+    });
+    let mut faults = Vec::new();
+    for mode in MODES {
+        for size in MONITORS {
+            for edge in Edge::ALL {
+                let across: Vec<Edge> = match edge.is_horizontal() {
+                    true => vec![Edge::Left, Edge::Right],
+                    false => vec![Edge::Top],
+                };
+                let neighbours: Vec<_> = across
+                    .iter()
+                    .map(|side| bar_on(*side, None, None))
+                    .collect();
+                let cases = [
+                    ("hiding", hide, &neighbours[..], 2),
+                    (
+                        "steady beside reserving bars",
+                        None,
+                        &neighbours[..],
+                        if edge.is_horizontal() { 2 } else { 0 },
+                    ),
+                    ("steady alone", None, &[][..], 0),
+                ];
+                for (name, autohide, beside, in_bar_mode) in cases {
+                    let expected = if mode == Shape::Bar { in_bar_mode } else { 0 };
+                    let at = format!("{edge:?} {name} on {}x{} in {mode:?}", size.0, size.1);
+                    let drawn = |fillet| {
+                        reset_layout_runtime();
+                        seed_world(Edge::Top, mode, None);
+                        let scope = telar::owner_scope();
+                        let owner = scope.id();
+                        let measured = measure_area_beside(
+                            &bar_in(Some(mode), edge, autohide, fillet),
+                            beside,
+                            size,
+                        );
+                        drop(scope);
+                        telar::dispose_owner(owner);
+                        measured
+                    };
+                    let (plain, rounded) = match (drawn(None), drawn(Some(RADIUS))) {
+                        (Ok(plain), Ok(rounded)) => (plain, rounded),
+                        (Err(error), _) | (_, Err(error)) => {
+                            faults.push(format!("{at}: {error}"));
+                            continue;
+                        }
+                    };
+                    if !notch_pieces(&plain, RADIUS).is_empty() {
+                        faults.push(format!("{at}: pieces without a fillet"));
+                    }
+                    let pieces = notch_pieces(&rounded, RADIUS);
+                    if pieces.len() != expected {
+                        faults.push(format!("{at}: {} pieces, not {expected}", pieces.len()));
+                    }
+                    let screen =
+                        Rect::new(-SLACK, -SLACK, size.0 + 2.0 * SLACK, size.1 + 2.0 * SLACK);
+                    for (rect, colour) in pieces {
+                        if autohide.is_none() && rect.intersect(screen) != Some(rect) {
+                            faults.push(format!("{at}: a piece at {rect:?} is off the screen"));
+                        }
+                        if colour.a <= 0.0 {
+                            faults.push(format!("{at}: a piece with no colour"));
+                        }
+                        let strip_solid = rounded.iter().any(|command| {
+                            matches!(command, DrawCommand::Rect { style, .. }
+                                if style.fill == Some(Paint::Solid(colour)))
+                        });
+                        if !strip_solid {
+                            faults.push(format!("{at}: a piece in a colour the strip is not"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} fillet(s) were drawn wrong:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
+/// Every box in `commands` that draws a line round itself: where it is on the surface, the line, and the lift under it.
+fn edged(commands: &[DrawCommand]) -> Vec<(Rect, telar::Border, Option<telar::Shadow>)> {
+    under_transform(commands)
+        .into_iter()
+        .filter_map(|(command, at)| match command {
+            DrawCommand::Rect { rect, style } => {
+                Some((in_surface_space(*rect, at), style.border?, style.shadow))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// **A container's style is the plate behind it and a child's is its own box**: every arrangement, with a lifted, lined plate and children lined and lifted in another colour, draws one plate exactly over the container's cells and one box per child on show inside it, each in the line and the lift its style names, on every monitor.
+#[test]
+fn a_styled_container_draws_its_plate_over_its_cells_and_a_box_round_each_child_on_show() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut faults = Vec::new();
+    for size in MONITORS {
+        for mut container in containers().into_iter().chain([pages_container()]) {
+            let shown = match container.arrange {
+                Some(layout::Arrange::Pages) => 1,
+                _ => container.children.len(),
+            };
+            container.style = styled("accent", 2);
+            for child in &mut container.children {
+                child.style = styled("red", 3);
+            }
+            reset_layout_runtime();
+            seed_world(Edge::Top, Shape::Bar, None);
+            let theme = config::config()
+                .expect("the sweep published a config")
+                .resolve_theme();
+            let line = |token: &str| telar::Border::uniform(layout::color_of(token, &theme), 2.0);
+            let lift = |step| ui::scale::elevation::shadow(step);
+            let scope = telar::owner_scope();
+            let owner = scope.id();
+            let area = area_of(
+                container.id.to_string(),
+                layout::ResolvedAreaKind::Grid {
+                    rect: layout::Rect::default(),
+                    cell: 80.0,
+                    gap: 16.0,
+                    anchor: layout::Anchor::TopLeft,
+                },
+                vec![container.clone()],
+            );
+            let measured = measure_area(&area, size);
+            drop(scope);
+            telar::dispose_owner(owner);
+            let at = format!("{} on {}x{}", container.id, size.0, size.1);
+            let layout::GroupKind::Cell { col, row, .. } = container.kind else {
+                unreachable!("every case is on cells");
+            };
+            let span = surfaces::area::cells_of(&container).extent(80.0, 16.0);
+            let cells = Rect::new(
+                col as f32 * 96.0,
+                row as f32 * 96.0,
+                span.width,
+                span.height,
+            );
+            let commands = match measured {
+                Ok(commands) => commands,
+                Err(error) => {
+                    faults.push(format!("{at}: {error}"));
+                    continue;
+                }
+            };
+            let boxes = edged(&commands);
+            let plates: Vec<_> = boxes
+                .iter()
+                .filter(|(_, border, shadow)| *border == line("accent") && *shadow == lift(2))
+                .collect();
+            let children: Vec<_> = boxes
+                .iter()
+                .filter(|(_, border, shadow)| *border == line("red") && *shadow == lift(3))
+                .collect();
+            if plates.len() != 1 {
+                faults.push(format!("{at}: {} plates, not one", plates.len()));
+            }
+            for (rect, ..) in &plates {
+                let off = (rect.x - cells.x)
+                    .abs()
+                    .max((rect.y - cells.y).abs())
+                    .max((rect.width - cells.width).abs())
+                    .max((rect.height - cells.height).abs());
+                if off > SLACK {
+                    faults.push(format!(
+                        "{at}: the plate {rect:?} is not its cells {cells:?}"
+                    ));
+                }
+            }
+            if children.len() != shown {
+                faults.push(format!("{at}: {} child boxes, not {shown}", children.len()));
+            }
+            let held = Rect::new(
+                cells.x - SLACK,
+                cells.y - SLACK,
+                cells.width + 2.0 * SLACK,
+                cells.height + 2.0 * SLACK,
+            );
+            for (rect, ..) in &children {
+                if rect.intersect(held) != Some(*rect) {
+                    faults.push(format!("{at}: a child box {rect:?} is past its plate"));
+                }
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} styled container(s) drew wrong:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
+/// **A dock's groups are plates and its chips boxes, whatever it is drawn as**: a dock on every edge, in `bar`, `sections` and `chips`, on every monitor, draws one plate per styled group and one box per chip on show, in their own lines and lifts, all on the screen.
+#[test]
+fn a_styled_dock_draws_a_plate_per_group_and_a_box_per_chip_on_every_edge_and_shape() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut faults = Vec::new();
+    for mode in MODES {
+        for size in MONITORS {
+            for area in every_area(mode)
+                .into_iter()
+                .filter(|area| area.id.to_string().starts_with("styled-dock-"))
+            {
+                reset_layout_runtime();
+                seed_world(Edge::Top, mode, None);
+                let theme = config::config()
+                    .expect("the sweep published a config")
+                    .resolve_theme();
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let measured = measure_area(&area, size);
+                drop(scope);
+                telar::dispose_owner(owner);
+                let at = format!("{} on {}x{} in {mode:?}", area.id, size.0, size.1);
+                let commands = match measured {
+                    Ok(commands) => commands,
+                    Err(error) => {
+                        faults.push(format!("{at}: {error}"));
+                        continue;
+                    }
+                };
+                let line =
+                    |token: &str| telar::Border::uniform(layout::color_of(token, &theme), 2.0);
+                let boxes = edged(&commands);
+                let plates = boxes
+                    .iter()
+                    .filter(|(_, border, shadow)| {
+                        *border == line("accent") && *shadow == ui::scale::elevation::shadow(2)
+                    })
+                    .count();
+                let chips = boxes
+                    .iter()
+                    .filter(|(_, border, shadow)| {
+                        *border == line("green") && *shadow == ui::scale::elevation::shadow(1)
+                    })
+                    .count();
+                if plates != 3 {
+                    faults.push(format!("{at}: {plates} plates, not 3"));
+                }
+                if chips != 3 {
+                    faults.push(format!("{at}: {chips} chip boxes, not 3"));
+                }
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} styled dock(s) drew wrong:\n  {}",
         faults.len(),
         faults.join("\n  ")
     );

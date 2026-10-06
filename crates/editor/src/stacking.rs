@@ -11,7 +11,7 @@ use crate::{context, mode, steps};
 
 /// Which way along its stack the selection goes: one step, or all the way.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Order {
+pub enum Order {
     Forward,
     Backward,
     Front,
@@ -125,7 +125,7 @@ pub(crate) fn restack(selection: &Selection, order: Order) -> Result<(), EditErr
 }
 
 /// The operations that move what `node` names `order` way along what it is drawn over and under, on `desktop`'s screen: an area among the areas of its layer, a child of a `free` container among its siblings. What another level writes the place of is refused, since a level laid over another never restacks what it inherits.
-pub(crate) fn restacked(
+pub fn restacked(
     layout: &Layout,
     desktop: &Desktop,
     node: &Node,
@@ -133,12 +133,12 @@ pub(crate) fn restacked(
 ) -> Result<Vec<LayoutOp>, EditError> {
     let name = steps::name_of(&Selection::of(node.clone()));
     let (stack, at, len) = Stack::of(desktop, node)
-        .ok_or_else(|| EditError::refused(telar::t!("editor.order.none")))?;
+        .ok_or_else(|| EditError::refused(util::message!("editor.order.none")))?;
     let to = order.target(at, len);
     if to == at {
         return Err(EditError::refused(match order.toward_front() {
-            true => telar::t!("editor.order.in_front", name = name),
-            false => telar::t!("editor.order.behind", name = name),
+            true => util::message!("editor.order.in_front", name = name),
+            false => util::message!("editor.order.behind", name = name),
         }));
     }
     let mut work = Work::new(layout, desktop, node.layer);
@@ -150,7 +150,7 @@ pub(crate) fn restacked(
 }
 
 fn inherited(id: impl ToString) -> EditError {
-    EditError::refused(telar::t!("editor.keys.inherited", id = id.to_string()))
+    EditError::refused(util::message!("editor.keys.inherited", id = id.to_string()))
 }
 
 /// The area `node` names moved from `at` to `to` among `ids`, by moving it past the area now at `to` in the rule that writes it, and only where that rule's order is what the screen draws.

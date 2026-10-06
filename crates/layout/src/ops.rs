@@ -15,6 +15,8 @@ use util::report::Message;
 
 use crate::library::Library;
 use crate::model::*;
+use crate::rename::apply_rename;
+pub use crate::rename::{Named, Outside, Reference, RenameError, named, rename};
 use crate::validate::reserving_under;
 
 /// Which layer of which output rule an operation acts on — the rule's own, or one of its workspace rules'.
@@ -192,6 +194,24 @@ pub enum LayoutOp {
         output: OutputMatch,
         workspace: WorkspaceMatch,
     },
+    /// Gives an area of one layer another id at every level, with every `remove` naming it and every panel owner naming a komponent child drawn in it.
+    RenameArea {
+        layer: LayerKind,
+        id: AreaId,
+        to: AreaId,
+    },
+    /// Gives a group of one area another id at every level, with every `remove` naming it and every panel owner naming a komponent child drawn in it.
+    RenameGroup {
+        layer: LayerKind,
+        area: AreaId,
+        id: GroupId,
+        to: GroupId,
+    },
+    /// Gives an instance another id at every level, with every `remove` naming it and every panel it owns.
+    RenameInstance {
+        id: InstanceId,
+        to: InstanceId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -223,6 +243,7 @@ pub enum OpError {
     },
     /// A workspace rule that would add, remove or resize an area that reserves space (TA-2).
     Reservation(AreaId),
+    Taken(String),
 }
 
 /// What an edit tried to do to the lock layer's prompt.
@@ -286,6 +307,7 @@ impl OpError {
                 PromptEdit::Hide => util::message!("finding.prompt_hidden", id = id),
             },
             OpError::Reservation(id) => util::message!("finding.reservation", id = id),
+            OpError::Taken(id) => util::message!("finding.id_taken", id = id),
         }
     }
 }
@@ -646,6 +668,31 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
                 index: at,
                 rule: Box::new(rule),
             })
+        }
+        LayoutOp::RenameArea { layer, id, to } => apply_rename(
+            layout,
+            &Named::Area {
+                layer: *layer,
+                id: id.clone(),
+            },
+            to.as_str(),
+        ),
+        LayoutOp::RenameGroup {
+            layer,
+            area,
+            id,
+            to,
+        } => apply_rename(
+            layout,
+            &Named::Group {
+                layer: *layer,
+                area: area.clone(),
+                id: id.clone(),
+            },
+            to.as_str(),
+        ),
+        LayoutOp::RenameInstance { id, to } => {
+            apply_rename(layout, &Named::Instance(id.clone()), to.as_str())
         }
     }
 }

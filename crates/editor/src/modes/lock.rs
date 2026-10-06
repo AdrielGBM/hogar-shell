@@ -204,7 +204,7 @@ fn reason(report: &Report) -> String {
 }
 
 /// Refuses `after` where it would make a locked screen fall back to the minimal lock and `before` did not — a prompt too faint, too small, off its screen or unreadable, a control — saying why in the lock's own words. Only an edit that changes the lock layer is judged, and a lock layer already refused is never made harder to fix.
-pub(crate) fn kept(before: &Layout, after: &Layout) -> Result<(), String> {
+pub fn kept(before: &Layout, after: &Layout) -> Result<(), util::report::Message> {
     if lock_of(before) == lock_of(after) {
         return Ok(());
     }
@@ -214,11 +214,11 @@ pub(crate) fn kept(before: &Layout, after: &Layout) -> Result<(), String> {
         .problems(after)
         .errors
         .into_iter()
-        .find(|found| !was.contains(found))
+        .find(|found| !was.iter().any(|known| known.is_same_fault(found)))
     {
-        Some(found) => Err(telar::t!(
+        Some(found) => Err(util::message!(
             "editor.lock.would_fall_back",
-            why = found.message.render()
+            why = found.message
         )),
         None => Ok(()),
     }
@@ -234,7 +234,7 @@ pub(crate) fn falls_back_with(before: &Config, after: &Config) -> Option<String>
         .problems(&layout)
         .errors
         .into_iter()
-        .find(|found| !was.contains(found))
+        .find(|found| !was.iter().any(|known| known.is_same_fault(found)))
         .map(|found| found.message.render())
 }
 
@@ -383,18 +383,12 @@ pub(crate) fn contrast_row(draft: &AreaDraft) -> Built {
 
 /// Whether validation would let the prompt be drawn with `style`: only a fill the layout chose is judged, as the lock judges it.
 fn readable(style: &Style, theme: &NordTheme) -> bool {
-    style.fill.is_none()
-        || config::scheme::is_readable(theme.text, layout::prompt_backdrop(style, theme))
+    style.fill.is_none() || config::scheme::readable_ratio(layout::prompt_contrast(style, theme))
 }
 
 /// How readable the prompt's text is with `style`, as the contrast row says it.
 pub fn contrast_of(style: &Style, theme: &NordTheme) -> String {
-    let ratio = format!(
-        "{:.1}",
-        theme
-            .text
-            .contrast_ratio(layout::prompt_backdrop(style, theme))
-    );
+    let ratio = format!("{:.1}", layout::prompt_contrast(style, theme));
     let least = config::scheme::MIN_TEXT_CONTRAST.to_string();
     match readable(style, theme) {
         true => telar::t!("editor.lock.contrast", ratio = ratio, least = least),
@@ -462,7 +456,7 @@ fn follow_the_config() {
 pub(crate) fn open_privacy() -> Result<(), EditError> {
     let mode = mode::current()
         .filter(|mode| mode.layer == LayerKind::Lock)
-        .ok_or_else(|| EditError::Refused(telar::t!("editor.lock.only_here")))?;
+        .ok_or_else(|| EditError::Refused(util::message!("editor.lock.only_here")))?;
     host::close_transients();
     let output = mode.output.clone();
     transient::open(

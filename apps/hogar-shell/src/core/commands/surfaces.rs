@@ -19,22 +19,22 @@ pub(crate) const PANEL: Target = Target {
         },
         Command {
             name: "open",
-            args: "<module>",
-            help: "open a module's panel (idempotent)",
+            args: "<module|instance>",
+            help: "open a module's panel, or what `panel toggle` opens for an instance (idempotent)",
             run: |args| {
-                let module = with_panel(arg(args, 0, "module")?)?;
-                surfaces::panel::open_panel(module);
-                Ok(module.to_string())
+                let id = arg(args, 0, "module|instance")?;
+                surfaces::panel::open_named(id)?;
+                Ok(id.to_string())
             },
         },
         Command {
             name: "close",
-            args: "<module>",
-            help: "close a module's panel",
+            args: "<module|instance>",
+            help: "close a module's panel, what `panel toggle` opens for an instance, or anything `panel list` names",
             run: |args| {
-                let module = arg(args, 0, "module")?;
-                surfaces::panel::close_panel(module);
-                Ok(module.to_string())
+                let id = arg(args, 0, "module|instance")?;
+                surfaces::panel::close_named(id)?;
+                Ok(id.to_string())
             },
         },
         Command {
@@ -45,15 +45,6 @@ pub(crate) const PANEL: Target = Target {
         },
     ],
 };
-
-/// `module`, when it has a panel to open; the reply says so when it has none, rather than an `ok` for a request nothing acted on.
-fn with_panel(module: &str) -> Result<&str, String> {
-    if ui::descriptor::has_panel(module) {
-        Ok(module)
-    } else {
-        Err(format!("'{module}' has no panel"))
-    }
-}
 
 pub(crate) const LAUNCHER: Target = Target {
     name: "launcher",
@@ -284,7 +275,6 @@ pub(crate) const TOAST: Target = Target {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::Arc;
 
     use layout::{
         AreaId, InstanceId, LayerKind, Library, Resolved, ResolvedArea, ResolvedAreaKind, Style,
@@ -329,13 +319,7 @@ mod tests {
     fn panel_toggle_an_instance_toggles_the_panel_it_owns() {
         ui::descriptor::install(crate::core::modules::MODULES);
         surfaces::transient::close_all();
-        surfaces::reconcile::publish(&[surfaces::reconcile::Desktop {
-            output: Some("DP-1".to_string()),
-            config: Arc::new(config::Config::default()),
-            resolved: clock_owning_a_panel(),
-            reserved: Default::default(),
-            size: (1920.0, 1080.0),
-        }]);
+        crate::test_support::publish("DP-1", clock_owning_a_panel());
 
         assert_eq!(dispatch("panel toggle clock"), "ok clock");
         assert!(
@@ -353,6 +337,65 @@ mod tests {
         assert_eq!(
             dispatch("panel toggle no-such-thing"),
             "err 'no-such-thing' has no panel"
+        );
+        surfaces::transient::close_all();
+    }
+
+    #[test]
+    fn panel_open_and_close_resolve_an_instance_as_toggle_does() {
+        ui::descriptor::install(crate::core::modules::MODULES);
+        surfaces::transient::close_all();
+        crate::test_support::publish("DP-1", clock_owning_a_panel());
+
+        for _ in 0..2 {
+            assert_eq!(dispatch("panel open clock"), "ok clock");
+            assert!(surfaces::transient::is_open("clock@DP-1"));
+        }
+        assert!(!surfaces::transient::is_open("clock"));
+        assert_eq!(dispatch("panel close clock"), "ok clock");
+        assert!(!surfaces::transient::is_open("clock@DP-1"));
+        assert_eq!(dispatch("panel close clock"), "ok clock");
+
+        for line in ["panel open no-such-thing", "panel close no-such-thing"] {
+            assert_eq!(dispatch(line), "err 'no-such-thing' has no panel");
+        }
+        surfaces::transient::close_all();
+    }
+
+    #[test]
+    fn panel_open_and_close_reach_a_module_panel_through_an_instance_with_none_of_its_own() {
+        ui::descriptor::install(crate::core::modules::MODULES);
+        surfaces::transient::close_all();
+        crate::test_support::publish("DP-1", clock_owning_a_panel());
+
+        assert_eq!(dispatch("panel open clock-2"), "ok clock-2");
+        assert!(
+            surfaces::transient::is_open("clock"),
+            "{:?}",
+            surfaces::transient::open_ids()
+        );
+        assert!(!surfaces::transient::is_open("clock@DP-1"));
+        assert_eq!(dispatch("panel open clock-2"), "ok clock-2");
+        assert!(surfaces::transient::is_open("clock"), "open is idempotent");
+        assert_eq!(dispatch("panel close clock-2"), "ok clock-2");
+        assert!(!surfaces::transient::is_open("clock"));
+        surfaces::transient::close_all();
+    }
+
+    #[test]
+    fn panel_close_takes_down_anything_panel_list_names() {
+        ui::descriptor::install(crate::core::modules::MODULES);
+        surfaces::transient::close_all();
+        crate::test_support::publish("DP-1", clock_owning_a_panel());
+
+        assert_eq!(dispatch("panel open clock"), "ok clock");
+        assert!(surfaces::transient::is_open("clock@DP-1"));
+        assert_eq!(dispatch("panel close clock@DP-1"), "ok clock@DP-1");
+        assert!(!surfaces::transient::is_open("clock@DP-1"));
+        assert_eq!(
+            dispatch("panel close clock@DP-1"),
+            "err 'clock@DP-1' has no panel",
+            "a name nothing answers to and nothing holds open is refused"
         );
         surfaces::transient::close_all();
     }

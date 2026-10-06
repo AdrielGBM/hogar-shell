@@ -18,6 +18,7 @@ use layout::ResolvedAreaKind;
 use services::apps::{self, App};
 use services::state;
 use services::wallpaper;
+use surfaces::card_samples::Launcher;
 use surfaces::reconcile;
 use surfaces::transient::{self, Motion, Place, Slot, Spec};
 use ui::chrome::{Chrome, content_radius, panel_fill};
@@ -418,13 +419,20 @@ pub fn placement(output: Option<&str>) -> Place {
 ///
 /// Wraps at both ends, so holding Down cycles rather than sticking at the bottom, and Up from the first result jumps to the last — which is how every launcher behaves and what the hand expects.
 fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    // The app list is read once per open, not per keystroke: it only changes when software is installed.
+    panel_of(theme, config, apps::all())
+}
+
+fn panel_of(
+    theme: NordTheme,
+    config: &LauncherConfig,
+    installed: Vec<App>,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     // Kept by the surface rather than built here: a config edit rebuilds this tree, and a launcher that lost the half-typed search it was showing would be a launcher the user has to start over in.
     let query = kept("launcher.query", || signal(String::new()));
     let query_read = query.read_only();
     let config = config.clone();
 
-    // The app list is read once per open, not per keystroke: it only changes when software is installed.
-    let installed = apps::all();
     let shown = results_memo(
         installed,
         library(),
@@ -432,9 +440,7 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
         query_read,
         config.clone(),
     );
-    let for_columns = query.read_only();
-    let width = config.width as f32;
-    let columns = memo(move || mode_of(&for_columns.get()).0.columns(width));
+    let columns = columns_memo(query_read, config.width as f32);
 
     let selected = kept("launcher.selected", || signal(0usize));
     // Which row is armed, by key. A dangerous action needs a second Enter, and arming in place costs no extra surface — the same rule the session menu's destructive tiles follow.
@@ -454,18 +460,6 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
         disarm_on_query.set(String::new());
     });
 
-    let field = search_field(query, theme)?;
-    // What is left for the list once the search field and the panel's own padding have taken their share; the panel then sizes to its content, so a short result list gives a short panel rather than dead space.
-    let field_height = theme.font(FontRole::Title) * 1.8 + 12.0;
-    let list_height = (config.height as f32 - field_height - 38.0).max(80.0);
-    let list = result_list(
-        shown,
-        columns,
-        selected,
-        armed.read_only(),
-        list_height,
-        theme,
-    )?;
     let keys_shown = shown;
     let keys_columns = columns;
     // The shared list bindings, so the launcher and every other list surface agree on what a key means.
@@ -474,15 +468,14 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
     let keys_selected = selected;
     let keys_armed = armed;
 
-    // A fixed-width box the scaffold centres, rather than `100%` — which inside a full-screen scrim scaffold would be the whole screen. Height is left to the content so a short result list gives a short panel; the list itself carries the bound (see `result_list`).
-    let panel = StyledContainer::new(
-        LayoutStyle::new()
-            .flex_column()
-            .gap(space::lg())
-            .padding_all(space::xl())
-            .width(config.width as f32),
-        move |_| RectStyle::filled(panel_fill(), content_radius()),
-        vec![field, list],
+    let panel = frame(
+        theme,
+        &config,
+        query,
+        shown,
+        columns,
+        selected,
+        armed.read_only(),
     )?
     // `on_key` fires before the event reaches the children, which is what lets the arrows drive the list while the search field holds focus and keeps every other keystroke going to the field as typing. It also owns the query-reset subscription above: an `Effect` deregisters when its handle drops, and this closure lives for exactly as long as the panel it is attached to.
     .on_key(move |key| {
@@ -526,6 +519,81 @@ fn panel(theme: NordTheme, config: &LauncherConfig) -> Result<Box<dyn LayoutItem
         }
     });
     Ok(Box::new(panel))
+}
+
+fn columns_memo(query: telar::ReadSignal<String>, width: f32) -> telar::Memo<usize> {
+    memo(move || mode_of(&query.get()).0.columns(width))
+}
+
+/// The panel's look and size, shared by the launcher and its sample: a fixed-width box the scaffold centres, rather than `100%` — which inside a full-screen scrim scaffold would be the whole screen. Height is left to the content so a short result list gives a short panel; the list itself carries the bound (see `result_list`).
+fn frame(
+    theme: NordTheme,
+    config: &LauncherConfig,
+    query: telar::RwSignal<String>,
+    shown: telar::Memo<Vec<Entry>>,
+    columns: telar::Memo<usize>,
+    selected: telar::RwSignal<usize>,
+    armed: telar::ReadSignal<String>,
+) -> Result<StyledContainer, LayoutError> {
+    let field = search_field(query, theme)?;
+    let field_height = theme.font(FontRole::Title) * 1.8 + 12.0;
+    let list_height = (config.height as f32 - field_height - 38.0).max(80.0);
+    let list = result_list(shown, columns, selected, armed, list_height, theme)?;
+    StyledContainer::new(
+        LayoutStyle::new()
+            .flex_column()
+            .gap(space::lg())
+            .padding_all(space::xl())
+            .width(config.width as f32),
+        move |_| RectStyle::filled(panel_fill(), content_radius()),
+        vec![field, list],
+    )
+}
+
+/// The launcher the real panel draws, over the search and applications `launcher` names: its own look and size, a made-up list in place of the app index, nothing kept by the surface and no keys taken, so it can stand wherever a launcher is only being shown.
+pub fn preview(
+    launcher: &Launcher,
+    config: &LauncherConfig,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let theme = use_theme::<NordTheme>();
+    let listed: Vec<Entry> = launcher
+        .apps
+        .iter()
+        .map(|name| {
+            Entry::App(App {
+                id: name.clone(),
+                name: name.clone(),
+                exec: name.clone(),
+                ..App::default()
+            })
+        })
+        .collect();
+    let query = signal(launcher.search.clone());
+    let shown = memo(move || listed.clone());
+    let columns = columns_memo(query.read_only(), config.width as f32);
+    let panel = frame(
+        theme,
+        config,
+        query,
+        shown,
+        columns,
+        signal(0usize),
+        signal(String::new()).read_only(),
+    )?;
+    Ok(Box::new(panel))
+}
+
+/// [`preview`] under the launcher config of the desktop on `output`, as it stands when each sample launcher is drawn.
+pub fn preview_on(
+    output: &str,
+) -> impl Fn(&Launcher) -> Result<Box<dyn LayoutItem>, LayoutError> + use<> {
+    let output = output.to_string();
+    move |launcher| {
+        let config =
+            reconcile::with_desktop_now(Some(&output), |desktop| desktop.config.launcher.clone())
+                .unwrap_or_default();
+        preview(launcher, &config)
+    }
 }
 
 /// The rows to show, re-derived whenever the query or the library changes.
@@ -1080,6 +1148,61 @@ pub const KEYBOARD: KeyboardMode = KeyboardMode::Exclusive;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::test_support::fresh;
+
+    fn drawn(panel: Box<dyn LayoutItem>) -> Vec<String> {
+        crate::test_support::drawn(panel, 900.0, 900.0)
+    }
+
+    #[test]
+    fn the_sample_launcher_is_drawn_as_the_real_one_is() {
+        let sample = Launcher {
+            search: String::new(),
+            apps: vec![
+                "Firefox".into(),
+                "Files".into(),
+                "Visual Studio Code".into(),
+            ],
+        };
+        let narrow = LauncherConfig {
+            width: 420,
+            height: 300,
+            ..LauncherConfig::default()
+        };
+        for config in [LauncherConfig::default(), narrow] {
+            fresh();
+            let preview = drawn(preview(&sample, &config).expect("the sample builds"));
+
+            fresh();
+            let installed: Vec<App> = sample
+                .apps
+                .iter()
+                .map(|name| app(name, name, &[]))
+                .collect();
+            let real = drawn(panel_of(NordTheme::new(), &config, installed).expect("it builds"));
+
+            assert!(!preview.is_empty());
+            assert_eq!(preview, real, "{}x{}", config.width, config.height);
+        }
+        fresh();
+        let wide = drawn(preview(&sample, &LauncherConfig::default()).expect("builds"));
+        fresh();
+        let narrower = drawn(
+            preview(
+                &sample,
+                &LauncherConfig {
+                    width: 420,
+                    ..LauncherConfig::default()
+                },
+            )
+            .expect("builds"),
+        );
+        assert_ne!(
+            wide, narrower,
+            "the sample is drawn at the width it is given"
+        );
+    }
 
     fn app(id: &str, name: &str, keywords: &[&str]) -> App {
         App {

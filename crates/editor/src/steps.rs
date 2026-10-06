@@ -373,7 +373,7 @@ pub(crate) fn writes_as_shown(written: &Written, group: &ResolvedGroup) -> Resul
         });
     match writes {
         true => Ok(()),
-        false => Err(EditError::refused(telar::t!(
+        false => Err(EditError::refused(util::message!(
             "editor.keys.inherited",
             id = group.id.to_string()
         ))),
@@ -719,7 +719,7 @@ fn resize_instance(
         return crate::modes::container::grown(draft, &target.desktop, &target.node, direction);
     }
     let no_size = || {
-        EditError::refused(telar::t!(
+        EditError::refused(util::message!(
             "editor.keys.no_size",
             name = instance.module.clone()
         ))

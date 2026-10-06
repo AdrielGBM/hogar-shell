@@ -1022,6 +1022,12 @@ The weather (`[weather]`).
 - **`latitude`** · unset by default
 - **`longitude`** · unset by default
 
+## `[windows]`
+
+The `windows` module: one entry per open window. `titles` writes each window's title beside its icon where the strip has the room; off, every entry is the icon alone.
+
+- **`titles`** · default `true`
+
 ## `[workspaces]`
 
 The `workspaces` module.

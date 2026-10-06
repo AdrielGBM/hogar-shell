@@ -48,19 +48,24 @@ const TOUCH: f32 = 0.5;
 /// The toolbar's buttons: a new bar on each edge.
 const NEW_BARS: [StripButton; 4] = [
     (
-        || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Top)),
+        || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Top).render()),
         || said(create_on(Edge::Top)),
     ),
     (
-        || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Bottom)),
+        || {
+            telar::t!(
+                "editor.top.new_bar",
+                edge = edge_name(Edge::Bottom).render()
+            )
+        },
         || said(create_on(Edge::Bottom)),
     ),
     (
-        || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Left)),
+        || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Left).render()),
         || said(create_on(Edge::Left)),
     ),
     (
-        || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Right)),
+        || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Right).render()),
         || said(create_on(Edge::Right)),
     ),
 ];
@@ -122,12 +127,12 @@ pub(crate) fn install() {
 }
 
 /// What an edge is called in a sentence.
-pub(crate) fn edge_name(edge: Edge) -> String {
+pub(crate) fn edge_name(edge: Edge) -> util::report::Message {
     match edge {
-        Edge::Top => telar::t!("editor.top.edge.top"),
-        Edge::Bottom => telar::t!("editor.top.edge.bottom"),
-        Edge::Left => telar::t!("editor.top.edge.left"),
-        Edge::Right => telar::t!("editor.top.edge.right"),
+        Edge::Top => util::message!("editor.top.edge.top"),
+        Edge::Bottom => util::message!("editor.top.edge.bottom"),
+        Edge::Left => util::message!("editor.top.edge.left"),
+        Edge::Right => util::message!("editor.top.edge.right"),
     }
 }
 
@@ -255,7 +260,7 @@ fn bar(work: &Work, id: &AreaId) -> Result<ResolvedArea, EditError> {
     let area = work.area(work.layer, id)?;
     match area.kind {
         ResolvedAreaKind::Bar { .. } => Ok(area),
-        _ => Err(EditError::refused(telar::t!(
+        _ => Err(EditError::refused(util::message!(
             "editor.top.not_a_bar",
             id = id.to_string()
         ))),
@@ -330,7 +335,7 @@ pub(crate) fn created(
     area.reserve = Some(work.workspace.is_none());
     if !whole {
         let (at, length) = fitted(&free, None, near).ok_or_else(|| {
-            EditError::refused(telar::t!("editor.top.no_room", edge = edge_name(edge)))
+            EditError::refused(util::message!("editor.top.no_room", edge = edge_name(edge)))
         })?;
         if let Some(AreaKind::Bar {
             length: extent,
@@ -383,7 +388,7 @@ pub(crate) fn moved_to_edge(
     }
     let along = (length != Extent::Fill).then_some(was.along);
     let (at, length) = fitted(&free, along, near).ok_or_else(|| {
-        EditError::refused(telar::t!("editor.top.no_room", edge = edge_name(edge)))
+        EditError::refused(util::message!("editor.top.no_room", edge = edge_name(edge)))
     })?;
     place(&mut work, id, at, length)?;
     Ok(work.done())
@@ -458,7 +463,7 @@ pub(crate) fn split(
     let now = span(&work, &area)?;
     let at = at.round();
     if at - now.at < SHORTEST || now.end() - at < SHORTEST {
-        return Err(EditError::refused(telar::t!(
+        return Err(EditError::refused(util::message!(
             "editor.top.too_short",
             name = id.to_string()
         )));
@@ -560,7 +565,7 @@ pub(crate) fn joined(
     let (a, b) = (bar(&work, first)?, bar(&work, second)?);
     let (span_a, span_b) = (span(&work, &a)?, span(&work, &b)?);
     let apart = || {
-        EditError::refused(telar::t!(
+        EditError::refused(util::message!(
             "editor.top.not_beside",
             name = first.to_string(),
             other = second.to_string()
@@ -681,7 +686,7 @@ fn carried_actions(
             }
             Some(held) if held == chain => {}
             Some(_) => {
-                return Err(EditError::refused(telar::t!(
+                return Err(EditError::refused(util::message!(
                     "editor.top.join_actions_clash",
                     name = lead.id.to_string(),
                     other = trail.id.to_string(),
@@ -815,7 +820,7 @@ pub(crate) fn plate() -> Result<(), EditError> {
     let mode = crate::mode::required()?;
     let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
     let (bar, zone) = super::container::bar_near(&desktop, mode.layer)
-        .ok_or_else(|| EditError::refused(telar::t!("editor.container.no_bar")))?;
+        .ok_or_else(|| EditError::refused(util::message!("editor.container.no_bar")))?;
     let (ops, id) =
         super::container::in_bar(&session::draft().peek(), &desktop, mode.layer, &bar, zone)?;
     context::commit(plated(&id), ops)?;
@@ -838,10 +843,13 @@ pub(crate) fn chip_added(
     landing: &ChipLanding,
 ) -> Result<(Vec<LayoutOp>, InstanceId), EditError> {
     let descriptor = ui::descriptor::find(module).ok_or_else(|| {
-        EditError::refused(telar::t!("editor.desktop.unknown_module", module = module))
+        EditError::refused(util::message!(
+            "editor.desktop.unknown_module",
+            module = module
+        ))
     })?;
     if descriptor.representations.chip.is_none() {
-        return Err(EditError::refused(telar::t!(
+        return Err(EditError::refused(util::message!(
             "editor.top.no_chip",
             name = descriptor.name
         )));
@@ -935,7 +943,7 @@ pub(crate) fn moved_to_output(
         return Err(EditError::nothing());
     };
     if source == to {
-        return Err(EditError::refused(telar::t!(
+        return Err(EditError::refused(util::message!(
             "editor.top.no_other_output",
             name = id.to_string()
         )));
@@ -997,7 +1005,7 @@ pub(crate) fn moved_to_output(
     let arrived = places(&work.layout, &work.known, onto, layer, id);
     let left = !places(&work.layout, &work.known, from, layer, id);
     if !(arrived && left) {
-        return Err(EditError::refused(telar::t!(
+        return Err(EditError::refused(util::message!(
             "editor.top.not_moved",
             name = id.to_string(),
             output = to
@@ -1125,7 +1133,7 @@ fn join_toward(
     let area = bar(&Work::new(layout, &desktop, node.layer), &node.area)?;
     let edge = area.kind.edge().ok_or_else(EditError::nothing)?;
     let none_that_way = || {
-        EditError::refused(telar::t!(
+        EditError::refused(util::message!(
             "editor.top.no_bar_that_way",
             name = node.area.to_string()
         ))
@@ -1150,7 +1158,7 @@ fn output_step(selection: &Selection, layout: &Layout) -> Result<Vec<LayoutOp>, 
         .map(|step| &screens[(at + step) % screens.len()])
         .find(|screen| screen.output.is_some())
         .ok_or_else(|| {
-            EditError::refused(telar::t!(
+            EditError::refused(util::message!(
                 "editor.top.no_other_output",
                 name = node.area.to_string()
             ))
@@ -1197,7 +1205,7 @@ fn bar_rows(area: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
     if crate::mode::editing(node) {
         for edge in Edge::ALL {
             rows.push(telar::MenuEntry::row(
-                telar::t!("editor.top.new_bar", edge = edge_name(edge)),
+                telar::t!("editor.top.new_bar", edge = edge_name(edge).render()),
                 "",
                 move || said(create_on(edge)),
             ));
@@ -1491,11 +1499,12 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
             kind_field!(area, kind, Bar { length }, extent)
         },
     );
-    let seeded = std::cell::Cell::new(false);
+    let seen = std::cell::Cell::new(None);
     let resetting = draft.clone();
     telar::effect(move || {
-        length.with(|_| ());
-        if seeded.replace(true) && !resetting.is_resetting() && fills.peek() {
+        let now = length.get();
+        let before = seen.replace(Some(now));
+        if before.is_some_and(|before| before != now) && !resetting.is_resetting() && fills.peek() {
             fills.set(false);
         }
     });

@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_n_makes_a_container_on_the_first_free_span_and_shift_g_a_grid() {
+    fn shift_n_makes_a_container_on_the_first_free_span_and_alt_n_a_grid() {
         let rig = rig_with("container-create", |layout| {
             layout.outputs[0]
                 .layers
@@ -994,5 +994,154 @@ mod tests {
             .expect("a weight");
         assert!(close_within(weight, 1.5, 1e-3), "{weight}");
         undoes_to(&rig, &before);
+    }
+
+    /// Selecting climbs from a child to its container and on to the grid, by clicking the same spot again and by Alt+Up, and Alt+Down goes back in; selecting writes nothing.
+    #[test]
+    fn a_child_selects_its_container_then_the_grid_by_click_and_by_alt_arrow() {
+        let rig = rig_with("container-climb", four_containers);
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        let shelf = || grid_node().group(&GroupId::new("shelf"));
+        let mut screen = tools_page();
+        let at = centre(drawn("row-b"));
+        let apart = |step: f32| (at.0 + step * 20.0, at.1);
+        screen.click(apart(0.0));
+        assert_eq!(session::selected(), Selection::Instance(node_of("row-b")));
+        screen.click(apart(1.0));
+        assert_eq!(session::selected(), Selection::Group(shelf()));
+        screen.click(apart(2.0));
+        assert_eq!(session::selected(), Selection::Area(grid_node()));
+
+        let alt = with(|held| held.is_alt = true);
+        assert!(session::select(Selection::Instance(node_of("row-b"))));
+        assert!(tap(Key::Named(NamedKey::ArrowUp), alt));
+        assert_eq!(session::selected(), Selection::Group(shelf()));
+        assert!(tap(Key::Named(NamedKey::ArrowUp), alt));
+        assert_eq!(session::selected(), Selection::Area(grid_node()));
+        assert!(tap(Key::Named(NamedKey::ArrowDown), alt));
+        assert_eq!(session::selected(), Selection::Group(shelf()));
+        assert!(tap(Key::Named(NamedKey::ArrowDown), alt));
+        assert_eq!(session::selected(), Selection::Instance(node_of("row-a")));
+        assert_eq!(stored(&rig), before);
+    }
+
+    /// A container made from the keyboard in the top mode and on the lock is one entry in the history, as it is on the desktop.
+    #[test]
+    fn shift_n_is_one_undo_entry_in_the_top_mode_and_on_the_lock() {
+        for layer in [LayerKind::Top, LayerKind::Lock] {
+            let rig = rig_with("container-layers", |_| {});
+            let _owner = Owner::new();
+            let _host = enter(layer);
+            let before = stored(&rig);
+            assert!(tap(Key::Char('N'), with(|held| held.is_shift = true)));
+            assert_ne!(stored(&rig), before, "{layer}");
+            undoes_to(&rig, &before);
+        }
+    }
+
+    /// Where a container gesture named `what` starts and where it is carried to, on the screen as it is drawn now.
+    fn gesture(what: &str) -> ((f32, f32), (f32, f32)) {
+        let grids = widgets::grids(SCREEN, LayerKind::Desktop);
+        let empty = grids[0].0.rect_of(crate::modes::grid::Cells {
+            col: 0,
+            row: 7,
+            cols: 1,
+            rows: 1,
+        });
+        let (shelf, board) = (frame("shelf"), frame("board"));
+        let middle = |inner: telar::Rect, x: f32, y: f32| {
+            (inner.x + inner.width * x, inner.y + inner.height * y)
+        };
+        match what {
+            "reorder" => (centre(drawn("row-a")), middle(shelf.inner, 0.9, 0.5)),
+            "take out" => {
+                let out = drawn("row-b");
+                ((out.x + 2.0, out.y + 2.0), (empty.x + 2.0, empty.y + 2.0))
+            }
+            "adopt" => (centre(drawn("weather")), middle(shelf.inner, 0.5, 0.5)),
+            "weight" => {
+                let at = drawn("row-a");
+                (
+                    (at.x + at.width, at.y + at.height / 2.0),
+                    (
+                        at.x + (shelf.inner.width - shelf.gap) * 0.6,
+                        at.y + at.height / 2.0,
+                    ),
+                )
+            }
+            "span" => {
+                let at = drawn("board-a");
+                (
+                    (at.x + at.width, at.y + at.height),
+                    middle(board.inner, 1.0, 1.0),
+                )
+            }
+            other => panic!("no gesture called {other}"),
+        }
+    }
+
+    /// Esc before a container gesture is let go puts the layout back exactly and records nothing: a reorder, taking a child out, a widget dropped in, a row child's weight and a grid child's span.
+    #[test]
+    fn escape_mid_gesture_puts_every_container_gesture_back_with_nothing_recorded() {
+        let rig = rig_with("container-escape", four_containers);
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        let before = stored(&rig);
+        for (what, selected) in [
+            ("reorder", None),
+            ("take out", None),
+            ("adopt", None),
+            ("weight", Some("row-a")),
+            ("span", Some("board-a")),
+        ] {
+            undraw();
+            session::clear_selection();
+            if let Some(id) = selected {
+                assert!(session::select(Selection::Instance(node_of(id))));
+            }
+            let mut screen = tools_page();
+            let (from, to) = gesture(what);
+            assert!(
+                screen.drag_cancelled(&before, from, to),
+                "{what} previews first"
+            );
+            assert_eq!(session::draft().peek(), before, "{what}: Esc puts it back");
+            assert_eq!(stored(&rig), before, "{what}");
+            assert_eq!(rig.undo_label(), None, "{what}: nothing is recorded");
+        }
+    }
+
+    /// Where the layer has no grid to put a container on, Shift+N says so and writes nothing.
+    #[test]
+    fn shift_n_with_no_grid_is_refused_and_writes_nothing() {
+        for layer in [LayerKind::Desktop, LayerKind::Lock] {
+            let rig = rig_with("container-no-grid", |layout| {
+                layout.outputs[0]
+                    .layers
+                    .desktop
+                    .areas
+                    .retain(|area| area.id.as_str() != "widgets");
+                layout.outputs[0]
+                    .layers
+                    .lock
+                    .areas
+                    .retain(|area| area.id.as_str() != "lock-readings");
+            });
+            let _owner = Owner::new();
+            let _host = enter(layer);
+            let before = stored(&rig);
+            assert!(tap(Key::Char('N'), with(|held| held.is_shift = true)));
+            assert_eq!(stored(&rig), before, "{layer}");
+            assert_eq!(rig.undo_label(), None, "{layer}");
+            assert!(
+                mode::refusal()
+                    .peek()
+                    .is_some_and(|said| said.contains("grid")),
+                "{layer}: {:?}",
+                mode::refusal().peek()
+            );
+        }
     }
 }

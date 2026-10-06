@@ -15,10 +15,9 @@ mod tests {
     use surfaces::menu::Pointed;
     use surfaces::reconcile;
     use surfaces::rects::{self};
-    use surfaces::transient;
 
     use crate::mode::{self};
-    use crate::rig::{SCREEN, bar, rig_with};
+    use crate::rig::{SCREEN, Scope, bar, rig_with};
     use crate::select;
     use crate::session;
 
@@ -33,16 +32,6 @@ mod tests {
             .find(|area| area.id.as_str() == "bar-top")
             .expect("the bar")
             .visible = Some(Expr("false".to_string()));
-    }
-
-    struct Scope(telar::OwnerGuard);
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
     }
 
     fn enter() {
@@ -73,7 +62,7 @@ mod tests {
     #[test]
     fn a_hidden_area_is_drawn_dim_and_selected_by_pointer_in_its_mode_and_is_nothing_outside_it() {
         let _rig = rig_with("hidden-area", hide_the_bar);
-        let _scope = Scope(telar::owner_scope());
+        let _scope = Scope::new();
         ui::descriptor::install(&[]);
 
         let desktop = reconcile::desktops()[0].clone();

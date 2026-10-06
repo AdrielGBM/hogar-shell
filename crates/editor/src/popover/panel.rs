@@ -12,7 +12,7 @@ use surfaces::rects::{self, Node};
 
 use super::Inspector;
 use super::area::help;
-use super::draft::{AreaDraft, kind_field};
+use super::draft::{AreaDraft, Grip, kind_field};
 use super::handles;
 use super::rows::{self, Range, label};
 
@@ -108,13 +108,7 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     )?);
     Ok(Inspector {
         rows: list,
-        handles: vec![resize_handle(
-            draft.node.clone(),
-            owner,
-            along,
-            edge,
-            sizes,
-        )?],
+        handles: vec![resize_handle(draft, owner, along, edge, sizes)?],
     })
 }
 
@@ -260,12 +254,14 @@ struct Grab {
 }
 
 fn resize_handle(
-    node: Node,
+    draft: &AreaDraft,
     owner: InstanceId,
     along: RwSignal<String>,
     edge: Option<Edge>,
     sizes: Sizes,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let node = draft.node.clone();
+    let grip = draft.grip();
     Ok(Box::new(ReactiveList::with_style(
         crate::host::whole(),
         move || vec![edge.is_some() && along.with(|shape| shape == ALONG)],
@@ -273,12 +269,11 @@ fn resize_handle(
         move |docked: bool| {
             let (held, owner) = (node.clone(), owner.clone());
             let growing = Rc::new(move || growing(&held, &owner, edge, docked));
-            let drives_cols = !docked || deep_cols(edge);
-            let (own, other) = match drives_cols {
+            let (own, other) = match !docked || deep_cols(edge) {
                 true => (sizes.cols, sizes.rows),
                 false => (sizes.rows, sizes.cols),
             };
-            handle(node.clone(), growing, own, other, drives_cols, sizes)
+            handle(node.clone(), growing, (own, other), sizes, grip.clone())
         },
     )?))
 }
@@ -286,29 +281,24 @@ fn resize_handle(
 fn handle(
     node: Node,
     growing: Rc<dyn Fn() -> Grows>,
-    own: RwSignal<f32>,
-    other: RwSignal<f32>,
-    drives_cols: bool,
+    (own, other): (RwSignal<f32>, RwSignal<f32>),
     sizes: Sizes,
+    grip: Grip,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let grab: Rc<Cell<Option<Grab>>> = Rc::default();
     let transaction = Transaction::new(own)
         .on_commit({
-            let grab = Rc::clone(&grab);
-            move |_, _| grab.set(None)
+            let (grab, grip) = (Rc::clone(&grab), grip.clone());
+            move |_, _| {
+                grab.set(None);
+                grip.release();
+            }
         })
         .on_revert({
-            let grab = Rc::clone(&grab);
+            let (grab, grip) = (Rc::clone(&grab), grip.clone());
             move |_| {
-                if let Some(held) = grab.take() {
-                    let before = match drives_cols {
-                        true => held.rows,
-                        false => held.cols,
-                    };
-                    if other.peek() != before {
-                        other.set(before);
-                    }
-                }
+                grab.set(None);
+                grip.put_back();
             }
         });
     let now = growing();
@@ -326,6 +316,7 @@ fn handle(
         }
     };
     let to_value = move |x: f32, y: f32| {
+        grip.hold();
         let held = grab.get().unwrap_or_else(|| Grab {
             at: (x, y),
             grows: growing(),

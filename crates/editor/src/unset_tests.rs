@@ -14,25 +14,10 @@ mod tests {
     use surfaces::transient;
 
     use crate::popover;
-    use crate::rig::{Rig, SCREEN, bar, rig_with};
+    use crate::rig::{Rig, SCREEN, Scope, bar, rig_with};
     use crate::session;
 
     /// An owner for what a test builds, disposed when it ends.
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
-    }
-
     /// The open popover's tree, laid out over the whole screen as its window lays it out.
     struct Screen {
         tree: ComponentList,

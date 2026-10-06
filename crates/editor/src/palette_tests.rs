@@ -700,4 +700,39 @@ mod tests {
         );
         tools.button(from, false);
     }
+
+    /// Esc while an entry is carried over the bar drops nothing: the layout is as it was and no entry is recorded.
+    #[test]
+    fn escape_while_an_entry_is_carried_puts_nothing_on_the_bar() {
+        let rig = rig_with("palette-escape", two_chips_at_the_start);
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Top);
+        draw(LayerKind::Top);
+        let before = stored(&rig);
+        let chip = |id: &str| {
+            rects::instance(Some(SCREEN), &InstanceId::new(id))
+                .map(|(_, rect)| rect)
+                .unwrap_or_else(|| panic!("{id} is drawn"))
+        };
+        let (left, right) = (chip("workspaces"), chip("notes"));
+        let between = (
+            (left.x + left.width + right.x) / 2.0,
+            left.y + left.height / 2.0,
+        );
+
+        let mut page = palette_page("clock");
+        let entry = page.at("Clock");
+        page.move_to(entry);
+        page.button(entry, true);
+        page.move_to((entry.0 + 8.0, entry.1 + 8.0));
+        page.move_to(between);
+        assert!(gesture::hint().peek().is_some(), "the drag shows where");
+        assert!(tap(Key::Named(NamedKey::Escape), NONE));
+        page.button(between, false);
+
+        assert_eq!(stored(&rig), before);
+        assert_eq!(rig.undo_label(), None);
+        assert_eq!(gesture::hint().peek(), None, "and shows nothing after");
+        assert_eq!(zone(&bar_top(), Zone::Start), ["workspaces", "notes"]);
+    }
 }

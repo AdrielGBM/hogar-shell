@@ -519,8 +519,8 @@ pub(crate) fn grown(
             };
             if step == 0 {
                 return Err(EditError::refused(match arrange {
-                    Arrange::Row => telar::t!("editor.container.grows_across"),
-                    _ => telar::t!("editor.container.grows_down"),
+                    Arrange::Row => util::message!("editor.container.grows_across"),
+                    _ => util::message!("editor.container.grows_down"),
                 }));
             }
             let (low, high) = Instance::WEIGHTS;
@@ -621,7 +621,7 @@ pub(crate) fn on_grid(
     let mut work = Work::new(layout, desktop, layer);
     let grid = work.area(layer, area)?;
     if !grid.kind.places_on_cells() {
-        return Err(EditError::refused(telar::t!(
+        return Err(EditError::refused(util::message!(
             "editor.desktop.not_a_grid",
             id = area.to_string()
         )));
@@ -630,7 +630,7 @@ pub(crate) fn on_grid(
     let span = match at {
         Some(_) => free_span(&grid, room, near).unwrap_or(Cells::ONE),
         None => free_span(&grid, room, near)
-            .ok_or_else(|| EditError::refused(telar::t!("editor.container.no_room")))?,
+            .ok_or_else(|| EditError::refused(util::message!("editor.container.no_room")))?,
     };
     let spot = at.unwrap_or((span.col, span.row));
     let id = layout::ops::free_group_id(&work.layout, &work.known, layer, area, "container");
@@ -721,7 +721,11 @@ pub(crate) fn create() -> Result<(), EditError> {
             (ops, area, id)
         }
         (LayerKind::Top, None) => return super::top::plate(),
-        (_, None) => return Err(EditError::refused(telar::t!("editor.container.no_grid"))),
+        (_, None) => {
+            return Err(EditError::refused(util::message!(
+                "editor.container.no_grid"
+            )));
+        }
     };
     crate::context::commit(
         telar::t!("editor.container.made", name = id.to_string()),

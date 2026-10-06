@@ -11,6 +11,7 @@ use telar::{ReadSignal, RwSignal, detached, effect, signal};
 
 use layout::{LayerKind, LayoutStore, StoreError};
 use surfaces::{reconcile, transient};
+use util::report::Message;
 
 use crate::host::{self, Session};
 
@@ -20,7 +21,7 @@ pub struct Mode {
     pub layer: LayerKind,
     pub output: String,
     /// Why this mode offers no tools: lock mode on a machine that cannot lock (TA-8). The strip says it instead.
-    pub refused: Option<String>,
+    pub refused: Option<Message>,
 }
 
 /// What the compositor and the session say about entering a mode, read at the moment of entering.
@@ -133,7 +134,8 @@ pub fn current() -> Option<Mode> {
 
 /// [`current`], for what only a mode can do — open the palette, make a bar on the edited screen — refused outside one.
 pub(crate) fn required() -> Result<Mode, crate::session::EditError> {
-    current().ok_or_else(|| crate::session::EditError::Refused(telar::t!("editor.refused.no_mode")))
+    current()
+        .ok_or_else(|| crate::session::EditError::Refused(util::message!("editor.refused.no_mode")))
 }
 
 /// Whether `node`'s layer is the one being edited on its screen. A context menu offers an item's own actions in and out of edit mode (TA-4) and adds the entries that act on the mode — a new stack, a new grid — only where this holds.
@@ -176,7 +178,7 @@ pub fn install() {
 }
 
 /// Edits `layer` on `output`, or on the focused screen when none is named, leaving whatever mode was up first. Entering the mode already up changes nothing.
-pub fn enter(layer: LayerKind, output: Option<&str>) -> Result<Mode, String> {
+pub fn enter(layer: LayerKind, output: Option<&str>) -> Result<Mode, Message> {
     enter_as(layer, output, &Compositor::now())
 }
 
@@ -184,12 +186,12 @@ pub(crate) fn enter_as(
     layer: LayerKind,
     output: Option<&str>,
     compositor: &Compositor,
-) -> Result<Mode, String> {
+) -> Result<Mode, Message> {
     if layer == LayerKind::Lock && compositor.locked {
-        return Err(telar::t!("editor.refused.locked"));
+        return Err(util::message!("editor.refused.locked"));
     }
     if surfaces::layouts::read(LayoutStore::is_safe).unwrap_or(false) {
-        return Err(StoreError::Safe.to_string());
+        return Err(StoreError::Safe.message());
     }
     let output = edited_output(output)?;
     let refused = match layer {
@@ -197,7 +199,7 @@ pub(crate) fn enter_as(
             .lockable
             .clone()
             .err()
-            .map(|reason| telar::t!("editor.refused.cannot_lock", reason = reason)),
+            .map(|reason| util::message!("editor.refused.cannot_lock", reason = reason)),
         _ => None,
     };
     let mode = Mode {
@@ -223,7 +225,7 @@ pub fn switch(layer: LayerKind) {
         return;
     };
     if let Err(why) = enter(layer, Some(&mode.output)) {
-        tracing::warn!(layer = %layer, "could not switch edit mode: {why}");
+        tracing::warn!(layer = %layer, "could not switch edit mode: {}", why.english());
     }
 }
 
@@ -252,14 +254,14 @@ pub(crate) fn leave_session(serial: u64) {
 }
 
 /// The screen a mode is entered on: the one named, which must be one the shell draws on, else the focused one, else the first.
-fn edited_output(named: Option<&str>) -> Result<String, String> {
+fn edited_output(named: Option<&str>) -> Result<String, Message> {
     let screens: Vec<String> = reconcile::desktops()
         .iter()
         .filter_map(|desktop| desktop.output.clone())
         .collect();
     match named {
         Some(name) if screens.iter().any(|screen| screen == name) => Ok(name.to_string()),
-        Some(name) => Err(telar::t!(
+        Some(name) => Err(util::message!(
             "editor.refused.no_such_output",
             output = name,
             outputs = screens.join(", ")
@@ -267,7 +269,7 @@ fn edited_output(named: Option<&str>) -> Result<String, String> {
         None => transient::focused_output()
             .filter(|focused| screens.contains(focused))
             .or_else(|| screens.first().cloned())
-            .ok_or_else(|| telar::t!("editor.refused.no_output")),
+            .ok_or_else(|| util::message!("editor.refused.no_output")),
     }
 }
 

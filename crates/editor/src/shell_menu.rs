@@ -32,7 +32,7 @@ pub fn open(asked: ShellAsked) -> Result<(), EditError> {
         .filter(|mode| desktop.output.as_deref() == Some(mode.output.as_str()))
         .map(|mode| mode.layer);
     if editing == Some(LayerKind::Lock) {
-        return Err(EditError::refused(telar::t!("editor.menu.lock")));
+        return Err(EditError::refused(util::message!("editor.menu.lock")));
     }
     let at = asked
         .at
@@ -145,7 +145,7 @@ fn edit_rows(target: &Target, editing: Option<LayerKind>) -> MenuEntry {
             let output = target.output.clone();
             MenuEntry::row(mode::name_of(layer), "", move || {
                 if let Err(why) = mode::enter(layer, output.as_deref()) {
-                    mode::refuse(why);
+                    mode::refuse(why.render());
                 }
             })
         })

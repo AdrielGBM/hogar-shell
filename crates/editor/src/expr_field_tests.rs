@@ -27,10 +27,9 @@ mod tests {
         self, Candidate, Checked, Kind, Wanted, Word, complete, ranked, word_at,
     };
     use crate::keys::{self, Press};
-    use crate::mode::{self};
     use crate::popover;
     use crate::popover::bindings::{Step, plan, removal};
-    use crate::rig::{Rig, SCREEN, bar, rig, rig_with};
+    use crate::rig::{Rig, SCREEN, Scope, bar, rig, rig_with};
 
     fn face(_: &Host) -> Built {
         Ok(Box::new(Container::new(
@@ -86,23 +85,11 @@ mod tests {
     }];
 
     /// An owner for what a test builds, disposed when it ends, with the battery installed and charged at 50.
-    struct Scope(telar::OwnerGuard);
-
-    impl Scope {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            LEVEL.with(|now| now.set(50.0));
-            SINKS.with(|sinks| sinks.borrow_mut().clear());
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Scope {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+    fn scope() -> Scope {
+        ui::descriptor::install(PROBES);
+        LEVEL.with(|now| now.set(50.0));
+        SINKS.with(|sinks| sinks.borrow_mut().clear());
+        Scope::new()
     }
 
     const NONE: ModifiersState = ModifiersState {
@@ -317,7 +304,7 @@ mod tests {
     #[test]
     fn a_condition_shows_its_value_live_and_a_typo_is_flagged_where_it_is() {
         let _rig = rig("expr-live");
-        let _scope = Scope::new();
+        let _scope = scope();
         let mut screen = opened_on_widgets();
         screen.type_in("$battery.level < 20");
         assert!(screen.shows("= false · bool"), "50 is not under 20");
@@ -366,7 +353,7 @@ mod tests {
     #[test]
     fn enter_keeps_the_expression_as_one_entry_and_ctrl_z_takes_it_back() {
         let rig = rig("expr-enter");
-        let _scope = Scope::new();
+        let _scope = scope();
         let _host = crate::rig::open_mode(LayerKind::Desktop);
         let mut screen = opened_on_widgets();
         screen.type_in("$battery.level < 20");
@@ -401,7 +388,7 @@ mod tests {
     #[test]
     fn escape_puts_the_field_back_and_then_reverts_the_popover() {
         let rig = rig("expr-escape");
-        let _scope = Scope::new();
+        let _scope = scope();
         let mut screen = opened_on_widgets();
         screen.type_in("$battery.level < 20");
         assert!(previewed_visible().is_some());
@@ -424,7 +411,7 @@ mod tests {
     #[test]
     fn a_popover_closed_on_a_broken_expression_writes_nothing() {
         let rig = rig("expr-broken");
-        let _scope = Scope::new();
+        let _scope = scope();
         let mut screen = opened_on_widgets();
         screen.type_in("$battery.level <");
         assert!(screen.shows("expected"), "the field says what is missing");
@@ -438,7 +425,7 @@ mod tests {
     #[test]
     fn a_completion_is_taken_with_the_keys_or_a_press() {
         let _rig = rig("expr-complete");
-        let _scope = Scope::new();
+        let _scope = scope();
         let mut screen = opened_on_widgets();
         screen.type_in("$bat");
         assert!(
@@ -469,7 +456,7 @@ mod tests {
     #[test]
     fn a_binding_added_to_an_instance_is_previewed_and_kept() {
         let rig = rig("expr-binding");
-        let _scope = Scope::new();
+        let _scope = scope();
         let clock = Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
             .instance(&GroupId::new("center"), &InstanceId::new("clock"));
         popover::open_instance(clock).expect("the clock's popover opens");
@@ -509,7 +496,7 @@ mod tests {
     #[test]
     fn a_group_repeats_over_a_list_typed_into_its_row_and_never_on_a_cell() {
         let rig = rig("expr-repeat");
-        let _scope = Scope::new();
+        let _scope = scope();
         popover::open_area(widgets()).expect("the grid's popover opens");
         assert!(
             !Screen::of_popover().shows("one copy per item"),
@@ -549,7 +536,7 @@ mod tests {
                 .expect("its centre");
             center.repeat = Some(Expr("{\"a\", \"b\"}".into()));
         });
-        let _scope = Scope::new();
+        let _scope = scope();
         let copy = bar().instance(&GroupId::new("center"), &InstanceId::new("clock#1"));
         popover::open_instance(copy).expect("a copy opens the child's popover");
         let mut screen = Screen::of_popover();
@@ -768,7 +755,7 @@ mod tests {
     /// TA-8: what a lock-layer popover checks and shows is what the lock screen may read, and every other layer reads as the signed-in user.
     #[test]
     fn a_lock_layer_field_reads_what_the_lock_screen_may_show() {
-        let _scope = Scope::new();
+        let _scope = scope();
         assert_eq!(
             expr_field::environment(LayerKind::Lock).audience(),
             ui::host::Audience::Anyone
@@ -868,7 +855,7 @@ mod tests {
     #[test]
     fn a_mistake_is_said_in_the_language_the_shell_speaks() {
         let _rig = rig("expr-spanish");
-        let _scope = Scope::new();
+        let _scope = scope();
         let mut screen = opened_on_widgets();
         telar::set_locale("es");
         screen.retype("$batery.level < 20");

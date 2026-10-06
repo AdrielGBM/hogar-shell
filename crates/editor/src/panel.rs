@@ -1,4 +1,4 @@
-use layout::{Area, AreaId, AreaKind, InstanceId, LayerKind, ResolvedAreaKind};
+use layout::{Area, AreaId, AreaKind, InstanceId, LayerKind, Layout, LayoutOp, ResolvedAreaKind};
 use surfaces::panel::Owner;
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{Node, Part};
@@ -46,33 +46,57 @@ pub(crate) fn offered(node: &Node) -> Option<Offer> {
 
 /// How a panel given to an instance opens off it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Shape {
+pub enum Shape {
     /// Beside its owner, its cells across and down.
     Beside,
     /// Along the whole of its owner's bar.
     Along,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Given {
+    Held(AreaId),
+    Made(Vec<LayoutOp>, AreaId),
+}
+
 pub(crate) fn give(node: &Node, shape: Shape) -> Result<(), EditError> {
-    if node.layer == LayerKind::Lock {
-        return Err(EditError::refused(telar::t!("editor.panel.lock")));
-    }
+    refuse_on_lock(node)?;
     mode::ensure_editing(node)?;
     let desktop =
         reconcile::desktop_now(node.output.as_deref()).ok_or_else(EditError::no_output)?;
-    let offer = offer(&desktop, node)
-        .ok_or_else(|| EditError::refused(telar::t!("editor.panel.nested")))?;
-    if let Some(owned) = &offer.owned {
-        return show(node, owned);
+    match given(&session::draft().peek(), &desktop, node, shape)? {
+        Given::Held(owned) => show(node, &owned),
+        Given::Made(ops, id) => {
+            let name = crate::steps::name_of(&Selection::of(node.clone()));
+            let label = match shape {
+                Shape::Along => telar::t!("editor.panel.docked", name = name),
+                Shape::Beside => telar::t!("editor.panel.given", name = name),
+            };
+            crate::context::commit(label, ops)?;
+            show(node, &id)
+        }
+    }
+}
+
+pub fn given(
+    layout: &Layout,
+    desktop: &Desktop,
+    node: &Node,
+    shape: Shape,
+) -> Result<Given, EditError> {
+    refuse_on_lock(node)?;
+    let offer = offer(desktop, node)
+        .ok_or_else(|| EditError::refused(util::message!("editor.panel.nested")))?;
+    if let Some(owned) = offer.owned {
+        return Ok(Given::Held(owned));
     }
     let along = shape == Shape::Along;
     if along && !offer.in_bar {
-        return Err(EditError::refused(telar::t!("editor.panel.no_bar")));
+        return Err(EditError::refused(util::message!("editor.panel.no_bar")));
     }
-    let layout = session::draft().peek();
-    let mut work = Work::new(&layout, &desktop, node.layer);
+    let mut work = Work::new(layout, desktop, node.layer);
     let stem = format!("{}-panel", offer.owner);
-    let id = layout::ops::free_area_id(&layout, &work.known, node.layer, &stem);
+    let id = layout::ops::free_area_id(layout, &work.known, node.layer, &stem);
     work.add(
         node.layer,
         Area {
@@ -88,13 +112,14 @@ pub(crate) fn give(node: &Node, shape: Shape) -> Result<(), EditError> {
             ..Area::default()
         },
     )?;
-    let name = crate::steps::name_of(&Selection::of(node.clone()));
-    let label = match shape {
-        Shape::Along => telar::t!("editor.panel.docked", name = name),
-        Shape::Beside => telar::t!("editor.panel.given", name = name),
-    };
-    crate::context::commit(label, work.done())?;
-    show(node, &id)
+    Ok(Given::Made(work.done(), id))
+}
+
+fn refuse_on_lock(node: &Node) -> Result<(), EditError> {
+    match node.layer {
+        LayerKind::Lock => Err(EditError::refused(util::message!("editor.panel.lock"))),
+        _ => Ok(()),
+    }
 }
 
 fn show(node: &Node, owned: &AreaId) -> Result<(), EditError> {

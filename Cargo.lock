@@ -968,6 +968,7 @@ dependencies = [
  "hogar-shell-util",
  "libc",
  "platform-wayland",
+ "serde",
  "serde_json",
  "telar",
  "telar-expression",

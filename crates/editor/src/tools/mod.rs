@@ -90,7 +90,7 @@ fn toggle_for(selection: &Selection, tool: Tool) -> Result<(), EditError> {
     if !offers(selection, tool) {
         return Err(match (tool, selection) {
             (_, Selection::None) | (Tool::Radius, _) => EditError::nothing(),
-            (Tool::Padding, _) => EditError::refused(telar::t!("editor.tool.no_padding")),
+            (Tool::Padding, _) => EditError::refused(util::message!("editor.tool.no_padding")),
         });
     }
     ACTIVE.with(|active| active.set(Some(tool)));
@@ -286,6 +286,7 @@ fn live(
             stepped,
             dropped,
             color,
+            ..Ends::default()
         },
     )
 }

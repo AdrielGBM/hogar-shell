@@ -503,6 +503,23 @@ impl Page {
         hint
     }
 
+    /// [`Page::drag`] with Esc pressed before the release: answers whether the draft showed something other than `before` just before it, so a test can tell a gesture that previewed from one that never began.
+    pub(crate) fn drag_cancelled(
+        &mut self,
+        before: &Layout,
+        from: (f32, f32),
+        to: (f32, f32),
+    ) -> bool {
+        self.move_to(from);
+        self.button(from, true);
+        self.move_to((from.0 + 8.0, from.1 + 8.0));
+        self.move_to(to);
+        let previewed = crate::session::draft().peek() != *before;
+        assert!(tap(telar::Key::Named(telar::NamedKey::Escape), NONE));
+        self.button(to, false);
+        previewed
+    }
+
     /// Where the text `wanted` is drawn, a little inside its start.
     pub(crate) fn at(&self, wanted: &str) -> (f32, f32) {
         let mut found = None;
@@ -517,5 +534,142 @@ impl Page {
             }
         });
         found.unwrap_or_else(|| panic!("{wanted:?} is drawn"))
+    }
+}
+
+/// An owner for what a test builds, disposed when the test ends with whatever the test left open closed first: left alive, the trees it mounted would still answer the signals they read while the thread's storage is torn down.
+pub(crate) struct Scope(telar::OwnerGuard);
+
+impl Scope {
+    pub(crate) fn new() -> Self {
+        Self(telar::owner_scope())
+    }
+}
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        crate::popover::close();
+        mode::leave();
+        transient::close_all();
+        telar::dispose_owner(self.0.id());
+    }
+}
+
+/// A card laid out over the whole screen as its window lays it out, again after every event, the pointer followed as its window follows it.
+pub(crate) struct Card {
+    pub(crate) tree: telar::ComponentList,
+    node: telar::NodeId,
+}
+
+impl Card {
+    pub(crate) fn open() -> Self {
+        Self::of(
+            crate::popover::tree()
+                .expect("a popover is open")
+                .expect("its tree builds"),
+        )
+    }
+
+    pub(crate) fn of(item: Box<dyn LayoutItem>) -> Self {
+        let page = telar::Container::new(
+            telar::LayoutStyle::new().width(1920.0).height(1080.0),
+            vec![item],
+        )
+        .expect("a page");
+        let node = page.layout_node();
+        let card = Self {
+            tree: telar::ComponentList::new(Pointed::new(Box::new(page))),
+            node,
+        };
+        card.lay_out();
+        card
+    }
+
+    pub(crate) fn lay_out(&self) {
+        lay_out(self.node, (1920.0, 1080.0));
+    }
+
+    /// `event` routed as the runner routes it: to the overlays first, and to the card where none takes it.
+    pub(crate) fn route(&mut self, event: &telar::Event) {
+        telar::observe_keyboard(event);
+        if !telar::dispatch_overlays(event) {
+            self.tree.on_event(event);
+        }
+        self.lay_out();
+    }
+
+    pub(crate) fn key(&mut self, key: telar::Key, modifiers: telar::ModifiersState) {
+        self.route(&telar::Event::KeyPressed { key, modifiers });
+    }
+
+    pub(crate) fn escape(&mut self) {
+        self.key(telar::Key::Named(telar::NamedKey::Escape), NONE);
+    }
+
+    pub(crate) fn texts(&self) -> Vec<(String, telar::Rect)> {
+        self.lay_out();
+        let mut found = Vec::new();
+        telar::for_each_with_matrix(&self.tree.commands(), |command, [a, b, c, d, e, f]| {
+            if let telar::DrawCommand::Text { text, rect, .. } = command {
+                found.push((
+                    text.to_string(),
+                    telar::Rect::new(
+                        a * rect.x + c * rect.y + e,
+                        b * rect.x + d * rect.y + f,
+                        rect.width,
+                        rect.height,
+                    ),
+                ));
+            }
+        });
+        found
+    }
+
+    pub(crate) fn said(&self) -> Vec<String> {
+        self.texts().into_iter().map(|(text, _)| text).collect()
+    }
+
+    pub(crate) fn shows(&self, wanted: &str) -> bool {
+        self.texts().iter().any(|(text, _)| text == wanted)
+    }
+
+    pub(crate) fn shows_part_of(&self, wanted: &str) -> bool {
+        self.texts().iter().any(|(text, _)| text.contains(wanted))
+    }
+
+    /// Clicks the topmost `wanted` the card draws.
+    pub(crate) fn click_on(&mut self, wanted: &str) {
+        let at = self
+            .texts()
+            .into_iter()
+            .filter(|(text, _)| text == wanted)
+            .map(|(_, rect)| rect)
+            .min_by(|a, b| a.y.total_cmp(&b.y))
+            .unwrap_or_else(|| panic!("{wanted:?} is drawn: {:?}", self.said()));
+        for event in move_and_click(centre(at)) {
+            self.route(&event);
+        }
+    }
+
+    /// Turns the wheel over the card until `wanted` is among the rows it shows, then clicks it.
+    pub(crate) fn press(&mut self, wanted: &str) {
+        let frame = card_of(&self.tree);
+        let over = centre(frame);
+        let find = |card: &Card| {
+            card.texts()
+                .into_iter()
+                .find(|(text, _)| text == wanted)
+                .map(|(_, rect)| rect)
+                .unwrap_or_else(|| panic!("{wanted:?} is drawn: {:?}", card.said()))
+        };
+        for _ in 0..80 {
+            let Some(pixels) = wheel_toward(frame, find(self)) else {
+                break;
+            };
+            self.route(&wheel_at(over, pixels));
+        }
+        for event in click_at(centre(find(self))) {
+            self.route(&event);
+        }
     }
 }

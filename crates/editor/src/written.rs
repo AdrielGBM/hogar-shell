@@ -12,6 +12,7 @@ use layout::{
     WorkspaceMatch, WorkspaceRule,
 };
 use surfaces::reconcile::Desktop;
+use util::report::Message;
 
 use crate::session::EditError;
 
@@ -35,7 +36,7 @@ impl Written {
         layer: LayerKind,
         id: &AreaId,
         workspace: Option<&WorkspaceMatch>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Message> {
         let screen = output.unwrap_or_default();
         let mut rules: Vec<&OutputRule> = layout
             .outputs
@@ -54,7 +55,7 @@ impl Written {
         screen: &str,
         layer: LayerKind,
         id: &AreaId,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Message> {
         let site = |rule: &OutputRule| Site {
             output: rule.matches.clone(),
             workspace: None,
@@ -79,7 +80,7 @@ impl Written {
         }
         let rule = rules
             .last()
-            .ok_or_else(|| telar::t!("editor.popover.no_rule", output = screen))?;
+            .ok_or_else(|| util::message!("editor.popover.no_rule", output = screen))?;
         Ok(Self {
             site: site(rule),
             area: blank(id),
@@ -94,9 +95,9 @@ impl Written {
         layer: LayerKind,
         id: &AreaId,
         workspace: &WorkspaceMatch,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Message> {
         if layer == LayerKind::Lock {
-            return Err(telar::t!("editor.variant.lock"));
+            return Err(util::message!("editor.variant.lock"));
         }
         let site = |rule: &OutputRule| Site {
             output: rule.matches.clone(),
@@ -130,7 +131,7 @@ impl Written {
         }
         let rule = rules
             .last()
-            .ok_or_else(|| telar::t!("editor.popover.no_rule", output = screen))?;
+            .ok_or_else(|| util::message!("editor.popover.no_rule", output = screen))?;
         let (insert_at, made) = match variant(rule, workspace, layer) {
             Some(written) => (written.areas.len(), None),
             None => (
@@ -222,7 +223,7 @@ pub fn area_removal(
     layer: LayerKind,
     id: &AreaId,
     workspace: Option<&WorkspaceMatch>,
-) -> Result<Vec<LayoutOp>, String> {
+) -> Result<Vec<LayoutOp>, Message> {
     let is_prompt = screen
         .area(layer, id)
         .is_some_and(|area| matches!(area.kind, ResolvedAreaKind::Prompt { .. }));
@@ -231,7 +232,7 @@ pub fn area_removal(
             id: id.clone(),
             refused: PromptEdit::Remove,
         }
-        .to_string());
+        .message());
     }
     let output = Some(screen.output.as_str());
     let mut after = layout.clone();
@@ -243,7 +244,7 @@ pub fn area_removal(
         }],
         false => Vec::new(),
     };
-    layout::ops::apply_all(&mut after, &ops).map_err(|why| why.to_string())?;
+    layout::ops::apply_all(&mut after, &ops).map_err(|why| why.message())?;
     let (resolved, _) = layout::resolve(&after, known, &screen.output, screen.workspace.as_ref());
     if resolved.area(layer, id).is_some() {
         ops.extend(hiding(&after, output, layer, id, workspace)?);
@@ -258,14 +259,14 @@ fn hiding(
     layer: LayerKind,
     id: &AreaId,
     workspace: Option<&WorkspaceMatch>,
-) -> Result<Vec<LayoutOp>, String> {
+) -> Result<Vec<LayoutOp>, Message> {
     let screen = output.unwrap_or_default();
     let rule = layout
         .outputs
         .iter()
         .filter(|rule| rule.matches.matches(screen))
         .max_by_key(|rule| rule.matches.specificity())
-        .ok_or_else(|| telar::t!("editor.popover.no_rule", output = screen))?;
+        .ok_or_else(|| util::message!("editor.popover.no_rule", output = screen))?;
     let mut site = Site {
         output: rule.matches.clone(),
         workspace: None,
@@ -274,7 +275,7 @@ fn hiding(
     let mut ops = Vec::new();
     if let Some(workspace) = workspace {
         if layer == LayerKind::Lock {
-            return Err(telar::t!("editor.variant.lock"));
+            return Err(util::message!("editor.variant.lock"));
         }
         site.workspace = Some(workspace.clone());
         if !rule
