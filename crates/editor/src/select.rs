@@ -54,6 +54,14 @@ thread_local! {
     static LAST_PRESS: Cell<Option<(Instant, (f32, f32))>> = const { Cell::new(None) };
 }
 
+/// Mounted after every other tool so the quick bar is never under another tool's handles or bodies.
+pub(crate) fn install() {
+    for layer in LayerKind::ALL {
+        crate::host::add_tool(layer, crate::quick::tool);
+    }
+    crate::quick::install();
+}
+
 pub(crate) fn tool(mode: &Mode) -> Built {
     let theme = use_theme::<NordTheme>();
     let (output, layer) = (mode.output.clone(), mode.layer);
@@ -337,6 +345,10 @@ fn sized() -> Option<(String, Rect)> {
     };
     let rect = rects::rect(&node)?;
     Some((size_tag(&node, rect), rect))
+}
+
+pub(crate) fn size_tag_shown() -> bool {
+    sized().is_some()
 }
 
 /// Where the selection is and why it is dim, while the area it is in is hidden by its `visible`: drawn at 30 % for its mode and selectable there.

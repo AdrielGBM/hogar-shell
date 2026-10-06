@@ -564,7 +564,7 @@ pub fn bell_module(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutE
     let icon = ui::icon::icon_view(
         move || glyph.get().to_string(),
         move || fg,
-        host.icon_size(),
+        host.live_icon_size(),
     )?;
     let badge = Text::new(
         move || badge_text(unread_read.get()),

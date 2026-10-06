@@ -20,6 +20,7 @@ use crate::host::{passthrough, see_through, whole};
 use crate::mode::{Mode, said};
 use crate::session::{self, Edit, EditError, Selection};
 
+use super::container::{self, Frame};
 use super::desktop::{self, Landing};
 use super::gesture::{self, Hint, pressable};
 use super::grid::{self, Cells, Room};
@@ -60,6 +61,34 @@ impl Geometry {
             cell,
             pitch: cell + gap,
             room: desktop::room_of(desktop, area),
+        })
+    }
+
+    /// `None` for a panel that is shut.
+    pub fn of_panel(output: &str, layer: LayerKind, area: &ResolvedArea) -> Option<Self> {
+        let ResolvedAreaKind::Panel {
+            cols,
+            rows,
+            cell,
+            gap,
+            ..
+        } = area.kind
+        else {
+            return None;
+        };
+        let region = rects::rect(&Node::area(Some(output), layer, &area.id))
+            .filter(|rect| rect.width > 0.0 && rect.height > 0.0)?;
+        let pad = area.style.padding.unwrap_or_default();
+        Some(Self {
+            area: area.id.clone(),
+            region,
+            origin: (region.x + pad.left(), region.y + pad.top()),
+            cell,
+            pitch: cell + gap,
+            room: Room {
+                cols: cols.max(1),
+                rows: rows.max(1),
+            },
         })
     }
 
@@ -119,7 +148,41 @@ pub(crate) fn grids(output: &str, layer: LayerKind) -> Grids {
         .unwrap_or_default()
 }
 
-/// Where something `footprint` big, carried with its top left corner `grab` from the pointer, would land with the pointer at `point`: onto the widget whose middle the pointer is over, else on the cells under its corner — on the first of `grids` the pointer is over, `None` over none. `own` is the group it is carried out of, which it is never stacked onto.
+/// Open panels come first: they are drawn over the grids.
+pub(crate) fn drop_grids(output: &str, layer: LayerKind) -> Grids {
+    let Some(desktop) = reconcile::desktop(Some(output)) else {
+        return Vec::new();
+    };
+    let Some(held) = desktop.resolved.layer(layer) else {
+        return Vec::new();
+    };
+    let panels = held
+        .areas
+        .iter()
+        .filter_map(|area| Some((Geometry::of_panel(output, layer, area)?, area.clone())));
+    panels.chain(grids(output, layer)).collect()
+}
+
+pub(crate) fn cell_landing(
+    (geometry, area): &(Geometry, ResolvedArea),
+    point: (f32, f32),
+    grab: (f32, f32),
+    footprint: Cells,
+) -> (AreaId, Landing, Aim) {
+    let corner = (point.0 - grab.0, point.1 - grab.1);
+    let (col, row) = geometry.cell_at(corner);
+    let cells = footprint.at(col, row).within(geometry.room);
+    (
+        area.id.clone(),
+        Landing::Cell {
+            col: cells.col,
+            row: cells.row,
+        },
+        Aim::Cells(geometry.rect_of(cells)),
+    )
+}
+
+/// Where something `footprint` big, carried with its top left corner `grab` from the pointer, would land with the pointer at `point`: into the container the pointer is anywhere over, at the slot under it; onto the widget whose middle the pointer is over; else on the cells under its corner — on the first of `grids` the pointer is over, `None` over none. `own` is the group it is carried out of, which it never lands in.
 pub(crate) fn landing_at(
     grids: &[(Geometry, ResolvedArea)],
     point: (f32, f32),
@@ -127,9 +190,10 @@ pub(crate) fn landing_at(
     footprint: Cells,
     own: Option<(&AreaId, &GroupId)>,
 ) -> Option<(AreaId, Landing, Aim)> {
-    let (geometry, area) = grids
+    let over = grids
         .iter()
         .find(|(geometry, _)| geometry.region.contains(point.0, point.1))?;
+    let (geometry, area) = over;
     let middle = |rect: Rect| {
         Rect::new(
             rect.x + rect.width / 4.0,
@@ -138,47 +202,37 @@ pub(crate) fn landing_at(
             rect.height / 2.0,
         )
     };
-    let onto = grid::placed(area).into_iter().find(|(id, cells)| {
-        own != Some((&area.id, id)) && middle(geometry.rect_of(*cells)).contains(point.0, point.1)
+    let onto = area.groups.iter().find_map(|group| {
+        if own == Some((&area.id, &group.id)) {
+            return None;
+        }
+        let rect = geometry.rect_of(grid::cells_of(group)?);
+        match container::Frame::of(geometry, group) {
+            Some(frame) => frame.outer.contains(point.0, point.1).then(|| {
+                (
+                    Landing::Into(group.id.clone(), frame.adopting(point)),
+                    Aim::Onto(rect),
+                )
+            }),
+            None => middle(rect)
+                .contains(point.0, point.1)
+                .then(|| (Landing::Onto(group.id.clone()), Aim::Onto(rect))),
+        }
     });
-    if let Some((id, cells)) = onto {
-        return Some((
-            area.id.clone(),
-            Landing::Onto(id),
-            Aim::Onto(geometry.rect_of(cells)),
-        ));
+    if let Some((landing, aimed)) = onto {
+        return Some((area.id.clone(), landing, aimed));
     }
-    let corner = (point.0 - grab.0, point.1 - grab.1);
-    let (col, row) = geometry.cell_at(corner);
-    let cells = footprint.at(col, row).within(geometry.room);
-    Some((
-        area.id.clone(),
-        Landing::Cell {
-            col: cells.col,
-            row: cells.row,
-        },
-        Aim::Cells(geometry.rect_of(cells)),
-    ))
+    Some(cell_landing(over, point, grab, footprint))
 }
 
-/// What the tag at the pointer says of `landing` on the grid `onto`: the cell the carried widget's corner goes on, counted from one, or what letting go onto a group does — joins a container, or stacks.
-fn landing_tag(grids: &[(Geometry, ResolvedArea)], onto: &AreaId, landing: &Landing) -> String {
+/// What the tag at the pointer says of `landing`: the cell the carried widget's corner goes on, counted from one, or what letting go onto a group does — joins a container, or stacks.
+pub(crate) fn landing_tag(landing: &Landing) -> String {
     match landing {
         Landing::Cell { col, row } => {
             telar::t!("editor.pointer.cell", col = col + 1, row = row + 1)
         }
-        Landing::Onto(group) => {
-            let contained = grids
-                .iter()
-                .filter(|(geometry, _)| geometry.area == *onto)
-                .flat_map(|(_, area)| &area.groups)
-                .find(|held| held.id == *group)
-                .is_some_and(surfaces::container::arranges);
-            match contained {
-                true => telar::t!("editor.pointer.into"),
-                false => telar::t!("editor.pointer.stack"),
-            }
-        }
+        Landing::Into(..) => telar::t!("editor.pointer.into"),
+        Landing::Onto(_) => telar::t!("editor.pointer.stack"),
     }
 }
 
@@ -196,28 +250,20 @@ pub(crate) fn tool(mode: &Mode) -> Built {
         |id: &InstanceId| id.clone(),
         move |id: InstanceId| target(&building, layer, id, dragging),
     )?;
-    let placing = {
-        let output = output.clone();
-        ReactiveList::with_style(
-            whole(),
-            move || match palette::picked().get() {
-                Some(_) => grids(&output, layer)
-                    .into_iter()
-                    .map(|(geometry, _)| geometry)
-                    .collect(),
-                None => Vec::new(),
-            },
-            |geometry: &Geometry| format!("{geometry:?}"),
-            move |geometry: Geometry| cells_target(geometry, layer),
-        )?
-    };
+    let placing = placing(&output, layer)?;
     let handle = {
-        let output = output.clone();
+        let (output, building) = (output.clone(), output.clone());
         ReactiveList::with_style(
             whole(),
             move || selected_widget(&output, layer).into_iter().collect(),
             |node: &Node| node.clone(),
-            move |node: Node| size_handle(node),
+            {
+                let output = building;
+                move |node: Node| match container_of(&drop_grids(&output, layer), &node) {
+                    Some(frame) => child_handle(node, frame),
+                    None => size_handle(node),
+                }
+            },
         )?
     };
     Ok(Box::new(passthrough(
@@ -231,9 +277,32 @@ pub(crate) fn tool(mode: &Mode) -> Built {
     )?))
 }
 
+pub(crate) fn placing_tool(mode: &Mode) -> Built {
+    Ok(Box::new(passthrough(
+        whole(),
+        vec![see_through(placing(&mode.output, mode.layer)?)?, outline()?],
+    )?))
+}
+
+fn placing(output: &str, layer: LayerKind) -> Result<ReactiveList, telar::LayoutError> {
+    let (listing, building) = (output.to_string(), output.to_string());
+    ReactiveList::with_style(
+        whole(),
+        move || match palette::picked().get() {
+            Some(_) => drop_grids(&listing, layer)
+                .into_iter()
+                .map(|(geometry, _)| geometry)
+                .collect(),
+            None => Vec::new(),
+        },
+        |geometry: &Geometry| format!("{geometry:?}"),
+        move |geometry: Geometry| cells_target(&building, geometry, layer),
+    )
+}
+
 /// Every widget on a grid of the edited layer, each once.
 fn widgets(output: &str, layer: LayerKind) -> Vec<InstanceId> {
-    let grids: Vec<AreaId> = grids(output, layer)
+    let grids: Vec<AreaId> = drop_grids(output, layer)
         .into_iter()
         .map(|(geometry, _)| geometry.area)
         .collect();
@@ -254,7 +323,7 @@ fn selected_widget(output: &str, layer: LayerKind) -> Option<Node> {
     let Selection::Instance(node) = session::selection().get() else {
         return None;
     };
-    let on_a_grid = grids(output, layer)
+    let on_a_grid = drop_grids(output, layer)
         .iter()
         .any(|(geometry, _)| geometry.area == node.area);
     on_a_grid.then_some(node)
@@ -326,7 +395,7 @@ fn target(
     )))
 }
 
-/// A widget being carried: what it is, where it was taken hold of, and the grids as they were when it was.
+/// A widget being carried: what it is, where it was taken hold of, the container it was taken out of, and the grids as they were when it was.
 struct Carried {
     node: Node,
     grab: (f32, f32),
@@ -334,41 +403,89 @@ struct Carried {
     size: (f32, f32),
     footprint: Cells,
     grids: Grids,
+    container: Option<Frame>,
 }
 
 impl Carried {
     fn of(node: Node, rect: Rect, point: (f32, f32), output: &str, layer: LayerKind) -> Self {
-        let grids = grids(output, layer);
-        let footprint = match &node.part {
-            Part::Instance(group, id) => grids
-                .iter()
-                .find(|(geometry, _)| geometry.area == node.area)
-                .and_then(|(_, area)| area.groups.iter().find(|held| held.id == *group))
-                .and_then(|group| {
-                    let alone = group.children.len() == 1;
-                    match alone {
-                        true => grid::cells_of(group),
-                        false => group
-                            .children
-                            .iter()
-                            .find(|child| child.id == id.template())
-                            .map(|child| desktop::footprint(child.representation)),
+        let grids = drop_grids(output, layer);
+        let (footprint, container) = match &node.part {
+            Part::Instance(group, id) => {
+                let held = grids
+                    .iter()
+                    .find(|(geometry, _)| geometry.area == node.area)
+                    .and_then(|(geometry, area)| {
+                        Some((geometry, area.groups.iter().find(|held| held.id == *group)?))
+                    });
+                let container = held.and_then(|(geometry, group)| Frame::of(geometry, group));
+                let footprint = held.and_then(|(_, group)| {
+                    let child = group
+                        .children
+                        .iter()
+                        .find(|child| child.id == id.template());
+                    match (container.is_some(), group.children.len() == 1) {
+                        (true, _) => child.map(|child| {
+                            desktop::footprint(desktop::loose_size(
+                                &child.module,
+                                layer,
+                                child.representation,
+                            ))
+                        }),
+                        (false, true) => grid::cells_of(group),
+                        (false, false) => {
+                            child.map(|child| desktop::footprint(child.representation))
+                        }
                     }
-                }),
-            _ => None,
-        }
-        .unwrap_or(Cells::ONE);
+                });
+                (footprint, container)
+            }
+            _ => (None, None),
+        };
         Self {
             node,
             grab: (point.0 - rect.x, point.1 - rect.y),
             size: (rect.width, rect.height),
-            footprint,
+            footprint: footprint.unwrap_or(Cells::ONE),
             grids,
+            container,
         }
+    }
+
+    /// Previews the child taken to another slot, cell or box of its own container with the pointer at `point`, and the lines it snapped to; `None` once the pointer is outside it.
+    fn preview_inside(&self, edit: &Edit, point: (f32, f32)) -> Option<()> {
+        let frame = self.container.as_ref()?;
+        if !frame.outer.contains(point.0, point.1) {
+            return None;
+        }
+        let Part::Instance(_, id) = &self.node.part else {
+            return None;
+        };
+        let moved = frame.moving(&id.template(), point, self.grab, crate::snap::free());
+        let guides = moved
+            .as_ref()
+            .map(|(_, guides)| crate::snap::lines(guides, frame.inner))
+            .unwrap_or_default();
+        gesture::hint().set(Some(Hint {
+            pointer: point,
+            guides,
+            ..Hint::default()
+        }));
+        let planned = moved.and_then(|(slot, _)| {
+            let before = edit.transaction().before()?;
+            let desktop = reconcile::desktop_now(self.node.output.as_deref())?;
+            let ops =
+                container::rearranged(&before, &desktop, &self.node, slot).unwrap_or_default();
+            Some((ops, Aim::Onto(frame.outer)))
+        });
+        gesture::aimed(edit, planned, aim());
+        Some(())
     }
 
     /// Previews where the widget lands with the pointer at `point`, and outlines it, with its ghost under the pointer and a tag beside it saying where it lands; over no grid, the layout stays as it was.
     fn preview(&self, edit: &Edit, point: (f32, f32)) {
+        if self.preview_inside(edit, point).is_some() {
+            return;
+        }
         let own = match &self.node.part {
             Part::Instance(group, _) => Some((&self.node.area, group)),
             _ => None,
@@ -376,9 +493,7 @@ impl Carried {
         let landed = landing_at(&self.grids, point, self.grab, self.footprint, own);
         gesture::hint().set(Some(Hint {
             pointer: point,
-            tag: landed
-                .as_ref()
-                .map(|(onto, landing, _)| landing_tag(&self.grids, onto, landing)),
+            tag: landed.as_ref().map(|(_, landing, _)| landing_tag(landing)),
             ghost: Some(Rect::new(
                 point.0 - self.grab.0,
                 point.1 - self.grab.1,
@@ -427,10 +542,19 @@ fn outline() -> Result<Box<dyn LayoutItem>, telar::LayoutError> {
     see_through(list)
 }
 
-/// While a widget picked in the palette waits for a place, a box over one grid's cells: a press puts it on the cells under the pointer, and the cells it would cover are outlined as the pointer moves.
-fn cells_target(geometry: Geometry, layer: LayerKind) -> Built {
+/// While a widget picked in the palette waits for a place, a box over the cells of one grid or open panel: a press puts it on the cells under the pointer, and the cells it would cover are outlined as the pointer moves.
+fn cells_target(output: &str, geometry: Geometry, layer: LayerKind) -> Built {
     let hovering = geometry.clone();
     let pressing = geometry.clone();
+    let footprint_of = {
+        let (output, area) = (output.to_string(), geometry.area.clone());
+        move |pick: &Pick| {
+            let grids = drop_grids(&output, layer);
+            let over = grids.iter().find(|(geometry, _)| geometry.area == area);
+            picked_footprint(pick, over)
+        }
+    };
+    let footprint_pressed = footprint_of.clone();
     Ok(Box::new(
         StyledContainer::new(
             surfaces::area::at(geometry.region),
@@ -443,7 +567,7 @@ fn cells_target(geometry: Geometry, layer: LayerKind) -> Built {
             else {
                 return;
             };
-            let cells = picked_footprint(&pick, layer).at(0, 0);
+            let cells = footprint_of(&pick).at(0, 0);
             let (col, row) = hovering.cell_at(corner_for(&hovering, cells, point));
             aim().set(Some(Aim::Cells(
                 hovering.rect_of(cells.at(col, row).within(hovering.room)),
@@ -454,7 +578,7 @@ fn cells_target(geometry: Geometry, layer: LayerKind) -> Built {
             else {
                 return;
             };
-            let cells = picked_footprint(&pick, layer);
+            let cells = footprint_pressed(&pick);
             let (col, row) = pressing.cell_at(corner_for(&pressing, cells, point));
             let at = cells.at(col, row).within(pressing.room);
             palette::unpick();
@@ -473,16 +597,17 @@ pub(crate) fn corner_for(geometry: &Geometry, cells: Cells, point: (f32, f32)) -
     (point.0 - rect.width / 2.0, point.1 - rect.height / 2.0)
 }
 
-/// The cells a widget picked in the palette covers once it is placed.
-pub(crate) fn picked_footprint(pick: &Pick, layer: LayerKind) -> Cells {
+/// The cells what the palette picked covers once it is placed: a widget's at the size chosen for it, and on the grid `over`, for a container, the span that grid has room for.
+pub(crate) fn picked_footprint(pick: &Pick, over: Option<&(Geometry, ResolvedArea)>) -> Cells {
     match pick {
         Pick::Komponent(id) => crate::written::known()
             .komponent(id)
             .map_or(Cells::ONE, crate::komponent::footprint),
-        _ => {
-            let module = pick.module().unwrap_or_default();
-            desktop::first_size(&module, layer).map_or(Cells::ONE, desktop::footprint)
-        }
+        Pick::Container => over.map_or(Cells::ONE, |(geometry, area)| {
+            container::footprint_on(area, geometry.room)
+        }),
+        Pick::Module(_, size) => size.map_or(Cells::ONE, desktop::footprint),
+        Pick::Plate | Pick::Stack => Cells::ONE,
     }
 }
 
@@ -545,10 +670,111 @@ fn size_handle(node: Node) -> Built {
     )))
 }
 
+/// The container the instance `node` is a child of, as `grids` drew it.
+fn container_of(grids: &[(Geometry, ResolvedArea)], node: &Node) -> Option<Frame> {
+    let Part::Instance(group, _) = &node.part else {
+        return None;
+    };
+    container::frame_in(grids, &node.area, group)
+}
+
+/// Where the handle of a child of `frame` drawn at `rect` sits: the end of a row's or a column's child, the bottom right corner of a grid's or a free one's.
+fn handle_point(frame: &Frame, rect: Rect) -> ((f32, f32), Cursor) {
+    match frame.group.arrange {
+        Some(layout::Arrange::Row) => (
+            (rect.x + rect.width, rect.y + rect.height / 2.0),
+            Cursor::EwResize,
+        ),
+        Some(layout::Arrange::Column) => (
+            (rect.x + rect.width / 2.0, rect.y + rect.height),
+            Cursor::NsResize,
+        ),
+        _ => (
+            (rect.x + rect.width, rect.y + rect.height),
+            Cursor::NwseResize,
+        ),
+    }
+}
+
+/// The handle of the selected child of a container that sets what it takes of it: dragged, a row's or a column's child its weight, a grid's child its span and a free one its box, snapping to its siblings unless Alt is held, with a tag beside the pointer saying what it now takes.
+fn child_handle(node: Node, frame: Frame) -> Built {
+    let theme = use_theme::<NordTheme>();
+    let name = crate::steps::name_of(&Selection::Instance(node.clone()));
+    let edit = Edit::new(telar::t!("editor.desktop.resized", name = name));
+    let placed = {
+        let node = node.clone();
+        move || rects::rect(&node).unwrap_or_default()
+    };
+    let at = placed.clone();
+    let cursor = handle_point(&frame, placed()).1;
+    let held = frame;
+    let (dragged, taken) = (node.clone(), node.clone());
+    let output_now = node.output.clone().unwrap_or_default();
+    let dragged_layer = node.layer;
+    let previewing = edit.clone();
+    let Part::Instance(_, id) = &node.part else {
+        return Err(telar::LayoutError::Engine(
+            "a child's handle is for an instance".to_string(),
+        ));
+    };
+    let id = id.template();
+    Ok(Box::new(gesture::drag(
+        StyledContainer::new(
+            LayoutStyle::new(),
+            move |_| {
+                RectStyle::filled(theme.surface, HANDLE / 2.0)
+                    .with_border(Border::uniform(theme.accent, 2.0))
+            },
+            Vec::new(),
+        )?
+        .styled_by(move || {
+            let ((x, y), _) = handle_point(&held, at());
+            LayoutStyle::new()
+                .absolute()
+                .inset_start(x - HANDLE / 2.0)
+                .inset_top(y - HANDLE / 2.0)
+                .width(HANDLE)
+                .height(HANDLE)
+        })
+        .control(Role::Button)
+        .cursor(cursor),
+        edit.transaction(),
+        move |_| {
+            Some((
+                placed(),
+                container_of(&drop_grids(output_now.as_str(), dragged_layer), &taken)?,
+            ))
+        },
+        move |(start, frame), _| {
+            let Some(point) = surfaces::menu::pointer() else {
+                return;
+            };
+            let Some((slot, guides)) = frame.resizing(&id, *start, point, crate::snap::free())
+            else {
+                return;
+            };
+            gesture::hint().set(Some(Hint {
+                pointer: point,
+                tag: Some(frame.size_tag(&id, slot)),
+                guides: crate::snap::lines(&guides, frame.inner),
+                ..Hint::default()
+            }));
+            let planned = previewing.transaction().before().and_then(|before| {
+                let desktop = reconcile::desktop_now(dragged.output.as_deref())?;
+                Some(container::rearranged(&before, &desktop, &dragged, slot).unwrap_or_default())
+            });
+            if let Some(ops) = planned {
+                let _ = previewing.preview(ops);
+            }
+        },
+        |_, _| {},
+    )))
+}
+
 /// The size of the widget `node` whose footprint, from the corner of `rect` it keeps, reaches nearest `point`.
 fn size_toward(node: &Node, rect: Rect, point: (f32, f32)) -> Option<layout::Representation> {
     let module = shown(node)?.module;
-    let geometry = grids(node.output.as_deref()?, node.layer)
+    let geometry = drop_grids(node.output.as_deref()?, node.layer)
         .into_iter()
         .find(|(geometry, _)| geometry.area == node.area)?
         .0;

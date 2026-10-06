@@ -2,7 +2,7 @@
 //!
 //! **Distinct hotspots (F-7).** Splitting and joining are never the same place: a region's two split buttons sit at its centre, one for each way it can be cut, and a join button sits on the edge two regions share, beside the grip that moves that edge. A split button pressed splits the region in half; dragged, it places the cut where it is let go. The grip moves the edge between neighbours, and every region on either side of it follows, so no gap opens and nothing overlaps.
 //!
-//! **Every drag has a key (WCAG 2.5.7).** `s` splits the selected region side by side and Shift+S top and bottom, Alt+arrows join it with the region that way, and the generic Shift+arrows and Ctrl+arrows move and resize it as the grips do, neighbours following ([`super::regions`]). A focused grip moves with the arrows. `w` switches editing the workspace that is up alone on and off ([`crate::variant`]); `t` lays a texture over the selected region, as the toolbar's button does, and `n` and `[` `]` slice a texture's image and turn its gradient ([`super::texture`]).
+//! **Every drag has a key (WCAG 2.5.7).** `s` splits the selected region side by side and Shift+S top and bottom, Alt+Shift+arrows join it with the region that way, as they join bars, and the generic Shift+arrows and Ctrl+arrows move and resize it as the grips do, neighbours following ([`super::regions`]). A focused grip moves with the arrows. `w` switches editing the workspace that is up alone on and off ([`crate::variant`]); `t` lays a texture over the selected region, as the toolbar's button does, and `n` and `[` `]` slice a texture's image and turn its gradient ([`super::texture`]).
 //!
 //! **One undo entry each.** A split, a join, an edge moved and a texture added or taken away are each one edit.
 
@@ -50,7 +50,7 @@ pub(crate) fn install() {
     crate::popover::add_area_tool("wallpaper_region", region_tool);
     crate::popover::add_area_tool("texture", texture::tool);
     crate::host::add_tool(LayerKind::Background, tool);
-    crate::host::add_toolbar_button(LayerKind::Background, TEXTURE_BUTTON);
+    crate::host::add_adding_button(LayerKind::Background, TEXTURE_BUTTON);
     crate::host::set_add(LayerKind::Background, || {
         texture_selected(&session::selected())
     });
@@ -77,7 +77,7 @@ pub(crate) fn install() {
         "wallpaper_region",
         KeyOp {
             name: "region-join",
-            keys: keys::arrows_with(Chord::alt),
+            keys: keys::arrows_with(|chord| chord.alt().shift()),
             label: || telar::t!("editor.keys.op.region-join"),
             run: Run::Toward(join_toward),
         },

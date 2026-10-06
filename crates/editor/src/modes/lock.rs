@@ -1,4 +1,4 @@
-//! Lock mode (TA-8): no tools of its own. The lock layer is edited with the background mode's regions and textures and the desktop mode's grids, palette and keys, over a preview of the lock screen; what this adds is only what the lock has and the other layers do not — the prompt, moved and restyled but never removed, and how much a locked screen may reveal.
+//! Lock mode: the lock layer is edited with the background mode's regions and textures and the desktop mode's grids, containers, palette and keys, over a preview of the lock screen; what this adds is only what the lock has and the other layers do not — the prompt, moved and restyled but never removed, a background region covering the screen (Shift+B), and how much a locked screen may reveal. Containers and the style of an instance are as free here as anywhere, for they only lay readings out and paint them; panels and actions are refused, since a locked screen answers to nothing but the prompt, and the prompt is always resolved last, above whatever else is placed.
 //!
 //! **What is edited is what the lock draws.** The preview runs the lock's own check ([`LockLayout::checked`]) and, where a real lock would fall back to the minimal one, shows that and says why. An edit that would make it fall back is refused before it is previewed ([`kept`]), with the lock's reason, so the lock layer an edit leaves is one the lock draws.
 //!
@@ -17,8 +17,8 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use config::{Config, MediaDetail, NotificationDetail};
 use layout::{
-    LayerKind, Layout, LayoutId, LayoutOp, Library, OutputMatch, ResolvedAreaKind, SMALLEST_PROMPT,
-    Style,
+    Area, AreaId, AreaKind, LayerKind, Layout, LayoutId, LayoutOp, Library, OutputMatch, Rect,
+    ResolvedAreaKind, SMALLEST_PROMPT, Style,
 };
 use modules::lock::LockLayout;
 use platform_wayland::KeyboardMode;
@@ -31,6 +31,7 @@ use ui::descriptor::Built;
 use util::report::Report;
 
 use crate::config_popover;
+use crate::context;
 use crate::host::{self, passthrough, whole};
 use crate::keys::{self, Chord, KeyOp, Run};
 use crate::mode::{self, Mode, said};
@@ -38,7 +39,7 @@ use crate::popover::area::rect_rows;
 use crate::popover::rows::{self, label};
 use crate::popover::{AreaDraft, Inspector, kind_field, parsed, spelled};
 use crate::session::{self, EditError};
-use crate::written::{Written, known};
+use crate::written::{Work, Written, known};
 
 use super::{background, desktop, rect_handles, widgets};
 
@@ -56,10 +57,23 @@ pub(crate) fn install() {
     host::add_tool(LayerKind::Lock, widgets::tool);
     host::add_tool(LayerKind::Lock, tool);
     desktop::add_grid_tools(LayerKind::Lock);
-    host::add_toolbar_button(LayerKind::Lock, background::TEXTURE_BUTTON);
+    host::add_adding_button(LayerKind::Lock, background::TEXTURE_BUTTON);
     host::add_toolbar_button(
         LayerKind::Lock,
         (|| telar::t!("editor.lock.privacy"), || said(open_privacy())),
+    );
+    host::add_adding_button(
+        LayerKind::Lock,
+        (|| telar::t!("editor.lock.region"), || said(add_region())),
+    );
+    keys::add_mode_key_op(
+        LayerKind::Lock,
+        KeyOp {
+            name: "lock-region",
+            keys: vec![Chord::char('b').shift()],
+            label: || telar::t!("editor.keys.op.lock-region"),
+            run: Run::Act(|_| add_region()),
+        },
     );
     keys::add_mode_key_op(
         LayerKind::Lock,
@@ -71,6 +85,47 @@ pub(crate) fn install() {
         },
     );
     detached(|| effect(follow_the_config));
+}
+
+/// A region covering the whole screen at the back of the lock layer, under the readings and the prompt, and selects it, as one undo entry.
+pub(crate) fn add_region() -> Result<(), EditError> {
+    crate::popover::close();
+    context::make(region_added, |id| {
+        telar::t!("editor.lock.region_made", name = id.to_string())
+    })
+}
+
+fn region_added(
+    layout: &Layout,
+    desktop: &Desktop,
+    layer: LayerKind,
+) -> Result<(Vec<LayoutOp>, AreaId), EditError> {
+    let mut work = Work::new(layout, desktop, layer);
+    let id = layout::ops::free_area_id(layout, &work.known, layer, "region");
+    let written = work.written(layer, &id)?;
+    let area = Area {
+        id: id.clone(),
+        kind: Some(AreaKind::WallpaperRegion {
+            rect: Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+            }),
+            source: None,
+            fit: None,
+            transition: None,
+        }),
+        ..Area::default()
+    };
+    let mut ops = written.ops(&area);
+    ops.push(LayoutOp::MoveArea {
+        site: written.site.clone(),
+        id: id.clone(),
+        index: 0,
+    });
+    work.apply(ops)?;
+    Ok((work.done(), id))
 }
 
 /// The config the lock is drawn with: the running one, which is what a lock taken now would read, with a theme being previewed on it.

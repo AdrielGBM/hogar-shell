@@ -22,8 +22,10 @@ mod tests {
     use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
     use ui::host::WidgetSize;
 
+    use crate::host::{self, Under};
     use crate::keys::{self};
     use crate::mode;
+    use crate::popover;
     use crate::popover::handles::{
         CORNERS, Corner, NEAREST, Side, handle_point, most_padding_in, most_radius_in,
     };
@@ -32,7 +34,6 @@ mod tests {
     };
     use crate::session::{self, Selection};
     use crate::tools::{self, Tool};
-    use crate::{host, popover};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
     const NONE: ModifiersState = ModifiersState {
@@ -91,15 +92,15 @@ mod tests {
         }
     }
 
-    /// The mode's tools as its host builds them, over the whole screen.
+    /// The mode's host as its window builds it, over the whole screen.
     struct Screen(ComponentList);
 
     impl Screen {
         fn new() -> Self {
             let current = mode::current().expect("the mode is up");
-            let tools = vec![host::tools(&current).expect("the tools build")];
+            let host = vec![host::tree(&current, Under::Nothing).expect("the host builds")];
             let page = LayoutStyle::new().width(SIZE.0).height(SIZE.1);
-            let root = Pointed::new(Box::new(Container::new(page, tools).expect("a page")));
+            let root = Pointed::new(Box::new(Container::new(page, host).expect("a page")));
             let node = root.layout_node();
             let tree = ComponentList::new(root);
             compute_layout(
@@ -439,7 +440,13 @@ mod tests {
             "a press that moves nothing records nothing"
         );
 
+        let selected = session::selected();
         screen.key(NamedKey::ArrowRight);
+        assert_eq!(
+            session::selected(),
+            selected,
+            "the focused handle takes the arrow before the mode's keys move the selection"
+        );
         let stepped = before[3] + 1.0;
         assert_eq!(
             bar_radius(&rig),

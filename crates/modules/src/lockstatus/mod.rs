@@ -49,8 +49,8 @@ pub struct IndicatorProps {
     pub keys: ReadSignal<LockKeys>,
     pub fg: Color,
     pub idle: Color,
-    pub size: f32,
-    pub pad: f32,
+    pub size: telar::Reactive<f32>,
+    pub pad: telar::Reactive<f32>,
 }
 
 pub fn indicator(
@@ -72,12 +72,16 @@ pub fn indicator(
         },
         size,
     )?;
-    let square = LayoutStyle::new()
-        .align_items(AlignItems::CENTER)
-        .justify_content(JustifyContent::CENTER)
-        .padding_all(pad)
-        .flex_shrink(0.0);
-    Ok(Box::new(Container::new(square, vec![glyph])?))
+    let square = move || {
+        LayoutStyle::new()
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER)
+            .padding_all(pad.get())
+            .flex_shrink(0.0)
+    };
+    Ok(Box::new(
+        Container::new(square(), vec![glyph])?.styled_by(square),
+    ))
 }
 
 #[cfg(test)]

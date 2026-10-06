@@ -259,7 +259,10 @@ mod tests {
 
     #[test]
     fn a_command_with_no_arguments_reports_which_one_is_missing() {
-        assert_eq!(dispatch("panel toggle"), "err missing argument <module>");
+        assert_eq!(
+            dispatch("panel toggle"),
+            "err missing argument <module|instance>"
+        );
         assert_eq!(
             dispatch("volume set abc"),
             "err <percent> must be a whole number, got 'abc'"

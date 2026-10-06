@@ -8,12 +8,12 @@ let host = ui::host::Host::current()?;
 let state = signal(volume::current_mic());
 let read = state.read_only();
 let fg = host.foreground;
-let icon = host.icon_size();
+let icon = host.live_icon_size();
 
 platform_wayland::watch(volume::subscribe_mic, move |mic: Volume| state.set(Some(mic)));
 
 [view]
-icon_glyph name:(Reactive::of(move || read.get().map_or("mic", glyph::microphone).to_string())) tint:(Reactive::of(move || fg)) size:(icon)
+icon_glyph name:(Reactive::of(move || read.get().map_or("mic", glyph::microphone).to_string())) tint:(Reactive::of(move || fg)) size:(icon.clone())
 
 [preview "Mic" fixture:ui::preview::bar_chip]
 mic

@@ -87,7 +87,7 @@ The launcher has no chip to anchor to, so it is a node in the shell's shared **O
 its own. See [Compositor rules](../../guides/compositor-rules.md) for what a rule against the old
 `hogar-shell-overlay` namespace (the launcher's alone, before DEC-14) reaches now.
 
-It opens in the middle of the focused screen, unless a `Stack` area on that screen says `launcher = true`: then it opens where that stack is pinned — its `anchor`, moved by its `offset`, inside the box its `within` names — the first such stack of the screen winning. In the overlay edit mode, Shift+L on a selected stack (or "Open the launcher here" in its menu or popover) moves it there, and pressed again puts it back in the middle. See the [Layout reference](../../reference/layout.md#areakindstack).
+It opens in the middle of the focused screen, unless a `Stack` area on that screen says `launcher = true`: then it opens where that stack is pinned — its `anchor`, moved by its `offset`, inside the box its `within` names — the first such stack of the screen winning. In the overlay edit mode, Shift+O on a selected stack (or "Open the launcher here" in its menu or popover) moves it there, and pressed again puts it back in the middle. See the [Layout reference](../../reference/layout.md#areakindstack).
 
 ## What it needs
 

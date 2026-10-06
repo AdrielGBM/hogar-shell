@@ -60,7 +60,7 @@ const EVERY_SIZE: &[WidgetSize] = &WidgetSize::ALL;
 
 fn icon_chip(host: &Host, glyph: &'static str) -> Built {
     let fg = host.foreground;
-    ui::icon::icon_view(move || glyph.to_string(), move || fg, host.icon_size())
+    ui::icon::icon_view(move || glyph.to_string(), move || fg, host.live_icon_size())
 }
 
 fn session_panel(_host: &Host) -> Built {
@@ -68,7 +68,7 @@ fn session_panel(_host: &Host) -> Built {
 }
 
 fn settings_panel(host: &Host) -> Built {
-    settings::panel::settings_panel(host.extent.height)
+    settings::panel::settings_panel(host.extent().height)
 }
 
 pub static MODULES: &[ModuleDescriptor] = &[

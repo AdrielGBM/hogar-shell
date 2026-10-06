@@ -335,6 +335,14 @@ impl ResolvedAreaKind {
         }
     }
 
+    /// Whether this kind places its groups on cells: a grid, and a panel, which is a grid that opens from its owner.
+    pub fn places_on_cells(&self) -> bool {
+        matches!(
+            self,
+            ResolvedAreaKind::Grid { .. } | ResolvedAreaKind::Panel { .. }
+        )
+    }
+
     /// Whether this kind holds instances at all. A wallpaper region and a texture are paint, so a group placed in one is reported rather than silently ignored.
     pub fn holds_instances(&self) -> bool {
         !matches!(

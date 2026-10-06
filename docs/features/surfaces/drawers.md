@@ -24,9 +24,16 @@ bar no longer opens its panel at an end of it. Along a horizontal bar the drawer
 vertical one it lines up with the chip's top. Either way it is kept clear of the far end of the screen, so a
 drawer never opens off the side.
 
+A chip anywhere else opens its drawer off itself too, never off another chip of the same module. A chip on a
+dock hangs it off the dock's side, as a bar chip does off its bar's. A chip on no edge — on the desktop grid,
+in a free area, inside a container or in a panel an instance owns — hangs it below itself where it fits there,
+else above itself where it fits there, else on whichever side has more room, centred on the chip. A panel the
+layout gives such a chip opens on the same side by the same rule, so the two never disagree.
+
 Opened with no chip in hand — `hogar-shell panel toggle`, a keybind — there is nothing to follow, and the drawer
-falls back to wherever the layout placed that instance (`start`, `end`, or centred for a module the layout has
-not placed on any bar).
+falls back to the module's first chip on the focused screen, else its first anywhere, else the middle of the
+screen. `hogar-shell panel toggle <instance>` names a chip, and opens off that one. An auto-hidden bar stays out
+while a drawer of one of its chips is open.
 
 ## Where it lives
 

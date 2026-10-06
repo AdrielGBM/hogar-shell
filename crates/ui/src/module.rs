@@ -94,10 +94,10 @@ pub fn resting_fill(variant: Variant, rest: Color, accent: Color) -> Color {
     }
 }
 
-/// A chip's drag-to-open gesture: pulling it away from the bar opens the panel it would otherwise toggle.
+/// A chip's drag-to-open gesture: pulling it away from the bar runs `open`, which opens what its press would otherwise toggle.
 #[derive(Clone)]
 pub struct DragOpen {
-    pub module: String,
+    pub open: Rc<dyn Fn()>,
     /// The bar's edge, which is what says which direction "away from the bar" is.
     pub edge: Edge,
     /// How far the pointer must travel inwards before letting go opens the panel, in px.
@@ -119,11 +119,11 @@ impl DragOpen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use telar::{LayoutError, LayoutItem};
+    use telar::LayoutItem;
     #[test]
     fn a_drag_opens_a_panel_only_when_it_pulls_away_from_the_bar() {
         let gesture = |edge| DragOpen {
-            module: "clock".to_string(),
+            open: Rc::new(|| ()),
             edge,
             threshold: 48.0,
         };
@@ -147,7 +147,7 @@ mod tests {
     fn an_elastic_chip_yields_width_and_a_plain_one_holds_it() {
         use crate::module_shell::{ModuleShellProps, module_shell};
         use telar::{
-            AvailableSpace, Container, LayoutStyle, Slots, compute_layout, reset_layout_runtime,
+            AvailableSpace, Container, LayoutStyle, compute_layout, reset_layout_runtime,
             set_theme, track_layout,
         };
 
@@ -159,18 +159,9 @@ mod tests {
             set_theme(NordTheme::new());
             let label = Container::new(LayoutStyle::new().width(LABEL).height(20.0), vec![])
                 .expect("the label builds");
-            let mut inner = Slots::new();
-            inner.push(None, Box::new(label) as Box<dyn LayoutItem>);
             let chip = module_shell(
                 ModuleShellProps::props().elastic(elastic).build(),
-                telar::Children::new({
-                    let inner = std::cell::RefCell::new(Some(inner));
-                    move || {
-                        inner.borrow_mut().take().ok_or_else(|| {
-                            telar::LayoutError::Engine("chip children built twice".into())
-                        })
-                    }
-                }),
+                crate::layout::built_once(Box::new(label)),
             )
             .expect("the chip builds");
             let rect = track_layout(chip.layout_node()).expect("the chip registers its rect");
@@ -206,7 +197,7 @@ mod tests {
     fn a_resting_chip_paints_its_rest_or_its_accent_and_nothing_else() {
         use crate::module_shell::{ModuleShellProps, module_shell};
         use telar::{
-            AvailableSpace, ComponentList, Container, DrawCommand, LayoutStyle, Paint, Slots,
+            AvailableSpace, ComponentList, Container, DrawCommand, LayoutStyle, Paint,
             compute_layout, reset_layout_runtime, set_theme,
         };
 
@@ -215,23 +206,13 @@ mod tests {
             set_theme(NordTheme::new());
             let label = Container::new(LayoutStyle::new().width(20.0).height(20.0), vec![])
                 .expect("the label builds");
-            let mut inner = Slots::new();
-            inner.push(None, Box::new(label) as Box<dyn LayoutItem>);
             let chip = module_shell(
                 ModuleShellProps::props()
                     .variant(variant)
                     .rest(rest)
                     .accent(accent)
                     .build(),
-                telar::Children::new({
-                    let inner = RefCell::new(Some(inner));
-                    move || {
-                        inner
-                            .borrow_mut()
-                            .take()
-                            .ok_or_else(|| LayoutError::Engine("chip children built twice".into()))
-                    }
-                }),
+                crate::layout::built_once(Box::new(label)),
             )
             .expect("the chip builds");
             let page = Container::new(

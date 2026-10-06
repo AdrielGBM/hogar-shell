@@ -54,7 +54,7 @@ fn logo_icon(general: &config::GeneralConfig) -> String {
 pub fn logo_chip(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let fg = host.foreground;
     let icon = logo_icon(&host.options::<config::GeneralConfig>());
-    ui::icon::icon_view(move || icon.clone(), move || fg, host.icon_size())
+    ui::icon::icon_view(move || icon.clone(), move || fg, host.live_icon_size())
 }
 
 #[cfg(test)]

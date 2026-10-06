@@ -6,7 +6,9 @@
 //!
 //! **Continuity (TA-3).** "From bars…" in the palette, and a chip's menu, move the chip's instance onto a grid as a widget — the same instance, id, options and state, only drawn another way.
 //!
-//! **Every drag has a key (WCAG 2.5.7).** `a` opens the palette, where Enter places the entry it points at on the first free cells near the selection; `Shift+N` makes a grid; Shift+arrows move a widget one cell (out of its stack, if it is in one) and Ctrl+arrows step its size, both reflowing what they cover; Ctrl+Shift+arrows stack it onto the widget that way; `w` switches editing the workspace that is up alone on and off ([`crate::variant`]).
+//! **Containers.** A widget let go anywhere over a container joins it where the pointer is, and one dragged out of a container is a widget of its own again ([`super::container`]).
+//!
+//! **Every drag has a key (WCAG 2.5.7).** `a` opens the palette, where Enter places the entry it points at on the first free cells near the selection; `Alt+N` makes a grid and `Shift+N` a container; Shift+arrows move a widget one cell (out of its stack, if it is in one) and Ctrl+arrows step its size, both reflowing what they cover; Ctrl+Shift+arrows stack it onto the widget that way; `w` switches editing the workspace that is up alone on and off ([`crate::variant`]).
 //!
 //! **One undo entry each.** A drop, an add, a size step, a stack and a new grid are each one edit, whatever they moved out of the way.
 
@@ -30,6 +32,7 @@ use crate::popover::{AreaDraft, Inspector, InstanceDraft, help, kind_field, kind
 use crate::session::{self, EditError, Selection};
 use crate::written::Work;
 
+use super::container::{self, Slot};
 use super::grid::{self, Cells, Room};
 use super::palette::{self, Pick};
 use super::widgets;
@@ -72,47 +75,47 @@ pub(crate) fn install() {
     );
 }
 
-/// Gives the mode of `layer` the grid tools' toolbar buttons and keys: a new grid, and the palette.
+/// The key that makes a new grid.
+pub(crate) fn grid_key() -> Chord {
+    Chord::char('n').alt()
+}
+
+/// Gives the mode of `layer` the grid tools' toolbar buttons and keys: a new grid, a new container, and the palette.
 pub(crate) fn add_grid_tools(layer: LayerKind) {
     for button in GRID_BUTTONS {
-        crate::host::add_toolbar_button(layer, button);
+        crate::host::add_adding_button(layer, button);
     }
     crate::host::set_add(layer, palette::open);
-    keys::add_mode_key_op(
-        layer,
-        KeyOp {
-            name: "widget-add",
-            keys: vec![Chord::char('a')],
-            label: || telar::t!("editor.keys.op.widget-add"),
-            run: Run::Act(|_| palette::open()),
-        },
-    );
+    keys::add_mode_key_op(layer, palette::add_key());
     keys::add_mode_key_op(
         layer,
         KeyOp {
             name: "grid-create",
-            keys: vec![Chord::char('n').shift()],
+            keys: vec![grid_key()],
             label: || telar::t!("editor.keys.op.grid-create"),
             run: Run::Act(|_| create_grid()),
         },
     );
+    keys::add_mode_key_op(layer, container::create_key());
 }
 
 /// Where a dragged widget is let go on a grid.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Landing {
     /// Placed with its first cell here, beside whatever is around it.
     Cell { col: u32, row: u32 },
-    /// Onto the group called this, joining it in one stack.
+    /// Onto the group called this, joining it in one stack, or at the end of the container it is.
     Onto(GroupId),
+    /// Into the container called this, at the slot the pointer is over.
+    Into(GroupId, Slot),
 }
 
-/// The grid `id` of the edit's layer, as the layout planned so far resolves it.
+/// The grid or panel `id` of the edit's layer, as the layout planned so far resolves it: both place their groups on cells.
 fn grid_of(work: &Work, id: &AreaId) -> Result<ResolvedArea, EditError> {
     let area = work.area(work.layer, id)?;
-    match area.kind {
-        ResolvedAreaKind::Grid { .. } => Ok(area),
-        _ => Err(EditError::refused(telar::t!(
+    match area.kind.places_on_cells() {
+        true => Ok(area),
+        false => Err(EditError::refused(telar::t!(
             "editor.desktop.not_a_grid",
             id = id.to_string()
         ))),
@@ -176,7 +179,7 @@ fn settle_group(work: &mut Work, area: &AreaId, group: &GroupId) -> Result<(), E
 }
 
 /// Takes the instance `node` names out of its group, as its menu's Remove does, keeping what it is so it can be put somewhere else.
-fn take_out(work: &mut Work, node: &Node) -> Result<Instance, EditError> {
+pub(crate) fn take_out(work: &mut Work, node: &Node) -> Result<Instance, EditError> {
     let Part::Instance(group, id) = &node.part else {
         return Err(EditError::nothing());
     };
@@ -197,7 +200,7 @@ fn take_out(work: &mut Work, node: &Node) -> Result<Instance, EditError> {
 }
 
 /// A new group of the grid `area` holding `instance` alone: its first cell at `at` where that is given, what it covers moved out of its way, else on the free cells nearest `near`.
-fn put_on(
+pub(crate) fn put_on(
     work: &mut Work,
     area: &AreaId,
     instance: Instance,
@@ -231,11 +234,12 @@ pub(crate) fn put_group(
         Some(at) => at,
         None => {
             let grid = grid_of(work, area)?;
-            let taken: Vec<Cells> = grid::placed(&grid)
-                .into_iter()
-                .map(|(_, cells)| cells)
-                .collect();
-            let free = grid::nearest_free(&taken, size, near, room_of(work.desktop, &grid));
+            let free = grid::nearest_free(
+                &grid::taken(&grid),
+                size,
+                near,
+                room_of(work.desktop, &grid),
+            );
             (free.col, free.row)
         }
     };
@@ -286,10 +290,17 @@ pub(crate) fn placed_as(resolved: &ResolvedInstance) -> Instance {
     }
 }
 
-/// How many cells the grid `area` has room for inside its rectangle on `desktop`'s screen, its padding taken off: the lattice it draws ([`surfaces::area::room`]).
+/// How many cells the grid `area` has room for inside its rectangle on `desktop`'s screen, its padding taken off: the lattice it draws ([`surfaces::area::room`]); a panel's are its columns and rows.
 pub(crate) fn room_of(desktop: &Desktop, area: &ResolvedArea) -> Room {
-    let ResolvedAreaKind::Grid { rect, .. } = area.kind else {
-        return Room { cols: 1, rows: 1 };
+    let rect = match area.kind {
+        ResolvedAreaKind::Grid { rect, .. } => rect,
+        ResolvedAreaKind::Panel { cols, rows, .. } => {
+            return Room {
+                cols: cols.max(1),
+                rows: rows.max(1),
+            };
+        }
+        _ => return Room { cols: 1, rows: 1 },
     };
     let region = region_of(desktop, area.within, rect);
     surfaces::area::room(area, region).map_or(Room { cols: 1, rows: 1 }, |room| Room {
@@ -326,31 +337,61 @@ pub(crate) fn dropped(
         Landing::Onto(target) if instance.area == *onto && target == group => {
             return Err(EditError::nothing());
         }
-        Landing::Onto(target) => {
-            let arranged = grid_of(&work, onto)?
-                .groups
-                .iter()
-                .any(|held| held.id == *target && held.arrange.is_some());
-            let moved = take_out(&mut work, instance)?;
-            work.rewrite(work.layer, onto, |written| {
-                let into = group_mut(written, target);
-                into.children.push(moved);
-                if !arranged {
-                    into.arrange = Some(Arrange::Pages);
-                }
-            })?;
-            settle_group(&mut work, onto, target)?;
+        Landing::Into(target, _) if instance.area == *onto && target == group => {
+            return Err(EditError::nothing());
         }
-        Landing::Cell { col, row } if instance.area == *onto && holding.children.len() == 1 => {
+        Landing::Onto(target) => {
+            let moved = take_out(&mut work, instance)?;
+            stack_onto(&mut work, onto, target, moved)?;
+        }
+        Landing::Into(target, slot) => {
+            let moved = take_out(&mut work, instance)?;
+            container::adopt(&mut work, onto, target, moved, *slot)?;
+        }
+        Landing::Cell { col, row }
+            if instance.area == *onto
+                && holding.children.len() == 1
+                && !container::arranges(holding) =>
+        {
             let cells = grid::cells_of(holding).ok_or_else(EditError::nothing)?;
             reflow(&mut work, onto, group, cells.at(*col, *row))?;
         }
         Landing::Cell { col, row } => {
-            let moved = take_out(&mut work, instance)?;
+            let mut moved = take_out(&mut work, instance)?;
+            if container::arranges(holding)
+                && let (Some(module), Some(now)) = (moved.module.as_deref(), moved.representation)
+            {
+                moved.representation = Some(loose_size(module, instance.layer, now));
+            }
             put_on(&mut work, onto, moved, Some((*col, *row)), (0, 0))?;
         }
     }
     Ok(work.done())
+}
+
+pub(crate) fn stack_onto(
+    work: &mut Work,
+    onto: &AreaId,
+    target: &GroupId,
+    instance: Instance,
+) -> Result<(), EditError> {
+    let arranged = grid_of(work, onto)?
+        .groups
+        .iter()
+        .any(|held| held.id == *target && held.arrange.is_some());
+    work.rewrite(work.layer, onto, |written| {
+        let into = group_mut(written, target);
+        into.children.push(instance);
+        if !arranged {
+            into.arrange = Some(Arrange::Pages);
+        }
+    })?;
+    settle_group(work, onto, target)
+}
+
+/// The size a widget taken out of a container is drawn at on its own: the smallest its module draws on `layer`, else `now`.
+pub(crate) fn loose_size(module: &str, layer: LayerKind, now: Representation) -> Representation {
+    sizes_of(module, layer).first().copied().unwrap_or(now)
 }
 
 /// Stacks the selected widget onto the one nearest it that way on its grid.
@@ -403,12 +444,19 @@ pub fn added(
     area: &AreaId,
     adding: &Adding,
 ) -> Result<(Vec<LayoutOp>, InstanceId), EditError> {
-    let Adding {
-        module,
-        representation,
-        at,
-        near,
-    } = *adding;
+    let mut work = Work::new(layout, desktop, layer);
+    let instance = fresh(&work, adding.module, adding.representation)?;
+    let id = instance.id.clone();
+    put_on(&mut work, area, instance, adding.at, adding.near)?;
+    Ok((work.done(), id))
+}
+
+/// Refused, with the reason, where the module does not draw that way or the lock screen would take a control.
+pub(crate) fn fresh(
+    work: &Work,
+    module: &str,
+    representation: Representation,
+) -> Result<Instance, EditError> {
     let descriptor = ui::descriptor::find(module).ok_or_else(|| {
         EditError::refused(telar::t!("editor.desktop.unknown_module", module = module))
     })?;
@@ -421,22 +469,18 @@ pub fn added(
                 size = representation.as_str()
             ))
         })?;
-    if !placeable(input, layer) {
+    if !placeable(input, work.layer) {
         return Err(EditError::refused(telar::t!(
             "editor.desktop.lock_readings",
             name = descriptor.name
         )));
     }
-    let mut work = Work::new(layout, desktop, layer);
-    let id = layout::ops::free_instance_id(&work.layout, &work.known, module);
-    let instance = Instance {
-        id: id.clone(),
+    Ok(Instance {
+        id: layout::ops::free_instance_id(&work.layout, &work.known, module),
         module: Some(module.to_string()),
         representation: Some(representation),
         ..Instance::default()
-    };
-    put_on(&mut work, area, instance, at, near)?;
-    Ok((work.done(), id))
+    })
 }
 
 /// The cells a widget drawn as `representation` covers on its own.
@@ -520,7 +564,7 @@ fn settle(node: &Node, desktop: &Desktop, after: &Layout) -> Vec<LayoutOp> {
     }
 }
 
-/// What a grid is left needing once the instance `id` has left the group `group` of its area `area`: a group with nothing in it taken away, since it would hold its cells empty, and a stack of one made a widget again.
+/// What a grid is left needing once the instance `id` has left the group `group` of its area `area`: a group with nothing in it taken away, since it would hold its cells empty — but for a container, which says it is empty and waits to be filled — and a stack of one made a widget again.
 pub(crate) fn tidied(
     layout: &Layout,
     desktop: &Desktop,
@@ -544,7 +588,7 @@ pub(crate) fn tidied(
             })
             .unwrap_or(false)
     };
-    if held.children.is_empty() {
+    if held.children.is_empty() && !container::arranges(held) {
         work.rewrite(layer, area, |written| {
             written.groups.retain(|held| held.id != *group)
         })?;
@@ -599,30 +643,37 @@ pub(crate) fn new_grid(
     Ok((work.done(), id))
 }
 
-/// Where the widget the palette adds goes: the grid the selection is on, near what is selected, else the first grid of the edited layer from its first cell.
+/// Where the widget the palette adds goes: the grid or panel the selection is on, near what is selected, else the first grid of the edited layer from its first cell.
 pub(crate) fn target_near(desktop: &Desktop, layer: LayerKind) -> Option<(AreaId, (u32, u32))> {
-    let grids: Vec<&ResolvedArea> = desktop
-        .resolved
-        .layer(layer)?
-        .areas
-        .iter()
-        .filter(|area| matches!(area.kind, ResolvedAreaKind::Grid { .. }))
-        .collect();
+    selected_cells(desktop, layer).or_else(|| {
+        desktop
+            .resolved
+            .layer(layer)?
+            .areas
+            .iter()
+            .find(|area| matches!(area.kind, ResolvedAreaKind::Grid { .. }))
+            .map(|area| (area.id.clone(), (0, 0)))
+    })
+}
+
+/// The grid or panel of `layer` the selection is on, and the cell of what is selected there.
+pub(crate) fn selected_cells(desktop: &Desktop, layer: LayerKind) -> Option<(AreaId, (u32, u32))> {
     let selected = session::selected();
-    if let Some(node) = selected.node()
-        && let Some(area) = grids.iter().find(|area| area.id == node.area)
-    {
-        let group = match &node.part {
-            Part::Instance(group, _) | Part::Group(group) => Some(group),
-            Part::Area => None,
-        };
-        let near = group
-            .and_then(|group| area.groups.iter().find(|held| held.id == *group))
+    let node = selected.node().filter(|node| node.layer == layer)?;
+    let area = desktop
+        .resolved
+        .area(layer, &node.area)
+        .filter(|area| area.kind.places_on_cells())?;
+    let near = match &node.part {
+        Part::Instance(group, _) | Part::Group(group) => area
+            .groups
+            .iter()
+            .find(|held| held.id == *group)
             .and_then(grid::cells_of)
-            .map_or((0, 0), |cells| (cells.col, cells.row));
-        return Some((area.id.clone(), near));
-    }
-    grids.first().map(|area| (area.id.clone(), (0, 0)))
+            .map_or((0, 0), |cells| (cells.col, cells.row)),
+        Part::Area => (0, 0),
+    };
+    Some((area.id.clone(), near))
 }
 
 /// Puts what `pick` names on a grid of `layer` on the screen being edited, as one undo entry, and selects it: on the cells `at` of the grid there where the pointer put it, else on the free cells nearest the selection — on a grid made for it where the layer has none.
@@ -631,6 +682,9 @@ pub(crate) fn put(
     at: Option<(AreaId, (u32, u32))>,
     layer: LayerKind,
 ) -> Result<(), EditError> {
+    if let Pick::Stack = pick {
+        return super::overlay::add_stack();
+    }
     let mode = crate::mode::required()?;
     let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
     let layout = session::draft().peek();
@@ -646,8 +700,27 @@ pub(crate) fn put(
     };
     let mut after = layout.clone();
     layout::ops::apply_all(&mut after, &ops)?;
+    if let Pick::Container = pick {
+        let (placed, group) = container::on_grid(&after, &desktop, layer, &area, (cell, near))?;
+        ops.extend(placed);
+        context::commit(
+            telar::t!("editor.container.made", name = group.to_string()),
+            ops,
+        )?;
+        session::select(Selection::Group(
+            Node::area(Some(&mode.output), layer, &area).group(&group),
+        ));
+        return Ok(());
+    }
     if let Pick::Komponent(id) = pick {
-        let (placed, group) = planned_use(&after, &desktop, layer, &area, id, (cell, near))?;
+        let (placed, group) = crate::komponent::planned(
+            &after,
+            &desktop,
+            layer,
+            &area,
+            id,
+            crate::komponent::Where::Cell { at: cell, near },
+        )?;
         ops.extend(placed);
         context::commit(
             telar::t!("editor.komponent.used", komponent = id.to_string()),
@@ -658,16 +731,10 @@ pub(crate) fn put(
         ));
         return Ok(());
     }
-    let module = pick.module().ok_or_else(EditError::nothing)?;
-    let representation = first_size(&module, layer).ok_or_else(|| {
-        EditError::refused(telar::t!(
-            "editor.desktop.no_widget",
-            module = module.clone()
-        ))
-    })?;
-    let name = ui::descriptor::find(&module).map_or(module.as_str(), |found| found.name);
+    let (module, representation) = pick.widget()?;
+    let name = ui::descriptor::find(module).map_or(module, |found| found.name);
     let adding = Adding {
-        module: &module,
+        module,
         representation,
         at: cell,
         near,
@@ -681,49 +748,12 @@ pub(crate) fn put(
     Ok(())
 }
 
-/// The operations that make a new group of the grid `area` of `layer` draw the komponent `id` with its parameters at their defaults, and its id: on the cells `at` where the pointer put it, else on the free cells nearest `near` ([`crate::komponent::plan_use`]).
-pub(crate) fn planned_use(
-    layout: &Layout,
-    desktop: &Desktop,
-    layer: LayerKind,
-    area: &AreaId,
-    id: &layout::KomponentId,
-    (at, near): (Option<(u32, u32)>, (u32, u32)),
-) -> Result<(Vec<LayoutOp>, GroupId), EditError> {
-    let library = crate::written::known();
-    let workspace = crate::variant::editing();
-    let screen = desktop.resolving(layout, &library);
-    crate::komponent::plan_use(
-        layout,
-        &library,
-        &surfaces::catalogue::Descriptors::installed(),
-        (&screen.resolved, Some(desktop)),
-        &crate::komponent::Placing {
-            layer,
-            area,
-            group: None,
-            output: desktop.output.as_deref(),
-            workspace: workspace.as_ref(),
-            cell: at,
-            near,
-            zone: None,
-        },
-        &crate::komponent::Use::of(id.clone()),
-    )
-    .map_err(crate::komponent::Refusal::into_edit)
-}
-
-/// The size `module` starts at when the palette puts it on `layer` ([`palette::offered`]).
-pub(crate) fn first_size(module: &str, layer: LayerKind) -> Option<Representation> {
-    palette::offered(ui::descriptor::find(module)?, layer)
-}
-
-/// A grid's menu rows, in its own mode only since each acts on the mode: adding a widget to it, and making another grid.
+/// A grid's menu rows, in its own mode only since each acts on the mode: adding a widget or a container to it, and making another grid.
 fn grid_rows(_: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
     if !crate::mode::editing(node) {
         return Vec::new();
     }
-    let selected = node.clone();
+    let (selected, holding) = (node.clone(), node.clone());
     vec![
         telar::MenuEntry::row(
             telar::t!("editor.desktop.add_widget"),
@@ -734,8 +764,16 @@ fn grid_rows(_: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
             },
         ),
         telar::MenuEntry::row(
+            telar::t!("editor.container.new"),
+            keys::spell(&container::create_key().keys),
+            move || {
+                session::select(Selection::Area(holding.clone()));
+                said(container::create());
+            },
+        ),
+        telar::MenuEntry::row(
             telar::t!("editor.desktop.new_grid"),
-            keys::spell(&[Chord::char('n').shift()]),
+            keys::spell(&[grid_key()]),
             || said(create_grid()),
         ),
     ]

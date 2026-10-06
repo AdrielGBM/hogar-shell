@@ -48,8 +48,25 @@ its sizes (S 2×2, M 4×2, L 4×4 cells, which are 80 px and 16 px apart unless 
 
 `a` opens the palette of every module that draws as a widget. What is on a bar is another layer's and has
 nothing to do with the desktop: a chip never becomes a widget, nor a widget a chip. Every drag has a key: Shift+arrows move a widget one cell, Ctrl+arrows step
-its size, Ctrl+Shift+arrows stack it onto the widget that way, Shift+N makes a grid, and `w` edits the
-workspace that is up alone. `?` lists them all.
+its size, Ctrl+Shift+arrows stack it onto the widget that way, Alt+N makes a grid, Shift+N a container, and `w`
+edits the workspace that is up alone. `?` lists them all.
+
+### Containers
+
+A container is a group that lays its widgets out in its own cells as a `row`, a `column`, a `grid` or `free`
+(`arrange`, with each child's `weight`, `cell` or `rect`). Shift+N, or "Container" at the top of the palette, makes an
+empty one on the largest span still free near the selection. Let a widget go anywhere over a container and it joins it
+where the pointer is; drag a child inside to reorder it, move it to another cell or place it (a free child snaps to its
+siblings unless Alt is held), or out to make it a widget of its own again at its smallest size. The selected child's
+handle — at the end of a row's or column's child, at the corner of a grid's or free one's — sets its weight, span or
+box, and Shift+arrows and Ctrl+arrows do the same by key; Alt+↑ selects the container. A child's menu has "Customize the
+container…" (its arrangement, inner grid and gap) and "Take out of the container".
+
+Outside edit mode each child is its own: it answers its own presses, wheel and menu. A child whose share holds no
+widget is drawn as its chip, in the same chip shell a bar gives it and pressed the same way — what the layout binds
+to its press, else the panel the layout gives it, else its module's own press or panel, which hangs off the chip. A
+container claims the pointer only where its plate paints, so a press between the children of an unfilled one
+(`style = { opacity = 0 }`) goes through to the window underneath. A Smart Stack keeps its wheel, arrow keys and dots.
 
 ### A desktop per workspace
 

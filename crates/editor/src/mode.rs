@@ -143,6 +143,16 @@ pub fn editing(node: &surfaces::rects::Node) -> bool {
     })
 }
 
+/// Enters the mode that edits `node`'s layer on its screen, where that is not the one up already.
+pub(crate) fn ensure_editing(
+    node: &surfaces::rects::Node,
+) -> Result<(), crate::session::EditError> {
+    if !editing(node) {
+        enter(node.layer, node.output.as_deref()).map_err(crate::session::EditError::Refused)?;
+    }
+    Ok(())
+}
+
 /// Ends the mode on its own when the screen it edits goes away. The windows on that screen are already gone by then and the host's transient went with them without closing, so this is the one place the session's holds on the compositor are given back. Installed once, on the driver thread.
 pub fn install() {
     if WATCHING.with(|watching| watching.replace(true)) {

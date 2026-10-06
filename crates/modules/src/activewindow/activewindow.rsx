@@ -35,23 +35,24 @@ platform_wayland::watch(
 );
 
 let fg = host.foreground;
-let size = host.icon_size();
+let size = host.live_icon_size();
+let slot = memo(move || (icon_view.get(), size.get()));
 // The app's own artwork, not a tinted glyph: the point of this chip is recognising the app at a glance. A class with no installed icon simply renders nothing, leaving the title to carry the chip.
 let inverted = config.inverted;
 let leading = config.show_icon && !inverted;
 let trailing = config.show_icon && inverted;
 
 [view]
-// Which side the icon sits on is config, decided once; *which* icon is the focused window, so the slot is keyed on the class and rebuilt whenever that changes — the artwork is a widget of a different kind per class (vector or raster), which no amount of reactive props can swap in place.
+// Which side the icon sits on is config, decided once; *which* icon is the focused window, so the slot is keyed on the class and rebuilt whenever that or the size the chip is given changes — the artwork is a widget of a different kind per class (vector or raster), which no amount of reactive props can swap in place.
 row align:center
     if leading
-        match $icon_view as class key class.clone()
-            class
+        match $slot as slot key (slot.0.clone(), slot.1.to_bits())
+            (class, size)
                 icon_slot class:class.clone() size:size inverted:inverted
     text "{$title_view}" font_size:$theme.font(FontRole::Body) color:fg lines:1 ellipsis
     if trailing
-        match $icon_view as class key class.clone()
-            class
+        match $slot as slot key (slot.0.clone(), slot.1.to_bits())
+            (class, size)
                 icon_slot class:class.clone() size:size inverted:inverted
 
 [preview "Activewindow" fixture:crate::preview::activewindow]

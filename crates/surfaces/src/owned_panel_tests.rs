@@ -207,7 +207,6 @@ mod tests {
     #[test]
     fn a_chip_pulled_off_its_bar_opens_the_panel_its_instance_owns() {
         let mut shown = show(LayerKind::Top, vec![bar(Edge::Top), panel(false)]);
-        ui::module::set_panel_opener(crate::panel::open_panel);
         let (x, y) = centre(shown.owner_rect());
         assert!(!crate::panel::is_owned_open(&owner()));
         shown.drag((x, y), (x, y + 120.0));
@@ -898,5 +897,253 @@ mod tests {
         }
         assert_eq!(square_cuts(&before, at), 0, "at rest nothing is cut");
         transient::close_all();
+    }
+
+    thread_local! {
+        static RAN: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn ran() -> Vec<String> {
+        RAN.with(|ran| std::mem::take(&mut *ran.borrow_mut()))
+    }
+
+    fn recording() {
+        ran();
+        services::command::set_runner(
+            |line| {
+                RAN.with(|ran| ran.borrow_mut().push(line.to_string()));
+                "ok".to_string()
+            },
+            |_| true,
+        );
+        ui::module::set_panel_opener(|panel| {
+            RAN.with(|ran| ran.borrow_mut().push(format!("open {panel}")))
+        });
+    }
+
+    fn owner_of(module: &str, bound: bool) -> layout::ResolvedInstance {
+        let mut owner = instance("owner", module, Representation::Chip);
+        if bound {
+            owner.actions = BTreeMap::from([(
+                layout::Trigger::Press,
+                layout::Action(vec!["launcher toggle".to_string()]),
+            )]);
+        }
+        owner
+    }
+
+    fn bar_holding(owner: layout::ResolvedInstance, hides: bool) -> ResolvedArea {
+        let mut kind = bar_kind(Edge::Top);
+        if let ResolvedAreaKind::Bar { autohide, .. } = &mut kind {
+            *autohide = hides.then_some(layout::AutoHide {
+                peek: 2.0,
+                on_hover: true,
+            });
+        }
+        area(
+            "bar",
+            kind,
+            vec![group(
+                "start",
+                GroupKind::Zone { zone: Zone::Start },
+                vec![owner],
+            )],
+        )
+    }
+
+    /// A press on a bar chip runs its bound action, else opens the panel the layout gives its instance, else its module's own panel — the settings window for a placeholder, whose module is missing.
+    #[test]
+    fn a_chip_press_runs_its_action_else_its_owned_panel_else_its_module_panel() {
+        for module in ["probe", "missing"] {
+            for (bound, owns) in [(true, true), (false, true), (false, false)] {
+                let what = format!("{module} bound={bound} owns={owns}");
+                recording();
+                let mut areas = vec![bar_holding(owner_of(module, bound), false)];
+                if owns {
+                    areas.push(panel(false));
+                }
+                let mut shown = show(LayerKind::Top, areas);
+                shown.press(centre(shown.owner_rect()));
+                let module_panel = match module {
+                    "probe" => transient::is_open("probe"),
+                    _ => RAN.with(|ran| ran.borrow().contains(&"open settings".to_string())),
+                };
+                let owned = crate::panel::is_owned_open(&owner());
+                match (bound, owns) {
+                    (true, _) => {
+                        assert_eq!(ran(), ["launcher toggle"], "{what}");
+                        assert!(!owned && !module_panel, "{what}: the action alone");
+                    }
+                    (false, true) => {
+                        assert!(owned, "{what}: the owned panel opens");
+                        assert!(!module_panel, "{what}: and nothing else");
+                    }
+                    (false, false) => assert!(module_panel, "{what}: the module's panel opens"),
+                }
+                transient::close_all();
+            }
+        }
+    }
+
+    /// A chip on a dock answers a press as a bar chip does: with nothing bound and no panel of its own, its module's panel opens.
+    #[test]
+    fn a_dock_chip_press_opens_its_module_panel() {
+        recording();
+        let dock = area(
+            "dock",
+            ResolvedAreaKind::Dock {
+                edge: Edge::Bottom,
+                thickness: 48.0,
+            },
+            vec![group(
+                "start",
+                GroupKind::Zone { zone: Zone::Start },
+                vec![instance("owner", "probe", Representation::Chip)],
+            )],
+        );
+        let mut shown = show(LayerKind::Top, vec![dock]);
+        shown.press(centre(shown.owner_rect()));
+        assert!(transient::is_open("probe"));
+        shown.press(centre(shown.owner_rect()));
+        assert!(!transient::is_open("probe"), "a second press closes it");
+        transient::close_all();
+    }
+
+    /// `panel toggle <instance>` opens the panel the layout gives the instance, else its module's panel; a module id keeps toggling its module's panel, and a name that is neither is refused.
+    #[test]
+    fn panel_toggle_names_an_instance_or_a_module() {
+        let _shown = show(LayerKind::Top, vec![bar(Edge::Top), panel(false)]);
+        crate::panel::toggle_named("owner").expect("the instance has a panel");
+        assert!(crate::panel::is_owned_open(&owner()));
+        assert!(!transient::is_open("probe"));
+        crate::panel::toggle_named("owner").expect("again");
+        assert!(!crate::panel::is_owned_open(&owner()));
+
+        let _shown = show(LayerKind::Top, vec![bar(Edge::Top)]);
+        crate::panel::toggle_named("owner").expect("its module has a panel");
+        assert!(transient::is_open("probe"), "the instance's module panel");
+        crate::panel::toggle_named("probe").expect("a module id");
+        assert!(
+            !transient::is_open("probe"),
+            "toggled shut by its module id"
+        );
+        assert!(crate::panel::toggle_named("nothing").is_err());
+        transient::close_all();
+    }
+
+    /// A drawer opened from a chip inside an owned panel is that panel's child: opening it leaves the panel open, Esc closes the drawer first, and closing the panel closes the drawer with it.
+    #[test]
+    fn a_drawer_opened_from_inside_a_panel_is_its_child() {
+        let panel = ResolvedArea {
+            groups: vec![group(
+                "inside",
+                cell(0, 0),
+                vec![instance("inner", "probe", Representation::Chip)],
+            )],
+            ..panel(false)
+        };
+        let mut shown = show(LayerKind::Top, vec![bar(Edge::Top), panel]);
+        let inner = || {
+            centre(
+                crate::rects::instance(Some(SCREEN), &InstanceId::new("inner"))
+                    .expect("the chip inside the panel is drawn")
+                    .1,
+            )
+        };
+        crate::panel::open_owned(&owner());
+        shown.frame();
+        shown.press(inner());
+        assert!(transient::is_open("probe"), "the drawer opens");
+        assert!(
+            crate::panel::is_owned_open(&owner()),
+            "and the panel it was opened from stays open"
+        );
+
+        assert!(telar::dismiss_top(), "Esc has something to dismiss");
+        assert!(!transient::is_open("probe"), "Esc closes the drawer first");
+        assert!(
+            crate::panel::is_owned_open(&owner()),
+            "and leaves the panel"
+        );
+
+        shown.press(inner());
+        assert!(transient::is_open("probe"), "opened again");
+        crate::panel::close_owned(&owner());
+        assert!(
+            !transient::is_open("probe"),
+            "closing the panel closes its child"
+        );
+        transient::close_all();
+    }
+
+    /// How far the top bar is moved up off its edge in `frame`; what hangs below it is moved down.
+    fn bar_offset(frame: &[DrawCommand]) -> f32 {
+        frame
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::PushMatrix { matrix } => Some(-matrix[5]),
+                _ => None,
+            })
+            .fold(0.0, f32::max)
+    }
+
+    fn settled(shown: &Shown) -> Vec<DrawCommand> {
+        let now = std::time::Instant::now();
+        telar::motion::tick(now);
+        telar::motion::tick(now + std::time::Duration::from_secs(5));
+        shown.frame()
+    }
+
+    fn hover(shown: &mut Shown, (x, y): (f32, f32)) {
+        shown.tree.on_event(&Event::PointerMoved {
+            x: f64::from(x),
+            y: f64::from(y),
+            source: PointerSource::Mouse,
+        });
+    }
+
+    /// An autohidden bar stays out while the panel its chip owns, or its module's drawer, is open, and goes away once it closes and the pointer is elsewhere.
+    #[test]
+    fn an_autohidden_bar_stays_out_while_a_panel_of_its_chip_is_open() {
+        for owns in [true, false] {
+            let what = if owns { "owned panel" } else { "drawer" };
+            recording();
+            let mut areas = vec![bar_holding(owner_of("probe", false), true)];
+            if owns {
+                areas.push(panel(false));
+            }
+            let mut shown = show(LayerKind::Top, areas);
+            assert!(
+                bar_offset(&settled(&shown)) > 1.0,
+                "{what}: hidden at first"
+            );
+            let chip = centre(shown.owner_rect());
+            hover(&mut shown, (chip.0, 1.0));
+            assert_eq!(
+                bar_offset(&settled(&shown)),
+                0.0,
+                "{what}: hovering brings it"
+            );
+
+            shown.press(chip);
+            let open = || match owns {
+                true => crate::panel::is_owned_open(&owner()),
+                false => transient::is_open("probe"),
+            };
+            assert!(open(), "{what}: opened");
+            hover(&mut shown, (WIDE as f32 / 2.0, HIGH as f32 - 20.0));
+            assert_eq!(
+                bar_offset(&settled(&shown)),
+                0.0,
+                "{what}: the bar stays out while it is open"
+            );
+
+            transient::close_all();
+            assert!(!open());
+            assert!(
+                bar_offset(&settled(&shown)) > 1.0,
+                "{what}: and goes once it closes"
+            );
+        }
     }
 }

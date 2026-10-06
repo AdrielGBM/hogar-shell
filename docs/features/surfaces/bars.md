@@ -104,8 +104,9 @@ there, and the peek strip is the bar's own edge rather than a second surface to 
 `on_hover` is what triggers the reveal on pointer contact; switched off, only a drag inward past
 `[panels] drag_threshold` brings it in.
 
-**Known limit:** it hides on pointer-leave unconditionally, including while a panel it opened is still up.
-Hiding only when a window would actually cover it needs `cosmic_overlap_notify_v1`, which is COSMIC-only today.
+It stays out while a drawer or a layout panel opened from one of its chips is up, whatever the pointer does, and
+hides once that closes with the pointer elsewhere. Hiding only when a window would actually cover it needs
+`cosmic_overlap_notify_v1`, which is COSMIC-only today.
 
 ## Per monitor
 

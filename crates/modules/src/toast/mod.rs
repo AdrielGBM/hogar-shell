@@ -53,6 +53,21 @@ pub(crate) fn card(
     theme: NordTheme,
     radius: f32,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    card_swiped(
+        toast,
+        theme,
+        radius,
+        crate::stack::swipe::column_threshold(),
+    )
+}
+
+/// [`card`] dragged aside past `swipe` px, or not draggable at all with `None`.
+pub(crate) fn card_swiped(
+    toast: &Toast,
+    theme: NordTheme,
+    radius: f32,
+    swipe: Option<f32>,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let icon = ui::icon::icon_view(
         {
             let name = toast.icon.clone();
@@ -113,7 +128,7 @@ pub(crate) fn card(
     )?
     .hover_style(move |_| RectStyle::filled(theme.overlay, radius));
     // Dragged aside, never pressed away: a toast reports something that already happened, so a press on it does nothing. It still takes the pointer, which is the column's trade (see `crate::stack`).
-    let Some(threshold) = crate::stack::swipe::column_threshold() else {
+    let Some(threshold) = swipe else {
         return Ok(Box::new(card));
     };
     Ok(Box::new(crate::stack::swipe::swipe_aside(

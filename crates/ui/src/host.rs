@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, Once};
 
 use platform_wayland::EventSender;
 
-use telar::{Color, LayoutError};
+use telar::{Color, LayoutError, Memo, Reactive};
 
 use config::{Config, Edge, ModuleOptions, ModuleOverride, ResolvedShape};
 
@@ -269,6 +269,43 @@ pub struct Size {
     pub height: f32,
 }
 
+/// The box a host gives what it builds: fixed where only a rebuild can change it, or following a place that lays what it holds out again at another size without building it again.
+#[derive(Clone, Copy)]
+pub enum Extent {
+    Fixed(Size),
+    Live(Memo<Size>),
+}
+
+impl Extent {
+    /// An extent that follows `read`, kept under the current owner and disposed with it.
+    pub fn following(read: impl Fn() -> Size + 'static) -> Self {
+        Self::Live(telar::memo(read))
+    }
+
+    /// The box now, read so that a closure reading it runs again when it changes.
+    pub fn get(self) -> Size {
+        match self {
+            Self::Fixed(size) => size,
+            Self::Live(size) => size.get(),
+        }
+    }
+}
+
+impl From<Size> for Extent {
+    fn from(size: Size) -> Self {
+        Self::Fixed(size)
+    }
+}
+
+impl std::fmt::Debug for Extent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fixed(size) => f.debug_tuple("Fixed").field(size).finish(),
+            Self::Live(_) => f.write_str("Live"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Host {
     pub instance: InstanceId,
@@ -276,8 +313,8 @@ pub struct Host {
     /// The instance's own options, read through [`Host::options`] and [`Host::presentation`].
     options: Arc<toml::Table>,
     pub representation: Representation,
-    /// The box the representation is given. A chip has no length of its own along its bar, so that side is `f32::INFINITY`.
-    pub extent: Size,
+    /// The box the representation is given, read through [`Host::extent`]. A chip has no length of its own along its bar, so that side is `f32::INFINITY`.
+    extent: Extent,
     /// The edge a chip's bar hangs off; `None` for a representation that runs along no bar.
     pub axis: Option<Edge>,
     pub shape: ResolvedShape,
@@ -317,7 +354,7 @@ impl Host {
             module: instance.module,
             options: instance.options,
             representation: Representation::Chip,
-            extent,
+            extent: extent.into(),
             axis: Some(edge),
             shape: config.shape_from(None, None, None, None),
             accent,
@@ -336,7 +373,7 @@ impl Host {
         instance: Instance,
         config: Arc<Config>,
         representation: Representation,
-        extent: Size,
+        extent: impl Into<Extent>,
         axis: Option<Edge>,
         shape: ResolvedShape,
         accent: Color,
@@ -348,7 +385,7 @@ impl Host {
             module: instance.module,
             options: instance.options,
             representation,
-            extent,
+            extent: extent.into(),
             axis,
             shape,
             accent,
@@ -363,7 +400,7 @@ impl Host {
         instance: Instance,
         representation: Representation,
         chrome: &Chrome,
-        extent: Size,
+        extent: impl Into<Extent>,
     ) -> Self {
         let theme = chrome.config.resolve_theme();
         Self {
@@ -371,7 +408,7 @@ impl Host {
             module: instance.module,
             options: instance.options,
             representation,
-            extent,
+            extent: extent.into(),
             axis: None,
             shape: chrome.shape,
             accent: theme.accent,
@@ -382,16 +419,31 @@ impl Host {
         }
     }
 
-    /// `module`'s `representation`, `extent` across, placed inside what this host builds — a card on the dashboard's page. No instance speaks for it, so it reads its module's defaults.
-    pub fn inner(&self, module: &str, representation: Representation, extent: Size) -> Self {
+    /// `module`'s `representation` in this host's box, placed inside what this host builds — a card on the dashboard's page. No instance speaks for it, so it reads its module's defaults.
+    pub fn inner(&self, module: &str, representation: Representation) -> Self {
         let inner = Instance::of_module(module);
         Self {
             instance: inner.id,
             module: inner.module,
             options: inner.options,
             representation,
-            extent,
             ..self.clone()
+        }
+    }
+
+    /// The box this host gives what it builds. Read inside a closure — a style, a canvas, a memo — so that what it sizes follows a place that lays it out again at another size without building it again.
+    pub fn extent(&self) -> Size {
+        self.extent.get()
+    }
+
+    /// `read` of this host as its box changes: read once where the box is fixed, and again each time it changes where it follows one.
+    pub fn follow<T: 'static>(&self, read: impl Fn(&Host) -> T + 'static) -> Reactive<T> {
+        match self.extent {
+            Extent::Fixed(_) => Reactive::Const(read(self)),
+            Extent::Live(_) => {
+                let host = self.clone();
+                Reactive::of(move || read(&host))
+            }
         }
     }
 
@@ -457,10 +509,11 @@ impl Host {
 
     /// The extent across the axis: a bar's thickness for a chip, the shorter side for anything else.
     pub fn thickness(&self) -> f32 {
+        let extent = self.extent();
         match self.axis {
-            Some(edge) if edge.is_vertical() => self.extent.width,
-            Some(_) => self.extent.height,
-            None => self.extent.width.min(self.extent.height),
+            Some(edge) if edge.is_vertical() => extent.width,
+            Some(_) => extent.height,
+            None => extent.width.min(extent.height),
         }
     }
 
@@ -471,6 +524,11 @@ impl Host {
     /// About three quarters of the thickness, so a glyph fills most of a square chip and scales with its bar.
     pub fn icon_size(&self) -> f32 {
         (self.thickness() * 0.75).round().clamp(8.0, 64.0)
+    }
+
+    /// [`Host::icon_size`] as the box changes, for a glyph that follows the place laying it out.
+    pub fn live_icon_size(&self) -> Reactive<f32> {
+        self.follow(Host::icon_size)
     }
 
     /// Padding that makes a square chip exactly as wide as it is thick: an icon of ≈0.75 of the thickness plus two of these.

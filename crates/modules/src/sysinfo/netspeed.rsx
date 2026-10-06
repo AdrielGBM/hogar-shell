@@ -17,15 +17,15 @@ platform_wayland::watch(netspeed::subscribe, move |speed: NetSpeed| {
 
 let fg = host.foreground;
 // Half-height arrows stacked in the chip: two rates need two lines to stay readable at bar size, and the direction glyph says which is which without a label.
-let arrow_size = (host.icon_size() * 0.55).round();
+let arrow_size = host.follow(|host| (host.icon_size() * 0.55).round());
 
 [view]
 col justify:center gap:(::ui::scale::space::xs())
     row align:center gap:(::ui::scale::space::sm())
-        icon_glyph name:(Reactive::of(|| "arrow-down".to_string())) tint:(Reactive::of(move || fg)) size:(arrow_size)
+        icon_glyph name:(Reactive::of(|| "arrow-down".to_string())) tint:(Reactive::of(move || fg)) size:(arrow_size.clone())
         text "{$down_view}" font_size:$theme.font(FontRole::Caption) color:fg
     row align:center gap:(::ui::scale::space::sm())
-        icon_glyph name:(Reactive::of(|| "arrow-up".to_string())) tint:(Reactive::of(move || fg)) size:(arrow_size)
+        icon_glyph name:(Reactive::of(|| "arrow-up".to_string())) tint:(Reactive::of(move || fg)) size:(arrow_size.clone())
         text "{$up_view}" font_size:$theme.font(FontRole::Caption) color:fg
 
 [preview "Netspeed" fixture:ui::preview::bar_chip]

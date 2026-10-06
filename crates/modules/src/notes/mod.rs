@@ -30,7 +30,11 @@ struct PanelState {
 /// The bar chip: a sticky-note glyph that opens the notes panel.
 pub fn notes_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let fg = host.foreground;
-    icon_view(|| "sticky-note".to_string(), move || fg, host.icon_size())
+    icon_view(
+        || "sticky-note".to_string(),
+        move || fg,
+        host.live_icon_size(),
+    )
 }
 
 /// The notes panel: a header (title + add) over the editable note list, each note an icon, title, body, and delete, with an inline icon picker per note. Loads the notes on open, from memory after the first; every edit persists (debounced).

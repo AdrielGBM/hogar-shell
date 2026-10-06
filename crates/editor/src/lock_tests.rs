@@ -489,9 +489,9 @@ mod tests {
         };
 
         assert!(tap(
-            Key::Char('N'),
+            Key::Char('n'),
             ModifiersState {
-                is_shift: true,
+                is_alt: true,
                 ..NONE
             }
         ));
@@ -646,9 +646,9 @@ mod tests {
         assert!(transient::is_open(lock_mode::PRIVACY));
         transient::close(lock_mode::PRIVACY);
         assert!(tap(
-            Key::Char('N'),
+            Key::Char('n'),
             ModifiersState {
-                is_shift: true,
+                is_alt: true,
                 ..NONE
             }
         ));
@@ -765,5 +765,180 @@ mod tests {
             mode::refusal().peek(),
             Some("'mixer' is not drawn at another size that way".to_string())
         );
+    }
+
+    fn with_readings(layout: &Layout, change: impl FnOnce(&mut Area)) -> Layout {
+        let mut changed = layout.clone();
+        let readings = changed.outputs[0]
+            .layers
+            .lock
+            .areas
+            .iter_mut()
+            .find(|area| area.id.as_str() == "lock-readings")
+            .expect("the shipped readings");
+        change(readings);
+        changed
+    }
+
+    fn press() -> std::collections::BTreeMap<layout::Trigger, layout::Action> {
+        [(
+            layout::Trigger::Press,
+            layout::Action(vec!["launch foot".to_string()]),
+        )]
+        .into()
+    }
+
+    /// The lock layer refuses what a locked screen must not answer to — an action on an area or on an instance, a panel, a control — each said by the lock's own check and each kept out of the layout by `kept`.
+    #[test]
+    fn the_lock_refuses_actions_panels_and_controls() {
+        let rig = rig_with("lock-refusals", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        let before = stored(&rig);
+        assert!(refused(&before).is_empty());
+
+        let on_area = with_readings(&before, |area| area.actions = press());
+        let on_instance = with_readings(&before, |area| {
+            area.groups[0].children[0].actions = press();
+        });
+        let panel = {
+            let mut layout = before.clone();
+            layout.outputs[0].layers.lock.areas.insert(
+                0,
+                Area {
+                    id: AreaId::new("lock-panel"),
+                    kind: Some(AreaKind::Panel {
+                        owner: Some(layout::InstanceId::new("lock-clock")),
+                        along: None,
+                        cols: None,
+                        rows: None,
+                        cell: None,
+                        gap: None,
+                    }),
+                    ..Area::default()
+                },
+            );
+            layout
+        };
+        let control = with_readings(&before, |area| {
+            area.groups[0].children[0].module = Some("mixer".to_string());
+        });
+        for (name, after) in [
+            ("an action on an area", on_area),
+            ("an action on an instance", on_instance),
+            ("a panel", panel),
+            ("a control", control),
+        ] {
+            assert!(!refused(&after).is_empty(), "{name} is refused");
+            assert!(
+                lock_mode::kept(&before, &after).is_err(),
+                "{name} is not kept"
+            );
+        }
+    }
+
+    /// Containers and the style of an instance are allowed on the lock: they only arrange and paint readings.
+    #[test]
+    fn containers_and_instance_style_are_allowed_on_the_lock() {
+        let rig = rig_with("lock-containers", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        let before = stored(&rig);
+        let after = with_readings(&before, |area| {
+            let group = &mut area.groups[0];
+            group.arrange = Some(layout::Arrange::Column);
+            group.gap = Some(12.0);
+            group.style.fill = Some("surface".to_string());
+            let child = &mut group.children[0];
+            child.style = Style {
+                fill: Some("surface".to_string()),
+                radius: Some(layout::Corners::all(12.0)),
+                shadow: Some(2),
+                border: Some(layout::Border {
+                    width: Some(2.0),
+                    color: Some("accent".to_string()),
+                }),
+                ..Style::default()
+            };
+        });
+        assert!(refused(&after).is_empty(), "{:?}", refused(&after));
+        assert!(lock_mode::kept(&before, &after).is_ok());
+    }
+
+    /// A prompt with a border and a shadow is still a prompt the lock draws, so the edit is kept; an unreadable fill is not.
+    #[test]
+    fn a_shadowed_bordered_prompt_passes_kept() {
+        let rig = rig_with("lock-prompt-edge", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        let before = stored(&rig);
+        let styled = |style: Style| {
+            let mut after = before.clone();
+            after.outputs[0]
+                .layers
+                .lock
+                .areas
+                .iter_mut()
+                .find(|area| area.id.as_str() == "prompt")
+                .expect("the prompt")
+                .style = style;
+            after
+        };
+        let edged = styled(Style {
+            shadow: Some(3),
+            border: Some(layout::Border {
+                width: Some(3.0),
+                color: Some("accent".to_string()),
+            }),
+            ..Style::default()
+        });
+        assert!(refused(&edged).is_empty(), "{:?}", refused(&edged));
+        assert!(lock_mode::kept(&before, &edged).is_ok());
+        let unreadable = styled(Style {
+            fill: Some("text".to_string()),
+            shadow: Some(3),
+            ..Style::default()
+        });
+        assert!(lock_mode::kept(&before, &unreadable).is_err());
+    }
+
+    /// Shift+B adds a region over the whole lock screen, at the back where the readings and the prompt stay above it, as one undo entry the lock accepts.
+    #[test]
+    fn a_full_screen_region_is_added_in_lock_mode() {
+        let rig = rig_with("lock-full-region", |_| {});
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Lock);
+        assert!(tap(
+            Key::Char('B'),
+            ModifiersState {
+                is_shift: true,
+                ..NONE
+            }
+        ));
+        let made = stored(&rig);
+        let ids = lock_ids(&made);
+        assert_eq!(ids.first().map(String::as_str), Some("region"), "{ids:?}");
+        assert_eq!(ids.last().map(String::as_str), Some("prompt"), "{ids:?}");
+        let region = &lock_areas(&made)[0];
+        assert!(matches!(
+            region.kind,
+            Some(AreaKind::WallpaperRegion { rect: Some(Rect { x, y, w, h }), .. })
+                if (x, y, w, h) == (0.0, 0.0, 1.0, 1.0)
+        ));
+        assert!(refused(&made).is_empty(), "{:?}", refused(&made));
+        draw();
+        let rect = rects::rect(&Node::area(
+            Some(SCREEN),
+            LayerKind::Lock,
+            &AreaId::new("region"),
+        ))
+        .expect("the region is drawn");
+        assert!(
+            rect.x.abs() < 1.0
+                && (rect.width - SIZE.0).abs() < 1.0
+                && (rect.height - SIZE.1).abs() < 1.0,
+            "{rect:?}"
+        );
+        assert!(rig.undo_label().is_some());
     }
 }

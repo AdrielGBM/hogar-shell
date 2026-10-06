@@ -114,7 +114,7 @@ pub fn dashboard_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     icon_view(
         || "layout-dashboard".to_string(),
         move || fg,
-        host.icon_size(),
+        host.live_icon_size(),
     )
 }
 
@@ -177,11 +177,9 @@ fn cards_page(host: &Host, cards: Vec<PageCard>) -> Result<Box<dyn LayoutItem>, 
     let mut built: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(cards.len());
     for card in cards {
         built.push(match card {
-            PageCard::Module(id) => ui::descriptor::place(
-                id,
-                &host.inner(id, Representation::Card, host.extent),
-                full_width(),
-            )?,
+            PageCard::Module(id) => {
+                ui::descriptor::place(id, &host.inner(id, Representation::Card), full_width())?
+            }
             PageCard::Own(card) => card.build(Density::Page)?,
         });
     }

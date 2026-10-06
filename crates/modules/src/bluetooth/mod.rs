@@ -36,7 +36,7 @@ pub fn chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     icon_view(
         move || glyph::bluetooth(glyph_state.get()).to_string(),
         move || glyph::bluetooth_tint(tint_state.get(), theme, accent, fg),
-        host.icon_size(),
+        host.live_icon_size(),
     )
 }
 

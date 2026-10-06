@@ -2,6 +2,7 @@
 
 pub(crate) mod background;
 pub(crate) mod bars;
+pub(crate) mod container;
 pub(crate) mod desktop;
 pub(crate) mod gesture;
 pub(crate) mod grid;

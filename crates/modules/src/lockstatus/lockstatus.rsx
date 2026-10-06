@@ -18,13 +18,13 @@ let indicators = memo(move || shown(listed.get(), config));
 
 let fg = host.foreground;
 let idle = use_theme::<NordTheme>().muted;
-let size = host.icon_size();
-let pad = host.inset();
+let size = host.live_icon_size();
+let pad = host.follow(ui::host::Host::inset);
 
 [view]
 row align:center
     for lock in $indicators key *lock
-        indicator lock:lock keys:tint.clone() fg:fg idle:idle size:size pad:pad
+        indicator lock:lock keys:tint.clone() fg:fg idle:idle size:size.clone() pad:pad.clone()
 
 [preview "Lockstatus" fixture:ui::preview::bar_chip]
 lockstatus

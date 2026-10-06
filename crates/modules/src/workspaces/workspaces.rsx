@@ -32,7 +32,6 @@ platform_wayland::watch(hyprland::subscribe, move |snap: Snapshot| {
 let style = PillStyle {
     theme: use_theme::<NordTheme>(),
     radius: host.corner_radius(),
-    // A stretched horizontal chip can't derive its width from its height, so size both sides to make a square.
     side: host.thickness(),
     vertical: host.is_vertical(),
     occupied_background,
@@ -40,8 +39,15 @@ let style = PillStyle {
     spring: host.config().animation.spring(),
     trail,
 };
+// A stretched horizontal chip can't derive its width from its height, so both sides are sized to make a square, and the pills are drawn again at the thickness the chip is given whenever that changes.
+let side = memo({
+    let host = host.clone();
+    move || host.thickness()
+});
 [view]
-pill_grid items:items style:style on_press:focus
+match $side as side key side.to_bits()
+    side
+        pill_grid items:items style:(PillStyle { side, ..style }) on_press:focus
 
 [preview "Workspaces" fixture:crate::preview::workspaces]
 workspaces

@@ -6,13 +6,16 @@
 //!
 //! **Volume and brightness, and the launcher.** An OSD is a card like the others, so where it appears is a route of kind `osd`, which "Show volume and brightness here" adds and takes away — on any stack but the one taking what no route takes, which has them already and would take nothing else with a route of its own. The launcher is not a card: it opens where the first stack on its screen with `launcher = true` is pinned, and in the middle of the screen where none says so (`modules::launcher::placement`).
 //!
-//! **Every drag has a key (WCAG 2.5.7).** Shift+N makes a stack, Shift+arrows step its anchor, Alt+arrows move it a few pixels off it, Ctrl+arrows make it wider or narrower, `v` shows volume and brightness in it or stops, Shift+L opens the launcher at it or stops, and Enter opens the popover with its routes. Each is one undo entry.
+//! **Every drag has a key (WCAG 2.5.7).** Shift+N makes a stack, Shift+arrows step its anchor, Alt+Shift+arrows move it a few pixels off it, Ctrl+arrows make it wider or narrower, `v` shows volume and brightness in it or stops, Shift+O opens the launcher at it or stops, and Enter opens the popover with its routes. Each is one undo entry.
+//!
+//! **Trying the routes.** `t` sends the next sample — a notification, a critical one, a toast, a volume OSD, the launcher — each staying as long as the real one would ([`card_samples::lifetime`]), and a stack's "Try cards" menu sends any of them. A sample is routed by [`layout::route_card`] among the stacks of the screen and drawn in the one it lands in ([`surfaces::card_samples`]), so a critical sample shows which stack takes critical notifications. Samples are previews: they never reach the notification daemon, its history or the toaster, and leaving the mode takes them all away.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use telar::{
     Border, Children, Color, Cursor, JustifyContent, LayoutError, LayoutStyle, ReactiveList, Rect,
-    RectStyle, RwSignal, StyledContainer, effect, signal, use_theme,
+    RectStyle, RwSignal, StyledContainer, detached, effect, signal, use_theme,
 };
 
 use config::theme::NordTheme;
@@ -20,15 +23,16 @@ use layout::{
     Anchor, Area, AreaId, AreaKind, CardKind, LayerKind, Layout, LayoutOp, Offset, ResolvedArea,
     ResolvedAreaKind, Route, StackOutputPolicy, Urgency, Within,
 };
+use surfaces::card_samples::{self, Launcher, Sample, Shown};
 use surfaces::pinned::{self, Side};
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::Node;
 use ui::descriptor::Built;
 
 use crate::context;
-use crate::host::{passthrough, see_through, whole};
+use crate::host::{passthrough, see_through, usable, whole};
 use crate::keys::{self, Chord, Direction, KeyOp, Run};
-use crate::mode::{Mode, said};
+use crate::mode::{self, Mode, said};
 use crate::popover::area::{chosen, variants};
 use crate::popover::rows::{self, Range, label};
 use crate::popover::{AreaDraft, Inspector, help, kind_field, kind_read, parsed, spelled};
@@ -43,7 +47,7 @@ const GHOST: f32 = 96.0;
 const SNAP: f32 = 24.0;
 /// How big a point of the anchor picker is across.
 const DOT: f32 = 14.0;
-/// How far one Alt+arrow moves a stack off its anchor.
+/// How far one Alt+Shift+arrow moves a stack off its anchor.
 const NUDGE: f32 = 8.0;
 /// How wide a new stack is, as wide as the shipped one.
 const NEW_WIDTH: f32 = 380.0;
@@ -63,20 +67,37 @@ const NEW_ANCHORS: [Anchor; 9] = [
 pub(crate) fn install() {
     crate::host::add_tool(LayerKind::Overlay, tool);
     crate::host::set_add(LayerKind::Overlay, add_stack);
-    crate::host::add_toolbar_button(
+    crate::host::add_adding_button(
         LayerKind::Overlay,
         (
             || telar::t!("editor.overlay.new_stack"),
             || said(add_stack()),
         ),
     );
+    crate::host::add_toolbar_button(
+        LayerKind::Overlay,
+        (
+            || telar::t!("editor.overlay.try.button"),
+            || said(try_next()),
+        ),
+    );
+    keys::add_mode_key_op(
+        LayerKind::Overlay,
+        KeyOp {
+            name: "cards-try",
+            keys: vec![Chord::char('t')],
+            label: || telar::t!("editor.keys.op.cards-try"),
+            run: Run::Act(|_| try_next()),
+        },
+    );
+    detached(|| effect(clear_samples_outside_the_mode));
     crate::popover::add_area_tool("stack", stack_tool);
     context::add_area_rows("stack", stack_rows);
     keys::add_mode_key_op(
         LayerKind::Overlay,
         KeyOp {
             name: "stack-add",
-            keys: vec![Chord::char('n').shift()],
+            keys: vec![stack_key()],
             label: || telar::t!("editor.keys.op.stack-add"),
             run: Run::Act(|_| add_stack()),
         },
@@ -85,7 +106,7 @@ pub(crate) fn install() {
         "stack",
         KeyOp {
             name: "stack-offset",
-            keys: keys::arrows_with(Chord::alt),
+            keys: keys::arrows_with(|chord| chord.alt().shift()),
             label: || telar::t!("editor.keys.op.stack-offset"),
             run: Run::Toward(nudge_selected),
         },
@@ -94,7 +115,7 @@ pub(crate) fn install() {
         "stack",
         KeyOp {
             name: "osd-placement",
-            keys: vec![Chord::char('v')],
+            keys: vec![osd_key()],
             label: || telar::t!("editor.keys.op.osd-placement"),
             run: Run::Act(|selection| toggle_osd(&selected_stack(selection)?)),
         },
@@ -103,11 +124,23 @@ pub(crate) fn install() {
         "stack",
         KeyOp {
             name: "launcher-placement",
-            keys: vec![Chord::char('l').shift()],
+            keys: vec![launcher_key()],
             label: || telar::t!("editor.keys.op.launcher-placement"),
             run: Run::Act(|selection| toggle_launcher(&selected_stack(selection)?)),
         },
     );
+}
+
+fn stack_key() -> Chord {
+    Chord::char('n').shift()
+}
+
+fn osd_key() -> Chord {
+    Chord::char('v')
+}
+
+fn launcher_key() -> Chord {
+    Chord::char('o').shift()
 }
 
 /// A stack of a screen, as the overlay tools read it.
@@ -596,6 +629,130 @@ fn recent_apps() -> Vec<String> {
     apps
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Try {
+    Notification,
+    Critical,
+    Toast,
+    Osd,
+    Launcher,
+}
+
+impl Try {
+    const ALL: [Try; 5] = [
+        Try::Notification,
+        Try::Critical,
+        Try::Toast,
+        Try::Osd,
+        Try::Launcher,
+    ];
+
+    fn label(self) -> String {
+        match self {
+            Try::Notification => telar::t!("editor.overlay.try.notification"),
+            Try::Critical => telar::t!("editor.overlay.try.critical"),
+            Try::Toast => telar::t!("editor.overlay.try.toast"),
+            Try::Osd => telar::t!("editor.overlay.try.osd"),
+            Try::Launcher => telar::t!("editor.overlay.try.launcher"),
+        }
+    }
+
+    fn sample(self) -> Option<Sample> {
+        match self {
+            Try::Notification => Some(Sample::notification(
+                "Signal",
+                Urgency::Normal,
+                telar::t!("editor.overlay.try.notification_title"),
+                telar::t!("editor.overlay.try.notification_body"),
+            )),
+            Try::Critical => Some(Sample::notification(
+                "UPower",
+                Urgency::Critical,
+                telar::t!("editor.overlay.try.critical_title"),
+                telar::t!("editor.overlay.try.critical_body"),
+            )),
+            Try::Toast => Some(Sample::toast(
+                "camera",
+                telar::t!("editor.overlay.try.toast_title"),
+                String::new(),
+            )),
+            Try::Osd => Some(Sample::osd(64)),
+            Try::Launcher => None,
+        }
+    }
+}
+
+thread_local! {
+    static NEXT_TRY: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Takes the samples away whenever the mode being edited changes, which leaving the overlay mode does.
+fn clear_samples_outside_the_mode() {
+    mode::active().get();
+    card_samples::clear();
+    NEXT_TRY.with(|next| next.set(0));
+}
+
+/// Sends the sample after the last one `t` sent, round the five. A sample no stack takes is refused and the next press goes on to the one after it.
+pub(crate) fn try_next() -> Result<(), EditError> {
+    let at = NEXT_TRY.with(|next| next.replace(next.get() + 1));
+    try_card(Try::ALL[at % Try::ALL.len()])
+}
+
+/// Puts a sample of `kind` up in the stack of the edited screen that [`layout::route_card`] sends it to, for as long as the edited screen's config keeps the real card up, or opens or closes the sample launcher. Nothing is sent to the notification daemon, its history or the toaster.
+pub(crate) fn try_card(kind: Try) -> Result<(), EditError> {
+    let mode = mode::current()
+        .filter(|mode| mode.layer == LayerKind::Overlay)
+        .ok_or_else(|| EditError::refused(telar::t!("editor.overlay.try.only_here")))?;
+    let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
+    let Some(sample) = kind.sample() else {
+        card_samples::toggle_launcher(Launcher {
+            search: telar::t!("editor.overlay.try.search"),
+            apps: vec![
+                "Firefox".to_string(),
+                "Terminal".to_string(),
+                telar::t!("editor.overlay.try.files"),
+                telar::t!("editor.overlay.try.settings"),
+            ],
+        });
+        return Ok(());
+    };
+    let stacks = stacks_of(&desktop);
+    let Some(stack) = layout::route_card(&stacks, |placed| &placed.routes, &sample.routed()) else {
+        return Err(EditError::refused(telar::t!(
+            "editor.overlay.try.nowhere",
+            card = kind.label()
+        )));
+    };
+    mode::confirm(telar::t!(
+        "editor.overlay.try.landed",
+        card = kind.label(),
+        name = stack.id.to_string()
+    ));
+    let lifetime = card_samples::lifetime(&sample, &desktop.config);
+    card_samples::push(sample, lifetime);
+    Ok(())
+}
+
+/// Whether the overlay mode is being edited on the screen `node` is on.
+fn trying_on(node: &Node) -> bool {
+    mode::current().is_some_and(|mode| {
+        mode.layer == LayerKind::Overlay && node.output.as_deref() == Some(mode.output.as_str())
+    })
+}
+
+fn try_rows() -> telar::MenuEntry {
+    telar::MenuEntry::Sub {
+        label: telar::t!("editor.overlay.try.menu"),
+        entries: Try::ALL
+            .into_iter()
+            .map(|kind| {
+                telar::MenuEntry::row(kind.label(), String::new(), move || said(try_card(kind)))
+            })
+            .collect(),
+    }
+}
+
 /// A stack's menu rows: volume and brightness here or not — except on the stack that takes what no route takes, which takes them already — the launcher here or not, and in its mode a new stack.
 fn stack_rows(area: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
     let ResolvedAreaKind::Stack {
@@ -616,7 +773,7 @@ fn stack_rows(area: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
                 true => telar::t!("editor.overlay.osd_off"),
                 false => telar::t!("editor.overlay.osd_here"),
             },
-            keys::spell(&[Chord::char('v')]),
+            osd_key().spelled(),
             move || said(toggle_osd(&at_osd)),
         ));
     }
@@ -626,13 +783,16 @@ fn stack_rows(area: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
             true => telar::t!("editor.overlay.launcher_off"),
             false => telar::t!("editor.overlay.launcher_here"),
         },
-        keys::spell(&[Chord::char('l').shift()]),
+        launcher_key().spelled(),
         move || said(toggle_launcher(&at_launcher)),
     ));
+    if trying_on(node) {
+        rows.push(try_rows());
+    }
     if crate::mode::editing(node) {
         rows.push(telar::MenuEntry::row(
             telar::t!("editor.overlay.new_stack"),
-            keys::spell(&[Chord::char('n').shift()]),
+            stack_key().spelled(),
             || said(add_stack()),
         ));
     }
@@ -643,6 +803,7 @@ fn stack_rows(area: &ResolvedArea, node: &Node) -> Vec<telar::MenuEntry> {
 pub(crate) fn tool(mode: &Mode) -> Built {
     let (output, layer) = (mode.output.clone(), mode.layer);
     let frozen = signal(false);
+    let samples = sample_cards(output.clone())?;
     let ghosts = {
         let (listing, building) = (output.clone(), output.clone());
         ReactiveList::with_style(
@@ -686,14 +847,103 @@ pub(crate) fn tool(mode: &Mode) -> Built {
     };
     Ok(Box::new(passthrough(
         whole(),
-        vec![see_through(ghosts)?, see_through(picker)?],
+        vec![samples, see_through(ghosts)?, see_through(picker)?],
     )?))
+}
+
+/// The sample cards and launcher of the screen `output`, under the stacks' boxes: each stack's column holds the samples [`layout::route_card`] sends it, and the launcher is in the middle of the screen where no stack opens it.
+fn sample_cards(output: String) -> Built {
+    let (listing, building, centring) = (output.clone(), output.clone(), output);
+    let columns = ReactiveList::with_style(
+        whole(),
+        move || {
+            reconcile::desktop(Some(&listing))
+                .map(|desktop| {
+                    stacks_of(&desktop)
+                        .into_iter()
+                        .map(|placed| (placed.layer, placed.id))
+                        .collect()
+                })
+                .unwrap_or_default()
+        },
+        |held: &(LayerKind, AreaId)| held.clone(),
+        move |(layer, id): (LayerKind, AreaId)| sample_column(&building, layer, id),
+    )?;
+    let launcher = ReactiveList::with_style(
+        whole(),
+        {
+            let output = centring.clone();
+            move || {
+                let opened_by_a_stack = reconcile::desktop(Some(&output)).is_some_and(|desktop| {
+                    stacks_of(&desktop).iter().any(|placed| placed.launcher)
+                });
+                match opened_by_a_stack {
+                    true => Vec::new(),
+                    false => card_samples::launcher().get().into_iter().collect(),
+                }
+            }
+        },
+        |_: &Launcher| (),
+        move |launcher: Launcher| {
+            let output = centring.clone();
+            card_samples::centred_launcher(launcher, move || usable(Some(&output)))
+        },
+    )?;
+    Ok(Box::new(passthrough(
+        whole(),
+        vec![Box::new(columns), Box::new(launcher)],
+    )?))
+}
+
+fn sample_column(output: &str, layer: LayerKind, id: AreaId) -> Built {
+    let node = Node::area(Some(output), layer, &id);
+    let output = output.to_string();
+    card_samples::column(
+        move || shown_in(&output, layer, &id),
+        move || placed_now(&node).map(|placed| (placed.column(), placed.anchor)),
+        modules::stack::sample::preview_card,
+    )
+}
+
+/// What the stack `id` of `layer` shows of the samples: the launcher where it is the one that opens it, and every sample card [`layout::route_card`] sends it, a critical one above the rest.
+pub(crate) fn shown_in(output: &str, layer: LayerKind, id: &AreaId) -> Vec<Shown> {
+    let Some(desktop) = reconcile::desktop(Some(output)) else {
+        return Vec::new();
+    };
+    let stacks = stacks_of(&desktop);
+    let here = |placed: &Placed| placed.layer == layer && placed.id == *id;
+    let mut shown = Vec::new();
+    if stacks
+        .iter()
+        .find(|placed| placed.launcher)
+        .is_some_and(here)
+        && let Some(launcher) = card_samples::launcher().get()
+    {
+        shown.push(Shown::Launcher(launcher));
+    }
+    let mut cards: Vec<Sample> = card_samples::samples()
+        .get()
+        .into_iter()
+        .filter(|sample| {
+            layout::route_card(&stacks, |placed| &placed.routes, &sample.routed()).is_some_and(here)
+        })
+        .collect();
+    cards.sort_by_key(|sample| sample.urgency != Some(Urgency::Critical));
+    shown.extend(cards.into_iter().map(Shown::Card));
+    shown
 }
 
 /// The stack `node` names, as its screen shows it now.
 fn placed_now(node: &Node) -> Option<Placed> {
     let desktop = reconcile::desktop(node.output.as_deref())?;
     stack_on(&desktop, node.layer, &node.area).ok()
+}
+
+/// Whether samples are up in the stack `node` names, which the box of its first card then leaves visible instead of washing over.
+fn sampled(node: &Node) -> bool {
+    node.output
+        .as_deref()
+        .is_some_and(|output| !shown_in(output, node.layer, &node.area).is_empty())
 }
 
 /// The box of one stack's first card: a press selects the stack, a secondary press opens its menu, and a drag carries it — pinned, as it goes, where [`landing`] says.
@@ -714,6 +964,9 @@ fn ghost_target(node: Node, frozen: RwSignal<bool>) -> Built {
     let label = {
         let node = node.clone();
         move || {
+            if sampled(&node) {
+                return String::new();
+            }
             let stacks: Vec<(AreaId, Vec<Route>)> = reconcile::desktop(node.output.as_deref())
                 .map(|desktop| {
                     stacks_of(&desktop)
@@ -729,6 +982,7 @@ fn ghost_target(node: Node, frozen: RwSignal<bool>) -> Built {
         let node = node.clone();
         move || Some(node.clone())
     };
+    let painting = node.clone();
     let previewing = edit.clone();
     let taking = node.clone();
     Ok(Box::new(gesture::drag(
@@ -736,7 +990,8 @@ fn ghost_target(node: Node, frozen: RwSignal<bool>) -> Built {
             StyledContainer::new(
                 LayoutStyle::new(),
                 move |_| {
-                    RectStyle::filled(theme.accent.with_alpha(0.12), ui::scale::corner::md())
+                    let wash = if sampled(&painting) { 0.0 } else { 0.12 };
+                    RectStyle::filled(theme.accent.with_alpha(wash), ui::scale::corner::md())
                         .with_border(Border::uniform(theme.accent, 1.0))
                 },
                 vec![rows::note(label)?],

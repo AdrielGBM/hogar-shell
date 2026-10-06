@@ -86,12 +86,8 @@ fn icon_widget(
     icon_view(|| FALLBACK_GLYPH.to_string(), move || tint, size)
 }
 
-fn anchor_for(site: &Option<Site>, rect: ReadSignal<Rect>) -> Option<surfaces::transient::Anchor> {
-    site.as_ref().map(|site| site.anchor(rect.get()))
-}
-
 /// A primary click. An item that says it is a menu, or that implements no `Activate`, gets its menu opened — which for everything built on libappindicator is the only interaction it has.
-fn primary(item: &TrayItem, site: &Option<Site>, rect: ReadSignal<Rect>) {
+fn primary(item: &TrayItem, site: &Site, rect: ReadSignal<Rect>) {
     if item.item_is_menu || !item.has_activate {
         open_menu(item, site, rect);
         return;
@@ -100,15 +96,12 @@ fn primary(item: &TrayItem, site: &Option<Site>, rect: ReadSignal<Rect>) {
 }
 
 /// A right click always means "show me the menu". Only when the item exposes none does this fall back to asking the application to pop its own.
-fn open_menu(item: &TrayItem, site: &Option<Site>, rect: ReadSignal<Rect>) {
+fn open_menu(item: &TrayItem, site: &Site, rect: ReadSignal<Rect>) {
     if item.menu.trim().is_empty() {
         tray_service::context_menu(item, 0, 0);
         return;
     }
-    let Some(anchor) = anchor_for(site, rect) else {
-        return;
-    };
-    menu::toggle(item, anchor);
+    menu::toggle(item, site.beside(rect.get()));
 }
 
 fn secondary(item: &TrayItem) {

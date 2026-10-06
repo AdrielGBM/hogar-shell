@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use telar::{
-    AssetState, Color, LayoutError, LayoutItem, LayoutStyle, ObjectFit, ReactiveList, ReadSignal,
-    RectStyle, SpinnerProps, StyledContainer, Svg, SvgData, spinner, use_theme,
+    AssetState, Color, LayoutError, LayoutItem, LayoutStyle, ObjectFit, Reactive, ReactiveList,
+    ReadSignal, RectStyle, SpinnerProps, StyledContainer, Svg, SvgData, spinner, use_theme,
 };
 use util::asset::{Load, Loader, Retry};
 
@@ -180,16 +180,19 @@ fn with_store<R>(read: impl FnOnce(&IconStore) -> R) -> R {
     })
 }
 
-/// A reactive icon widget: shows the self-animating [`spinner`] while the glyph downloads, then swaps to the tinted SVG once it lands. `name` and `tint` are reactive closures, so the icon re-resolves when either changes (e.g. battery ↔ charging).
+/// A reactive icon widget: shows the self-animating [`spinner`] while the glyph downloads, then swaps to the tinted SVG once it lands. `name`, `tint` and `size` are reactive, so the icon re-resolves when any changes (e.g. battery ↔ charging, or a host laid out at another size).
 pub fn icon_view(
     name: impl Fn() -> String + 'static,
     tint: impl Fn() -> Color + Clone + 'static,
-    size: f32,
+    size: impl Into<Reactive<f32>>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let icon_stroke = use_theme::<NordTheme>().icon_stroke;
-    let source = move || vec![icon_state(&name())];
-    let key = |state: &AssetState<Arc<SvgData>>| state.as_ready().map(|svg| svg.id());
-    let build = move |state: AssetState<Arc<SvgData>>| -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let size = size.into();
+    let source = move || vec![(icon_state(&name()), size.get())];
+    let key = |(state, size): &(AssetState<Arc<SvgData>>, f32)| {
+        (state.as_ready().map(|svg| svg.id()), size.to_bits())
+    };
+    let build = move |(state, size): (AssetState<Arc<SvgData>>, f32)| -> Result<Box<dyn LayoutItem>, LayoutError> {
         match state {
             AssetState::Ready(svg) => {
                 let tint = tint.clone();

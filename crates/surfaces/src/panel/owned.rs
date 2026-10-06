@@ -8,7 +8,7 @@ use telar::{Container, LayoutItem, ReactiveList, Rect, Shadow, StyledContainer};
 
 use config::theme::NordTheme;
 use config::{Config, Edge};
-use layout::{InstanceId, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind};
+use layout::{InstanceId, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedLayer};
 use platform_wayland::KeyboardMode;
 use ui::chrome::Chrome;
 use ui::descriptor::Built;
@@ -74,6 +74,19 @@ impl Found {
         }
     }
 
+    fn owner_node(&self, owner: &Owner) -> Option<Node> {
+        let group = self.holder.groups.iter().find(|group| {
+            group
+                .children
+                .iter()
+                .any(|child| child.id == owner.instance)
+        })?;
+        Some(
+            Node::area(owner.output.as_deref(), self.layer, &self.holder.id)
+                .instance(&group.id, &owner.instance),
+        )
+    }
+
     fn shape(&self) -> Option<PanelShape> {
         let ResolvedAreaKind::Panel {
             cols,
@@ -95,17 +108,22 @@ impl Found {
     }
 }
 
-fn find(resolved: &Resolved, instance: &InstanceId) -> Option<Found> {
-    let (layer, panel) = resolved.areas().find(|(_, area)| {
-        matches!(&area.kind, ResolvedAreaKind::Panel { owner, .. } if owner == instance)
-    })?;
-    let holder = resolved.layer(layer)?.areas.iter().find(|area| {
+/// The area on `layer` holding the instance `owner`, a panel aside: the bar, dock, grid or container its panel opens from.
+pub fn owner_area<'a>(layer: &'a ResolvedLayer, owner: &InstanceId) -> Option<&'a ResolvedArea> {
+    layer.areas.iter().find(|area| {
         !matches!(area.kind, ResolvedAreaKind::Panel { .. })
             && area
                 .groups
                 .iter()
-                .any(|group| group.children.iter().any(|child| child.id == *instance))
+                .any(|group| group.children.iter().any(|child| child.id == *owner))
+    })
+}
+
+fn find(resolved: &Resolved, instance: &InstanceId) -> Option<Found> {
+    let (layer, panel) = resolved.areas().find(|(_, area)| {
+        matches!(&area.kind, ResolvedAreaKind::Panel { owner, .. } if owner == instance)
     })?;
+    let holder = owner_area(resolved.layer(layer)?, instance)?;
     Some(Found {
         layer,
         panel: panel.clone(),
@@ -212,7 +230,9 @@ pub fn open(owner: &Owner) -> bool {
     .motion(motion)
     .shadow(move || shadow_of(&casting, layer))
     .keyboard(KeyboardMode::OnDemand)
-    .output(owner.output.clone());
+    .output(owner.output.clone())
+    .from(found.owner_node(owner))
+    .holding(Node::area(owner.output.as_deref(), layer, &found.panel.id));
     OPENED.with(|opened| {
         let mut opened = opened.borrow_mut();
         opened.retain(|(held, _)| held != owner && transient::is_open(&held.id()));

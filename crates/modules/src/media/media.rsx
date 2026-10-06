@@ -45,7 +45,7 @@ let show_text = memo(move || !vertical && !text_empty.get().is_empty());
 
 [view]
 row align:center gap:(::ui::scale::space::md())
-    icon_glyph name:(Reactive::of(move || icon_view.get())) tint:(Reactive::of(move || fg)) size:(host.icon_size())
+    icon_glyph name:(Reactive::of(move || icon_view.get())) tint:(Reactive::of(move || fg)) size:(host.live_icon_size())
     if $show_text
         text "{$text_view}" font_size:$theme.font(FontRole::Body) color:fg lines:1 ellipsis
 

@@ -4,8 +4,8 @@ use ui::descriptor::{PanelProps, panel};
 use ui::chrome::{content_radius, panel_fill};
 
 let host = current_drawer_host()?;
-let dw = host.extent.width;
-let dmh = host.extent.height;
+let dw = host.extent().width;
+let dmh = host.extent().height;
 let rad = content_radius();
 
 [view]

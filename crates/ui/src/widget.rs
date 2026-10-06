@@ -264,14 +264,15 @@ fn bar_rects(
 pub fn spectrum_ring(
     bands: Live<Arc<[f32]>>,
     tint: Live<Color>,
-    inner: f32,
-    reach: f32,
+    inner: Live<f32>,
+    reach: Live<f32>,
     style: SpectrumStyle,
     layout: LayoutStyle,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let canvas = Canvas::new(layout, move |rect| {
         let values = bands.get();
         let color = tint.get();
+        let (inner, reach) = (inner.get(), reach.get());
         if values.is_empty() {
             return RenderNode::Empty;
         }
@@ -364,8 +365,8 @@ pub(crate) fn spectrum_preview() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let ring = spectrum_ring(
         util::reactive::fixed(bands),
         util::reactive::fixed(theme.text),
-        60.0,
-        50.0,
+        util::reactive::fixed(60.0),
+        util::reactive::fixed(50.0),
         SpectrumStyle {
             gap: 2.0,
             radius: 2.0,

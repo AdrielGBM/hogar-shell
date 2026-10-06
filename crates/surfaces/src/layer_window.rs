@@ -3198,12 +3198,15 @@ mod tests {
                 assert_eq!(across, 34.0, "{edge:?} {autohide:?}");
                 let found = crate::transient::chips::find("dot-a", None, Some(SCREEN))
                     .expect("its chip opens things");
+                let crate::transient::Place::Beside(anchor) = found.place else {
+                    panic!("{edge:?} {autohide:?}: a bar chip opens beside its bar");
+                };
                 assert_eq!(
-                    found.anchor.layer,
+                    anchor.layer,
                     LayerKind::Overlay,
                     "{edge:?} {autohide:?}: what the chip opens lives in the chip's window"
                 );
-                assert_eq!(found.anchor.edge, edge);
+                assert_eq!(anchor.edge, edge);
                 drop((root, scope));
                 telar::dispose_owner(owner);
             }

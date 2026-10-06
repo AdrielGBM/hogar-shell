@@ -45,7 +45,7 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 
 | Command | Arguments | What it does |
 | --- | --- | --- |
-| `toggle` | `<module>` | open a module's panel, or close it if it is up |
+| `toggle` | `<module\|instance>` | open a module's panel, or close it if it is up; an instance opens the panel the layout gives it, else its module's panel beside it |
 | `open` | `<module>` | open a module's panel (idempotent) |
 | `close` | `<module>` | close a module's panel |
 | `list` |  | which transients are open right now — a panel, but also the drawer, popout, tray menu, float, launcher, notification centre or region picker |

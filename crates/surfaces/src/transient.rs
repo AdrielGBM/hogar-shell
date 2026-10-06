@@ -3,10 +3,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use telar::focus::FocusId;
 use telar::{
     Component, Container, DismissRegistration, Event, EventResult, LayoutItem, LayoutStyle, NodeId,
     ReactiveList, ReadSignal, Rect, RectStyle, RenderNode, RwSignal, Shadow, SizeDimension,
-    StyledContainer, Transition, box_item, exits_in_flight, on_cleanup, signal, track_layout,
+    StyledContainer, Transition, box_item, exits_in_flight, focus, on_cleanup, signal,
+    track_layout,
 };
 
 use config::fingerprint::{Fingerprint, Reload, Stamp};
@@ -18,6 +20,7 @@ use ui::descriptor::Built;
 use ui::scale::elevation;
 
 use crate::layer_window::{Concealment, Demand, Demands, Hold, Holder, Screen, WindowKey};
+use crate::rects::Node;
 
 pub const DEFAULT_GAP: f32 = 8.0;
 
@@ -35,6 +38,8 @@ pub struct Anchor {
 #[derive(Clone)]
 pub enum Place {
     Beside(Anchor),
+    /// Beside an anchor on no edge: below it or above it, whichever [`hanging`] picks for the height the content is laid out at. Its anchor's `edge` is not read.
+    Hanging(Anchor),
     /// The whole window its anchor is drawn in, for content that works on the anchored thing itself as well as beside it: a popover and the handles it puts on the item it customizes.
     Over(Anchor),
     Centred,
@@ -55,14 +60,26 @@ pub enum Place {
 impl Place {
     fn anchor(&self) -> Option<&Anchor> {
         match self {
-            Place::Beside(anchor) | Place::Over(anchor) => Some(anchor),
+            Place::Beside(anchor) | Place::Hanging(anchor) | Place::Over(anchor) => Some(anchor),
             _ => None,
         }
     }
 
+    /// How content placed here arrives: out of the edge it hangs off, or faded in where which side that is waits on its size.
+    pub fn motion(&self) -> Motion {
+        match self {
+            Place::Beside(anchor) => Motion::Slide(anchor.edge),
+            _ => Motion::Fade,
+        }
+    }
+
+    pub(crate) fn output(&self) -> Option<String> {
+        self.home().and_then(|(output, _)| output)
+    }
+
     fn home(&self) -> Option<(Option<String>, LayerKind)> {
         match self {
-            Place::Beside(anchor) | Place::Over(anchor) => {
+            Place::Beside(anchor) | Place::Hanging(anchor) | Place::Over(anchor) => {
                 Some((anchor.output.clone(), anchor.layer))
             }
             Place::Owned(owned) => Some((owned.output.clone(), owned.layer)),
@@ -88,7 +105,7 @@ pub enum Motion {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
-    /// One at a time, and a standing window closes it: a drawer claims the whole output to hear a press outside it, so a window opened under one would be dismissed by the first press near it.
+    /// One at a time, and a standing window closes it: a drawer claims the whole output to hear a press outside it, so a window opened under one would be dismissed by the first press near it. A transient opened from inside one is its child, and leaves it open.
     Drawer,
     Standing,
     Free,
@@ -111,6 +128,10 @@ pub struct Spec {
     pub on_close: Option<Rc<dyn Fn()>>,
     /// The shadow the content casts, read each time the transient moves so a cut around it leaves room for it.
     pub shadow: Rc<dyn Fn() -> Option<Shadow>>,
+    /// The instance it was opened from, whose area stays on screen while it is up ([`holds`]).
+    pub from: Option<Node>,
+    /// The area drawn inside it: what an instance there opens is its child, kept open beside it and closed with it.
+    pub holding: Option<Node>,
 }
 
 impl Spec {
@@ -126,7 +147,19 @@ impl Spec {
             content,
             on_close: None,
             shadow: Rc::new(|| None),
+            from: None,
+            holding: None,
         }
+    }
+
+    pub fn from(mut self, from: Option<Node>) -> Self {
+        self.from = from;
+        self
+    }
+
+    pub fn holding(mut self, area: Node) -> Self {
+        self.holding = Some(area);
+        self
     }
 
     pub fn slot(mut self, slot: Slot) -> Self {
@@ -169,15 +202,20 @@ pub struct Entry {
     spec: Spec,
     serial: u64,
     window: WindowKey,
+    /// The open transient it was opened from inside of ([`Spec::holding`]).
+    parent: Option<String>,
     closing: Cell<bool>,
     /// Created by the row, and flipped by the registry from outside the tree.
     shown: RefCell<Option<RwSignal<bool>>>,
     builds: RefCell<Option<RwSignal<u64>>>,
+    extent: Cell<Option<RwSignal<Option<Rect>>>>,
     stamp: RefCell<Stamp>,
     rebuilt: Cell<u64>,
     /// Given up the moment the transient closes rather than when its exit ends, so Esc and the keyboard go back at once.
     claims: RefCell<Option<(Demand, DismissRegistration)>>,
     hold: RefCell<Option<Hold>>,
+    /// The control inside it that last took its window's focus, seen as an event or a build inside it moved the focus there.
+    focused: Cell<Option<FocusId>>,
 }
 
 impl Entry {
@@ -187,6 +225,17 @@ impl Entry {
 
     fn is_open(&self) -> bool {
         !self.closing.get()
+    }
+
+    fn holds_focus(&self) -> bool {
+        self.focused.get().is_some_and(focus::is_focused)
+    }
+
+    fn follow_focus(&self, before: Option<FocusId>) {
+        let now = focus::current();
+        if now != before {
+            self.focused.set(now);
+        }
     }
 }
 
@@ -206,6 +255,7 @@ type Hidden = dyn Fn(Option<&str>, LayerKind) -> bool;
 thread_local! {
     static REGISTRY: RefCell<Registry> = RefCell::new(Registry::default());
     static HIDDEN: RefCell<Option<Box<Hidden>>> = const { RefCell::new(None) };
+    static OPENINGS: RwSignal<u64> = telar::detached(|| signal(0));
 }
 
 pub fn install(holder: Holder) {
@@ -297,10 +347,15 @@ pub fn release(hold: Hold, output: Option<&str>, layer: LayerKind, exit: std::ti
 }
 
 pub fn open(spec: Spec) {
+    let parent = parent_of(&spec);
     if matches!(spec.slot, Slot::Drawer | Slot::Standing) {
-        close_drawer();
+        let kept = lineage(parent.as_deref());
+        for drawer in drawers().iter().filter(|drawer| !kept.contains(drawer)) {
+            close(drawer);
+        }
     }
     close(&spec.id);
+    let parent = parent.filter(|parent| is_open(parent));
     let (entry, publish) = REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         let keys = registry
@@ -317,13 +372,16 @@ pub fn open(spec: Spec) {
         let entry = Rc::new(Entry {
             serial: registry.serial,
             window: window.clone(),
+            parent,
             closing: Cell::new(false),
             shown: RefCell::new(None),
             builds: RefCell::new(None),
+            extent: Cell::new(None),
             stamp: RefCell::new(Stamp::default()),
             rebuilt: Cell::new(0),
             hold: RefCell::new(hold),
             claims: RefCell::new(None),
+            focused: Cell::new(None),
             spec,
         });
         registry.entries.push(Rc::clone(&entry));
@@ -331,6 +389,56 @@ pub fn open(spec: Spec) {
     });
     tracing::debug!(id = entry.id(), window = ?entry.window, "transient opened");
     deliver(publish);
+    opened_or_closed();
+}
+
+/// The open transient holding the area `spec` is opened from, which makes it that transient's child.
+fn parent_of(spec: &Spec) -> Option<String> {
+    let from = spec.from.as_ref()?;
+    REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .entries
+            .iter()
+            .rfind(|entry| {
+                entry.is_open()
+                    && entry.id() != spec.id
+                    && entry.spec.holding.as_ref().is_some_and(|area| {
+                        from.is_in(area.output.as_deref(), area.layer, &area.area)
+                    })
+            })
+            .map(|entry| entry.id().to_string())
+    })
+}
+
+/// The open transient `id` and every one it is a child of, nearest first.
+fn lineage(id: Option<&str>) -> Vec<String> {
+    let mut line: Vec<String> = Vec::new();
+    let mut at = id.map(str::to_string);
+    while let Some(id) = at.filter(|id| !line.contains(id)) {
+        at = REGISTRY.with(|registry| {
+            registry
+                .borrow()
+                .entries
+                .iter()
+                .find(|entry| entry.id() == id && entry.is_open())
+                .and_then(|entry| entry.parent.clone())
+        });
+        line.push(id);
+    }
+    line
+}
+
+fn children_of(id: &str) -> Vec<String> {
+    REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .entries
+            .iter()
+            .filter(|entry| entry.is_open() && entry.parent.as_deref() == Some(id))
+            .map(|entry| entry.id().to_string())
+            .collect()
+    })
 }
 
 pub fn toggle(spec: Spec) {
@@ -351,13 +459,28 @@ pub fn is_open(id: &str) -> bool {
     })
 }
 
-/// Whether an open transient other than `except` takes the keyboard: what the shortcuts of the one that is `except` stand aside for, since the keys are that other one's while it is up.
+/// Whether an open transient other than `except` takes the keyboard: what the shortcuts of the one that is `except` stand aside for, since the keys are that other one's while it is up. One that holds the keyboard whenever it is up always does; one that takes it on demand does only while a control inside it holds the focus of the window `except` is drawn in, since the compositor gives the keys of another window to that window alone.
 pub fn takes_keyboard_besides(except: &str) -> bool {
-    REGISTRY.with(|registry| {
-        registry.borrow().entries.iter().any(|entry| {
-            entry.is_open() && entry.id() != except && entry.spec.keyboard != KeyboardMode::None
+    let open: Vec<Rc<Entry>> = REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .entries
+            .iter()
+            .filter(|entry| entry.is_open())
+            .cloned()
+            .collect()
+    });
+    let window = open
+        .iter()
+        .find(|entry| entry.id() == except)
+        .map(|entry| &entry.window);
+    open.iter()
+        .filter(|entry| entry.id() != except)
+        .any(|entry| match entry.spec.keyboard {
+            KeyboardMode::None => false,
+            KeyboardMode::Exclusive => true,
+            KeyboardMode::OnDemand => Some(&entry.window) == window && entry.holds_focus(),
         })
-    })
 }
 
 /// The window the open transient `id` is drawn in: its anchor's, or an overlay window.
@@ -372,24 +495,50 @@ pub fn drawn_in(id: &str) -> Option<WindowKey> {
     })
 }
 
-pub fn drawer_is_open(id: &str) -> bool {
-    drawer().as_deref() == Some(id)
-}
-
-fn drawer() -> Option<String> {
+#[cfg(test)]
+pub(crate) fn place_of(id: &str) -> Option<Place> {
     REGISTRY.with(|registry| {
         registry
             .borrow()
             .entries
             .iter()
-            .find(|entry| entry.spec.slot == Slot::Drawer && entry.is_open())
+            .find(|entry| entry.id() == id && entry.is_open())
+            .map(|entry| entry.spec.place.clone())
+    })
+}
+
+/// Where the open transient `id` rests once laid out.
+pub fn rect_of(id: &str) -> Option<Rect> {
+    let extent = REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .entries
+            .iter()
+            .find(|entry| entry.id() == id && entry.is_open())
+            .and_then(|entry| entry.extent.get())
+    })?;
+    extent.get()
+}
+
+pub fn drawer_is_open(id: &str) -> bool {
+    drawers().iter().any(|drawer| drawer == id)
+}
+
+fn drawers() -> Vec<String> {
+    REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .entries
+            .iter()
+            .filter(|entry| entry.spec.slot == Slot::Drawer && entry.is_open())
             .map(|entry| entry.id().to_string())
+            .collect()
     })
 }
 
 pub fn close_drawer() {
-    if let Some(id) = drawer() {
-        close(&id);
+    for drawer in drawers() {
+        close(&drawer);
     }
 }
 
@@ -417,8 +566,14 @@ pub fn close(id: &str) {
             .cloned()
             .collect()
     });
-    for entry in closing {
+    for entry in &closing {
         entry.closing.set(true);
+    }
+    for child in children_of(id) {
+        close(&child);
+    }
+    let any = !closing.is_empty();
+    for entry in closing {
         let claims = entry.claims.borrow_mut().take();
         drop(claims);
         if let Some(on_close) = entry.spec.on_close.clone() {
@@ -434,6 +589,28 @@ pub fn close(id: &str) {
             None => forget(&entry),
         }
     }
+    if any {
+        opened_or_closed();
+    }
+}
+
+/// Whether a transient opened from one of `area`'s instances is up, which keeps an autohidden bar on screen. Reactive.
+pub fn holds(area: &Node) -> bool {
+    OPENINGS.with(|openings| openings.with(|_| ()));
+    REGISTRY.with(|registry| {
+        registry.borrow().entries.iter().any(|entry| {
+            entry.is_open()
+                && entry
+                    .spec
+                    .from
+                    .as_ref()
+                    .is_some_and(|from| from.is_in(area.output.as_deref(), area.layer, &area.area))
+        })
+    })
+}
+
+fn opened_or_closed() {
+    OPENINGS.with(|openings| openings.update(|n| *n = n.wrapping_add(1)));
 }
 
 pub fn close_all() {
@@ -444,6 +621,7 @@ pub fn close_all() {
     }
     let publish = REGISTRY.with(|registry| registry.borrow().publish_all());
     deliver(publish);
+    opened_or_closed();
 }
 
 /// Forgets every transient routed to a window that is gone — an output unplugged under it — so it neither keeps its slot nor holds a window nothing draws.
@@ -457,11 +635,15 @@ pub(crate) fn prune(live: &[WindowKey]) {
             .cloned()
             .collect()
     });
+    let any = !orphans.is_empty();
     for entry in orphans {
         entry.closing.set(true);
         let claims = entry.claims.borrow_mut().take();
         drop(claims);
         forget(&entry);
+    }
+    if any {
+        opened_or_closed();
     }
 }
 
@@ -650,6 +832,7 @@ fn row(entry: Rc<Entry>, frame: Frame) -> Built {
     let transition = transition(entry.spec.motion, &config);
     let built = Rc::clone(&entry);
     let extent = signal(None);
+    entry.extent.set(Some(extent));
     let arriving = arrival(shown, transition);
     let presence = telar::Presence::with_style(
         whole(),
@@ -661,10 +844,14 @@ fn row(entry: Rc<Entry>, frame: Frame) -> Built {
         shown.set(true);
     }
     let shadow = Rc::clone(&entry.spec.shadow);
-    Ok(Box::new(Contained::new(Box::new(presence), move || {
-        let moving = arriving() || !shown.get();
-        cut_to(extent.get(), moving, shadow())
-    })))
+    Ok(Box::new(Contained::new(
+        Box::new(presence),
+        entry,
+        move || {
+            let moving = arriving() || !shown.get();
+            cut_to(extent.get(), moving, shadow())
+        },
+    )))
 }
 
 /// The box a transient that is `moving` is cut to: where it rests, widened by the reach of the `shadow` it casts so the slide does not cut it, and no cut at all once it is still.
@@ -695,13 +882,19 @@ fn arrival(shown: RwSignal<bool>, transition: Transition) -> impl Fn() -> bool +
 /// `inner` cut to the box `bounds` says while it says one, and drawn whole while it does not: a transition that slides its child travels past where the child rests, and the paint of that travel is damage outside the box it ends in.
 struct Contained {
     inner: Box<dyn LayoutItem>,
+    entry: Rc<Entry>,
     bounds: Box<dyn Fn() -> Option<Rect>>,
 }
 
 impl Contained {
-    fn new(inner: Box<dyn LayoutItem>, bounds: impl Fn() -> Option<Rect> + 'static) -> Self {
+    fn new(
+        inner: Box<dyn LayoutItem>,
+        entry: Rc<Entry>,
+        bounds: impl Fn() -> Option<Rect> + 'static,
+    ) -> Self {
         Self {
             inner,
+            entry,
             bounds: Box::new(bounds),
         }
     }
@@ -718,7 +911,10 @@ impl Component for Contained {
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
-        self.inner.on_event(event)
+        let before = focus::current();
+        let answered = self.inner.on_event(event);
+        self.entry.follow_focus(before);
+        answered
     }
 
     fn debug_name(&self) -> &'static str {
@@ -806,7 +1002,10 @@ fn content(entry: &Rc<Entry>, builds: RwSignal<u64>, style: LayoutStyle) -> Buil
         move |_| {
             let chrome = chrome_of(&built);
             chrome.provide();
-            (built.spec.content)(&chrome)
+            let before = focus::current();
+            let content = (built.spec.content)(&chrome);
+            built.follow_focus(before);
+            content
         },
     )?;
     Ok(Box::new(list))
@@ -840,13 +1039,7 @@ fn follow_extent(
 
 /// The box `place` leaves content laid out as `laid` in, where it ends up: a place that moves its content after layout says where, and every other leaves it where layout put it.
 fn settled(place: &Place, laid: Rect, screen: Screen) -> Rect {
-    let size = (laid.width, laid.height);
-    let usable = screen.reserved.box_of(layout::Within::Usable, screen.size);
     match place {
-        Place::Beside(anchor) => {
-            let (x, y) = beside(anchor, size, usable);
-            Rect::new(x, y, laid.width, laid.height)
-        }
         Place::Pinned {
             within,
             anchor,
@@ -854,11 +1047,26 @@ fn settled(place: &Place, laid: Rect, screen: Screen) -> Rect {
         } => crate::pinned::pinned(
             screen.reserved.box_of(*within, screen.size),
             *anchor,
-            size,
+            (laid.width, laid.height),
             *offset,
         ),
-        _ => laid,
+        _ => settled_in(
+            place,
+            laid,
+            screen.reserved.box_of(layout::Within::Usable, screen.size),
+        ),
     }
+}
+
+/// [`settled`] for a place that moves its content inside the `usable` box alone.
+pub(crate) fn settled_in(place: &Place, laid: Rect, usable: Rect) -> Rect {
+    let size = (laid.width, laid.height);
+    let (x, y) = match place {
+        Place::Beside(anchor) => beside(anchor, size, usable),
+        Place::Hanging(anchor) => hung_off(anchor.rect, anchor.gap, size, usable),
+        _ => return laid,
+    };
+    Rect::new(x, y, laid.width, laid.height)
 }
 
 fn position(place: &Place, content: Box<dyn LayoutItem>, screen: ReadSignal<Screen>) -> Built {
@@ -873,7 +1081,7 @@ fn position(place: &Place, content: Box<dyn LayoutItem>, screen: ReadSignal<Scre
         }
     };
     match place.clone() {
-        Place::Beside(_) | Place::Pinned { .. } => Ok(Box::new(
+        Place::Beside(_) | Place::Hanging(_) | Place::Pinned { .. } => Ok(Box::new(
             StyledContainer::new(
                 LayoutStyle::new()
                     .absolute()
@@ -928,6 +1136,38 @@ fn at(rect: Rect) -> LayoutStyle {
 /// A vertical anchor lines up by its top rather than its centre because a transient beside a vertical bar is as tall as its content, and what the eye follows from a chip in a column is the row it is on.
 pub fn beside(anchor: &Anchor, panel: (f32, f32), usable: Rect) -> (f32, f32) {
     beside_chip(anchor.edge, anchor.gap, anchor.rect, panel, usable)
+}
+
+/// Where something `panel` big opened from `owner` on no edge sits: on the side [`hanging`] picks, centred on it, and kept `gap` inside `usable` both ways.
+pub(crate) fn hung_off(owner: Rect, gap: f32, panel: (f32, f32), usable: Rect) -> (f32, f32) {
+    let (width, height) = panel;
+    let y = match hanging(owner, usable, height) {
+        Edge::Bottom => owner.y - gap - height,
+        _ => owner.y + owner.height + gap,
+    };
+    (
+        kept_inside(
+            owner.x + owner.width / 2.0 - width / 2.0,
+            usable.x,
+            usable.width,
+            width,
+            gap,
+        ),
+        kept_inside(y, usable.y, usable.height, height, gap),
+    )
+}
+
+/// The side of `owner` something `height` tall opened from it hangs off when no bar says which, as the edge a bar there would face: below it ([`Edge::Top`]) where it fits there, else above it ([`Edge::Bottom`]) where it fits there, else whichever side `usable` has more room on.
+pub fn hanging(owner: Rect, usable: Rect, height: f32) -> Edge {
+    let needs = height + 2.0 * DEFAULT_GAP;
+    let below = usable.y + usable.height - (owner.y + owner.height);
+    let above = owner.y - usable.y;
+    match (needs <= below, needs <= above) {
+        (true, _) => Edge::Top,
+        (false, true) => Edge::Bottom,
+        (false, false) if below >= above => Edge::Top,
+        (false, false) => Edge::Bottom,
+    }
 }
 
 pub(crate) fn kept_inside(at: f32, start: f32, length: f32, extent: f32, gap: f32) -> f32 {
@@ -1004,83 +1244,109 @@ pub mod chips {
     pub struct Site {
         pub output: Option<String>,
         pub layer: LayerKind,
-        pub edge: Edge,
+        /// The edge the chip's bar or dock hangs off; `None` for a chip on no edge, which hangs what it opens on the side [`hanging`] picks.
+        pub edge: Option<Edge>,
         pub chrome: Chrome,
         pub gap: f32,
     }
 
     impl Site {
         /// Where a chip built under `host` is, read while it is being built: the window it is in is the one being built.
-        pub fn of_host(host: &ui::host::Host) -> Option<Self> {
-            let edge = host.axis?;
+        pub fn of_host(host: &ui::host::Host) -> Self {
             let config = host.config();
-            Some(Self {
+            Self {
                 output: host.output.clone(),
                 layer: crate::layer_window::LayerWindowContext::current()
                     .map_or(LayerKind::Top, |window| window.layer),
-                edge,
+                edge: host.axis,
                 chrome: Chrome::new(
                     std::sync::Arc::clone(config),
                     host.shape,
                     host.output.clone(),
                 ),
                 gap: standoff(config, &host.shape),
-            })
+            }
         }
 
-        pub fn anchor(&self, rect: Rect) -> Anchor {
-            Anchor {
+        /// Beside `rect`, on the side the chip's edge faces, or for a chip on no edge on the side [`hanging`] picks once what it opens is laid out.
+        pub fn beside(&self, rect: Rect) -> Place {
+            let anchor = |edge| Anchor {
                 output: self.output.clone(),
                 layer: self.layer,
-                edge: self.edge,
+                edge,
                 rect,
                 chrome: self.chrome.clone(),
                 gap: self.gap,
+            };
+            match self.edge {
+                Some(edge) => Place::Beside(anchor(edge)),
+                None => Place::Hanging(anchor(Edge::Top)),
             }
         }
     }
 
-    /// A chip of the module asked for: where to hang what it opens, and the instance that opens it.
+    /// A chip of the module asked for: where to hang what it opens, the instance that opens it, and where it is.
     pub struct Found {
-        pub anchor: Anchor,
+        pub place: Place,
         pub instance: ui::host::Instance,
+        pub at: Node,
     }
 
-    /// The pressed chip of `module`, else its first chip on `focused`, else its first anywhere — TA-2's first-instance rule, with a press naming its own instance. By module rather than by instance, because `panel toggle <module>` and a keybind name a module (F-1.2); it reads the chips [`crate::rects`] holds.
+    /// The chip of `module` a press, `panel toggle <module>` or a keybind opens from: the pressed one, else its first on the pressed or `focused` screen, else its first anywhere, with a press naming its own instance. By module rather than by instance, because a command and a keybind name a module; it reads the chips [`crate::rects`] holds, on a bar or anywhere else.
+    ///
+    /// What a press opens hangs off what was pressed, whichever module that is: the chip its placement names, else the chip at its rect, else, pressed on no chip at all, off its rect on no edge.
     pub fn find(
         module: &str,
         pressed: Option<ui::module::Pressed>,
         focused: Option<&str>,
     ) -> Option<Found> {
-        let of_module: Vec<(crate::rects::Chip, Rect)> = crate::rects::chips()
-            .into_iter()
-            .filter(|(chip, _)| &*chip.instance.module == module)
-            .collect();
-        let on = |output: Option<&str>| -> Vec<&(crate::rects::Chip, Rect)> {
-            of_module
+        let chips = crate::rects::chips();
+        let on = |output: Option<&str>| -> Vec<&(Node, crate::rects::Chip, Rect)> {
+            chips
                 .iter()
-                .filter(|(chip, _)| chip.site.output.as_deref() == output)
+                .filter(|(_, chip, _)| chip.site.output.as_deref() == output)
                 .collect()
         };
-        let chosen = match &pressed {
+        let placed = pressed
+            .as_ref()
+            .and_then(|pressed| pressed.placement.as_ref())
+            .and_then(|placement| placement.get::<Node>());
+        let hit = pressed.as_ref().and_then(|pressed| {
+            let there = on(pressed.output.as_deref());
+            there
+                .iter()
+                .find(|(node, _, _)| Some(node) == placed)
+                .or_else(|| there.iter().find(|(_, _, rect)| *rect == pressed.rect))
+                .copied()
+        });
+        let of_module =
+            |(_, chip, _): &&(Node, crate::rects::Chip, Rect)| &*chip.instance.module == module;
+        let screen = pressed
+            .as_ref()
+            .map_or(focused, |pressed| pressed.output.as_deref());
+        let (node, chip, at) = hit
+            .filter(of_module)
+            .or_else(|| on(screen).into_iter().find(of_module))
+            .or_else(|| chips.iter().find(of_module))?;
+        let (place, from) = match &pressed {
             Some(pressed) => {
-                let there = on(pressed.output.as_deref());
-                there
-                    .iter()
-                    .copied()
-                    .find(|(_, rect)| *rect == pressed.rect)
-                    .or_else(|| there.first().copied())
+                let site = hit.map_or_else(
+                    || Site {
+                        edge: None,
+                        output: pressed.output.clone(),
+                        ..chip.site.clone()
+                    },
+                    |(_, by, _)| by.site.clone(),
+                );
+                let from = hit.map(|(node, _, _)| node).or(placed).unwrap_or(node);
+                (site.beside(pressed.rect), from.clone())
             }
-            None => on(focused).first().copied(),
-        }
-        .or_else(|| of_module.first())?;
-        let (chip, at) = chosen;
-        let rect = pressed
-            .filter(|pressed| pressed.output == chip.site.output)
-            .map_or(*at, |pressed| pressed.rect);
+            None => (chip.site.beside(*at), node.clone()),
+        };
         Some(Found {
-            anchor: chip.site.anchor(rect),
+            place,
             instance: chip.instance.clone(),
+            at: from,
         })
     }
 }
@@ -1237,7 +1503,7 @@ mod tests {
             let site = chips::Site {
                 output: Some(output.to_string()),
                 layer: LayerKind::Top,
-                edge: Edge::Top,
+                edge: Some(Edge::Top),
                 chrome: chrome(),
                 gap: 8.0,
             };
@@ -1268,7 +1534,7 @@ mod tests {
             placement: None,
         };
         let found = chips::find("clock", Some(pressed), Some("DP-1")).expect("a clock chip");
-        assert_eq!(found.anchor.output.as_deref(), Some("HDMI-A-1"));
+        assert_eq!(found.place.output().as_deref(), Some("HDMI-A-1"));
         assert_eq!(
             found.instance.options.get("drawer_width"),
             Some(&toml::Value::Integer(500)),
@@ -1276,7 +1542,7 @@ mod tests {
         );
         let unpressed = chips::find("clock", None, Some("HDMI-A-1")).expect("a clock chip");
         assert_eq!(
-            unpressed.anchor.output.as_deref(),
+            unpressed.place.output().as_deref(),
             Some("HDMI-A-1"),
             "with no press, the focused screen's chip"
         );
@@ -1355,5 +1621,113 @@ mod tests {
         close("second");
         assert_eq!(open_ids(), vec!["first"]);
         close_all();
+    }
+
+    fn entry_of(id: &str) -> Rc<Entry> {
+        REGISTRY.with(|registry| {
+            registry
+                .borrow()
+                .entries
+                .iter()
+                .find(|entry| entry.id() == id)
+                .cloned()
+                .expect("the transient is open")
+        })
+    }
+
+    fn pressed_at((x, y): (f64, f64)) -> [Event; 2] {
+        let button = telar::PointerButton::Primary;
+        [
+            Event::PointerPressed {
+                x,
+                y,
+                button,
+                source: telar::PointerSource::Mouse,
+            },
+            Event::PointerReleased {
+                x,
+                y,
+                button,
+                source: telar::PointerSource::Mouse,
+            },
+        ]
+    }
+
+    #[test]
+    fn one_on_demand_takes_the_keyboard_only_while_a_control_inside_it_holds_its_windows_focus() {
+        fn focusable_in(entry: Rc<Entry>) -> Contained {
+            let control = StyledContainer::new(
+                LayoutStyle::new().width(40.0).height(20.0),
+                |_| RectStyle::default(),
+                Vec::new(),
+            )
+            .expect("a control")
+            .control(telar::Role::Button)
+            .on_press(|| {});
+            let page = Container::new(
+                LayoutStyle::new().width(200.0).height(100.0),
+                vec![Box::new(control)],
+            )
+            .expect("a page");
+            let node = page.layout_node();
+            telar::compute_layout(
+                node,
+                telar::AvailableSpace::Definite(200.0),
+                telar::AvailableSpace::Definite(100.0),
+            )
+            .expect("it lays out");
+            Contained::new(Box::new(page), entry, || None)
+        }
+
+        telar::reset_runtime();
+        close_all();
+        let scope = telar::owner_scope();
+        open(spec("host", Slot::Free).keyboard(KeyboardMode::Exclusive));
+        open(spec("panel", Slot::Free).keyboard(KeyboardMode::OnDemand));
+        open(
+            Spec::new(
+                "elsewhere",
+                Place::Owned(Owned {
+                    output: None,
+                    layer: LayerKind::Top,
+                    rect: Rc::new(|usable| usable),
+                }),
+                content(),
+            )
+            .keyboard(KeyboardMode::OnDemand),
+        );
+        assert!(
+            !takes_keyboard_besides("host"),
+            "open, neither takes the host's keys"
+        );
+
+        let mut panel = focusable_in(entry_of("panel"));
+        for event in pressed_at((10.0, 10.0)) {
+            panel.on_event(&event);
+        }
+        assert!(focus::current().is_some(), "the press focused the control");
+        assert!(
+            takes_keyboard_besides("host"),
+            "with its control focused, the keys of the window they share are the panel's"
+        );
+        focus::clear();
+        assert!(
+            !takes_keyboard_besides("host"),
+            "focus gone, the keys are the host's again"
+        );
+
+        let mut elsewhere = focusable_in(entry_of("elsewhere"));
+        for event in pressed_at((10.0, 10.0)) {
+            elsewhere.on_event(&event);
+        }
+        assert!(focus::current().is_some());
+        assert!(
+            !takes_keyboard_besides("host"),
+            "one in another window never has the keys the host's window is given"
+        );
+
+        drop((panel, elsewhere));
+        close_all();
+        telar::dispose_owner(scope.id());
     }
 }

@@ -6,9 +6,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use config::Config;
-use layout::{ActiveWorkspace, AreaId, LayerKind, Layout, LayoutId, LayoutStore};
+use layout::{
+    ActiveWorkspace, AreaId, Group, GroupId, GroupKind, Instance, InstanceId, LayerKind, Layout,
+    LayoutId, LayoutStore, Representation,
+};
 use platform_wayland::OutputDescriptor;
 use surfaces::layer_window::{Content, Demands, LayerWindowContext};
+use surfaces::menu::Pointed;
 use surfaces::reconcile::{Shell, plan};
 use surfaces::rects::Node;
 use surfaces::transient;
@@ -18,6 +22,9 @@ use ui::host::Host;
 
 use crate::keys::{self, Press};
 use crate::mode::{self, Compositor, Mode};
+use crate::modes::container::{self, Frame};
+use crate::modes::gesture::{self, Hint};
+use crate::modes::widgets;
 
 /// The one screen a rig draws on.
 pub(crate) const SCREEN: &str = "DP-1";
@@ -230,22 +237,26 @@ pub(crate) fn pointer_at((x, y): (f32, f32)) -> telar::Event {
     }
 }
 
-pub(crate) fn click_at((x, y): (f32, f32)) -> [telar::Event; 2] {
-    let (x, y) = (f64::from(x), f64::from(y));
-    [
-        telar::Event::PointerPressed {
-            x,
-            y,
-            button: telar::PointerButton::Primary,
-            source: telar::PointerSource::Mouse,
-        },
-        telar::Event::PointerReleased {
-            x,
-            y,
-            button: telar::PointerButton::Primary,
-            source: telar::PointerSource::Mouse,
-        },
-    ]
+pub(crate) fn press_at((x, y): (f32, f32)) -> telar::Event {
+    telar::Event::PointerPressed {
+        x: x.into(),
+        y: y.into(),
+        button: telar::PointerButton::Primary,
+        source: telar::PointerSource::Mouse,
+    }
+}
+
+pub(crate) fn release_at((x, y): (f32, f32)) -> telar::Event {
+    telar::Event::PointerReleased {
+        x: x.into(),
+        y: y.into(),
+        button: telar::PointerButton::Primary,
+        source: telar::PointerSource::Mouse,
+    }
+}
+
+pub(crate) fn click_at(at: (f32, f32)) -> [telar::Event; 2] {
+    [press_at(at), release_at(at)]
 }
 
 pub(crate) fn move_and_click(at: (f32, f32)) -> [telar::Event; 3] {
@@ -298,7 +309,11 @@ pub(crate) fn hold_alt(held: bool) {
 }
 
 pub(crate) fn close(a: f32, b: f32) -> bool {
-    (a - b).abs() < 1e-5
+    close_within(a, b, 1e-5)
+}
+
+pub(crate) fn close_within(a: f32, b: f32, eps: f32) -> bool {
+    (a - b).abs() < eps
 }
 
 thread_local! {
@@ -343,4 +358,164 @@ pub(crate) fn draw(layer: LayerKind) {
     )
     .expect("the layer lays out");
     DRAWN.with(|drawn| *drawn.borrow_mut() = Some((scope.id(), tree)));
+}
+
+/// No modifier held.
+pub(crate) const NONE: telar::ModifiersState = telar::ModifiersState {
+    is_shift: false,
+    is_ctrl: false,
+    is_alt: false,
+    is_meta: false,
+};
+
+/// The modifiers `modifiers` holds down.
+pub(crate) fn with(modifiers: fn(&mut telar::ModifiersState)) -> telar::ModifiersState {
+    let mut held = NONE;
+    modifiers(&mut held);
+    held
+}
+
+/// A widget of `module` at size M.
+pub(crate) fn widget(id: &str, module: &str) -> Instance {
+    Instance {
+        id: InstanceId::new(id),
+        module: Some(module.to_string()),
+        representation: Some(Representation::WidgetM),
+        ..Instance::default()
+    }
+}
+
+/// An empty group on the cells `cells` of a grid, as its column, row, columns and rows.
+pub(crate) fn cell_group(id: &str, (col, row, cols, rows): (u32, u32, u32, u32)) -> Group {
+    Group {
+        id: GroupId::new(id),
+        kind: Some(GroupKind::Cell {
+            col,
+            row,
+            col_span: cols,
+            row_span: rows,
+        }),
+        ..Group::default()
+    }
+}
+
+pub(crate) fn centre(rect: telar::Rect) -> (f32, f32) {
+    (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
+}
+
+/// Checks one gesture is one undo entry: undoing it once puts the layout back as it was.
+pub(crate) fn undoes_to(rig: &Rig, before: &Layout) {
+    crate::session::undo().expect("one undo takes it back");
+    assert_eq!(
+        &stored(rig),
+        before,
+        "one undo puts back everything the gesture did"
+    );
+}
+
+/// The container `group` of the desktop grid as it is drawn now.
+pub(crate) fn frame(group: &str) -> Frame {
+    container::frame_in(
+        &widgets::grids(SCREEN, LayerKind::Desktop),
+        &AreaId::new("widgets"),
+        &GroupId::new(group),
+    )
+    .expect("a container on the grid")
+}
+
+/// Lays out what was relaid since the last frame, as the runner does each frame.
+pub(crate) fn settle() {
+    for _ in 0..3 {
+        telar::relayout_if_dirty();
+    }
+}
+
+/// Something built and laid out over the whole screen, which the pointer and the keys reach as the runner routes them.
+pub(crate) struct Page(pub(crate) telar::ComponentList);
+
+impl Page {
+    pub(crate) fn of(built: Built) -> Self {
+        Self::over(vec![built.expect("it builds")])
+    }
+
+    pub(crate) fn over(children: Vec<Box<dyn LayoutItem>>) -> Self {
+        let (width, height) = (1920.0, 1080.0);
+        let root = Pointed::new(Box::new(
+            telar::Container::new(
+                telar::LayoutStyle::new().width(width).height(height),
+                children,
+            )
+            .expect("a page"),
+        ));
+        let node = root.layout_node();
+        let tree = telar::ComponentList::new(root);
+        telar::compute_layout(
+            node,
+            telar::AvailableSpace::Definite(width),
+            telar::AvailableSpace::Definite(height),
+        )
+        .expect("it lays out");
+        settle();
+        Self(tree)
+    }
+
+    /// `event` routed to the overlays first, and to the page where none takes it.
+    pub(crate) fn send(&mut self, event: telar::Event) {
+        telar::observe_keyboard(&event);
+        if !telar::dispatch_overlays(&event) {
+            self.0.on_event(&event);
+        }
+        settle();
+    }
+
+    pub(crate) fn key(&mut self, key: telar::Key) {
+        self.send(telar::Event::KeyPressed {
+            key,
+            modifiers: NONE,
+        });
+    }
+
+    pub(crate) fn move_to(&mut self, at: (f32, f32)) {
+        self.send(pointer_at(at));
+    }
+
+    pub(crate) fn button(&mut self, at: (f32, f32), pressed: bool) {
+        self.send(match pressed {
+            true => press_at(at),
+            false => release_at(at),
+        });
+    }
+
+    pub(crate) fn click(&mut self, at: (f32, f32)) {
+        self.move_to(at);
+        self.button(at, true);
+        self.button(at, false);
+    }
+
+    /// A press at `from`, a move a little way off and then to `to`, and a release there; answers what the drag showed at the pointer just before it was let go.
+    pub(crate) fn drag(&mut self, from: (f32, f32), to: (f32, f32)) -> Option<Hint> {
+        self.move_to(from);
+        self.button(from, true);
+        self.move_to((from.0 + 8.0, from.1 + 8.0));
+        self.move_to(to);
+        let hint = gesture::hint().peek();
+        self.button(to, false);
+        hint
+    }
+
+    /// Where the text `wanted` is drawn, a little inside its start.
+    pub(crate) fn at(&self, wanted: &str) -> (f32, f32) {
+        let mut found = None;
+        telar::for_each_with_matrix(&self.0.commands(), |command, [a, b, c, d, e, f]| {
+            if let telar::DrawCommand::Text { text, rect, .. } = command
+                && text.to_string() == wanted
+            {
+                found = Some((
+                    a * (rect.x + 2.0) + c * (rect.y + rect.height / 2.0) + e,
+                    b * (rect.x + 2.0) + d * (rect.y + rect.height / 2.0) + f,
+                ));
+            }
+        });
+        found.unwrap_or_else(|| panic!("{wanted:?} is drawn"))
+    }
 }

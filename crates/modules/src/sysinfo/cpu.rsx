@@ -28,7 +28,7 @@ let percent = memo(move || format!("{:.0}%", load_text.get()));
 
 [view]
 row align:center gap:(::ui::scale::space::md())
-    icon_glyph name:(Reactive::of(|| "cpu".to_string())) tint:(Reactive::of(move || load_color(load_tint.get(), fg))) size:(host.icon_size())
+    icon_glyph name:(Reactive::of(|| "cpu".to_string())) tint:(Reactive::of(move || load_color(load_tint.get(), fg))) size:(host.live_icon_size())
     text "{$percent}" font_size:$theme.font(FontRole::Body) color:fg
 
 [preview "Cpu" fixture:ui::preview::bar_chip]

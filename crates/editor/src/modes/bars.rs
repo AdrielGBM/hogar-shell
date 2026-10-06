@@ -5,8 +5,8 @@
 use std::cell::{Cell, RefCell};
 
 use telar::{
-    Border, Cursor, LayoutStyle, ReactiveList, Rect, RectStyle, RwSignal, StyledContainer,
-    detached, signal, use_theme,
+    Cursor, LayoutStyle, ReactiveList, Rect, RectStyle, RwSignal, StyledContainer, detached,
+    signal, use_theme,
 };
 
 use config::Edge;
@@ -20,7 +20,8 @@ use crate::host::{self, HOTSPOT, passthrough, see_through, whole};
 use crate::mode::{Mode, said};
 use crate::session::{self, Edit, Selection};
 
-use super::gesture::{self, held, pressable};
+use super::gesture::{self, Hint, held, pressable};
+use super::palette;
 use super::top::{self, ChipLanding, Drawn};
 
 /// How deep the strip along a free stretch of an edge is, that a new bar is pulled out of.
@@ -30,13 +31,13 @@ const INWARD: f32 = 24.0;
 /// How far outside a bar a carried chip still lands on it.
 const CATCH: f32 = 12.0;
 
-/// Where a drag under way would put what it carries, drawn as it goes.
+/// Where a drag under way would put what it carries on a bar.
 #[derive(Clone, Debug, PartialEq)]
 enum Aim {
     /// The line a carried chip would be put at, across the bar it lands on.
     Line(Rect),
-    /// A chip carried off every bar, with the pointer here: letting it go takes it off the layout.
-    Off((f32, f32)),
+    /// Off every bar: letting go takes the chip off the layout, which the pointer's hint says.
+    Off,
 }
 
 thread_local! {
@@ -45,6 +46,13 @@ thread_local! {
 
 fn aim() -> RwSignal<Option<Aim>> {
     AIM.with(|aim| *aim)
+}
+
+pub(crate) fn mark(line: Option<Rect>) {
+    let aimed = line.map(Aim::Line);
+    if aim().peek() != aimed {
+        aim().set(aimed);
+    }
 }
 
 /// The top mode's layer over the edited screen.
@@ -79,7 +87,7 @@ pub(crate) fn tool(mode: &Mode) -> Built {
         )?
     };
     let buttons = {
-        let (listing, building) = (output.clone(), output);
+        let (listing, building) = (output.clone(), output.clone());
         ReactiveList::with_style(
             whole(),
             held(frozen, move || buttons_of(&listing, layer)),
@@ -87,6 +95,15 @@ pub(crate) fn tool(mode: &Mode) -> Built {
             move |button: Button| button.build(&building, layer, frozen),
         )?
     };
+    let placing = ReactiveList::with_style(
+        whole(),
+        move || match palette::picked().get() {
+            Some(_) => seen_on(&output, layer, None),
+            None => Vec::new(),
+        },
+        |bar: &Seen| format!("{bar:?}"),
+        |bar: Seen| line_target(bar),
+    )?;
     Ok(Box::new(passthrough(
         whole(),
         vec![
@@ -94,9 +111,43 @@ pub(crate) fn tool(mode: &Mode) -> Built {
             see_through(bars)?,
             see_through(chips)?,
             see_through(buttons)?,
+            see_through(placing)?,
             marks()?,
         ],
     )?))
+}
+
+fn line_target(bar: Seen) -> Built {
+    let pressing = bar.clone();
+    let rect = bar.rect;
+    Ok(Box::new(
+        StyledContainer::new(
+            surfaces::area::at(rect),
+            |_| RectStyle::default(),
+            Vec::new(),
+        )?
+        .cursor(Cursor::Crosshair)
+        .on_pointer_move(move |_, _| {
+            if let Some(point) = surfaces::menu::pointer() {
+                let (_, line) = bar.landing(bar.along(point));
+                mark(Some(bar.line_at(line)));
+            }
+        })
+        .on_hover(|inside| {
+            if !inside {
+                mark(None);
+            }
+        })
+        .on_press(move || {
+            let (Some(point), Some(pick)) = (surfaces::menu::pointer(), palette::picked().peek())
+            else {
+                return;
+            };
+            let (landing, _) = pressing.landing(pressing.along(point));
+            palette::unpick();
+            said(palette::place(&pick, &palette::Spot::Bar(landing)));
+        }),
+    ))
 }
 
 /// A free stretch of an edge, from `from` to `until` along it.
@@ -310,7 +361,7 @@ pub(crate) struct Seen {
 }
 
 impl Seen {
-    fn along(&self, point: (f32, f32)) -> f32 {
+    pub(crate) fn along(&self, point: (f32, f32)) -> f32 {
         match self.edge.is_vertical() {
             true => point.1,
             false => point.0,
@@ -374,6 +425,58 @@ impl Seen {
     }
 }
 
+pub(crate) fn seen_on(output: &str, layer: LayerKind, carried: Option<&InstanceId>) -> Vec<Seen> {
+    let desktop = reconcile::desktop(Some(output));
+    bars_on(output, layer)
+        .into_iter()
+        .filter_map(|id| {
+            let area = desktop.as_ref()?.resolved.area(layer, &id)?.clone();
+            let edge = area.kind.edge()?;
+            let rect = rects::rect(&Node::area(Some(output), layer, &id))?;
+            let drawn = Drawn::of(Some(output), layer, &id, edge);
+            let zones = [Zone::Start, Zone::Center, Zone::End].map(|zone| {
+                let chips: Vec<(f32, f32)> = area
+                    .groups
+                    .iter()
+                    .filter(|group| {
+                        group.kind == layout::GroupKind::Zone { zone } && group.arrange.is_none()
+                    })
+                    .flat_map(|group| {
+                        group
+                            .children
+                            .iter()
+                            .filter(|child| Some(&child.id) != carried)
+                            .filter_map(|child| {
+                                drawn.along(&Part::Instance(group.id.clone(), child.id.clone()))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                (zone, chips)
+            });
+            Some(Seen {
+                id,
+                edge,
+                rect,
+                zones,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn over(bars: &[Seen], point: (f32, f32)) -> Option<&Seen> {
+    bars.iter().find(|bar| {
+        let rect = bar.rect;
+        Rect::new(
+            rect.x - CATCH,
+            rect.y - CATCH,
+            rect.width + 2.0 * CATCH,
+            rect.height + 2.0 * CATCH,
+        )
+        .contains(point.0, point.1)
+    })
+}
+
 /// A chip being carried: what it is, and the bars as they were when it was taken hold of.
 struct Carried {
     node: Node,
@@ -386,47 +489,11 @@ impl Carried {
             Part::Instance(_, id) => Some(id.template()),
             _ => None,
         };
-        let desktop = reconcile::desktop(Some(output));
-        let bars = bars_on(output, layer)
-            .into_iter()
-            .filter_map(|id| {
-                let area = desktop.as_ref()?.resolved.area(layer, &id)?.clone();
-                let edge = area.kind.edge()?;
-                let rect = rects::rect(&Node::area(Some(output), layer, &id))?;
-                let drawn = Drawn::of(Some(output), layer, &id, edge);
-                let zones = [Zone::Start, Zone::Center, Zone::End].map(|zone| {
-                    let chips: Vec<(f32, f32)> = area
-                        .groups
-                        .iter()
-                        .filter(|group| {
-                            group.kind == layout::GroupKind::Zone { zone }
-                                && group.arrange.is_none()
-                        })
-                        .flat_map(|group| {
-                            group
-                                .children
-                                .iter()
-                                .filter(|child| Some(&child.id) != carried.as_ref())
-                                .filter_map(|child| {
-                                    drawn.along(&Part::Instance(group.id.clone(), child.id.clone()))
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect();
-                    (zone, chips)
-                });
-                Some(Seen {
-                    id,
-                    edge,
-                    rect,
-                    zones,
-                })
-            })
-            .collect();
+        let bars = seen_on(output, layer, carried.as_ref());
         Self { node, bars }
     }
 
-    /// Previews where the chip lands with the pointer at `point`, and marks it: on the bar under the pointer at its insertion line, or off every bar and so off the layout.
+    /// Previews where the chip lands with the pointer at `point`, and marks it: on the bar under the pointer at its insertion line, or off every bar and so off the layout, which the hint beside the pointer says.
     fn preview(&self, edit: &Edit, point: (f32, f32)) {
         let (Some(before), Some(desktop)) = (
             edit.transaction().before(),
@@ -434,25 +501,22 @@ impl Carried {
         ) else {
             return;
         };
-        let over = self.bars.iter().find(|bar| {
-            let rect = bar.rect;
-            Rect::new(
-                rect.x - CATCH,
-                rect.y - CATCH,
-                rect.width + 2.0 * CATCH,
-                rect.height + 2.0 * CATCH,
-            )
-            .contains(point.0, point.1)
-        });
-        let planned = match over {
+        let planned = match over(&self.bars, point) {
             Some(bar) => {
                 let (landing, line) = bar.landing(bar.along(point));
                 top::chip_moved(&before, &desktop, &self.node, &landing)
                     .map(|ops| (ops, Aim::Line(bar.line_at(line))))
             }
-            None => crate::context::removal(&before, &desktop, &self.node)
-                .map(|ops| (ops, Aim::Off(point))),
+            None => {
+                crate::context::removal(&before, &desktop, &self.node).map(|ops| (ops, Aim::Off))
+            }
         };
+        let off = matches!(planned, Ok((_, Aim::Off)));
+        gesture::hint().set(off.then(|| Hint {
+            pointer: point,
+            tag: Some(telar::t!("editor.top.taken_away")),
+            ..Hint::default()
+        }));
         gesture::aimed(edit, planned.ok(), aim());
     }
 }
@@ -663,42 +727,25 @@ fn join_button(first: Node, second: &AreaId) -> Built {
     ))
 }
 
-/// The line a carried chip would be put at, and the note that says what a chip carried off every bar would become.
+/// The line a carried chip would be put at.
 fn marks() -> Built {
     let theme = use_theme::<NordTheme>();
     let list = ReactiveList::with_style(
         whole(),
-        || aim().get().into_iter().collect(),
-        |aimed: &Aim| format!("{aimed:?}"),
-        move |aimed: Aim| -> Built {
-            match aimed {
-                Aim::Line(rect) => Ok(Box::new(
-                    StyledContainer::new(
-                        surfaces::area::at(rect),
-                        move |_| RectStyle::filled(theme.accent, 1.0),
-                        Vec::new(),
-                    )?
-                    .input_transparent(),
-                )),
-                Aim::Off((x, y)) => {
-                    let said = || telar::t!("editor.top.taken_away");
-                    Ok(Box::new(
-                        StyledContainer::new(
-                            LayoutStyle::new()
-                                .absolute()
-                                .inset_start(x + 16.0)
-                                .inset_top(y + 16.0)
-                                .padding_all(ui::scale::space::xs()),
-                            move |_| {
-                                RectStyle::filled(theme.surface, ui::scale::corner::xs())
-                                    .with_border(Border::uniform(theme.accent, 1.0))
-                            },
-                            vec![crate::popover::rows::note(said)?],
-                        )?
-                        .input_transparent(),
-                    ))
-                }
-            }
+        || match aim().get() {
+            Some(Aim::Line(rect)) => vec![rect],
+            Some(Aim::Off) | None => Vec::new(),
+        },
+        |rect: &Rect| format!("{rect:?}"),
+        move |rect: Rect| -> Built {
+            Ok(Box::new(
+                StyledContainer::new(
+                    surfaces::area::at(rect),
+                    move |_| RectStyle::filled(theme.accent, 1.0),
+                    Vec::new(),
+                )?
+                .input_transparent(),
+            ))
         },
     )?;
     see_through(list)

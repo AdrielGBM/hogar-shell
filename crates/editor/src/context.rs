@@ -1,6 +1,6 @@
 //! Context menus on every item and area (TA-4): a secondary press on a chip, a widget, a card or an area's empty space opens one, and so does the menu key (or Shift+F10) on what has the focus, in an edit mode and outside one.
 //!
-//! **What is in it.** An instance's module's own actions, "Customize…", a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), saving its group as a komponent, "Remove" and "Edit <layer>…" — or, for a child of a komponent a group draws, its module's actions, the use's parameters, "Detach" and "Edit <layer>…" ([`crate::komponent`]); an area's own bound actions, "Customize…", what the tools for its kind add ([`add_area_rows`]) and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config (TA-7). On the layer an edit mode is editing, every menu ends with undo, redo, the history to jump through ([`crate::history`]) and the strip's actions. Nothing is offered on the lock layer (TA-8).
+//! **What is in it.** An instance's module's own actions, "Customize…", "Duplicate", "Order ▸" in a `free` container ([`crate::stacking`]), for a child of a container "Customize the container…" and "Take out of the container" ([`crate::modes::container`]), a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), saving its group as a komponent, "Remove" and "Edit <layer>…" — or, for a child of a komponent a group draws, its module's actions, the use's parameters, "Detach" and "Edit <layer>…" ([`crate::komponent`]); an area's own bound actions, "Customize…", "Duplicate" where its kind can be copied ([`crate::duplicate`]), "Order ▸", what the tools for its kind add ([`add_area_rows`]) and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config. On the layer an edit mode is editing, every menu ends with undo, redo, the history to jump through ([`crate::history`]) and the strip's actions. Nothing is offered on the lock layer.
 //!
 //! **Where.** A menu is a transient laid over the whole window it was asked in (F-2.3, DEC-9): the item's own, or the overlay window where that layer is hidden or an edit mode's host is over it. It opens at the pointer, or on the item when the keyboard asked, and never past an edge of the screen.
 //!
@@ -95,8 +95,6 @@ pub fn open(asked: Asked) -> Result<(), EditError> {
         ),
     };
     entries.extend(mode_rows(&node));
-    popover::close();
-    transient::close(ID);
     let window = match mode::current()
         .is_some_and(|mode| node.output.as_deref() == Some(mode.output.as_str()))
     {
@@ -104,28 +102,48 @@ pub fn open(asked: Asked) -> Result<(), EditError> {
         false => window,
     };
     let rect = rects::rect(&node).unwrap_or_default();
+    show(
+        &desktop,
+        (window, area.kind.edge().unwrap_or(Edge::Top)),
+        rect,
+        at.unwrap_or((rect.x, rect.y + rect.height)),
+        entries,
+    );
+    Ok(())
+}
+
+/// Shows `entries` as the one open menu at `at`, kept inside `desktop`'s screen, in the window of `layer` hanging off `rect` by `edge`, closing (and so keeping what it changed) whichever popover or menu was open.
+pub(crate) fn show(
+    desktop: &Desktop,
+    (layer, edge): (LayerKind, Edge),
+    rect: Rect,
+    at: (f32, f32),
+    entries: Vec<MenuEntry>,
+) {
+    popover::close();
+    transient::close(ID);
     SHOWN.with(|shown| {
         *shown.borrow_mut() = Some(Shown {
-            at: at.unwrap_or((rect.x, rect.y + rect.height)),
+            at,
             within: Rect::new(0.0, 0.0, desktop.size.0, desktop.size.1),
             entries,
         })
     });
+    let output = desktop.output.clone();
     let anchor = Anchor {
-        output: node.output.clone(),
-        layer: window,
-        edge: area.kind.edge().unwrap_or(Edge::Top),
+        output: output.clone(),
+        layer,
+        edge,
         rect,
-        chrome: Chrome::global(desktop.config.clone(), node.output.clone()),
+        chrome: Chrome::global(desktop.config.clone(), output.clone()),
         gap: 0.0,
     };
     transient::open(
         Spec::new(ID, Place::Over(anchor), Rc::new(|_: &Chrome| tree()))
-            .output(node.output.clone())
+            .output(output)
             .keyboard(KeyboardMode::Exclusive)
             .on_close(|| SHOWN.with(|shown| *shown.borrow_mut() = None)),
     );
-    Ok(())
 }
 
 /// Opens the menu of what an edit mode has selected, answering whether anything was: in an edit mode the selection is what has the focus, so this is what the menu key opens there.
@@ -229,12 +247,16 @@ fn instance_entries(
         "",
         move || said(popover::open_instance(customized.clone())),
     ));
+    rows.push(duplicate_row(node));
+    rows.extend(crate::stacking::menu(node));
+    rows.extend(crate::modes::container::menu_rows(area, node, holder));
     rows.extend(
         destinations(desktop, node, &resolved, module)
             .into_iter()
             .map(|to| move_row(node, module.name, to)),
     );
     rows.extend(crate::komponent::rows(area, node, holder));
+    rows.extend(crate::panel::rows(node));
     rows.push(remove_row(node, module.name));
     rows.extend(edit_row(node));
     Ok(rows)
@@ -275,6 +297,10 @@ fn area_entries(area: &ResolvedArea, node: &Node) -> Vec<MenuEntry> {
         "",
         move || said(popover::open_area(customized.clone())),
     ));
+    if crate::duplicate::refusal(&area.kind).is_none() {
+        rows.push(duplicate_row(node));
+    }
+    rows.extend(crate::stacking::menu(node));
     let tools: Vec<AreaRows> = AREA_ROWS.with(|tools| {
         tools
             .borrow()
@@ -299,11 +325,15 @@ fn area_entries(area: &ResolvedArea, node: &Node) -> Vec<MenuEntry> {
     rows
 }
 
-/// What the mode adds to the menu of anything on the layer it edits: undo and redo, the history to jump through, and every action of the strip ([`crate::host::add_strip_action`]).
 fn mode_rows(node: &Node) -> Vec<MenuEntry> {
-    if !mode::editing(node) {
-        return Vec::new();
+    match mode::editing(node) {
+        true => edit_mode_rows(),
+        false => Vec::new(),
     }
+}
+
+/// What the mode adds to the menu of anything on the layer it edits: undo and redo, the history to jump through, and every action of the strip ([`crate::host::add_strip_action`]).
+pub(crate) fn edit_mode_rows() -> Vec<MenuEntry> {
     let history = crate::history::current();
     let walk = |label: String, chords: Vec<Chord>, way: Way, possible: bool| {
         let hint = chords.first().map(Chord::spelled).unwrap_or_default();
@@ -381,6 +411,15 @@ fn edit_row(node: &Node) -> Option<MenuEntry> {
             }
         },
     ))
+}
+
+fn duplicate_row(node: &Node) -> MenuEntry {
+    let selection = session::Selection::of(node.clone());
+    MenuEntry::row(
+        telar::t!("editor.menu.duplicate"),
+        crate::duplicate::chord().spelled(),
+        move || said(crate::duplicate::duplicate(&selection)),
+    )
 }
 
 fn remove_row(node: &Node, name: &str) -> MenuEntry {
@@ -743,20 +782,52 @@ pub(crate) fn rows() -> Vec<String> {
     })
 }
 
-/// Picks the row that says `label`, as the panel does: the menu closes, then the row acts.
+/// What the rows of the open menu's submenu `label` say, top to bottom; empty where it has no such submenu.
 #[cfg(test)]
-pub(crate) fn pick(label: &str) {
-    let act = SHOWN.with(|shown| {
+pub(crate) fn sub_rows(label: &str) -> Vec<String> {
+    SHOWN.with(|shown| {
         shown
             .borrow()
             .iter()
             .flat_map(|shown| shown.entries.iter())
             .find_map(|entry| match entry {
-                MenuEntry::Row {
-                    label: said, act, ..
-                } if said == label => Some(Rc::clone(act)),
+                MenuEntry::Sub {
+                    label: said,
+                    entries,
+                } if said == label => Some(
+                    entries
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            MenuEntry::Row { label, .. } | MenuEntry::Sub { label, .. } => {
+                                Some(label.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                ),
                 _ => None,
             })
+            .unwrap_or_default()
+    })
+}
+
+/// Picks the row that says `label`, in the menu or in any of its submenus, as the panel does: the menu closes, then the row acts.
+#[cfg(test)]
+pub(crate) fn pick(label: &str) {
+    fn found(entries: &[MenuEntry], label: &str) -> Option<Rc<dyn Fn()>> {
+        entries.iter().find_map(|entry| match entry {
+            MenuEntry::Row {
+                label: said, act, ..
+            } if said == label => Some(Rc::clone(act)),
+            MenuEntry::Sub { entries, .. } => found(entries, label),
+            _ => None,
+        })
+    }
+    let act = SHOWN.with(|shown| {
+        shown
+            .borrow()
+            .as_ref()
+            .and_then(|shown| found(&shown.entries, label))
     });
     let act = act.unwrap_or_else(|| panic!("no row says {label:?}: {:?}", rows()));
     transient::close(ID);

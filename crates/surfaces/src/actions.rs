@@ -25,6 +25,7 @@ pub struct Bound {
     actions: Rc<BTreeMap<Trigger, Action>>,
     menu: Option<Rc<dyn Fn()>>,
     owner: Option<Node>,
+    own_press: Option<Rc<dyn Fn()>>,
 }
 
 impl Bound {
@@ -52,9 +53,17 @@ impl Bound {
         }
     }
 
+    /// The same, a press nothing bound and no owned panel answers running `own_press`: the module's own press or panel.
+    pub fn with_own_press(self, own_press: Option<Rc<dyn Fn()>>) -> Self {
+        Self { own_press, ..self }
+    }
+
     /// Whether nothing is bound and no menu offered, so there is nothing to answer.
     pub fn is_empty(&self) -> bool {
-        self.actions.is_empty() && self.menu.is_none() && !self.opens_panel()
+        self.actions.is_empty()
+            && self.menu.is_none()
+            && self.own_press.is_none()
+            && !self.opens_panel()
     }
 
     /// What `trigger` runs, if it is bound to a chain with a command in it.
@@ -67,10 +76,15 @@ impl Bound {
         Some(Rc::new(move || run(&action)))
     }
 
-    /// What a press runs, first that answers: its bound action, the panel the layout gives the instance, then `built_in`.
-    pub fn press(&self, built_in: Option<Rc<dyn Fn()>>) -> Option<Rc<dyn Fn()>> {
+    /// What a press runs, first that answers: its bound action, the panel the layout gives the instance, then its own press.
+    pub fn press(&self) -> Option<Rc<dyn Fn()>> {
         self.runs(Trigger::Press)
-            .or_else(|| self.owned_panel(built_in))
+            .or_else(|| self.owned_panel(crate::panel::toggle_owned, self.own_press.clone()))
+    }
+
+    /// What pulling the instance off its bar runs: it opens the panel the layout gives it, else `built_in`. A bound press has no say, since a chain is nothing to open.
+    pub fn drag(&self, built_in: Option<Rc<dyn Fn()>>) -> Option<Rc<dyn Fn()>> {
+        self.owned_panel(crate::panel::open_owned_at, built_in)
     }
 
     fn opens_panel(&self) -> bool {
@@ -78,12 +92,16 @@ impl Bound {
     }
 
     /// Read again at the press, so a panel taken out of the layout since the build hands the press back to `built_in`.
-    fn owned_panel(&self, built_in: Option<Rc<dyn Fn()>>) -> Option<Rc<dyn Fn()>> {
+    fn owned_panel(
+        &self,
+        act: fn(&Node) -> bool,
+        built_in: Option<Rc<dyn Fn()>>,
+    ) -> Option<Rc<dyn Fn()>> {
         let Some(owner) = self.owner.clone().filter(|_| self.opens_panel()) else {
             return built_in;
         };
         Some(Rc::new(move || {
-            if !crate::panel::toggle_owned(&owner)
+            if !act(&owner)
                 && let Some(built_in) = &built_in
             {
                 built_in();
@@ -163,7 +181,7 @@ impl Bound {
 
     /// The bound presses alone — primary, long, middle and secondary, the last falling back to the menu — for a root whose wheel is merged with its own elsewhere.
     pub fn presses(&self, container: StyledContainer) -> StyledContainer {
-        let press = self.press(None);
+        let press = self.press();
         let long_press = self.long_press();
         let alt_press = self.alt_press();
         container
@@ -172,9 +190,26 @@ impl Bound {
             .maybe_on_alt_press(alt_press.map(|run| move |button| run(button)))
     }
 
+    /// The presses alone, for a placeholder standing in for the instance.
+    pub fn answers(&self) -> ui::placeholder::Presses {
+        ui::placeholder::Presses {
+            press: self.press(),
+            long_press: self.long_press(),
+            alt_press: self.alt_press(),
+        }
+    }
+
+    /// [`Bound::answers`] for a placeholder standing in for a module that failed, whose press nothing else answers opens the settings window it can be fixed in.
+    pub fn fixing(&self) -> ui::placeholder::Presses {
+        self.clone()
+            .with_own_press(Some(Rc::new(ui::placeholder::open_settings)))
+            .answers()
+    }
+
     /// Whether any press is bound or a menu offered, which is what a chip with nothing else to wrap it needs a wrapper for.
     pub fn has_presses(&self) -> bool {
         self.menu.is_some()
+            || self.own_press.is_some()
             || self.opens_panel()
             || [
                 Trigger::Press,
@@ -213,7 +248,7 @@ impl Bound {
                 }
             })
         };
-        let press = self.press(None).map(only_there);
+        let press = self.press().map(only_there);
         let long_press = self.long_press().map(only_there);
         let alt_press = self.alt_press().map(|run| {
             let empty = Rc::clone(&empty);
@@ -296,11 +331,11 @@ mod tests {
     fn an_empty_chain_answers_nothing_so_the_press_falls_through() {
         recording();
         let bound = BTreeMap::from([(Trigger::Press, Action(Vec::new()))]);
-        let bound = Bound::of(&bound, Audience::Owner);
-        assert!(bound.runs(Trigger::Press).is_none());
         let built_in: Rc<dyn Fn()> =
             Rc::new(|| RAN.with(|ran| ran.borrow_mut().push("built-in".to_string())));
-        bound.press(Some(built_in)).expect("the built-in answers")();
+        let bound = Bound::of(&bound, Audience::Owner).with_own_press(Some(built_in));
+        assert!(bound.runs(Trigger::Press).is_none());
+        bound.press().expect("the built-in answers")();
         assert_eq!(ran(), ["built-in"]);
     }
 

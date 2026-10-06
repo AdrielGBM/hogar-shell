@@ -73,6 +73,11 @@ pub fn placed(area: &ResolvedArea) -> Vec<(GroupId, Cells)> {
         .collect()
 }
 
+/// The cells every group of `area` placed at an explicit cell covers: what a new group has to keep clear of.
+pub fn taken(area: &ResolvedArea) -> Vec<Cells> {
+    area.groups.iter().filter_map(cells_of).collect()
+}
+
 /// The cells `group` covers, where it is placed at one.
 pub fn cells_of(group: &ResolvedGroup) -> Option<Cells> {
     let GroupKind::Cell { col, row, .. } = group.kind else {
@@ -87,23 +92,29 @@ pub fn cells_of(group: &ResolvedGroup) -> Option<Cells> {
     })
 }
 
-/// The free cells nearest `near` that a group of `size` fits on without covering any of `taken`: inside `room` wherever there is space there, else in the first rows below everything.
-pub fn nearest_free(taken: &[Cells], size: Cells, near: (u32, u32), room: Room) -> Cells {
-    let free = |cells: &Cells| !taken.iter().any(|other| other.overlaps(cells));
-    let nearest = |candidates: Vec<Cells>| {
-        candidates
-            .into_iter()
-            .filter(free)
-            .min_by_key(|cells| (cells.distance(near), cells.row, cells.col))
-    };
+fn nearest_of(taken: &[Cells], candidates: Vec<Cells>, near: (u32, u32)) -> Option<Cells> {
+    candidates
+        .into_iter()
+        .filter(|cells| !taken.iter().any(|other| other.overlaps(cells)))
+        .min_by_key(|cells| (cells.distance(near), cells.row, cells.col))
+}
+
+/// The free cells nearest `near` inside `room` that a group of `size` fits on without covering any of `taken`; `None` where there is no such space.
+pub fn free_inside(taken: &[Cells], size: Cells, near: (u32, u32), room: Room) -> Option<Cells> {
     let widest = room.cols.saturating_sub(size.cols);
     let inside = (0..=room.rows.saturating_sub(size.rows))
         .flat_map(|row| (0..=widest).map(move |col| size.at(col, row)))
         .filter(|cells| cells.fits(room))
         .collect();
-    if let Some(found) = nearest(inside) {
+    nearest_of(taken, inside, near)
+}
+
+/// The free cells nearest `near` that a group of `size` fits on without covering any of `taken`: inside `room` wherever there is space there, else in the first rows below everything.
+pub fn nearest_free(taken: &[Cells], size: Cells, near: (u32, u32), room: Room) -> Cells {
+    if let Some(found) = free_inside(taken, size, near, room) {
         return found;
     }
+    let widest = room.cols.saturating_sub(size.cols);
     let below = taken
         .iter()
         .map(|cells| cells.row + cells.rows)
@@ -113,7 +124,7 @@ pub fn nearest_free(taken: &[Cells], size: Cells, near: (u32, u32), room: Room) 
     let spill = (0..=below)
         .flat_map(|row| (0..=widest).map(move |col| size.at(col, row)))
         .collect();
-    nearest(spill).unwrap_or_else(|| size.at(0, below))
+    nearest_of(taken, spill, near).unwrap_or_else(|| size.at(0, below))
 }
 
 /// A group by its id, on the cells it covers.

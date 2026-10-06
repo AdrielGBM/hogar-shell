@@ -1,6 +1,6 @@
 [logic]
 use crate::icon_glyph::{icon_glyph, IconGlyphProps};
-use crate::module::{DragOpen, Placement, from_chip, open_panel};
+use crate::module::{DragOpen, Placement, from_chip};
 use ::config::Variant;
 use ::config::theme::NordTheme;
 use std::cell::RefCell;
@@ -19,8 +19,9 @@ pub struct Props {
     pub radius: f32 = 0.0,
     /// A square icon chip that scales with the bar, rather than a content-width text pill.
     pub square: bool = false,
-    /// The padding around a square chip's icon, which is what makes it as wide as its bar is thick: [`crate::host::Host::inset`].
-    pub inset: f32 = 0.0,
+    /// The padding around a square chip's icon, which is what makes it as wide as its bar is thick: [`crate::host::Host::inset`], followed as the chip's box changes.
+    #[props(into)]
+    pub inset: Reactive<f32> = Reactive::Const(0.0),
     /// Whether the chip runs down a vertical bar, where it has no length to give up.
     pub vertical: bool = false,
     /// Gives up width when the bar is short of it, instead of holding the chip's content width. Only for a chip whose label elides — otherwise it hides its own tail with nothing to say so.
@@ -49,8 +50,13 @@ let (hover, active) = match props.variant {
 };
 
 // A square chip stretches to the bar's thickness, and symmetric padding around a bar-proportional icon (see `Host::icon_size`) makes the other side match.
-let inset_x = if props.square { props.inset } else { 8.0 };
-let inset_y = if props.square { props.inset } else { 2.0 };
+let square = props.square;
+let inset = props.inset;
+let inset_x = memo({
+    let inset = inset.clone();
+    move || if square { inset.get() } else { 8.0 }
+});
+let inset_y = memo(move || if square { inset.get() } else { 2.0 });
 
 // An elastic chip needs the floor out from under it as well as the willingness to shrink: a flex item's own minimum is its content, and a label that has not been told it may elide reports the whole title as content. Only along a horizontal bar, where there is a length to give up — down a vertical one a chip's width is the bar's, and these modules show their glyph alone anyway.
 let elastic = props.elastic && !props.vertical;
@@ -92,14 +98,14 @@ let settle = drag.map(|drag| {
         let from = released.borrow_mut().take().unwrap_or((x, y));
         if drag.travel(from, (x, y)) >= drag.threshold {
             let chip = crate::module::Pressed { rect: dragged.get(), output: dragged_on.clone(), placement: dragged_at.clone() };
-            from_chip(chip, || open_panel(&drag.module));
+            from_chip(chip, || (drag.open)());
         }
     }
 });
 
 [view]
 // Both halves of the drag sit on the pressable box itself, not on a wrapper: a child hit-tests first, so a drag armed outside it would never see the press.
-row track_rect:$chip align:center justify:center pad_x:inset_x pad_y:inset_y shrink:shrink min_width:floor fill:base radius:radius input_opaque hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_long_press:(long_press.map(|f| move || f())) on_alt_press:(alt_press.map(|f| move |button| f(button))) on_drag:arm on_drag_end:settle
+row track_rect:$chip align:center justify:center pad_x:$inset_x pad_y:$inset_y shrink:shrink min_width:floor fill:base radius:radius input_opaque hover_style(fill:hover) active_style(fill:active) on_press:press on_scroll:(scroll.map(|f| move |dx, dy| f(dx, dy))) on_long_press:(long_press.map(|f| move || f())) on_alt_press:(alt_press.map(|f| move |button| f(button))) on_drag:arm on_drag_end:settle
     children
 
 [preview "Module chip" fixture:crate::preview::bar_chip]

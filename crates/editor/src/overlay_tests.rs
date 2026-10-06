@@ -8,7 +8,10 @@ mod tests {
         ModifiersState, compute_layout,
     };
 
+    use std::time::{Duration, Instant};
+
     use layout::{Anchor, AreaId, CardKind, LayerKind, Offset, Route, RoutedCard, Urgency};
+    use surfaces::card_samples::{self, Shown};
     use surfaces::pinned;
     use surfaces::reconcile;
     use surfaces::rects::Node;
@@ -69,8 +72,9 @@ mod tests {
         is_shift: true,
         ..NONE
     };
-    const ALT: ModifiersState = ModifiersState {
+    const ALT_SHIFT: ModifiersState = ModifiersState {
         is_alt: true,
+        is_shift: true,
         ..NONE
     };
 
@@ -132,7 +136,7 @@ mod tests {
         urgency: None,
     };
 
-    /// TA-5: Shift+N makes a stack in the middle and selects it; an anchor pressed pins it there exactly; Alt+arrows move it off its anchor until the screen's edge stops it; its width is set from the popover — each one entry in the history, and undoing them all takes the stack away again.
+    /// Shift+N makes a stack in the middle and selects it; an anchor pressed pins it there exactly; Alt+Shift+arrows move it off its anchor until the screen's edge stops it; its width is set from the popover — each one entry in the history, and undoing them all takes the stack away again.
     #[test]
     fn a_stack_is_made_pinned_moved_and_widened_each_as_one_undo_entry() {
         let rig = rig_with("overlay-stack", |_| {});
@@ -159,19 +163,19 @@ mod tests {
             Some("Pin stack-2 to the top right")
         );
 
-        assert!(tap(arrow(Direction::Down), ALT));
-        assert!(tap(arrow(Direction::Left), ALT));
+        assert!(tap(arrow(Direction::Down), ALT_SHIFT));
+        assert!(tap(arrow(Direction::Left), ALT_SHIFT));
         assert_eq!(
             stack("stack-2").map(|placed| placed.offset),
             Some(Offset { x: -8.0, y: 8.0 })
         );
-        assert!(tap(arrow(Direction::Right), ALT));
+        assert!(tap(arrow(Direction::Right), ALT_SHIFT));
         assert!(
-            tap(arrow(Direction::Right), ALT),
+            tap(arrow(Direction::Right), ALT_SHIFT),
             "to the very edge of the screen"
         );
         let at_edge = stack("stack-2").expect("the stack");
-        tap(arrow(Direction::Right), ALT);
+        tap(arrow(Direction::Right), ALT_SHIFT);
         assert_eq!(
             stack("stack-2").map(|placed| placed.offset),
             Some(at_edge.offset),
@@ -261,7 +265,7 @@ mod tests {
         );
     }
 
-    /// TA-5: `v` makes a stack where volume and brightness appear, and Shift+L where the launcher opens — at that stack's anchor, on no other stack of the screen — and pressed again each puts things back; undo does too.
+    /// `v` makes a stack where volume and brightness appear, and Shift+O where the launcher opens — at that stack's anchor, on no other stack of the screen — and pressed again each puts things back; undo does too.
     #[test]
     fn volume_and_brightness_and_the_launcher_are_placed_at_a_stack() {
         let rig = rig_with("overlay-placement", |_| {});
@@ -292,7 +296,7 @@ mod tests {
         );
         assert_eq!(lands(OSD).as_deref(), Some("stack-2"));
 
-        assert!(tap(Key::Char('L'), SHIFT));
+        assert!(tap(Key::Char('O'), SHIFT));
         assert!(matches!(
             modules::launcher::placement(Some(SCREEN)),
             Place::Pinned {
@@ -322,7 +326,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(tap(Key::Char('L'), SHIFT));
+        assert!(tap(Key::Char('O'), SHIFT));
         assert!(matches!(
             modules::launcher::placement(Some(SCREEN)),
             Place::Centred
@@ -572,5 +576,168 @@ mod tests {
         assert_eq!(routes, vec![overlay::osd_route()]);
         assert!(overlay::shows_osd(&routes));
         assert!(overlay::osd_toggled(routes).is_empty());
+    }
+
+    fn tap_t() -> bool {
+        tap(Key::Char('t'), NONE)
+    }
+
+    fn sample_kinds() -> Vec<(CardKind, Option<Urgency>)> {
+        card_samples::samples()
+            .peek()
+            .iter()
+            .map(|sample| (sample.kind, sample.urgency))
+            .collect()
+    }
+
+    fn shown(id: &str) -> Vec<(CardKind, Option<Urgency>)> {
+        overlay::shown_in(SCREEN, LayerKind::Overlay, &AreaId::new(id))
+            .into_iter()
+            .filter_map(|shown| match shown {
+                Shown::Card(sample) => Some((sample.kind, sample.urgency)),
+                Shown::Launcher(_) => None,
+            })
+            .collect()
+    }
+
+    /// `t` sends the five samples in turn, each drawn in the stack `layout::route_card` picks: the critical one in the stack routed `urgency = "critical"`, the rest in the corner. Each goes after the lifetime its real card has under the default config, nothing reaches the toaster, and leaving the mode clears what is left.
+    #[test]
+    fn sample_cards_are_routed_into_the_stacks_expire_and_go_with_the_mode() {
+        let _rig = rig_with("overlay-try", |_| {});
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Overlay);
+        overlay::add_stack().expect("a stack in the middle");
+        popover::open_area(node("stack-2")).expect("its popover opens");
+        let _ = laid();
+        popover::shared::<Vec<Route>>("routes")
+            .expect("the stack's routes")
+            .set(vec![Route {
+                kind: Some(CardKind::Notification),
+                app: None,
+                urgency: Some(Urgency::Critical),
+            }]);
+        popover::close();
+
+        for _ in 0..4 {
+            assert!(tap_t());
+        }
+        let normal = (CardKind::Notification, Some(Urgency::Normal));
+        let critical = (CardKind::Notification, Some(Urgency::Critical));
+        assert_eq!(sample_kinds().len(), 4, "{:?}", sample_kinds());
+        assert_eq!(shown("stack-2"), vec![critical]);
+        assert_eq!(
+            shown("stack"),
+            vec![normal, (CardKind::Toast, None), (CardKind::Osd, None)]
+        );
+        assert!(services::toaster::current().is_empty());
+
+        let now = Instant::now();
+        card_samples::sweep(now + Duration::from_millis(2000));
+        assert_eq!(
+            sample_kinds().len(),
+            4,
+            "nothing goes before [stack] timeout_ms"
+        );
+        card_samples::sweep(now + Duration::from_millis(3100));
+        assert_eq!(
+            sample_kinds(),
+            vec![critical],
+            "everything but the sticky critical notification goes after [stack] timeout_ms"
+        );
+        card_samples::sweep(now + Duration::from_secs(121));
+        assert!(
+            sample_kinds().is_empty(),
+            "and that one after [notifications] critical_max_secs"
+        );
+
+        assert!(tap_t());
+        assert!(card_samples::launcher().peek().is_some());
+        assert!(tap_t());
+        assert_eq!(
+            sample_kinds(),
+            vec![normal],
+            "the sixth press starts round again"
+        );
+
+        mode::leave();
+        assert!(card_samples::samples().peek().is_empty());
+        assert!(card_samples::launcher().peek().is_none());
+    }
+
+    /// Volume only in every stack: every sample but the OSD is refused, and each refusal moves `t` on to the next, so the OSD still comes up.
+    #[test]
+    fn a_refused_sample_does_not_hold_up_the_ones_after_it() {
+        let _rig = rig_with("overlay-try-past-refusals", |_| {});
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Overlay);
+        only_volume_everywhere();
+        for refused in ["notification", "critical", "toast"] {
+            assert!(tap_t(), "{refused}");
+            assert!(mode::refusal().peek().is_some(), "{refused}");
+            assert!(card_samples::samples().peek().is_empty(), "{refused}");
+        }
+        assert!(tap_t());
+        assert_eq!(sample_kinds(), vec![(CardKind::Osd, None)]);
+    }
+
+    /// A sample stays up as long as the real card of its kind would under the edited screen's config: the column's `[stack] timeout_ms`, but a critical notification under `critical_sticky` until `critical_max_secs`, for as long as the mode is up where that is `0`.
+    #[test]
+    fn a_sample_lives_as_long_as_the_config_keeps_its_card_up() {
+        let mut config = config::Config::default();
+        config.stack.timeout_ms = 5000;
+        let toast = card_samples::Sample::toast("camera", String::new(), String::new());
+        let osd = card_samples::Sample::osd(40);
+        let critical = card_samples::Sample::notification(
+            "UPower",
+            Urgency::Critical,
+            String::new(),
+            String::new(),
+        );
+        let normal = card_samples::Sample::notification(
+            "Mail",
+            Urgency::Normal,
+            String::new(),
+            String::new(),
+        );
+        let five = Some(Duration::from_secs(5));
+        for sample in [&toast, &osd, &normal] {
+            assert_eq!(card_samples::lifetime(sample, &config), five, "{sample:?}");
+        }
+        assert_eq!(
+            card_samples::lifetime(&critical, &config),
+            Some(Duration::from_secs(120))
+        );
+        config.notifications.critical_max_secs = 0;
+        assert_eq!(card_samples::lifetime(&critical, &config), None);
+        config.notifications.critical_sticky = false;
+        assert_eq!(card_samples::lifetime(&critical, &config), five);
+    }
+
+    /// Volume and brightness in every stack, and nothing else.
+    fn only_volume_everywhere() {
+        overlay::add_stack().expect("a stack");
+        for id in ["stack", "stack-2"] {
+            let node = node(id);
+            let ops = overlay::osd_here(
+                &session::draft().peek(),
+                &screen(),
+                LayerKind::Overlay,
+                &node.area,
+                &[],
+            )
+            .expect("routes only volume");
+            context::commit("osd".to_string(), ops).expect("committed");
+        }
+    }
+
+    /// A sample that no stack takes is refused and nothing is put up.
+    #[test]
+    fn a_sample_no_stack_takes_is_refused() {
+        let _rig = rig_with("overlay-try-nowhere", |_| {});
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Overlay);
+        only_volume_everywhere();
+        assert!(overlay::try_card(overlay::Try::Toast).is_err());
+        assert!(card_samples::samples().peek().is_empty());
     }
 }

@@ -1,6 +1,11 @@
 //! Layout styles, and the input claim, more than one surface or module reaches for.
 
-use telar::{AlignItems, Color, JustifyContent, LayoutStyle, SizeDimension, StyledContainer};
+use std::cell::RefCell;
+
+use telar::{
+    AlignItems, Children, Color, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
+    SizeDimension, Slots, StyledContainer,
+};
 
 use config::Align;
 
@@ -36,4 +41,17 @@ pub fn justify(align: Align) -> JustifyContent {
         Align::Center => JustifyContent::CENTER,
         Align::End => JustifyContent::FLEX_END,
     }
+}
+
+/// `content` as the children of a component that builds them once, which is what a shell wrapped around one module's tree hands it.
+pub fn built_once(content: Box<dyn LayoutItem>) -> Children {
+    let mut slots = Slots::new();
+    slots.push(None, content);
+    let slots = RefCell::new(Some(slots));
+    Children::new(move || {
+        slots
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| LayoutError::Engine("children built twice".into()))
+    })
 }

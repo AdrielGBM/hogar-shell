@@ -9,12 +9,12 @@ pub(crate) const PANEL: Target = Target {
     commands: &[
         Command {
             name: "toggle",
-            args: "<module>",
-            help: "open a module's panel, or close it if it is up",
+            args: "<module|instance>",
+            help: "open a module's panel, or close it if it is up; an instance opens the panel the layout gives it, else its module's panel beside it",
             run: |args| {
-                let module = with_panel(arg(args, 0, "module")?)?;
-                surfaces::panel::toggle_panel(module);
-                Ok(module.to_string())
+                let id = arg(args, 0, "module|instance")?;
+                surfaces::panel::toggle_named(id)?;
+                Ok(id.to_string())
             },
         },
         Command {
@@ -280,3 +280,80 @@ pub(crate) const TOAST: Target = Target {
         },
     ],
 };
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use layout::{
+        AreaId, InstanceId, LayerKind, Library, Resolved, ResolvedArea, ResolvedAreaKind, Style,
+        Within,
+    };
+
+    use crate::core::commands::dispatch;
+
+    /// The shipped layout on DP-1 with a panel owned by its bar's clock.
+    fn clock_owning_a_panel() -> Resolved {
+        let shipped = layout::resolve(&layout::built_in(), &Library::default(), "DP-1", None).0;
+        let panel = ResolvedArea {
+            id: AreaId::new("clock-panel"),
+            kind: ResolvedAreaKind::Panel {
+                owner: InstanceId::new("clock"),
+                along: false,
+                cols: 2,
+                rows: 2,
+                cell: 40.0,
+                gap: 8.0,
+            },
+            reserve: false,
+            above_fullscreen: false,
+            within: Within::Output,
+            style: Style::default(),
+            visible: None,
+            groups: Vec::new(),
+            actions: BTreeMap::new(),
+        };
+        let layers = LayerKind::ALL.into_iter().filter_map(|kind| {
+            let mut layer = shipped.layer(kind)?.clone();
+            if kind == LayerKind::Top {
+                layer.areas.push(panel.clone());
+            }
+            Some((kind, layer))
+        });
+        Resolved::of("DP-1", layers)
+    }
+
+    /// `panel toggle <instance>` opens and closes the panel the layout gives that instance, under the id `panel list` names it by; a name nothing answers to is refused.
+    #[test]
+    fn panel_toggle_an_instance_toggles_the_panel_it_owns() {
+        ui::descriptor::install(crate::core::modules::MODULES);
+        surfaces::transient::close_all();
+        surfaces::reconcile::publish(&[surfaces::reconcile::Desktop {
+            output: Some("DP-1".to_string()),
+            config: Arc::new(config::Config::default()),
+            resolved: clock_owning_a_panel(),
+            reserved: Default::default(),
+            size: (1920.0, 1080.0),
+        }]);
+
+        assert_eq!(dispatch("panel toggle clock"), "ok clock");
+        assert!(
+            surfaces::transient::is_open("clock@DP-1"),
+            "{:?}",
+            surfaces::transient::open_ids()
+        );
+        assert!(
+            !surfaces::transient::is_open("clock"),
+            "not the module's own"
+        );
+        assert_eq!(dispatch("panel toggle clock"), "ok clock");
+        assert!(!surfaces::transient::is_open("clock@DP-1"));
+
+        assert_eq!(
+            dispatch("panel toggle no-such-thing"),
+            "err 'no-such-thing' has no panel"
+        );
+        surfaces::transient::close_all();
+    }
+}

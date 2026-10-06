@@ -1188,6 +1188,14 @@ fn blank(kind: &str) -> Option<AreaKind> {
             rect: None,
             anchor: None,
         },
+        "panel" => AreaKind::Panel {
+            owner: None,
+            along: None,
+            cols: None,
+            rows: None,
+            cell: None,
+            gap: None,
+        },
         "prompt" => AreaKind::Prompt { rect: None },
         _ => return None,
     })

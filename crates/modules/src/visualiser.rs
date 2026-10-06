@@ -1,7 +1,7 @@
 //! The audio visualiser: a ring in a small widget, a row on `[widgets.visualiser] edge` in a wider one. The bars hide by opacity, never by leaving the tree: rebuilding children on a value that changes with the music is a re-layout per frame.
 
 use telar::{
-    LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension, StyledContainer,
+    Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, SizeDimension, StyledContainer,
     motion::Animated, signal,
 };
 
@@ -45,22 +45,32 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     // Which edge the bars stand on is the dock area's, handed down by the host — a row of bars does not carry its own idea of where it is.
     let edge = host.axis.unwrap_or(Edge::Bottom);
     let bars = if host.is_small() {
-        let radius = host.extent.width.min(host.extent.height) / 2.0;
+        let ring = host.clone();
+        let radius = telar::memo(move || {
+            let extent = ring.extent();
+            extent.width.min(extent.height) / 2.0
+        });
         widget::spectrum_ring(
             bands,
             tint,
-            radius * RING_HOLE,
-            radius * (1.0 - RING_HOLE),
+            telar::memo(move || radius.get() * RING_HOLE),
+            telar::memo(move || radius.get() * (1.0 - RING_HOLE)),
             style,
             fill(),
         )?
     } else {
-        let across = if edge.is_horizontal() {
-            host.extent.height
-        } else {
-            host.extent.width
+        let row = host.clone();
+        let standing = move || {
+            let extent = row.extent();
+            let across = if edge.is_horizontal() {
+                extent.height
+            } else {
+                extent.width
+            };
+            standing_on(edge, across)
         };
-        widget::spectrum(bands, tint, edge, style, standing_on(edge, across))?
+        let spectrum = widget::spectrum(bands, tint, edge, style, fill())?;
+        Box::new(Container::new(standing(), vec![spectrum])?.styled_by(standing))
     };
 
     let fade = fade(&settings, &host.config().animation, silent.read_only());

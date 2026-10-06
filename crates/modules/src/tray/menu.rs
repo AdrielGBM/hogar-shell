@@ -13,7 +13,7 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use services::dbusmenu::{self, MenuItem, Toggle};
 use services::tray::TrayItem;
-use surfaces::transient::{self, Anchor, Motion, Place, Spec};
+use surfaces::transient::{self, Place, Spec};
 use ui::chrome::{Chrome, content_radius, panel_fill};
 use ui::icon::{app_icon_view, icon_view};
 use ui::scale::{corner, space};
@@ -40,7 +40,7 @@ pub fn close() {
 /// Opens `item`'s menu under its chip, or closes it if that same menu is already up.
 ///
 /// The layout is fetched on a worker thread and the transient opened from the handler, which [`platform_wayland::watch`] runs on the driver thread — the only place a transient may be opened. Doing the round trip inline would stall the frame on however long another application takes to answer.
-pub fn toggle(item: &TrayItem, anchor: Anchor) {
+pub fn toggle(item: &TrayItem, place: Place) {
     // Both halves matter: `OPEN_FOR` alone would still name this item after the menu was dismissed by a click outside it, and the next click on the same chip would read as "close" and do nothing.
     let already_open = transient::is_open(ID)
         && OPEN_FOR.with(|o| o.borrow().as_deref() == Some(item.key.as_str()));
@@ -70,11 +70,11 @@ pub fn toggle(item: &TrayItem, anchor: Anchor) {
                 return;
             };
             let (bus, path) = (event_bus.clone(), event_path.clone());
-            let edge = anchor.edge;
+            let motion = place.motion();
             transient::open(
                 Spec::new(
                     ID,
-                    Place::Beside(anchor.clone()),
+                    place.clone(),
                     Rc::new(move |chrome: &Chrome| {
                         menu_view(
                             &root,
@@ -86,7 +86,7 @@ pub fn toggle(item: &TrayItem, anchor: Anchor) {
                     }),
                 )
                 .dismiss_on_outside()
-                .motion(Motion::Slide(edge))
+                .motion(motion)
                 .on_close(|| OPEN_FOR.with(|o| *o.borrow_mut() = None)),
             );
         },

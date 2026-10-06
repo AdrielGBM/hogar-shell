@@ -1,7 +1,6 @@
 //! What a module is, declared once: its id, the representations it can be shown as, the options it reads, the verbs it answers and the readings it exposes; the table is installed at startup so a surface can resolve a module id without naming a module.
 
 use std::cell::Cell;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use platform_wayland::KeyboardMode;
@@ -404,7 +403,7 @@ impl ModuleDescriptor {
                     (popout.build)(host)
                         .fill(host.config().panel_fill())
                         .radius(host.shape.radius)
-                        .width(host.extent.width)
+                        .width(host.extent().width)
                         .build(Density::Compact)
                 }));
             }
@@ -495,12 +494,12 @@ pub fn closed(module: &str) {
     }
 }
 
-/// Builds `build` in a box laid out by `style`, so that a failure — an error or a panic, during the build or in a later re-run of what it built — is logged and shows `id`'s placeholder for `host` in its place instead of failing the surface around it. `menu` is what a secondary press on that placeholder opens ([`placeholder::placeholder`]).
+/// Builds `build` in a box laid out by `style`, so that a failure — an error or a panic, during the build or in a later re-run of what it built — is logged and shows `id`'s placeholder for `host` in its place instead of failing the surface around it. `presses` is what that placeholder answers.
 pub fn guard(
     id: &str,
     host: &Host,
     style: LayoutStyle,
-    menu: Option<Rc<dyn Fn()>>,
+    presses: placeholder::Presses,
     build: impl FnOnce() -> Built + 'static,
 ) -> Built {
     let id = id.to_string();
@@ -508,17 +507,33 @@ pub fn guard(
     let boundary = ErrorBoundary::with_style(style, build, move |failure| {
         tracing::error!("'{id}' as {:?}: {failure}", host.representation);
         let theme = host.config().resolve_theme();
-        placeholder::placeholder(&id, Some(&failure.to_string()), &host, theme, menu.clone())
+        placeholder::placeholder(
+            &id,
+            Some(&failure.to_string()),
+            &host,
+            theme,
+            presses.clone(),
+        )
     })?;
     Ok(Box::new(boundary))
 }
 
 /// `id`'s `host.representation` from the installed table, guarded by [`guard`]: an id no module answers to and a representation it does not declare fail the same way a build does.
 pub fn place(id: &str, host: &Host, style: LayoutStyle) -> Built {
+    place_answering(id, host, style, placeholder::Presses::fixing())
+}
+
+/// [`place`], its placeholder answering `presses`: none, under a wrapper that answers every press itself.
+pub fn place_answering(
+    id: &str,
+    host: &Host,
+    style: LayoutStyle,
+    presses: placeholder::Presses,
+) -> Built {
     let descriptor = find(id).copied();
     let module = id.to_string();
     let built_host = host.clone();
-    guard(id, host, style, None, move || {
+    guard(id, host, style, presses, move || {
         let descriptor = descriptor
             .ok_or_else(|| LayoutError::Engine(format!("no module answers to '{module}'")))?;
         descriptor.build(&built_host).unwrap_or_else(|| {

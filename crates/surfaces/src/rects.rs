@@ -59,7 +59,7 @@ impl Node {
     }
 }
 
-/// What a chip on a bar tells whatever it opens: the module and options it speaks for, and where on its bar it sits.
+/// What a chip tells whatever it opens: the module and options it speaks for, and where it sits.
 #[derive(Clone)]
 pub struct Chip {
     pub instance: ui::host::Instance,
@@ -127,6 +127,8 @@ struct Entry {
     node: Node,
     measure: Measure,
     chip: Option<Chip>,
+    /// Whether it says where its node is, rather than only where the chip that node holds is.
+    placed: bool,
 }
 
 thread_local! {
@@ -138,19 +140,24 @@ thread_local! {
 /// Records where the layout node `laid` lands as `node`, for as long as the owner building it lives, and hands back the rect it is tracked by.
 pub fn track(node: Node, laid: NodeId) -> Option<RwSignal<Rect>> {
     let rect = track_layout(laid)?;
-    enter(node, Measure::Laid(rect), None);
+    enter(node, Measure::Laid(rect), None, true);
     Some(rect)
 }
 
 /// [`track`] for a chip on a bar, which also says what the chip opens and where; `rect` is the chip's own tracked rect.
 pub fn track_chip(node: Node, rect: RwSignal<Rect>, chip: Chip) {
-    enter(node, Measure::Laid(rect), Some(chip));
+    enter(node, Measure::Laid(rect), Some(chip), true);
+}
+
+/// What the chip at `node` opens and where the chip itself is, for a chip whose node [`track`] already records by the box it was placed in, which can be larger than the chip: only what a press or a command opens finds it.
+pub fn track_opener(node: Node, rect: RwSignal<Rect>, chip: Chip) {
+    enter(node, Measure::Laid(rect), Some(chip), false);
 }
 
 /// Records `node` as the smallest rect around `rects`, for a group with no box of its own.
 pub fn track_spanning(node: Node, rects: Vec<RwSignal<Rect>>) {
     if !rects.is_empty() {
-        enter(node, Measure::Spanning(rects), None);
+        enter(node, Measure::Spanning(rects), None, true);
     }
 }
 
@@ -159,10 +166,10 @@ pub type Copies = RwSignal<BTreeMap<InstanceId, RwSignal<Rect>>>;
 
 /// Records `node` as the smallest rect around the chips `copies` holds at the time it is read, for a repeated group on a bar.
 pub fn track_copies(node: Node, copies: Copies) {
-    enter(node, Measure::Copies(copies), None);
+    enter(node, Measure::Copies(copies), None, true);
 }
 
-fn enter(node: Node, measure: Measure, chip: Option<Chip>) {
+fn enter(node: Node, measure: Measure, chip: Option<Chip>, placed: bool) {
     let token = NEXT.with(|next| next.replace(next.get() + 1));
     ENTRIES.with(|entries| {
         let mut entries = entries.borrow_mut();
@@ -172,6 +179,7 @@ fn enter(node: Node, measure: Measure, chip: Option<Chip>) {
             node,
             measure,
             chip,
+            placed,
         });
     });
     changed();
@@ -197,7 +205,7 @@ pub fn rect(node: &Node) -> Option<Rect> {
             .borrow()
             .iter()
             .rev()
-            .find(|entry| entry.node == *node && entry.measure.is_alive())
+            .find(|entry| entry.placed && entry.node == *node && entry.measure.is_alive())
             .map(|entry| entry.measure.get())
     })
 }
@@ -209,6 +217,7 @@ pub fn on(output: Option<&str>, layer: LayerKind) -> Vec<(Node, Rect)> {
         entries
             .borrow()
             .iter()
+            .filter(|entry| entry.placed)
             .filter(|entry| entry.node.output.as_deref() == output && entry.node.layer == layer)
             .filter(|entry| entry.measure.is_alive())
             .map(|entry| (entry.node.clone(), entry.measure.get()))
@@ -224,6 +233,7 @@ pub fn instance(output: Option<&str>, id: &InstanceId) -> Option<(Node, Rect)> {
             .borrow()
             .iter()
             .rev()
+            .filter(|entry| entry.placed)
             .filter(|entry| entry.node.output.as_deref() == output)
             .filter(|entry| matches!(&entry.node.part, Part::Instance(_, held) if held == id))
             .find(|entry| entry.measure.is_alive())
@@ -240,7 +250,8 @@ pub fn over_instance(
 ) -> bool {
     ENTRIES.with(|entries| {
         entries.borrow().iter().any(|entry| {
-            matches!(entry.node.part, Part::Instance(..))
+            entry.placed
+                && matches!(entry.node.part, Part::Instance(..))
                 && entry.node.is_in(output, layer, area)
                 && entry.measure.is_alive()
                 && entry.measure.peek().contains(at.0, at.1)
@@ -248,14 +259,20 @@ pub fn over_instance(
     })
 }
 
-/// Every chip on a bar, with where it is now, in the order they were built. Read without subscribing, for what a press or a command opens.
-pub(crate) fn chips() -> Vec<(Chip, Rect)> {
+/// Every chip, on a bar or anywhere else, with where the chip itself is now, in the order they were built. Read without subscribing, for what a press or a command opens.
+pub(crate) fn chips() -> Vec<(Node, Chip, Rect)> {
     ENTRIES.with(|entries| {
         entries
             .borrow()
             .iter()
             .filter(|entry| entry.measure.is_alive())
-            .filter_map(|entry| Some((entry.chip.clone()?, entry.measure.peek())))
+            .filter_map(|entry| {
+                Some((
+                    entry.node.clone(),
+                    entry.chip.clone()?,
+                    entry.measure.peek(),
+                ))
+            })
             .collect()
     })
 }

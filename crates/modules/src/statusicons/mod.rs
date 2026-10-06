@@ -6,7 +6,9 @@
 
 use std::path::Path;
 
-use telar::{AlignItems, Color, JustifyContent, LayoutError, LayoutItem, LayoutStyle, signal};
+use telar::{
+    AlignItems, Color, JustifyContent, LayoutError, LayoutItem, LayoutStyle, Reactive, signal,
+};
 
 use config::StatusIconsConfig;
 use config::theme::NordTheme;
@@ -89,7 +91,7 @@ fn icon(
     which: StatusIcon,
     fg: Color,
     theme: NordTheme,
-    size: f32,
+    size: Reactive<f32>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     match which {
         StatusIcon::Volume => {
@@ -207,12 +209,12 @@ pub fn cluster(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError
     let config = host.options::<config::StatusIconsConfig>();
     let theme = telar::use_theme::<NordTheme>();
     let fg = host.foreground;
-    let size = host.icon_size();
+    let size = host.live_icon_size();
     let vertical = host.is_vertical();
 
     let mut items: Vec<Box<dyn LayoutItem>> = Vec::new();
     for which in icons(&config) {
-        items.push(icon(which, fg, theme, size)?);
+        items.push(icon(which, fg, theme, size.clone())?);
     }
 
     let style = if vertical {
@@ -220,13 +222,17 @@ pub fn cluster(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutError
     } else {
         LayoutStyle::new().flex_row()
     };
-    Ok(Box::new(telar::Container::new(
+    let spacing = config.spacing;
+    let spaced = move || {
         style
+            .clone()
             .align_items(AlignItems::CENTER)
             .justify_content(JustifyContent::CENTER)
-            .gap((size * config.spacing).round().max(1.0)),
-        items,
-    )?))
+            .gap((size.get() * spacing).round().max(1.0))
+    };
+    Ok(Box::new(
+        telar::Container::new(spaced(), items)?.styled_by(spaced),
+    ))
 }
 
 #[cfg(test)]
@@ -315,7 +321,7 @@ mod tests {
             StatusIcon::Num,
         ] {
             assert!(
-                icon(which, fg, NordTheme::new(), 16.0).is_ok(),
+                icon(which, fg, NordTheme::new(), 16.0.into()).is_ok(),
                 "'{}' builds",
                 which.as_str()
             );

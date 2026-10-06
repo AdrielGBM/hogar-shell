@@ -1,6 +1,6 @@
 //! The keyboard path through an edit mode (TA-4, WCAG 2.5.7): everything a pointer does there, a key does too.
 //!
-//! **What the keys do.** The arrows (and `h` `j` `k` `l` under `[keynav] vim`) move the selection to the nearest thing of the same depth that way, the way [`ui::keynav`] reads a grid; Alt+Down and Alt+Up go into what is selected and out to what holds it; Tab and Shift+Tab cycle the areas. Enter customizes the selection, the menu key (or Shift+F10) opens its context menu and Delete takes it away. Shift+arrows move it one slot, cell or edge over, Ctrl+arrows make it one step bigger or smaller. `m` opens the mode pie, where an arrow picks the mode that lies that way, and `?` lists every key the mode answers.
+//! **What the keys do.** The arrows (and `h` `j` `k` `l` under `[keynav] vim`) move the selection to the nearest thing of the same depth that way, the way [`ui::keynav`] reads a grid; Alt+Down and Alt+Up go into what is selected and out to what holds it; Tab and Shift+Tab cycle the areas. Enter customizes the selection, the menu key (or Shift+F10) opens its context menu, Delete takes it away and Ctrl+D copies it. Ctrl+] and Ctrl+[ bring it forward or send it back one step among what overlaps it, with Shift all the way. Shift+arrows move it one slot, cell or edge over, Ctrl+arrows make it one step bigger or smaller. `m` opens the mode pie, where an arrow picks the mode that lies that way, and `?` lists every key the mode answers.
 //!
 //! **One press, one undo entry.** A move or a resize previews from the first press of its key and is committed when the key is released, or when any other key is pressed first: a held Shift+Right that the keyboard repeats ten times moves the chip ten slots and is taken back by one undo. While it is held it sits on the dismiss stack, so Esc puts it back as it was. The selection sits there too, under it: the first Esc clears what is selected and only the next reaches the mode's own way out.
 //!
@@ -25,6 +25,7 @@ use ui::keynav::{KeyNav, Move};
 
 use crate::mode::{self, Mode};
 use crate::session::{self, Edit, EditError, Selection};
+use crate::stacking::Order;
 use crate::{context, host, pie, popover, steps};
 
 /// How often a held key is looked at to see whether it has been let go, which is what commits the edit it drives.
@@ -134,9 +135,17 @@ impl Chord {
         self
     }
 
-    /// Whether pressing `key` with `modifiers` held is this chord. A letter is the same key whichever case the layout reports it in, Shift telling the two apart; a symbol already says whether Shift made it (`?` is Shift+`/`), so Shift is not asked for again.
+    /// Whether pressing `key` with `modifiers` held is this chord. A letter is the same key whichever case the layout reports it in, Shift telling the two apart. A symbol may need Shift to be typed at all (`?` is Shift+`/` on a US layout), so Shift counts only where the chord asks for it: Ctrl+Shift+] is that chord whether the layout reports `]` with Shift held, as one reaching `]` through AltGr does, or `}`, as a US layout does.
     pub fn matches(&self, key: &Key, modifiers: ModifiersState) -> bool {
-        normalized(&self.key, self.modifiers) == normalized(key, modifiers)
+        let (wanted, asked) = normalized(&self.key, self.modifiers);
+        let (pressed, held) = normalized(key, modifiers);
+        if wanted != pressed {
+            return false;
+        }
+        match symbol(&wanted) {
+            true => unshifted(asked) == unshifted(held) && (!asked.is_shift || held.is_shift),
+            false => asked == held,
+        }
     }
 
     /// The chord as a key list shows it, in the active locale: `Ctrl+Shift+Z`, `Shift+←`.
@@ -147,24 +156,33 @@ impl Chord {
     }
 }
 
+fn symbol(key: &Key) -> bool {
+    matches!(key, Key::Char(ch) if !ch.is_alphabetic())
+}
+
+fn unshifted(modifiers: ModifiersState) -> ModifiersState {
+    ModifiersState {
+        is_shift: false,
+        ..modifiers
+    }
+}
+
 fn normalized(key: &Key, modifiers: ModifiersState) -> (Key, ModifiersState) {
+    let shifted = ModifiersState {
+        is_shift: true,
+        ..modifiers
+    };
     match key {
         Key::Char(ch) if ch.is_alphabetic() => {
-            let shifted = ModifiersState {
-                is_shift: modifiers.is_shift || ch.is_uppercase(),
-                ..modifiers
-            };
             let lower = ch.to_lowercase().next().unwrap_or(*ch);
-            (Key::Char(lower), shifted)
+            match ch.is_uppercase() {
+                true => (Key::Char(lower), shifted),
+                false => (Key::Char(lower), modifiers),
+            }
         }
-        Key::Char(ch) => (
-            Key::Char(*ch),
-            ModifiersState {
-                is_shift: false,
-                ..modifiers
-            },
-        ),
-        Key::Named(_) => (key.clone(), modifiers),
+        Key::Char('}') => (Key::Char(']'), shifted),
+        Key::Char('{') => (Key::Char('['), shifted),
+        _ => (key.clone(), modifiers),
     }
 }
 
@@ -210,7 +228,10 @@ fn key_spelled(key: &Key) -> String {
 pub fn spell(chords: &[Chord]) -> String {
     let mut runs: Vec<(ModifiersState, Vec<String>)> = Vec::new();
     for chord in chords {
-        let (key, modifiers) = normalized(&chord.key, chord.modifiers);
+        let (key, modifiers) = match symbol(&chord.key) {
+            true => (chord.key.clone(), chord.modifiers),
+            false => normalized(&chord.key, chord.modifiers),
+        };
         let key = key_spelled(&key);
         match runs.last_mut() {
             Some((held, keys)) if *held == modifiers => keys.push(key),
@@ -279,6 +300,8 @@ enum Does {
     Customize,
     Menu,
     Remove,
+    Duplicate,
+    Restack,
     Move,
     Resize,
     History,
@@ -529,6 +552,14 @@ fn run(mode: &Mode, row: &Row, chord: &Chord) -> Result<bool, EditError> {
         }
         Does::Menu => return Ok(context::open_selected()),
         Does::Remove => remove(&session::selected())?,
+        Does::Duplicate | Does::Restack if session::selected() == Selection::None => {
+            return Ok(false);
+        }
+        Does::Duplicate => crate::duplicate::duplicate(&session::selected())?,
+        Does::Restack => {
+            let order = Order::of(chord).ok_or_else(EditError::nothing)?;
+            crate::stacking::restack(&session::selected(), order)?;
+        }
         Does::Move => {
             let direction = direction()?;
             let label = telar::t!(
@@ -786,7 +817,11 @@ fn switcher_key() -> Chord {
 
 /// Every keyboard operation of the mode of `layer`: the generic rows, then what the tools added for the mode, then what they added for area kinds, which answer in every mode an area of theirs is in.
 pub fn table(layer: LayerKind) -> Vec<Row> {
-    let vim = navigation().vim;
+    table_for(layer, navigation().vim)
+}
+
+/// [`table`] as it reads with the vim keys on or off, whatever the edited screen's `[keynav]` says.
+pub(crate) fn table_for(layer: LayerKind, vim: bool) -> Vec<Row> {
     let shift = ModifiersState {
         is_shift: true,
         ..ModifiersState::default()
@@ -856,6 +891,18 @@ pub fn table(layer: LayerKind) -> Vec<Row> {
             ],
             || telar::t!("editor.keys.op.remove"),
             Does::Remove,
+        ),
+        (
+            "duplicate",
+            vec![crate::duplicate::chord()],
+            || telar::t!("editor.keys.op.duplicate"),
+            Does::Duplicate,
+        ),
+        (
+            "restack",
+            Order::ALL.into_iter().map(Order::chord).collect(),
+            || telar::t!("editor.keys.op.restack"),
+            Does::Restack,
         ),
         (
             "move",
@@ -1089,6 +1136,17 @@ pub fn help_rows(layer: LayerKind) -> Vec<KeyLine> {
             what: (row.label)(),
         })
         .collect()
+}
+
+/// The first chord of the row called `name` in the mode that is up, as a key list spells it: what a control that does what the row does says its key is.
+pub(crate) fn spelled_key(name: &str) -> Option<String> {
+    let mode = mode::current()?;
+    table(mode.layer)
+        .into_iter()
+        .find(|row| row.name == name)?
+        .keys
+        .first()
+        .map(Chord::spelled)
 }
 
 /// What is placed on the edited layer, each node once.

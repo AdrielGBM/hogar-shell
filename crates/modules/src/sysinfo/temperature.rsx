@@ -33,7 +33,7 @@ let reading = memo(move || heat_text(temp_text.get(), &text_config));
 
 [view]
 row align:center gap:(::ui::scale::space::md())
-    icon_glyph name:(Reactive::of(|| "thermometer".to_string())) tint:(Reactive::of(move || ::ui::glyph::heat_tint(&tint_config, temp_tint.get(), heat, fg))) size:(host.icon_size())
+    icon_glyph name:(Reactive::of(|| "thermometer".to_string())) tint:(Reactive::of(move || ::ui::glyph::heat_tint(&tint_config, temp_tint.get(), heat, fg))) size:(host.live_icon_size())
     text "{$reading}" font_size:$theme.font(FontRole::Body) color:fg
 
 [preview "Temperature" fixture:ui::preview::bar_chip]

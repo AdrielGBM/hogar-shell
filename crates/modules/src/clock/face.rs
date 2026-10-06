@@ -30,7 +30,6 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         host.foreground
     };
     let show_date = settings.show_date && !host.is_small();
-    let extent = host.extent;
 
     let format = settings.time_format(&chip).to_string();
     let date_format = settings.date_format(&chip).to_string();
@@ -45,23 +44,20 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         tick_date.set(clock::draw(&at, &date_format));
     });
 
-    let size = fitted(
-        theme.font(FontRole::Display) * settings.resolved_scale(),
-        extent,
-        glyphs,
-        show_date,
-    );
+    let asked = theme.font(FontRole::Display) * settings.resolved_scale();
+    let size = host.follow(move |host| fitted(asked, host.extent(), glyphs, show_date));
     let shadow = settings
         .shadow
         .then(|| Shadow::new(0.0, 2.0, 12.0, Color::BLACK.with_alpha(0.55)));
 
     let reading = now.read_only();
+    let time_size = size.clone();
     let time = Text::new(
         move || reading.get(),
         LayoutStyle::new(),
         move || {
             let style = theme
-                .text_style_at(FontRole::Display, ink, size)
+                .text_style_at(FontRole::Display, ink, time_size.get())
                 .with_font_weight(600);
             match shadow {
                 Some(shadow) => style.with_text_shadow(shadow),
@@ -73,11 +69,12 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let mut lines: Vec<Box<dyn LayoutItem>> = vec![box_item(time)];
     if show_date {
         let reading = today.read_only();
-        let date_size = (size * DATE_SCALE).max(theme.font(FontRole::Body));
+        let date_size = size.clone();
         let date = Text::new(
             move || reading.get(),
             LayoutStyle::new(),
             move || {
+                let date_size = (date_size.get() * DATE_SCALE).max(theme.font(FontRole::Body));
                 let style = theme.text_style_at(FontRole::Title, ink, date_size);
                 match shadow {
                     Some(shadow) => style.with_text_shadow(shadow),
@@ -100,7 +97,13 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         )?));
     }
 
-    let column = Container::new(LayoutStyle::new().flex_column().gap(size * LINE_GAP), rows)?;
+    let spaced = size.clone();
+    let column_style = move || {
+        LayoutStyle::new()
+            .flex_column()
+            .gap(spaced.get() * LINE_GAP)
+    };
+    let column = Container::new(column_style(), rows)?.styled_by(column_style);
 
     let plate_radius = theme.radius.max(12.0);
     let opacity = settings.plate_opacity();
@@ -111,12 +114,16 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     } else {
         theme.surface
     };
-    let plate = StyledContainer::new(
+    let plate_style = move || {
+        let size = size.get();
         LayoutStyle::new()
             .flex_column()
             .justify_content(JustifyContent::CENTER)
             .padding_horizontal(size * PAD_ACROSS)
-            .padding_vertical(size * PAD_DOWN),
+            .padding_vertical(size * PAD_DOWN)
+    };
+    let plate = StyledContainer::new(
+        plate_style(),
         move |_| {
             if !settings.background {
                 return RectStyle::default();
@@ -132,7 +139,8 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
             style
         },
         vec![box_item(column)],
-    )?;
+    )?
+    .styled_by(plate_style);
     Ok(Box::new(plate))
 }
 

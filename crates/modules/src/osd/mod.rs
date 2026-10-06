@@ -27,6 +27,12 @@ impl OsdKind {
 #[derive(Clone, Copy)]
 struct OsdCtx {
     kind: OsdKind,
+    shown_level: Option<u8>,
+}
+
+/// A level to draw instead of the service's reading, for a card that only previews what an OSD looks like.
+pub fn current_osd_level() -> Option<u8> {
+    util::state::context::<OsdCtx>().and_then(|ctx| ctx.shown_level)
 }
 
 /// The kind the OSD being built reflects; read by `osd.rsx`.
@@ -43,11 +49,24 @@ pub fn current_osd_radius() -> f32 {
 
 /// Builds the OSD's content tree for `kind`/`theme` (declared in `osd.rsx`), putting both in scope for it first — which is why the surface calls this rather than the component directly.
 pub(crate) fn osd_content(kind: OsdKind, theme: NordTheme) -> Box<dyn LayoutItem> {
+    osd_card(kind, theme, None, true)
+}
+
+/// [`osd_content`] with the reading fixed at `shown_level` where there is one, and the swipe that dismisses it left off unless `swipeable`: what a preview draws, which must neither follow the service nor clear the live slot.
+pub(crate) fn osd_card(
+    kind: OsdKind,
+    theme: NordTheme,
+    shown_level: Option<u8>,
+    swipeable: bool,
+) -> Box<dyn LayoutItem> {
     set_theme(theme);
-    util::state::set_context(OsdCtx { kind });
+    util::state::set_context(OsdCtx { kind, shown_level });
     let content = osd::osd(osd::OsdProps::props().build(), telar::Children::default())
         .expect("osd content build failed");
-    let Some(threshold) = crate::stack::swipe::column_threshold() else {
+    let Some(threshold) = swipeable
+        .then(crate::stack::swipe::column_threshold)
+        .flatten()
+    else {
         return content;
     };
     // Wrapped only to carry the gesture: the box paints nothing, and the OSD inside it is unchanged.

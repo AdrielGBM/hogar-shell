@@ -327,8 +327,8 @@ fn cover(
     let ring = widget::spectrum_ring(
         derive(bands.read_only(), |bars| bars),
         fixed(theme.accent),
-        COVER / 2.0 + RING_GAP,
-        RING_REACH,
+        fixed(COVER / 2.0 + RING_GAP),
+        fixed(RING_REACH),
         widget::SpectrumStyle {
             gap: 1.5,
             radius: 1.5,

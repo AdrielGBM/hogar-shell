@@ -1139,4 +1139,60 @@ mod tests {
         assert_eq!(nearest_edge(size, (1900.0, 540.0)), Edge::Right);
         assert_eq!(measured(Edge::Right, size, (1900.0, 540.0)), (20.0, 540.0));
     }
+
+    /// A chip put into a group its bar does not write makes that group, in the zone it was put in, rather than going nowhere.
+    #[test]
+    fn a_chip_put_into_a_group_the_bar_does_not_write_makes_it() {
+        let mut bar = layout::Area {
+            id: AreaId::new("bar"),
+            ..layout::Area::default()
+        };
+        let chip = |id: &str| layout::Instance {
+            id: InstanceId::new(id),
+            module: Some("clock".to_string()),
+            ..layout::Instance::default()
+        };
+        let end = layout::GroupId::new("end");
+        top::put_chip(&mut bar, (&end, Zone::End), 3, chip("clock"));
+        top::put_chip(&mut bar, (&end, Zone::End), 0, chip("notes"));
+        assert_eq!(bar.groups.len(), 1, "{:?}", bar.groups);
+        let made = &bar.groups[0];
+        assert_eq!(made.id, end);
+        assert_eq!(made.kind, Some(layout::GroupKind::Zone { zone: Zone::End }));
+        let ids: Vec<&str> = made
+            .children
+            .iter()
+            .map(|child| child.id.as_str())
+            .collect();
+        assert_eq!(ids, ["notes", "clock"]);
+    }
+
+    /// Shift+N in the top mode puts an empty group on a plate in the selected bar, called a plate wherever it is named — its id, the history and the key list.
+    #[test]
+    fn shift_n_puts_a_group_on_a_plate_and_says_so() {
+        telar::set_locale("en");
+        let rig = rig_with("top-plate", |_| {});
+        let _owner = Owner::new();
+        let _mode = enter(LayerKind::Top);
+        assert!(tap(
+            Key::Char('N'),
+            crate::rig::with(|held| held.is_shift = true)
+        ));
+        assert_eq!(
+            rig.undo_label().as_deref(),
+            Some("Put a group on a plate: plate")
+        );
+        assert_eq!(
+            session::selected(),
+            Selection::Group(
+                Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("bar-top"))
+                    .group(&layout::GroupId::new("plate"))
+            )
+        );
+        assert!(
+            crate::keys::table(LayerKind::Top)
+                .iter()
+                .any(|row| row.name == "plate-create")
+        );
+    }
 }

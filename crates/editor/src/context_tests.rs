@@ -507,8 +507,11 @@ mod tests {
                 "Next",
                 "Previous",
                 "Customize Clock…",
+                "Duplicate",
                 "Move to the top layer as widget",
                 "Save group as komponent…",
+                "Give it a panel",
+                "Give it a panel along the whole bar",
                 "Remove",
                 "Edit Top…",
             ]
@@ -516,7 +519,13 @@ mod tests {
         opened(bar(), (400.0, 17.0));
         assert_eq!(
             context::rows(),
-            ["Customize bar…", "Split in half", "Remove", "Edit Top…"]
+            [
+                "Customize bar…",
+                "Duplicate",
+                "Split in half",
+                "Remove",
+                "Edit Top…"
+            ]
         );
     }
 

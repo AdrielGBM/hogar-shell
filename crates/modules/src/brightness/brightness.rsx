@@ -24,7 +24,7 @@ platform_wayland::watch(
 let glyph = memo(move || bright_glyph(level_glyph.get()));
 
 [view]
-icon_glyph name:(Reactive::of(move || glyph.get().to_string())) tint:(Reactive::of(move || fg)) size:(host.icon_size())
+icon_glyph name:(Reactive::of(move || glyph.get().to_string())) tint:(Reactive::of(move || fg)) size:(host.live_icon_size())
 
 [preview "Brightness" fixture:ui::preview::bar_chip]
 brightness

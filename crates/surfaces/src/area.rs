@@ -15,10 +15,10 @@ use telar::{
     AlignItems, BlendMode, ChildSlot, Clip, ClippedItem, Color, ConsumedKeys, Container, Gradient,
     Image, ImageData, ImageSlice, Insets, Key, LayoutError, LayoutItem, LayoutStyle, Memo,
     ObjectFit, Paint, Point, Raster, ReactiveList, RectStyle, Role, RwSignal, SizeDimension,
-    StyledContainer, TemplateTrack, Text, box_item, motion::Animated, signal,
+    StyledContainer, TemplateTrack, Text, box_item, motion::Animated, signal, track_layout,
 };
 
-use crate::actions::{Bound, EmptySpace, NOTCH};
+use crate::actions::{Bound, EmptySpace, NOTCH, Wheel};
 use crate::container;
 use crate::expressions::{self, Expressions, Overlay, Repeat};
 use crate::layer_window::{
@@ -28,6 +28,7 @@ use crate::layer_window::{
 use crate::look::{self, Look, Rest};
 use crate::reconcile::Desktop;
 use crate::rects;
+use crate::transient::chips::Site;
 use config::theme::{FontRole, NordTheme};
 use config::{Align, Config, Edge};
 use layout::{
@@ -36,10 +37,13 @@ use layout::{
     ResolvedGroup, ResolvedInstance, Sides, Style, Tile, Transition, Zone,
 };
 use services::wallpaper;
-use ui::descriptor::Built;
-use ui::host::{Audience, Footprint, Host, Instance, InstanceId, Representation, Size, WidgetSize};
+use ui::descriptor::{Built, ChipDef};
+use ui::host::{
+    Audience, Extent, Footprint, Host, Instance, InstanceId, Representation, Size, WidgetSize,
+};
 use ui::keynav::Move;
 use ui::layout::{align_items, fill, justify, painted_chrome};
+use ui::module::module_foreground;
 
 /// What an area's contents are built against beyond the area itself: the [`AreaContext`] the window hands down, minus what only the host acts on.
 #[derive(Clone, Copy)]
@@ -192,33 +196,37 @@ fn drawn(area: &ResolvedArea, surround: Surround) -> Option<Built> {
     Some(built)
 }
 
-/// `root` answering the gestures `area` binds to its empty space (TA-4's dead zones), for whichever kind of area it is the root of, and opening the area's context menu on a secondary press nothing is bound to. Nothing is bound on the lock layer, and no menu is offered there.
+/// `root` answering the gestures `area` binds to its empty space, for whichever kind of area it is the root of, and opening the area's context menu on a secondary press nothing is bound to. Nothing is bound on the lock layer, and no menu is offered there.
 ///
-/// The menu is offered only where `painted` says the root claims the pointer already, by what it draws: a root that answered a press only for the menu's sake would take every press over its whole box from the windows under it.
+/// The area's menu is offered only where `painted` says the root claims the pointer already, by what it draws: a root that answered a press only for the menu's sake would take every press over its whole box from the windows under it. The background layer is the exception, being under everything else: what it does not paint is the screen's empty space, and offers the shell's own menu there.
+///
+/// A root that neither paints nor answers lets presses through, its instances still claiming their own: a window gives a press to the topmost box under it whether or not that box wants it, so such a root would take it from an area built before it in the same window.
 pub fn empty_space(
     area: &ResolvedArea,
     surround: Surround,
     root: StyledContainer,
     painted: bool,
 ) -> StyledContainer {
-    let menu = painted
-        .then(|| {
-            crate::menu::on(
-                rects::Node::area(surround.output, surround.layer, &area.id),
-                surround.audience,
-            )
-        })
-        .flatten();
-    Bound::of(&area.actions, surround.audience)
-        .with_menu(menu)
-        .on_empty_space(
-            root,
-            EmptySpace {
-                output: surround.output.map(str::to_string),
-                layer: surround.layer,
-                area: area.id.clone(),
-            },
-        )
+    let menu = match (painted, surround.layer) {
+        (true, _) => crate::menu::on(
+            rects::Node::area(surround.output, surround.layer, &area.id),
+            surround.audience,
+        ),
+        (false, LayerKind::Background) => crate::menu::shell_on(surround.output, surround.audience),
+        (false, _) => None,
+    };
+    let bound = Bound::of(&area.actions, surround.audience).with_menu(menu);
+    if bound.is_empty() && !painted {
+        return root.input_transparent();
+    }
+    bound.on_empty_space(
+        root,
+        EmptySpace {
+            output: surround.output.map(str::to_string),
+            layer: surround.layer,
+            area: area.id.clone(),
+        },
+    )
 }
 
 /// Whether an area [`dressed`] in `style` paints a fill, which is what makes it claim the pointer.
@@ -250,7 +258,7 @@ pub fn free(area: &ResolvedArea, rect: Rect, anchor: Anchor, surround: Surround)
                             height: f32::INFINITY,
                         },
                         None,
-                        LayoutStyle::new(),
+                        (LayoutStyle::new(), Frame::Bare),
                         surround,
                     )
                 },
@@ -543,7 +551,7 @@ pub fn dock(area: &ResolvedArea, edge: Edge, thickness: f32, surround: Surround)
             dressed(
                 &area.style,
                 &surround.theme,
-                region(Rect::default(), surround)
+                pixels(docked(edge, thickness, area.style.padding, surround.bounds))
                     .flex_row()
                     .align_items(align_items(vertical))
                     .justify_content(justify(horizontal)),
@@ -554,6 +562,22 @@ pub fn dock(area: &ResolvedArea, edge: Edge, thickness: f32, surround: Surround)
         ),
         is_filled(&area.style, &surround.theme),
     )))
+}
+
+/// The box a dock holds: the whole of its edge long, and its strip and the padding either side of it across.
+fn docked(edge: Edge, thickness: f32, padding: Option<Sides>, bounds: telar::Rect) -> telar::Rect {
+    let sides = padding.unwrap_or_default();
+    let across = match edge.is_horizontal() {
+        true => (thickness + sides.vertical()).min(bounds.height),
+        false => (thickness + sides.horizontal()).min(bounds.width),
+    };
+    let (right, bottom) = (bounds.x + bounds.width, bounds.y + bounds.height);
+    match edge {
+        Edge::Top => telar::Rect::new(bounds.x, bounds.y, bounds.width, across),
+        Edge::Bottom => telar::Rect::new(bounds.x, bottom - across, bounds.width, across),
+        Edge::Left => telar::Rect::new(bounds.x, bounds.y, across, bounds.height),
+        Edge::Right => telar::Rect::new(right - across, bounds.y, across, bounds.height),
+    }
 }
 
 /// Reading where the hand-over between a `WallpaperRegion`'s two image layers has got to, and moving it. `Rc` on the reading half because both layers hold one; `Box` on the writing half because only the [`Handover`] does.
@@ -1560,7 +1584,7 @@ fn cell_group(
                 node,
                 footprint(instance).extent(cell, gap),
                 None,
-                LayoutStyle::new(),
+                (LayoutStyle::new(), Frame::Bare),
                 surround,
             )
         }),
@@ -1577,7 +1601,7 @@ fn cell_group(
 
 type BuildPlaced = Box<dyn Fn(&ResolvedInstance, &rects::Node, Surround) -> Built>;
 
-/// A container on its cells: each child in its share of the box they make, drawn at what fits there and cut to it, and an empty one saying so while its layer's edit mode is up. Each child is built once and kept by its instance id through whatever [`moves_only`] lets through, which only lays it out again. One is built again, alone, when what it is told it has changes, since a module sizes what it draws to that.
+/// A container on its cells: each child in its share of the box they make, drawn at what fits there and cut to it, and an empty one saying so while its layer's edit mode is up. Each child is built once and kept by its instance id through whatever [`moves_only`] lets through, which only lays it out again. A child given a share of another size follows it through its host's extent, and is built again, alone, only once that share fits another representation.
 fn contained(
     area: &ResolvedArea,
     group: &ResolvedGroup,
@@ -1593,29 +1617,23 @@ fn contained(
     let (group_id, instance_at) = (group.id.clone(), at.clone());
     let children = telar::fragment(
         move || shares.get(),
-        move |share: &Share| {
-            let told = share.told(cell);
-            (
-                share.instance.id.clone(),
-                share.representation.as_str(),
-                told.width.to_bits(),
-                told.height.to_bits(),
-            )
-        },
+        move |share: &Share| (share.instance.id.clone(), share.representation.as_str()),
         move |share: Share| {
             let node = instance_at.instance(&group_id, &share.instance.id);
-            let (id, last) = (share.instance.id.clone(), share.rect);
-            let follows = move || {
-                slot_at(shares.with(|now| {
+            let (id, last) = (share.instance.id.clone(), (share.rect, share.told(cell)));
+            let now = telar::memo(move || {
+                shares.with(|now| {
                     now.iter()
                         .find(|now| now.instance.id == id)
-                        .map_or(last, |now| now.rect)
-                }))
-            };
+                        .map_or(last, |now| (now.rect, now.told(cell)))
+                })
+            });
+            let follows = move || slot_at(now.get().0);
+            let told = Extent::following(move || now.get().1);
             let built = or_nothing(in_share(
                 &share,
                 &node,
-                cell,
+                told,
                 kept.surround(),
                 Some(Box::new(follows)),
             ))?;
@@ -1740,7 +1758,7 @@ fn shared_out(group: &ResolvedGroup, (cell, gap): (f32, f32)) -> BuildPlaced {
     Box::new(move |instance, node, surround| {
         let rect = shares.get(&instance.id).copied().unwrap_or(whole);
         let share = Share::of(instance, rect, (cell, gap), surround.audience);
-        in_share(&share, node, cell, surround, None)
+        in_share(&share, node, share.told(cell).into(), surround, None)
     })
 }
 
@@ -1748,7 +1766,7 @@ fn shared_out(group: &ResolvedGroup, (cell, gap): (f32, f32)) -> BuildPlaced {
 fn in_share(
     share: &Share,
     node: &rects::Node,
-    cell: f32,
+    told: Extent,
     surround: Surround,
     follows: Option<Box<dyn Fn() -> LayoutStyle>>,
 ) -> Built {
@@ -1760,7 +1778,7 @@ fn in_share(
         Placed::Chip => LayoutStyle::new(),
         _ => fill(),
     };
-    let child = place(&drawn, node, share.told(cell), None, style, surround)?;
+    let child = place(&drawn, node, told, None, (style, Frame::Shell), surround)?;
     let slot = Container::new(slot_at(share.rect), vec![child])?;
     let slot = match follows {
         Some(follows) => slot.styled_by(follows),
@@ -1821,7 +1839,16 @@ fn run(
         style,
         None,
         surround,
-        move |instance, node, surround| place(instance, node, extent, Some(edge), fill(), surround),
+        move |instance, node, surround| {
+            place(
+                instance,
+                node,
+                extent,
+                Some(edge),
+                (fill(), Frame::Bare),
+                surround,
+            )
+        },
     )
 }
 
@@ -1840,13 +1867,20 @@ fn along(edge: Edge, thickness: f32) -> LayoutStyle {
     }
 }
 
+/// How a chip is drawn where it is placed: bare, laid out by its module alone as a grid or a dock places one, or in the chip shell a bar puts it in, which pads it, lights it on hover and takes its presses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Frame {
+    Bare,
+    Shell,
+}
+
 /// One instance under a host told the box it was given and the options its entry sets, built inside the descriptor table's error boundary so a module that fails shows its placeholder instead of taking the area down with it. An instance with bindings is built again, alone, each time what they say changes.
 fn place(
     instance: &ResolvedInstance,
     node: &rects::Node,
-    extent: Size,
+    extent: impl Into<Extent>,
     axis: Option<Edge>,
-    style: LayoutStyle,
+    (style, frame): (LayoutStyle, Frame),
     surround: Surround,
 ) -> Built {
     // The last of three lines on "readings only, never controls" (TA-8): validation refuses a representation that acts on the lock layer, `layout add` refuses to place one, and a file that was hand-edited past both is drawn as a placeholder rather than built. Placed here because this is the one point every lock instance goes through, whatever kind of area holds it.
@@ -1854,20 +1888,30 @@ fn place(
         return ui::placeholder::neutral(surround.theme);
     }
     let (placing, at, kept) = (instance.clone(), node.clone(), Kept::of(surround));
+    let extent = extent.into();
     Expressions::here(surround.audience).bound_instance(
         instance,
         node,
         style,
-        move |style, bound| placed(&placing, &at, extent, axis, style, kept.surround(), bound),
+        move |style, bound| {
+            placed(
+                &placing,
+                &at,
+                (extent, axis),
+                (style, frame),
+                kept.surround(),
+                bound,
+            )
+        },
     )
 }
 
+/// A chip is registered as what its module's panel and its own press open from, at its own box, which a container's share can be larger than.
 fn placed(
     instance: &ResolvedInstance,
     node: &rects::Node,
-    extent: Size,
-    axis: Option<Edge>,
-    style: LayoutStyle,
+    (extent, axis): (Extent, Option<Edge>),
+    (style, frame): (LayoutStyle, Frame),
     surround: Surround,
     bound: Option<&Overlay>,
 ) -> Built {
@@ -1876,13 +1920,23 @@ fn placed(
         &instance.module,
         Overlay::options_or(bound, &instance.options),
     );
+    let presentation = placed.presentation(surround.config);
     let accent = Overlay::accent_or(bound, || {
-        surround.theme.accent_by_name(
-            surround
-                .config
-                .accent_name(&placed.presentation(surround.config)),
-        )
+        surround
+            .theme
+            .accent_by_name(surround.config.accent_name(&presentation))
     });
+    let chip = match instance.representation {
+        Placed::Chip => {
+            ui::descriptor::find(&instance.module).and_then(|module| module.representations.chip)
+        }
+        _ => None,
+    };
+    let shell = chip.filter(|chip| frame == Frame::Shell && !chip.is_bare());
+    let foreground = match shell {
+        Some(_) => module_foreground(presentation.variant, accent, surround.theme),
+        None => surround.theme.text,
+    };
     let host = Host::placed(
         placed,
         Arc::clone(surround.config),
@@ -1891,13 +1945,18 @@ fn placed(
         axis,
         surround.config.shape_from(None, None, None, None),
         accent,
-        surround.theme.text,
+        foreground,
         surround.output.map(str::to_string),
     )
     .shown_to(surround.audience);
     let gestures = Bound::of(&instance.actions, surround.audience)
         .with_menu(crate::menu::on(node.clone(), surround.audience))
-        .owning(node.clone());
+        .owning(node.clone())
+        .with_own_press(crate::panel::chip_press(&host, node));
+    let wheel = gestures.wheel(
+        chip.filter(|_| surround.audience == Audience::Owner)
+            .and_then(|chip| crate::bar::wheel(&chip, &host)),
+    );
     let plate = Look::of_instance(
         &instance.style,
         bound,
@@ -1908,20 +1967,52 @@ fn placed(
             surround.config.shape_from(None, None, None, None).radius,
         ),
     );
-    if gestures.is_empty() && plate.is_none() {
-        return ui::descriptor::place(&instance.module, &host, style);
+    let item = match shell {
+        Some(chip) => shelled(&host, chip, (&gestures, wheel), node, style, plate)?,
+        None => bare(&host, (&gestures, wheel), style, plate)?,
+    };
+    if chip.is_some()
+        && surround.audience == Audience::Owner
+        && let Some(rect) = track_layout(item.layout_node())
+    {
+        rects::track_opener(
+            node.clone(),
+            rect,
+            rects::Chip {
+                instance: host.instance(),
+                site: Site::of_host(&host),
+            },
+        );
+    }
+    Ok(item)
+}
+
+/// The module's own tree, wrapped where its instance's style paints a plate or its gestures answer.
+fn bare(
+    host: &Host,
+    (gestures, wheel): (&Bound, Option<Wheel>),
+    style: LayoutStyle,
+    plate: Option<Look>,
+) -> Built {
+    let module = host.module();
+    if gestures.is_empty() && wheel.is_none() && plate.is_none() {
+        return ui::descriptor::place(module, host, style);
     }
     // Around the module's own tree rather than in it: whatever the module answers itself, a button inside a widget, stays its own, and the bound gestures and the menu answer everywhere else on it — a placeholder standing in for a module that failed included.
     let inner = LayoutStyle::new().flex_column().flex_grow(1.0);
+    let answering = match gestures.is_empty() {
+        true => ui::placeholder::Presses::fixing(),
+        false => ui::placeholder::Presses::default(),
+    };
     let placed = match plate {
         Some(look) => {
             let placed = telar::Scope::with(|| {
                 ui::chrome::Plated::provide();
-                ui::descriptor::place(&instance.module, &host, inner)
+                ui::descriptor::place_answering(module, host, inner, answering)
             })?;
             Box::new(look::cut(placed, look.radius, false))
         }
-        None => ui::descriptor::place(&instance.module, &host, inner)?,
+        None => ui::descriptor::place_answering(module, host, inner, answering)?,
     };
     let wrapper = StyledContainer::new(
         style.flex_column(),
@@ -1929,10 +2020,48 @@ fn placed(
         vec![placed],
     )?;
     let wrapper = painted_chrome(wrapper, plate.map_or(Color::TRANSPARENT, |look| look.fill));
-    if gestures.is_empty() {
-        return Ok(Box::new(wrapper));
-    }
-    Ok(Box::new(gestures.on(wrapper)))
+    Ok(Box::new(gestures.presses(wrapper).maybe_on_scroll(
+        wheel.map(|run| move |dx, dy| run(dx, dy)),
+    )))
+}
+
+/// A chip-framed module in the chip shell a bar puts it in, resting on what it is placed on: its presses answer in a chip's order — what the layout binds, the panel its instance owns, then its own press or its module's panel — with the chip in scope, so what they open hangs off it.
+fn shelled(
+    host: &Host,
+    chip: ChipDef,
+    (gestures, wheel): (&Bound, Option<Wheel>),
+    at: &rects::Node,
+    style: LayoutStyle,
+    plate: Option<Look>,
+) -> Built {
+    let module = host.module();
+    let descriptor = ui::descriptor::find(module).copied();
+    let (built, gestures, at) = (host.clone(), gestures.clone(), at.clone());
+    let shell = ui::descriptor::guard(module, host, style.clone(), gestures.fixing(), move || {
+        let content = descriptor
+            .and_then(|descriptor| descriptor.build(&built))
+            .unwrap_or_else(|| {
+                Err(LayoutError::Engine(format!(
+                    "'{}' declares no chip",
+                    built.module()
+                )))
+            })?;
+        let look = crate::bar::ChipLook {
+            variant: built.presentation().variant,
+            rest: Color::TRANSPARENT,
+            accent: built.accent,
+            radius: built.corner_radius(),
+            drag_open: None,
+        };
+        crate::bar::chip_shell(&built, &chip, &gestures, wheel, &at, look, content)
+    })?;
+    Ok(match plate {
+        Some(look) => Box::new(painted_chrome(
+            StyledContainer::new(style, move |rect| look.paint(rect), vec![shell])?,
+            look.fill,
+        )),
+        None => shell,
+    })
 }
 
 /// Whether the module's own build of this representation registers nothing that answers the pointer.
@@ -2113,7 +2242,7 @@ mod tests {
     /// Publishes the box `host` was told it has and where the widget built for it ended up, which is the only way to ask an area where it put something.
     fn landed(host: &Host, item: Container) -> Built {
         let rect = track_layout(item.layout_node()).expect("a container registers its rect");
-        LANDED.with(|seen| *seen.borrow_mut() = Some((host.extent, rect)));
+        LANDED.with(|seen| *seen.borrow_mut() = Some((host.extent(), rect)));
         Ok(Box::new(item))
     }
 

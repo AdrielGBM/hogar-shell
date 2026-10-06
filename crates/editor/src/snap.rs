@@ -6,7 +6,7 @@
 //!
 //! **Alt drags free.** While Alt is held nothing snaps ([`free`]).
 //!
-//! **Not wired yet.** [`free_siblings`] lists the other children of a `free` container; no drag calls it until carrying free children uses it.
+//! **Containers.** A child of a `free` container carried or resized by its handle snaps the same way to its siblings ([`free_siblings`]) and to its container's padded box; see [`crate::modes::container`].
 use layout::{
     AreaId, InstanceId, LayerKind, Placement, Rect, ResolvedAreaKind, ResolvedGroup, ResolvedLayer,
 };

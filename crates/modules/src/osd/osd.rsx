@@ -1,6 +1,6 @@
 [logic]
 use ::ui::icon_glyph::{icon_glyph, IconGlyphProps};
-use crate::osd::{OsdKind, current_osd_kind, current_osd_radius};
+use crate::osd::{OsdKind, current_osd_kind, current_osd_level, current_osd_radius};
 use ::config::theme::NordTheme;
 use ::services::{brightness, volume};
 use ::ui::glyph;
@@ -17,10 +17,16 @@ fn osd_tint(dimmed: bool) -> Color {
 // A single-shot snapshot — the OSD is transient, and every trigger (click, scroll, key) replaces it with a freshly built one. It reads the shared services' cached value rather than the system: `volume::read()` forks `wpctl`, which has no business running while a surface is being laid out.
 let (glyph, frac, dimmed) = match current_osd_kind() {
     OsdKind::Volume => {
-        let v = volume::current().unwrap_or(volume::Volume {
-            level: 0,
-            muted: false,
-        });
+        let v = match current_osd_level() {
+            Some(level) => volume::Volume {
+                level: i32::from(level),
+                muted: false,
+            },
+            None => volume::current().unwrap_or(volume::Volume {
+                level: 0,
+                muted: false,
+            }),
+        };
         (
             glyph::volume(v),
             v.level.clamp(0, 100) as f32 / 100.0,

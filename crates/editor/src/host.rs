@@ -57,7 +57,7 @@ pub(crate) const HOTSPOT: f32 = 28.0;
 
 thread_local! {
     static TOOLS: RefCell<Vec<(LayerKind, Tool)>> = const { RefCell::new(Vec::new()) };
-    static TOOLBAR: RefCell<Vec<(LayerKind, StripButton)>> = const { RefCell::new(Vec::new()) };
+    static TOOLBAR: RefCell<Vec<(LayerKind, StripButton, bool)>> = const { RefCell::new(Vec::new()) };
     static ADDS: RefCell<Vec<(LayerKind, Add)>> = const { RefCell::new(Vec::new()) };
     static STRIP_ACTIONS: RefCell<Vec<StripButton>> = const { RefCell::new(Vec::new()) };
     static STRIP_MOVED: RwSignal<(f32, f32)> = detached(|| signal((0.0, 0.0)));
@@ -146,17 +146,31 @@ pub fn add_tool(layer: LayerKind, tool: Tool) {
 
 /// Adds `button` to the toolbar of every `layer` mode, after the buttons added before it. A mode with no buttons has no toolbar.
 pub(crate) fn add_toolbar_button(layer: LayerKind, button: StripButton) {
-    TOOLBAR.with(|buttons| buttons.borrow_mut().push((layer, button)));
+    TOOLBAR.with(|buttons| buttons.borrow_mut().push((layer, button, false)));
+}
+
+/// [`add_toolbar_button`] for a button that adds something to the layer, which makes it one of the layer's add tools as well ([`add_tools_of`]).
+pub(crate) fn add_adding_button(layer: LayerKind, button: StripButton) {
+    TOOLBAR.with(|buttons| buttons.borrow_mut().push((layer, button, true)));
 }
 
 /// The buttons of the `layer` mode's toolbar, in order.
 pub(crate) fn toolbar_of(layer: LayerKind) -> Vec<StripButton> {
+    toolbar_where(layer, |_| true)
+}
+
+/// The ways of adding to `layer` its mode's toolbar offers, in order: what the shell menu's "Add ▸" lists for it.
+pub(crate) fn add_tools_of(layer: LayerKind) -> Vec<StripButton> {
+    toolbar_where(layer, |adds| adds)
+}
+
+fn toolbar_where(layer: LayerKind, wanted: fn(bool) -> bool) -> Vec<StripButton> {
     TOOLBAR.with(|buttons| {
         buttons
             .borrow()
             .iter()
-            .filter(|(of, _)| *of == layer)
-            .map(|(_, button)| *button)
+            .filter(|(of, _, adds)| *of == layer && wanted(*adds))
+            .map(|(_, button, _)| *button)
             .collect()
     })
 }
@@ -287,8 +301,14 @@ pub(crate) fn tree(mode: &Mode, under: Under) -> Built {
     }
     layers.push(border(theme)?);
     layers.push(strip(mode)?);
+    layers.push(key_table()?);
+    Ok(Box::new(passthrough(whole(), layers)?))
+}
+
+/// The mode's key table, as the last thing the host's keys reach: a parent's key handler hears a key before its children do, so the table sits after everything the host draws and a focused control there — a handle, a quick bar button, a toggle — answers its own keys first, leaving the table only what it did not take.
+fn key_table() -> Built {
     Ok(Box::new(
-        passthrough(whole(), layers)?.on_key(crate::keys::on_key),
+        passthrough(LayoutStyle::new().absolute(), Vec::new())?.on_key(crate::keys::on_key),
     ))
 }
 

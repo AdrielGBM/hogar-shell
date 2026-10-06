@@ -1,11 +1,10 @@
 //! What the shell draws where a config names something this build does not have, or where a module failed to build; a placeholder keeps the entry's place in the error colour rather than vanishing it silently into a log nobody reads.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use telar::{
     AlignItems, Color, Container, LayoutError, LayoutItem, LayoutStyle, PointerButton, RectStyle,
-    SizeDimension, Slots, StyledContainer, Text, box_item,
+    SizeDimension, StyledContainer, Text, box_item,
 };
 
 use config::Variant;
@@ -13,6 +12,7 @@ use config::theme::{FontRole, NordTheme};
 
 use crate::host::{Host, Representation};
 use crate::icon::icon_view;
+use crate::layout::built_once;
 use crate::module::{module_foreground, open_panel};
 use crate::module_shell::{ModuleShellProps, module_shell};
 use crate::scale::space;
@@ -58,24 +58,35 @@ pub fn neutral(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     )?))
 }
 
-/// What stands in for `id` as `host.representation`: a chip on a bar, and elsewhere a box saying which id, and `reason` when there is one. `menu` is what a secondary press on it opens — the "Fix…" menu of what the layout placed there (TA-7) — and nothing where none is offered.
+/// What a placeholder answers: a chip every press, a box only `alt_press`, since a box may stand where nothing may act.
+#[derive(Clone, Default)]
+pub struct Presses {
+    pub press: Option<Rc<dyn Fn()>>,
+    pub long_press: Option<Rc<dyn Fn()>>,
+    pub alt_press: Option<Rc<dyn Fn(PointerButton)>>,
+}
+
+impl Presses {
+    /// A press opens the settings window, for a placeholder nothing around it binds anything to.
+    pub fn fixing() -> Self {
+        Self {
+            press: Some(Rc::new(open_settings)),
+            ..Self::default()
+        }
+    }
+}
+
+/// What stands in for `id` as `host.representation`: a chip on a bar, and elsewhere a box saying which id, and `reason` when there is one.
 pub fn placeholder(
     id: &str,
     reason: Option<&str>,
     host: &Host,
     theme: NordTheme,
-    menu: Option<Rc<dyn Fn()>>,
+    presses: Presses,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let alt_press = menu.map(|menu| -> Rc<dyn Fn(PointerButton)> {
-        Rc::new(move |button| {
-            if button == PointerButton::Secondary {
-                menu();
-            }
-        })
-    });
     match host.representation {
-        Representation::Chip => placeholder_chip(id, host, theme, alt_press),
-        _ => placeholder_box(id, reason, host, theme, alt_press),
+        Representation::Chip => placeholder_chip(id, host, theme, presses),
+        _ => placeholder_box(id, reason, host, theme, presses.alt_press),
     }
 }
 
@@ -84,10 +95,10 @@ fn placeholder_chip(
     id: &str,
     host: &Host,
     theme: NordTheme,
-    alt_press: Option<Rc<dyn Fn(PointerButton)>>,
+    presses: Presses,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let ink = ink(theme);
-    let glyph = icon_view(|| GLYPH.to_string(), move || ink, host.icon_size())?;
+    let glyph = icon_view(|| GLYPH.to_string(), move || ink, host.live_icon_size())?;
     let vertical = host.is_vertical();
     let content: Box<dyn LayoutItem> = if vertical {
         glyph
@@ -106,28 +117,19 @@ fn placeholder_chip(
             vec![glyph, box_item(label)],
         )?)
     };
-    let mut inner = Slots::new();
-    inner.push(None, content);
     module_shell(
         ModuleShellProps::props()
             .variant(Variant::Filled)
             .accent(fill(theme))
             .radius(host.corner_radius())
             .square(vertical)
-            .inset(host.inset())
+            .inset(host.follow(Host::inset))
             .vertical(vertical)
-            .on_press(Some(Rc::new(open_settings) as Rc<dyn Fn()>))
-            .on_alt_press(alt_press)
+            .on_press(presses.press)
+            .on_long_press(presses.long_press)
+            .on_alt_press(presses.alt_press)
             .build(),
-        telar::Children::new({
-            let inner = RefCell::new(Some(inner));
-            move || {
-                inner
-                    .borrow_mut()
-                    .take()
-                    .ok_or_else(|| LayoutError::Engine("children built twice".into()))
-            }
-        }),
+        built_once(content),
     )
 }
 
@@ -160,25 +162,31 @@ fn placeholder_box(
     if let Some(reason) = reason {
         lines.push(text(reason.to_string(), FontRole::Caption)?);
     }
+    let boxed = host.follow(boxed_style);
+    let radius = host.shape.radius;
+    let fill = fill(theme);
+    Ok(Box::new(crate::layout::painted_chrome(
+        StyledContainer::new(boxed.get(), move |_| RectStyle::filled(fill, radius), lines)?
+            .styled_by(move || boxed.get())
+            .maybe_on_alt_press(alt_press.map(|run| move |button| run(button))),
+        fill,
+    )))
+}
+
+fn boxed_style(host: &Host) -> LayoutStyle {
     let style = LayoutStyle::new()
         .flex_column()
         .gap(space::sm())
         .padding_all(space::lg());
-    let style = match host.widget_size() {
+    let extent = host.extent();
+    match host.widget_size() {
         Some(size) => {
             let extent = size.extent();
             style.width(extent.width).height(extent.height)
         }
-        None if host.extent.width.is_finite() => style.width(host.extent.width),
+        None if extent.width.is_finite() => style.width(extent.width),
         None => style.width(SizeDimension::Percent(1.0)),
-    };
-    let radius = host.shape.radius;
-    let fill = fill(theme);
-    Ok(Box::new(crate::layout::painted_chrome(
-        StyledContainer::new(style, move |_| RectStyle::filled(fill, radius), lines)?
-            .maybe_on_alt_press(alt_press.map(|run| move |button| run(button))),
-        fill,
-    )))
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +209,8 @@ mod tests {
         )
     }
 
+    use std::cell::RefCell;
+
     thread_local! {
         static OPENED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     }
@@ -213,8 +223,8 @@ mod tests {
         crate::module::set_panel_opener(|panel| {
             OPENED.with(|opened| opened.borrow_mut().push(panel.to_string()))
         });
-        let mut chip =
-            placeholder_chip("clokc", &host(), NordTheme::new(), None).expect("the chip builds");
+        let mut chip = placeholder_chip("clokc", &host(), NordTheme::new(), Presses::fixing())
+            .expect("the chip builds");
         let rect = track_layout(chip.layout_node()).expect("the chip registers its rect");
         compute_layout(
             chip.layout_node(),

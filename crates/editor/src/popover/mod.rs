@@ -15,6 +15,7 @@ pub mod handles;
 pub(crate) mod instance;
 pub(crate) mod look;
 pub(crate) mod origin;
+pub(crate) mod panel;
 pub(crate) mod place;
 pub mod rows;
 pub(crate) mod value;
@@ -77,6 +78,7 @@ thread_local! {
     static INSTANCE_TOOLS: RefCell<Vec<InstanceTool>> = const { RefCell::new(Vec::new()) };
     static SETTLES: RefCell<Vec<(&'static str, Settle)>> = const { RefCell::new(Vec::new()) };
     static OPEN: RefCell<Option<Open>> = const { RefCell::new(None) };
+    static CUSTOMIZING: RwSignal<Option<Node>> = telar::detached(|| signal(None));
     static SERIAL: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -97,6 +99,7 @@ pub fn settle_instances_in(kind: &'static str, settle: Settle) {
 
 pub(crate) fn install() {
     area::install();
+    add_area_tool("panel", panel::tool);
     add_instance_tool(bindings::tool);
 }
 
@@ -178,6 +181,18 @@ pub fn close() {
 /// What the open popover customizes.
 pub fn current() -> Option<Node> {
     OPEN.with(|open| open.borrow().as_ref().map(|open| open.node.clone()))
+}
+
+pub(crate) fn customizing() -> Option<Node> {
+    CUSTOMIZING.with(|customizing| customizing.get())
+}
+
+fn set_customizing(node: Option<Node>) {
+    CUSTOMIZING.with(|customizing| {
+        if customizing.peek() != node {
+            customizing.set(node);
+        }
+    });
 }
 
 /// The open popover's own open state, read reactively: what its expression fields gate their readings on. `None` while no popover is open.
@@ -279,6 +294,7 @@ fn open(node: Node) -> Result<(), EditError> {
             tree: Rc::clone(&tree),
         })
     });
+    set_customizing(Some(node.clone()));
 
     let window = match editing_here {
         Some(_) => LayerKind::Overlay,
@@ -391,6 +407,7 @@ fn finish(serial: u64) {
     }) else {
         return;
     };
+    set_customizing(None);
     open.open.set(false);
     if open.edit.is_open()
         && let Err(why) = open.edit.commit()

@@ -498,7 +498,7 @@ pub(crate) fn footprint(komponent: &layout::Komponent) -> Cells {
         })
 }
 
-/// The operations that make a group of the area `place` names draw `request`, and the group's id. A group that does not exist yet is made — a fresh readable id from the komponent's name where none is named — at the end of the zone `place` names of a bar (the end zone where it names none), on the free cells of a grid, or unplaced in a dock or free area; one that exists is used as it is where it holds nothing, and refused where it holds modules (replacing them is destructive) or already draws a komponent. The use is checked as the layout is ([`layout::check_use`]): the komponent exists, every parameter is declared and of its type, a grid cell does not repeat, and the lock layer holds readings only.
+/// The operations that make a group of the area `place` names draw `request`, and the group's id. A group that does not exist yet is made — a fresh readable id from the komponent's name where none is named — at the end of the zone `place` names of a bar (the end zone where it names none), on the free cells of a grid or a panel, or unplaced in a dock or free area; one that exists is used as it is where it holds nothing, and refused where it holds modules (replacing them is destructive) or already draws a komponent. The use is checked as the layout is ([`layout::check_use`]): the komponent exists, every parameter is declared and of its type, a grid cell does not repeat, and the lock layer holds readings only.
 ///
 /// `screen` is the screen the area is drawn on, `desktop` the one the editor or the shell is running where a grid has to find free cells.
 pub fn plan_use(
@@ -514,7 +514,7 @@ pub fn plan_use(
         .area(place.layer, place.area)
         .ok_or_else(|| UseError::NoArea(place.area.clone()))?;
     let placed_in_zone = matches!(area.kind, ResolvedAreaKind::Bar { .. });
-    let on_grid = matches!(area.kind, ResolvedAreaKind::Grid { .. });
+    let on_grid = area.kind.places_on_cells();
     if !placed_in_zone
         && !on_grid
         && !matches!(
@@ -675,7 +675,8 @@ pub(crate) fn bar_entry(node: &Node) -> Option<MenuEntry> {
     })
 }
 
-fn zone_name(zone: Zone) -> String {
+/// What a bar's zone is called where one is picked: the menus' and the palette's tag.
+pub(crate) fn zone_name(zone: Zone) -> String {
     match zone {
         Zone::Start => telar::t!("editor.komponent.zone.start"),
         Zone::Center => telar::t!("editor.komponent.zone.center"),
@@ -683,29 +684,66 @@ fn zone_name(zone: Zone) -> String {
     }
 }
 
-/// Puts the komponent `id` in a new group at the end of the zone `zone` of the bar `bar` names, every parameter at its default, through the same planner the palette and `komponent use` share ([`plan_use`]): one undo entry, and the new group selected where an edit mode is on that bar's screen.
-pub fn add_to_bar(bar: &Node, zone: Zone, id: &KomponentId) -> Result<(), EditError> {
-    let desktop = reconcile::desktop_now(bar.output.as_deref()).ok_or_else(EditError::no_output)?;
-    let layout = session::draft().peek();
+/// Where the editor puts a new group drawing a komponent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Where {
+    /// On the cells of a grid or a panel: its first cell `at` where a pointer put it, else the free cells nearest `near`.
+    Cell {
+        at: Option<(u32, u32)>,
+        near: (u32, u32),
+    },
+    /// At the end of this zone of a bar.
+    Zone(Zone),
+}
+
+/// The operations that make a new group of the area `area` of `layer` on `desktop`'s screen draw the komponent `id`, every parameter at its default, `place` saying where, and the group's id: the one planner the palette, the bar's menu and the desktop share ([`plan_use`]).
+pub(crate) fn planned(
+    layout: &Layout,
+    desktop: &Desktop,
+    layer: LayerKind,
+    area: &AreaId,
+    id: &KomponentId,
+    place: Where,
+) -> Result<(Vec<LayoutOp>, GroupId), EditError> {
+    let library = known();
     let workspace = crate::variant::editing();
-    let (ops, group) = plan_use(
-        &layout,
-        &known(),
+    let screen = desktop.resolving(layout, &library);
+    let (cell, near, zone) = match place {
+        Where::Cell { at, near } => (at, near, None),
+        Where::Zone(zone) => (None, (0, 0), Some(zone)),
+    };
+    plan_use(
+        layout,
+        &library,
         &surfaces::catalogue::Descriptors::installed(),
-        (&desktop.resolved, Some(&desktop)),
+        (&screen.resolved, Some(desktop)),
         &Placing {
-            layer: bar.layer,
-            area: &bar.area,
+            layer,
+            area,
             group: None,
-            output: bar.output.as_deref(),
+            output: desktop.output.as_deref(),
             workspace: workspace.as_ref(),
-            cell: None,
-            near: (0, 0),
-            zone: Some(zone),
+            cell,
+            near,
+            zone,
         },
         &Use::of(id.clone()),
     )
-    .map_err(Refusal::into_edit)?;
+    .map_err(Refusal::into_edit)
+}
+
+/// Puts the komponent `id` in a new group at the end of the zone `zone` of the bar `bar` names, every parameter at its default ([`planned`]): one undo entry, and the new group selected where an edit mode is on that bar's screen.
+pub fn add_to_bar(bar: &Node, zone: Zone, id: &KomponentId) -> Result<(), EditError> {
+    let desktop = reconcile::desktop_now(bar.output.as_deref()).ok_or_else(EditError::no_output)?;
+    let layout = session::draft().peek();
+    let (ops, group) = planned(
+        &layout,
+        &desktop,
+        bar.layer,
+        &bar.area,
+        id,
+        Where::Zone(zone),
+    )?;
     crate::context::commit(
         telar::t!("editor.komponent.used", komponent = id.to_string()),
         ops,

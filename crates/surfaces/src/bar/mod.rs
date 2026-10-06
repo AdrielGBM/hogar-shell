@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use telar::{
     AlignItems, BorderRadius, ChildSlot, Clip, ClippedItem, Color, Container, Gradient,
-    JustifyContent, LayoutError, LayoutItem, LayoutStyle, Paint, RectStyle, RwSignal, Slots,
+    JustifyContent, LayoutError, LayoutItem, LayoutStyle, Paint, RectStyle, RwSignal,
     StyledContainer, box_transform, motion::Animated, track_layout,
 };
 
@@ -24,7 +24,7 @@ use layout::{
 };
 use ui::descriptor::{Built, ChipDef, ChipFrame, ModuleDescriptor};
 use ui::host::{Audience, Host, Instance, InstanceId, Representation, Size};
-use ui::layout::{fill, painted_chrome};
+use ui::layout::{built_once, fill, painted_chrome};
 use ui::module::{DragOpen, Placement, module_foreground, resting_fill};
 use ui::module_shell::{ModuleShellProps, module_shell};
 use ui::placeholder::placeholder;
@@ -68,7 +68,7 @@ pub fn build_bar(
     let site = Site {
         output: surround.output.map(str::to_string),
         layer: LayerWindowContext::current().map_or(LayerKind::Top, |window| window.layer),
-        edge,
+        edge: Some(edge),
         chrome: ui::chrome::Chrome::new(
             Arc::clone(config),
             shape,
@@ -447,10 +447,35 @@ struct Hiding {
     away: (f32, f32),
     shown: Animated<f32>,
     pulling: RwSignal<bool>,
+    hovered: RwSignal<bool>,
+    /// Whether a panel or drawer opened from one of the bar's chips is up, which keeps the bar out until it closes.
+    held: RwSignal<bool>,
 }
 
 impl Hiding {
     fn of(chrome: &BarFrame) -> Option<Self> {
+        let hiding = Self::away(chrome)?;
+        let area = rects::Node::area(chrome.output, chrome.surround.layer, &chrome.area.id);
+        let Hiding {
+            held,
+            hovered,
+            pulling,
+            shown,
+            ..
+        } = hiding;
+        telar::effect(move || {
+            let holds = crate::transient::holds(&area);
+            held.set(holds);
+            if holds {
+                shown.retarget(1.0);
+            } else if !hovered.peek() && !pulling.peek() {
+                shown.retarget(0.0);
+            }
+        });
+        Some(hiding)
+    }
+
+    fn away(chrome: &BarFrame) -> Option<Self> {
         let hide = chrome.autohide?;
         let away = (chrome.thickness - hide.peek).max(0.0);
         let away = match chrome.edge {
@@ -467,6 +492,8 @@ impl Hiding {
             // Built at 0 and retargeted rather than at its destination, which would leave it inert — the same rule the wallpaper's cross-fade follows.
             shown: Animated::new(0.0f32, chrome.config.animation.tween_ms(160, 1_000)),
             pulling: telar::signal(false),
+            hovered: telar::signal(false),
+            held: telar::signal(false),
         })
     }
 
@@ -477,12 +504,18 @@ impl Hiding {
             let out = 1.0 - shown.get();
             box_transform(rect, 0.0, 1.0, 1.0, away.0 * out, away.1 * out)
         });
-        if self.on_hover {
-            return placed.on_hover(move |inside| shown.retarget(if inside { 1.0 } else { 0.0 }));
-        }
-        let pulling = self.pulling;
+        let Hiding {
+            on_hover,
+            pulling,
+            hovered,
+            held,
+            ..
+        } = self;
         placed.on_hover(move |inside| {
-            if !inside && !pulling.peek() {
+            hovered.set(inside);
+            if inside && on_hover {
+                shown.retarget(1.0);
+            } else if !inside && !pulling.peek() && !held.peek() {
                 shown.retarget(0.0);
             }
         })
@@ -506,6 +539,7 @@ impl Hiding {
             away,
             shown,
             pulling,
+            held,
             ..
         } = self;
         let band = self.band(size);
@@ -538,7 +572,7 @@ impl Hiding {
                     // Measured in the frame the pull was pressed in, where the bar was still away.
                     let (x, y) = (band.x + x + away.0, band.y + y + away.1);
                     let over = (0.0..=size.width).contains(&x) && (0.0..=size.height).contains(&y);
-                    if !over {
+                    if !over && !held.peek() {
                         shown.retarget(0.0);
                     }
                 }),
@@ -1082,20 +1116,25 @@ fn chip_wrapper(
             .expect("a container registers its rect")
             .read_only();
         wrapper = wrapper.on_hover(move |entered| {
-            crate::popout::hover(&instance, site.anchor(rect.get()), entered)
+            crate::popout::hover(&instance, site.beside(rect.get()), entered)
         });
     }
     Ok(Box::new(wrapper))
 }
 
-/// The drag-to-open gesture for a chip, when it has a panel to open and the gesture is switched on; a chip with nothing to open gets none, since arming a gesture that can only do nothing would still cancel its tap.
-fn drag_open_for(config: &Config, module: &ModuleDescriptor, edge: Edge) -> Option<DragOpen> {
-    if !opens_panel(module) {
-        return None;
-    }
-    let threshold = config.panels.drag_threshold()?;
+/// The drag-to-open gesture for a chip, when pulling it opens something and the gesture is switched on; a chip with nothing to open gets none, since arming a gesture that can only do nothing would still cancel its tap.
+fn drag_open(
+    module: &ModuleDescriptor,
+    bound: &Bound,
+    threshold: Option<f32>,
+    edge: Edge,
+) -> Option<DragOpen> {
+    let threshold = threshold?;
+    let id = module.id;
+    let built_in =
+        opens_panel(module).then(|| Rc::new(move || crate::panel::open_panel(id)) as Rc<dyn Fn()>);
     Some(DragOpen {
-        module: module.id.to_string(),
+        open: bound.drag(built_in)?,
         edge,
         threshold,
     })
@@ -1233,12 +1272,24 @@ impl ChipKit {
             axis(style, self.edge),
             Some(container::padding_of(group, true)),
         );
+        let style = match group.children.is_empty() && group.repeat.is_none() {
+            true => self.one_chip_long(style),
+            false => style,
+        };
         let node = crate::area::group_box(style, held, Some(look), None)?;
         // A stacked or repeated group already registered where it is, as one box or by its copies.
         if group.repeat.is_none() && !group.is_pages() {
             rects::track(self.at.group(&group.id), node.layout_node());
         }
         Ok(node)
+    }
+
+    /// `style` at least as long along the bar as a square chip, so a plate with nothing on it yet is still there to see and to select.
+    fn one_chip_long(&self, style: LayoutStyle) -> LayoutStyle {
+        match self.edge.is_horizontal() {
+            true => style.min_width(self.thickness),
+            false => style.min_height(self.thickness),
+        }
     }
 
     /// The host a chip is built under.
@@ -1300,11 +1351,14 @@ impl ChipKit {
             accent,
             module_foreground(variant, accent, self.theme),
         );
-        let menu = crate::menu::on(at.clone(), self.audience);
+        let bound = Bound::of(&instance.actions, self.audience)
+            .with_menu(crate::menu::on(at.clone(), self.audience))
+            .owning(at.clone());
+        let fixing = bound.fixing();
         let placed = ui::descriptor::lookup(&self.modules, id)
             .and_then(|module| Some((*module, module.representations.chip?)));
         let Some((module, chip)) = placed else {
-            let item = placeholder(id, None, &host, self.theme, menu)?;
+            let item = placeholder(id, None, &host, self.theme, fixing)?;
             rects::track(at.clone(), item.layout_node());
             return Ok(item);
         };
@@ -1319,16 +1373,14 @@ impl ChipKit {
             radius: self.radius,
             edge: self.edge,
             popout: module.representations.popout.is_some() && config.popouts.enabled,
-            drag_open: drag_open_for(config, &module, self.edge),
+            threshold: config.panels.drag_threshold(),
             site: self.site.clone(),
             at: at.clone(),
-            bound: Bound::of(&instance.actions, self.audience)
-                .with_menu(menu.clone())
-                .owning(at.clone()),
+            bound,
         };
         let style = chip_box(&chip, self.edge);
         let built = host.clone();
-        let item = ui::descriptor::guard(id, &host, style, menu, move || {
+        let item = ui::descriptor::guard(id, &host, style, fixing, move || {
             placed_chip(&module, &chip, &built, look)
         })?;
         let item: Box<dyn LayoutItem> = match plate {
@@ -1433,7 +1485,8 @@ struct Dressing {
     radius: f32,
     edge: Edge,
     popout: bool,
-    drag_open: Option<DragOpen>,
+    /// How far a pull off the bar travels before it opens what a press would, where pulling is switched on.
+    threshold: Option<f32>,
     site: Site,
     /// Where the chip is, which its presses and drags carry to whatever they open.
     at: rects::Node,
@@ -1486,34 +1539,21 @@ fn placed_chip(
         }
         None => None,
     };
-    let mut inner = Slots::new();
-    inner.push(None, content);
-    let shell = module_shell(
-        ModuleShellProps::props()
-            .variant(look.variant)
-            .rest(look.rest)
-            .accent(look.accent)
-            .radius(look.radius)
-            .square(chip.square)
-            .inset(host.inset())
-            .vertical(host.is_vertical())
-            .elastic(chip.elastic)
-            .on_press(look.bound.press(own_press))
-            .on_long_press(look.bound.long_press())
-            .on_alt_press(look.bound.alt_press())
-            .on_scroll(wheel)
-            .drag_open(look.drag_open)
-            .placement(Some(Placement::new(look.at)))
-            .build(),
-        telar::Children::new({
-            let inner = std::cell::RefCell::new(Some(inner));
-            move || {
-                inner
-                    .borrow_mut()
-                    .take()
-                    .ok_or_else(|| LayoutError::Engine("children built twice".into()))
-            }
-        }),
+    let bound = look.bound.clone().with_own_press(own_press);
+    let shell = chip_shell(
+        host,
+        chip,
+        &bound,
+        wheel,
+        &look.at,
+        ChipLook {
+            variant: look.variant,
+            rest: look.rest,
+            accent: look.accent,
+            radius: look.radius,
+            drag_open: drag_open(module, &bound, look.threshold, look.edge),
+        },
+        content,
     )?;
     // Outside the chip rather than on it: the chip's own hover already swaps its paint, and stacking a second meaning onto that callback would tie the two together.
     match popout {
@@ -1534,8 +1574,50 @@ fn placed_chip(
     }
 }
 
-/// The chip's wheel handler bound to the host it was built under, so a notch acts on this bar's options rather than the global config.
-fn wheel(chip: &ChipDef, host: &Host) -> Option<Wheel> {
+/// How the chip shell around one chip is painted, and what pulling it opens.
+pub(crate) struct ChipLook {
+    pub(crate) variant: Variant,
+    pub(crate) rest: Color,
+    pub(crate) accent: Color,
+    pub(crate) radius: f32,
+    pub(crate) drag_open: Option<DragOpen>,
+}
+
+/// `content` in the chip shell, wherever the chip is placed: padded to its host's thickness as that changes, lit on hover, and answering `bound` and `wheel` with the chip at `at` in scope, so what they open hangs off it. Built under its host, so a press of it names the screen it is on.
+pub(crate) fn chip_shell(
+    host: &Host,
+    chip: &ChipDef,
+    bound: &Bound,
+    wheel: Option<Wheel>,
+    at: &rects::Node,
+    look: ChipLook,
+    content: Box<dyn LayoutItem>,
+) -> Built {
+    host.build(|host| {
+        module_shell(
+            ModuleShellProps::props()
+                .variant(look.variant)
+                .rest(look.rest)
+                .accent(look.accent)
+                .radius(look.radius)
+                .square(chip.square)
+                .inset(host.follow(Host::inset))
+                .vertical(host.is_vertical())
+                .elastic(chip.elastic)
+                .on_press(bound.press())
+                .on_long_press(bound.long_press())
+                .on_alt_press(bound.alt_press())
+                .on_scroll(wheel)
+                .drag_open(look.drag_open)
+                .placement(Some(Placement::new(at.clone())))
+                .build(),
+            built_once(content),
+        )
+    })
+}
+
+/// The chip's wheel handler bound to the host it was built under, so a notch acts on its own instance's options rather than the global config.
+pub(crate) fn wheel(chip: &ChipDef, host: &Host) -> Option<Wheel> {
     let scroll = chip.scroll?;
     let host = host.clone();
     Some(Rc::new(move |dx, dy| scroll(&host, dx, dy)))
@@ -1779,7 +1861,7 @@ mod tests {
         Site {
             output: None,
             layer: LayerKind::Top,
-            edge,
+            edge: Some(edge),
             chrome: ui::chrome::Chrome::global(Arc::new(Config::default()), None),
             gap: 8.0,
         }
@@ -1936,8 +2018,6 @@ mod tests {
         let sink = Rc::clone(&clicked);
         reset_layout_runtime();
         set_theme(NordTheme::new());
-        let mut inner = Slots::new();
-        inner.push(None, dummy(&test_host(Edge::Top)).unwrap());
         let chip = module_shell(
             ModuleShellProps::props()
                 .variant(config::Variant::Default)
@@ -1947,15 +2027,7 @@ mod tests {
                 .square(true)
                 .on_press(Some(Rc::new(move || sink.set(true)) as Rc<dyn Fn()>))
                 .build(),
-            telar::Children::new({
-                let inner = std::cell::RefCell::new(Some(inner));
-                move || {
-                    inner
-                        .borrow_mut()
-                        .take()
-                        .ok_or_else(|| LayoutError::Engine("chip children built twice".into()))
-                }
-            }),
+            built_once(dummy(&test_host(Edge::Top)).unwrap()),
         )
         .unwrap();
         let mut wrapped = chip_wrapper(
@@ -3946,6 +4018,54 @@ mod tests {
                     claimed_by(&area(plain), &neighbours),
                     "{edge:?}, hiding: {}",
                     autohide.is_some()
+                );
+            }
+        }
+    }
+
+    /// A plate made in a bar before anything is put on it is one square chip long, so it can be seen and selected; an empty group with no style of its own still takes no room.
+    #[test]
+    fn an_empty_plated_group_is_one_chip_long_and_an_unstyled_one_takes_no_room() {
+        const THICKNESS: f32 = 32.0;
+        for edge in Edge::ALL {
+            for mode in ["bar", "sections", "chips"] {
+                reset_layout_runtime();
+                set_theme(NordTheme::new());
+                let _scope = telar::owner_scope();
+                let plated = ResolvedGroup {
+                    style: layout::Style {
+                        fill: Some(ui::scale::plate::FILL.to_string()),
+                        ..layout::Style::default()
+                    },
+                    ..zone_group("plate", Zone::Start, &[])
+                };
+                let area = area_of(
+                    edge,
+                    THICKNESS,
+                    shape_of(&format!("mode = \"{mode}\"")),
+                    None,
+                    vec![
+                        zone_group("start", Zone::Start, &["dummy"]),
+                        plated,
+                        zone_group("bare", Zone::End, &[]),
+                    ],
+                );
+                let _tree = laid(&area, &registry());
+                let at = rects::Node::area(None, LayerKind::Top, &area.id);
+                let plate = rects::rect(&at.group(&GroupId::new("plate")))
+                    .unwrap_or_else(|| panic!("{edge:?} {mode}: the plate is registered"));
+                let (along, across) = match edge.is_horizontal() {
+                    true => (plate.width, plate.height),
+                    false => (plate.height, plate.width),
+                };
+                assert!(
+                    along >= THICKNESS && across > 0.0,
+                    "{edge:?} {mode}: {plate:?} is no chip long"
+                );
+                assert!(
+                    rects::rect(&at.group(&GroupId::new("bare")))
+                        .is_none_or(|bare| bare.width * bare.height == 0.0),
+                    "{edge:?} {mode}: an unstyled empty group takes room"
                 );
             }
         }

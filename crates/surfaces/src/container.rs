@@ -440,7 +440,11 @@ mod built {
 
     /// Far larger than any share it is given, so a slot that let it spill would show.
     fn oversized(host: &Host) -> Built {
-        DRAWN.with(|drawn| drawn.borrow_mut().push((host.representation, host.extent)));
+        DRAWN.with(|drawn| {
+            drawn
+                .borrow_mut()
+                .push((host.representation, host.extent()))
+        });
         Ok(Box::new(Container::new(
             LayoutStyle::new().width(2000.0).height(2000.0),
             Vec::new(),
@@ -637,6 +641,7 @@ mod built {
 mod kept {
     use std::cell::RefCell;
 
+    use std::collections::HashMap;
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -651,8 +656,10 @@ mod kept {
         Color, ComponentList, Container, DrawCommand, LayoutItem, LayoutStyle, RectStyle,
         StyledContainer, reset_layout_runtime, set_theme, signal,
     };
-    use ui::descriptor::{Built, Category, Input, ModuleDescriptor, Representations, WidgetDef};
-    use ui::host::{Audience, Host, WidgetSize};
+    use ui::descriptor::{
+        Built, Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef,
+    };
+    use ui::host::{Audience, Host, Representation, Size, WidgetSize};
     use ui::layout::fill;
 
     use crate::area::Surround;
@@ -672,12 +679,19 @@ mod kept {
     };
 
     thread_local! {
-        static BUILT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        static BUILT: RefCell<Vec<(String, Representation)>> = const { RefCell::new(Vec::new()) };
+        static TOLD: RefCell<HashMap<String, Size>> = RefCell::new(HashMap::new());
     }
 
-    /// A widget that fills its share in a colour of its own, so two of them swapped draw something else.
+    /// A widget that fills its share in a colour of its own, so two of them swapped draw something else, and keeps saying what box its host tells it it has.
     fn swatch(host: &Host) -> Built {
-        BUILT.with(|built| built.borrow_mut().push(host.instance.as_str().to_string()));
+        let id = host.instance.as_str().to_string();
+        BUILT.with(|built| built.borrow_mut().push((id.clone(), host.representation)));
+        let told = host.clone();
+        telar::effect(move || {
+            let extent = told.extent();
+            TOLD.with(|seen| seen.borrow_mut().insert(id.clone(), extent));
+        });
         let tint = match host.instance.as_str() {
             "a" => Color::rgb(1.0, 0.0, 0.0),
             "b" => Color::rgb(0.0, 0.0, 1.0),
@@ -690,27 +704,50 @@ mod kept {
         )?))
     }
 
-    static SWATCHES: &[ModuleDescriptor] = &[ModuleDescriptor {
-        id: "swatch",
-        name: "swatch",
-        icon: "circle",
-        category: Category::Info,
-        options: &[],
-        representations: Representations {
-            chip: None,
-            widget: Some(WidgetDef {
-                sizes: &WidgetSize::ALL,
-                build: swatch,
-                input: Input::ReadOnly,
-            }),
-            card: None,
-            panel: None,
-            popout: None,
-        },
-        actions: &[],
-        sources: &[],
-    }];
+    const DOT: f32 = 10.0;
 
+    fn dot(_: &Host) -> Built {
+        Ok(Box::new(Container::new(
+            LayoutStyle::new().width(DOT).height(DOT),
+            Vec::new(),
+        )?))
+    }
+
+    static SWATCHES: &[ModuleDescriptor] = &[
+        ModuleDescriptor {
+            id: "swatch",
+            name: "swatch",
+            icon: "circle",
+            category: Category::Info,
+            options: &[],
+            representations: Representations {
+                chip: None,
+                widget: Some(WidgetDef {
+                    sizes: &WidgetSize::ALL,
+                    build: swatch,
+                    input: Input::ReadOnly,
+                }),
+                card: None,
+                panel: None,
+                popout: None,
+            },
+            actions: &[],
+            sources: &[],
+        },
+        ModuleDescriptor {
+            id: "pill",
+            name: "pill",
+            icon: "circle",
+            category: Category::Info,
+            options: &[],
+            representations: Representations {
+                chip: Some(ChipDef::new(dot, Input::ReadOnly).square()),
+                ..Representations::NONE
+            },
+            actions: &[],
+            sources: &[],
+        },
+    ];
     fn child(id: &str, placement: Placement) -> ResolvedInstance {
         ResolvedInstance {
             placement: Some(placement),
@@ -775,6 +812,7 @@ mod kept {
             set_theme(config.resolve_theme());
             ui::descriptor::install(SWATCHES);
             BUILT.with(|built| built.borrow_mut().clear());
+            TOLD.with(|told| told.borrow_mut().clear());
             let scope = telar::owner_scope();
             telar::set_context(LayerWindowContext {
                 layer: LayerKind::Desktop,
@@ -841,8 +879,14 @@ mod kept {
         ));
     }
 
-    fn built() -> Vec<String> {
+    fn built() -> Vec<(String, Representation)> {
         BUILT.with(|built| built.borrow().clone())
+    }
+
+    fn told(id: &str) -> Size {
+        telar::relayout_if_dirty();
+        TOLD.with(|told| told.borrow().get(id).copied())
+            .expect("the child was built")
     }
 
     fn at(id: &str) -> telar::Rect {
@@ -908,7 +952,7 @@ mod kept {
     }
 
     #[test]
-    fn moving_a_child_lays_it_out_again_and_resizing_one_builds_that_one_alone() {
+    fn moving_or_resizing_a_child_lays_it_out_again_and_its_host_follows_the_new_size() {
         let free = |a: Rect| {
             grid(container(
                 Arrange::Free,
@@ -958,17 +1002,127 @@ mod kept {
             w: 0.25,
             h: 0.5,
         });
+        assert_eq!(
+            told("a"),
+            Size {
+                width: a.width,
+                height: a.height
+            }
+        );
         edit(&moved, &resized);
         window.frame();
-        let mut expected = builds.clone();
-        expected.push("a".to_string());
+        assert_eq!(built(), builds, "a resize builds nothing either");
+        assert_eq!(at("a").width, BOX.width / 4.0);
+        assert_eq!(
+            told("a"),
+            Size {
+                width: BOX.width / 4.0,
+                height: a.height
+            },
+            "the child's host is told the share it was laid out at"
+        );
+        assert_eq!(at("b"), b);
+        assert_eq!(
+            told("b"),
+            Size {
+                width: b.width,
+                height: b.height
+            }
+        );
+    }
+
+    /// A chip in a container is padded as a chip of the box it is given is, and a resize that only lays it out again pads it anew.
+    #[test]
+    fn a_container_chips_padding_follows_a_resize() {
+        let free = |w: f32| {
+            grid(container(
+                Arrange::Free,
+                vec![ResolvedInstance {
+                    placement: Some(Placement::Rect(Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w,
+                        h: 0.5,
+                    })),
+                    ..instance("a", "pill", Placed::Chip)
+                }],
+            ))
+        };
+        let chip = || {
+            telar::relayout_if_dirty();
+            rects::chips()
+                .into_iter()
+                .rfind(|(node, _, _)| {
+                    matches!(&node.part, rects::Part::Instance(_, id) if id.as_str() == "a")
+                })
+                .map(|(_, _, rect)| rect)
+                .expect("the chip is drawn")
+        };
+        let was = free(0.5);
+        let window = Window::of(&was);
+        window.frame();
+        assert_eq!(chip().height, DOT + 2.0 * 5.0, "a chip 40 thick pads by 5");
+
+        let now = free(0.05);
+        edit(&was, &now);
+        window.frame();
+        assert_eq!(
+            chip().height,
+            DOT + 2.0 * 2.0,
+            "one squeezed to about 18 pads by 2"
+        );
+    }
+
+    #[test]
+    fn a_child_whose_share_fits_another_representation_is_built_again_alone_at_it() {
+        let alone = grid(container(
+            Arrange::Row,
+            vec![child("a", Placement::Weight(1.0))],
+        ));
+        let window = Window::of(&alone);
+        window.frame();
         assert_eq!(
             built(),
-            expected,
-            "a child told another size is built again, alone"
+            vec![
+                ("a".to_string(), Representation::Widget(WidgetSize::M)),
+                ("c".to_string(), Representation::Widget(WidgetSize::S)),
+            ],
+            "alone, a takes the whole box, which holds a medium widget"
         );
-        assert_eq!(at("a").width, BOX.width / 4.0);
-        assert_eq!(at("b"), b);
+        assert_eq!(
+            told("a"),
+            Size {
+                width: BOX.width,
+                height: BOX.height
+            }
+        );
+
+        let shared = grid(container(
+            Arrange::Row,
+            vec![
+                child("a", Placement::Weight(1.0)),
+                child("b", Placement::Weight(1.0)),
+            ],
+        ));
+        edit(&alone, &shared);
+        window.frame();
+        let half = (BOX.width - 8.0) / 2.0;
+        assert_eq!(
+            built()[2..],
+            [
+                ("a".to_string(), Representation::Widget(WidgetSize::S)),
+                ("b".to_string(), Representation::Widget(WidgetSize::S)),
+            ],
+            "a half holds only a small one, so a is built again at it, and b is built"
+        );
+        assert_eq!(
+            told("a"),
+            Size {
+                width: half,
+                height: BOX.height
+            }
+        );
+        assert_eq!(at("a").width, half);
     }
 
     #[test]

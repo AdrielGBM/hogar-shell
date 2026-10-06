@@ -985,6 +985,11 @@ fn every_area() -> Vec<layout::ResolvedArea> {
 
 /// What of each inked rect in `commands` is left once every clip around it has cut it: the ink that actually reaches the screen. A label past the end of a bar and a wallpaper larger than its region are cut by the clip they are drawn in, and are not ink anybody sees.
 fn visible_ink(commands: &[DrawCommand]) -> Vec<Rect> {
+    inked(commands).into_iter().map(|(_, rect)| rect).collect()
+}
+
+/// [`visible_ink`], each rect with the [`kind`] of command that put it there.
+fn inked(commands: &[DrawCommand]) -> Vec<(&'static str, Rect)> {
     let mut clips: Vec<Option<Rect>> = Vec::new();
     let mut ink = Vec::new();
     for (command, at) in under_transform(commands) {
@@ -1010,7 +1015,10 @@ fn visible_ink(commands: &[DrawCommand]) -> Vec<Rect> {
                     Some(None) => None,
                     None => Some(rect),
                 };
-                ink.extend(seen.filter(|rect| rect.width >= SLACK && rect.height >= SLACK));
+                ink.extend(
+                    seen.filter(|rect| rect.width >= SLACK && rect.height >= SLACK)
+                        .map(|rect| (kind(command), rect)),
+                );
             }
         }
     }
@@ -1029,6 +1037,23 @@ fn measure_area(
     area: &layout::ResolvedArea,
     size: (f32, f32),
 ) -> Result<Vec<DrawCommand>, LayoutError> {
+    let built = built_area(area, size)?;
+    let page = || LayoutStyle::new().width(size.0).height(size.1);
+    let root_node = new_container(page(), &[built.layout_node()])?;
+    let tree = ComponentList::new(Container::new(page(), vec![built])?);
+    compute_layout(
+        root_node,
+        AvailableSpace::Definite(size.0),
+        AvailableSpace::Definite(size.1),
+    )?;
+    Ok(tree.commands().to_vec())
+}
+
+/// `area` built on a desktop of `size`, as the shell would build it there.
+fn built_area(
+    area: &layout::ResolvedArea,
+    size: (f32, f32),
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let config = config::config().expect("the sweep published a config");
     let resolved = layout::Resolved::of(
         "SWEPT-1",
@@ -1055,17 +1080,8 @@ fn measure_area(
         reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
         audience: ui::host::Audience::Owner,
     };
-    let built = telar::batch(|| surfaces::area::build(area, surround))
-        .unwrap_or_else(|| Err(LayoutError::Engine("nothing builds this area".into())))?;
-    let page = || LayoutStyle::new().width(size.0).height(size.1);
-    let root_node = new_container(page(), &[built.layout_node()])?;
-    let tree = ComponentList::new(Container::new(page(), vec![built])?);
-    compute_layout(
-        root_node,
-        AvailableSpace::Definite(size.0),
-        AvailableSpace::Definite(size.1),
-    )?;
-    Ok(tree.commands().to_vec())
+    telar::batch(|| surfaces::area::build(area, surround))
+        .unwrap_or_else(|| Err(LayoutError::Engine("nothing builds this area".into())))
 }
 
 /// **Every area kind works everywhere it can be put** — the standing rule, taken literally: a bar and a dock on all four edges, a grid, a stack and a free area at all nine anchors, a wallpaper and a texture, on a laptop, a large monitor and a portrait one, in `bar`, `sections` and `chips`. Each has to lay out, draw something, and draw all of it on the screen it was placed on.
@@ -1204,6 +1220,229 @@ fn no_container_draws_past_its_box() {
     assert!(
         faults.is_empty(),
         "{} container(s) drew past their box:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
+/// The side of the container [`resized_child`] sits in: six 80 px cells 16 px apart, which holds a large widget with room to grow it.
+const RESIZED_BOX: f32 = 6.0 * 80.0 + 5.0 * 16.0;
+
+/// `module` alone in an unpadded free container six cells square at the top left corner of a grid, at `share` of its box.
+fn resized_child(module: &str, share: (f32, f32)) -> layout::ResolvedArea {
+    let child = layout::ResolvedInstance {
+        placement: Some(layout::Placement::Rect(layout::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: share.0,
+            h: share.1,
+        })),
+        ..instance(module, layout::Representation::WidgetS)
+    };
+    let container = layout::ResolvedGroup {
+        id: layout::GroupId::new("resized"),
+        arrange: Some(layout::Arrange::Free),
+        style: layout::Style {
+            padding: Some(layout::Sides::all(0.0)),
+            ..layout::Style::default()
+        },
+        ..group(
+            layout::GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 6,
+                row_span: 6,
+            },
+            vec![child],
+        )
+    };
+    area_of(
+        "resized".into(),
+        layout::ResolvedAreaKind::Grid {
+            rect: layout::Rect::default(),
+            cell: 80.0,
+            gap: 16.0,
+            anchor: layout::Anchor::TopLeft,
+        },
+        vec![container],
+    )
+}
+
+/// `was` laid out in a desktop window of `size`, then edited in place to `now` the way the window keeps a container's children through a change to their shares, and drawn again.
+fn resized_in_place(
+    was: &layout::ResolvedArea,
+    now: &layout::ResolvedArea,
+    size: (f32, f32),
+) -> Result<Vec<DrawCommand>, LayoutError> {
+    telar::set_context(surfaces::layer_window::LayerWindowContext {
+        layer: layout::LayerKind::Desktop,
+        output: Some("SWEPT-1".into()),
+        demands: std::rc::Rc::new(surfaces::layer_window::Demands::new(
+            platform_wayland::Layer::Bottom,
+        )),
+        mapped: telar::signal(true).read_only(),
+    });
+    let root = Container::new(
+        LayoutStyle::new().width(size.0).height(size.1),
+        vec![built_area(was, size)?],
+    )?;
+    let node = root.layout_node();
+    let mut tree = ComponentList::new(root);
+    tree.on_event(&telar::Event::WindowResized {
+        width: size.0 as u32,
+        height: size.1 as u32,
+    });
+    compute_layout(
+        node,
+        AvailableSpace::Definite(size.0),
+        AvailableSpace::Definite(size.1),
+    )?;
+    let kept = surfaces::area::moves_only(was, now)
+        && surfaces::area::move_cells(
+            Some("SWEPT-1"),
+            layout::LayerKind::Desktop,
+            layout::LayerKind::Desktop,
+            now,
+        );
+    if !kept {
+        return Err(LayoutError::Engine("the resize was not kept".into()));
+    }
+    telar::relayout_if_dirty();
+    Ok(tree.commands().to_vec())
+}
+
+/// What a module drew, by size alone: where it sits moves with whatever is beside it, and a label's width with the reading it shows.
+fn drawn_sizes(commands: &[DrawCommand]) -> Vec<(&'static str, f32, f32)> {
+    let mut sizes: Vec<(&'static str, f32, f32)> = inked(commands)
+        .into_iter()
+        .map(|(kind, rect)| match kind {
+            "text" => (kind, 0.0, rect.height),
+            _ => (kind, rect.width, rect.height),
+        })
+        .collect();
+    sizes.sort_by(|a, b| {
+        (a.0, a.1, a.2)
+            .partial_cmp(&(b.0, b.1, b.2))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    sizes
+}
+
+fn same_sizes(a: &[(&'static str, f32, f32)], b: &[(&'static str, f32, f32)]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            a.0 == b.0 && (a.1 - b.1).abs() <= SLACK * 2.0 && (a.2 - b.2).abs() <= SLACK * 2.0
+        })
+}
+
+/// The focused window and the workspaces the compositor reports, stood in for its own so that two builds compared with each other read the same, whatever another test seeded last.
+fn seed_compositor() {
+    use services::hyprland::{ActiveWindow, Snapshot, Workspace};
+    services::hyprland::seed_active_window(ActiveWindow {
+        title: "Resized window".to_string(),
+        class: "hogar-shell-preview".to_string(),
+        address: "0x1".to_string(),
+        handle: None,
+    });
+    services::hyprland::seed_workspaces(Snapshot {
+        workspaces: (1..=3)
+            .map(|id| Workspace {
+                id,
+                name: id.to_string(),
+                windows: id as u32 - 1,
+                monitor: "SWEPT-1".to_string(),
+                clients: Vec::new(),
+                handle: None,
+            })
+            .collect(),
+        active: 2,
+        focused_monitor: "SWEPT-1".to_string(),
+    });
+}
+
+/// **A container child resized in place draws what one built at its new size draws**: every module, alone in a container, as a chip, a small, a medium and a large widget, its share grown or shrunk without leaving the representation it fits. The resize keeps the child rather than building it again, so a module that sized what it draws once, at the box it was first told, draws at the old size inside the new one; laid out again, the same drawing has to come out as a fresh build at the new share, with nothing past the container's box.
+#[test]
+fn a_container_child_resized_in_place_draws_what_a_fresh_one_does() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let resizes: [((f32, f32), (f32, f32)); 4] = [
+        ((0.3, 0.06), (0.2, 0.04)),
+        ((0.32, 0.32), (0.45, 0.45)),
+        ((0.7, 0.32), (0.9, 0.4)),
+        ((0.95, 0.95), (0.7, 0.7)),
+    ];
+    let size = MONITORS[0];
+    let held = Rect::new(
+        -SLACK,
+        -SLACK,
+        RESIZED_BOX + 2.0 * SLACK,
+        RESIZED_BOX + 2.0 * SLACK,
+    );
+    let mut faults = Vec::new();
+    let mut compared = 0;
+    for module in crate::core::modules::MODULES {
+        for (from, to) in resizes {
+            let fits = |share: (f32, f32)| {
+                surfaces::container::fitted(
+                    module.id,
+                    Size {
+                        width: share.0 * RESIZED_BOX,
+                        height: share.1 * RESIZED_BOX,
+                    },
+                    (80.0, 16.0),
+                    ui::host::Audience::Owner,
+                )
+            };
+            if fits(from) != fits(to) {
+                continue;
+            }
+            let at = format!("{} as {:?}, {from:?} to {to:?}", module.id, fits(to));
+            let (was, now) = (resized_child(module.id, from), resized_child(module.id, to));
+            let drawn = |build: &dyn Fn() -> Result<Vec<DrawCommand>, LayoutError>| {
+                reset_layout_runtime();
+                seed_world(Edge::Top, Shape::Bar, None);
+                seed_compositor();
+                let mut still = (*config::config().expect("seeded")).clone();
+                still.animation.enabled = false;
+                config::set_config(Arc::new(still));
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let drawn = build();
+                drop(scope);
+                telar::dispose_owner(owner);
+                drawn
+            };
+            match (
+                drawn(&|| resized_in_place(&was, &now, size)),
+                drawn(&|| measure_area(&now, size)),
+            ) {
+                (Err(error), _) | (_, Err(error)) => faults.push(format!("{at}: {error}")),
+                (Ok(resized), Ok(fresh)) => {
+                    compared += 1;
+                    for rect in visible_ink(&resized)
+                        .into_iter()
+                        .filter(|rect| rect.intersect(held) != Some(*rect))
+                    {
+                        faults.push(format!(
+                            "{at}: {}x{} at {},{} is past its box",
+                            rect.width, rect.height, rect.x, rect.y
+                        ));
+                    }
+                    let (resized, fresh) = (drawn_sizes(&resized), drawn_sizes(&fresh));
+                    if !same_sizes(&resized, &fresh) {
+                        faults.push(format!(
+                            "{at}: drew {resized:?} where a fresh build draws {fresh:?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(compared > 0, "every resize left its representation");
+    assert!(
+        faults.is_empty(),
+        "{} resized container child(ren) drew wrong:\n  {}",
         faults.len(),
         faults.join("\n  ")
     );
@@ -1513,7 +1752,7 @@ fn styled(line: &str, shadow: u8) -> layout::Style {
     }
 }
 
-/// A bar in `mode` on `edge` whose start zone is a styled group, a plate around its chips, whose centre chip is styled on its own, and whose end is a styled stack.
+/// A bar in `mode` on `edge` whose start zone is a styled group, a plate around its chips, whose centre chip is styled on its own beside a plate with nothing on it yet, and whose end is a styled stack.
 fn styled_bar(edge: Edge, mode: Shape) -> layout::ResolvedArea {
     use layout::{GroupKind, Representation as Placed, Zone};
     let mut plated = group(
@@ -1533,6 +1772,12 @@ fn styled_bar(edge: Edge, mode: Shape) -> layout::ResolvedArea {
         }],
     );
     centre.id = layout::GroupId::new("centre");
+    let mut empty = group(GroupKind::Zone { zone: Zone::Center }, Vec::new());
+    empty.id = layout::GroupId::new("empty");
+    empty.style = layout::Style {
+        fill: Some(ui::scale::plate::FILL.into()),
+        ..layout::Style::default()
+    };
     let mut end = paged(
         GroupKind::Zone { zone: Zone::End },
         vec![
@@ -1561,7 +1806,7 @@ fn styled_bar(edge: Edge, mode: Shape) -> layout::ResolvedArea {
             },
             autohide: None,
         },
-        vec![plated, centre, end],
+        vec![plated, centre, empty, end],
     );
     bar.style = layout::Style {
         border: Some(layout::Border::default()),

@@ -861,6 +861,8 @@ mod tests {
             "customize",
             "context-menu",
             "remove",
+            "duplicate",
+            "restack",
             "move",
             "resize",
             "undo",
@@ -894,6 +896,7 @@ mod tests {
                 &[
                     "widget-cell",
                     "widget-add",
+                    "container-create",
                     "widget-size",
                     "widget-stack",
                     "widget-from-bar",
@@ -905,6 +908,7 @@ mod tests {
                 LayerKind::Top,
                 &[
                     "bar-create",
+                    "plate-create",
                     "bar-edge",
                     "bar-thickness",
                     "bar-length",
@@ -939,6 +943,7 @@ mod tests {
                 &[
                     "lock-regions",
                     "lock-grid",
+                    "container-create",
                     "lock-palette",
                     "prompt-move",
                     "prompt-style",
@@ -1045,6 +1050,81 @@ mod tests {
         assert_eq!(nearest_to(Direction::Up), None);
     }
 
+    fn answering(
+        layer: LayerKind,
+        vim: bool,
+        key: Key,
+        modifiers: ModifiersState,
+    ) -> Vec<&'static str> {
+        keys::table_for(layer, vim)
+            .into_iter()
+            .filter(|row| row.keys.iter().any(|chord| chord.matches(&key, modifiers)))
+            .map(|row| row.name)
+            .collect()
+    }
+
+    /// No tool's key, for a kind or for a mode, takes a chord that selects, moves or resizes, or goes inside or around, from the generic rows: on every layer, whatever kind is selected, with the vim keys on or off.
+    #[test]
+    fn no_tool_key_shadows_selecting_moving_or_resizing() {
+        let _owner = Owner::new();
+        let _rig = rig_with("keys-unshadowed", |_| {});
+        let alt = ModifiersState {
+            is_alt: true,
+            ..NONE
+        };
+        for vim in [false, true] {
+            let ends = keys::table_for(LayerKind::Desktop, vim)
+                .into_iter()
+                .find(|row| row.name == "select-ends")
+                .expect("the ends row")
+                .keys;
+            let generic: Vec<Chord> = [NONE, SHIFT, CTRL, alt]
+                .into_iter()
+                .flat_map(|modifiers| keys::arrows(vim, modifiers))
+                .chain(ends)
+                .collect();
+            for layer in LayerKind::ALL {
+                for row in keys::table_for(layer, vim) {
+                    if row.scope == Scope::Every {
+                        continue;
+                    }
+                    let shadowed: Vec<String> = generic
+                        .iter()
+                        .filter(|pressed| {
+                            row.keys
+                                .iter()
+                                .any(|chord| chord.matches(&pressed.key, pressed.modifiers))
+                        })
+                        .map(Chord::spelled)
+                        .collect();
+                    assert!(
+                        shadowed.is_empty(),
+                        "{layer} (vim {vim}): `{}` takes {shadowed:?}",
+                        row.name
+                    );
+                }
+            }
+        }
+    }
+
+    /// Alt+N makes a grid wherever a mode has the grid tools.
+    #[test]
+    fn alt_n_makes_a_grid() {
+        let _owner = Owner::new();
+        let _rig = rig_with("keys-alt-n", |_| {});
+        let alt = ModifiersState {
+            is_alt: true,
+            ..NONE
+        };
+        for layer in [LayerKind::Desktop, LayerKind::Lock] {
+            assert_eq!(
+                answering(layer, false, Key::Char('n'), alt),
+                vec!["grid-create"],
+                "{layer}"
+            );
+        }
+    }
+
     /// A letter is one key in either case, and Shift is what tells them apart; a symbol carries its Shift in itself.
     #[test]
     fn a_chord_matches_the_key_however_the_layout_reports_its_case() {
@@ -1064,6 +1144,43 @@ mod tests {
         );
         assert!(!Chord::named(NamedKey::Tab).matches(&Key::Named(NamedKey::Tab), shift));
         assert!(Chord::named(NamedKey::Tab).matches(&Key::Named(NamedKey::Tab), plain));
+    }
+
+    /// Ctrl+Shift+] and Ctrl+Shift+[ bring to the front and send to the back whether the layout reports the bracket with Shift held, as one reaching it through AltGr does, or the brace a US layout makes of it; without Shift they step, and the key list spells them as they are pressed.
+    #[test]
+    fn the_restack_chords_answer_however_the_layout_reports_the_bracket() {
+        use crate::stacking::Order;
+        telar::set_locale("en");
+        let ctrl_shift = ModifiersState {
+            is_shift: true,
+            ..CTRL
+        };
+        let order = |key: char, modifiers: ModifiersState| {
+            Order::of(&Chord {
+                key: Key::Char(key),
+                modifiers,
+            })
+        };
+        assert_eq!(order(']', CTRL), Some(Order::Forward));
+        assert_eq!(order('[', CTRL), Some(Order::Backward));
+        assert_eq!(order(']', ctrl_shift), Some(Order::Front));
+        assert_eq!(order('[', ctrl_shift), Some(Order::Back));
+        assert_eq!(order('}', ctrl_shift), Some(Order::Front));
+        assert_eq!(order('{', ctrl_shift), Some(Order::Back));
+        assert_eq!(order(']', SHIFT), None);
+        let _owner = Owner::new();
+        let _rig = rig_with("keys-restack-chords", |_| {});
+        for (key, modifiers) in [(']', ctrl_shift), ('}', ctrl_shift), ('[', ctrl_shift)] {
+            assert_eq!(
+                answering(LayerKind::Desktop, false, Key::Char(key), modifiers),
+                vec!["restack"],
+                "{key}"
+            );
+        }
+        assert_eq!(
+            keys::spell(&Order::ALL.map(Order::chord)),
+            "Ctrl+]/[, Ctrl+Shift+]/["
+        );
     }
 
     #[test]

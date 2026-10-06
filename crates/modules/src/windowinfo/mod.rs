@@ -34,7 +34,7 @@ pub fn window_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     icon_view(
         || ui::glyph::window_info().to_string(),
         move || fg,
-        host.icon_size(),
+        host.live_icon_size(),
     )
 }
 

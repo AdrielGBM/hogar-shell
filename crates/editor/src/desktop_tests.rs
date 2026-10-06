@@ -323,7 +323,7 @@ mod tests {
         );
 
         desktop::put(
-            &Pick::Module("weather".to_string()),
+            &Pick::Module("weather".to_string(), Some(Representation::WidgetM)),
             Some((widgets_area(), (7, 4))),
             LayerKind::Desktop,
         )
@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(cells_of("clock-2"), Some(at(0, 0, 4, 2)));
 
         desktop::put(
-            &Pick::Module("weather".into()),
+            &Pick::Module("weather".into(), Some(Representation::WidgetM)),
             Some((widgets_area(), (0, 0))),
             LayerKind::Desktop,
         )
@@ -385,8 +385,12 @@ mod tests {
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::Instance(node_of("clock-2"))));
         let before = stored(&rig);
-        desktop::put(&Pick::Module("clock".into()), None, LayerKind::Desktop)
-            .expect("added near the selection");
+        desktop::put(
+            &Pick::Module("clock".into(), Some(Representation::WidgetM)),
+            None,
+            LayerKind::Desktop,
+        )
+        .expect("added near the selection");
         let fresh = holding("clock-3").expect("the bar's clock and the desktop's keep theirs");
         assert_eq!(grid::cells_of(&fresh), Some(at(0, 2, 4, 2)));
         assert_eq!(
@@ -416,6 +420,7 @@ mod tests {
         assert_eq!(
             names(palette::lines(LayerKind::Desktop, "")),
             [
+                "Container",
                 "# Time",
                 "Clock",
                 "# Media",
@@ -431,7 +436,7 @@ mod tests {
         );
         assert_eq!(
             names(palette::lines(LayerKind::Lock, "")),
-            ["# Time", "Clock", "# Information", "Weather"],
+            ["Container", "# Time", "Clock", "# Information", "Weather"],
             "the mixer answers the pointer, so the lock screen is not offered it"
         );
         let mixer = ui::descriptor::find("mixer").expect("installed");
@@ -819,6 +824,7 @@ mod tests {
             Key::Named(NamedKey::ArrowRight),
             ModifiersState {
                 is_alt: true,
+                is_shift: true,
                 ..NONE
             }
         ));
@@ -1413,7 +1419,7 @@ mod tests {
             "{:?}",
             used.kind
         );
-        assert_eq!(rig.undo_label().as_deref(), Some("Place a widget"));
+        assert_eq!(rig.undo_label().as_deref(), Some("Add clock-pill"));
         session::undo().expect("one undo takes it back");
         assert_eq!(stored(&rig), before);
     }

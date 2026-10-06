@@ -10,7 +10,7 @@ let fg = host.foreground;
 platform_wayland::watch(network::subscribe, move |net: Network| state.set(net));
 
 [view]
-icon_glyph name:(Reactive::of(move || glyph::network(read.get()).to_string())) tint:(Reactive::of(move || fg)) size:(host.icon_size())
+icon_glyph name:(Reactive::of(move || glyph::network(read.get()).to_string())) tint:(Reactive::of(move || fg)) size:(host.live_icon_size())
 
 [preview "Network" fixture:ui::preview::bar_chip]
 network

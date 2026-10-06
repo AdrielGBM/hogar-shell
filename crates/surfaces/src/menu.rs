@@ -1,9 +1,10 @@
-//! The context menu a secondary press asks for, on an item or on an area's empty space (TA-4): what it is about, which window it was asked in and where.
+//! The context menu a secondary press asks for, on an item or on an area's empty space: what it is about, which window it was asked in and where — or, on a screen's empty background, the shell's own menu.
 //!
 //! What a menu holds and what its rows do is the editor's, which this crate cannot depend on, so the editor installs the opener at startup and everything here only asks for one. Nothing is ever asked for on the lock layer (TA-8).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::thread::LocalKey;
 
 use telar::{
     Component, Event, EventResult, Key, LayoutItem, ModifiersState, NamedKey, NodeId, RenderNode,
@@ -26,10 +27,19 @@ pub struct Asked {
     pub at: Option<(f32, f32)>,
 }
 
-type Opener = Rc<dyn Fn(Asked)>;
+/// A request for the shell's own menu, asked on a screen's empty background rather than about anything drawn there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellAsked {
+    pub output: Option<String>,
+    /// In the coordinates of the window it was asked in, which are its output's.
+    pub at: Option<(f32, f32)>,
+}
+
+type Installed<A> = RefCell<Option<Rc<dyn Fn(A)>>>;
 
 thread_local! {
-    static OPENER: RefCell<Option<Opener>> = const { RefCell::new(None) };
+    static OPENER: Installed<Asked> = const { RefCell::new(None) };
+    static SHELL_OPENER: Installed<ShellAsked> = const { RefCell::new(None) };
     static POINTER: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
 }
 
@@ -48,19 +58,46 @@ pub fn open(asked: Asked) {
 
 /// What a secondary press on `node` does: opens its menu where the pointer is, in the window being built. `None` on the lock layer, and while no opener is installed.
 pub fn on(node: Node, audience: Audience) -> Option<Rc<dyn Fn()>> {
-    let offered = audience == Audience::Owner
-        && node.layer != LayerKind::Lock
-        && OPENER.with(|opener| opener.borrow().is_some());
-    if !offered {
+    if node.layer == LayerKind::Lock {
         return None;
     }
     let window = LayerWindowContext::current().map_or(node.layer, |window| window.layer);
+    offer(&OPENER, audience, move |at| Asked {
+        node: node.clone(),
+        window,
+        at,
+    })
+}
+
+/// Installs what opens the shell's own menu, as [`install`] does for the menus of what is drawn.
+pub fn install_shell(open: impl Fn(ShellAsked) + 'static) {
+    SHELL_OPENER.with(|opener| *opener.borrow_mut() = Some(Rc::new(open)));
+}
+
+/// What a secondary press on the empty background of `output` does: opens the shell's menu where the pointer is. `None` for anyone but the owner, and while no opener is installed.
+pub fn shell_on(output: Option<&str>, audience: Audience) -> Option<Rc<dyn Fn()>> {
+    let output = output.map(str::to_string);
+    offer(&SHELL_OPENER, audience, move |at| ShellAsked {
+        output: output.clone(),
+        at,
+    })
+}
+
+/// A secondary press handing what `ask` makes of where the pointer is to the opener `installed` holds when it is pressed. `None` for anyone but the owner, and while nothing is installed there.
+fn offer<A: 'static>(
+    installed: &'static LocalKey<Installed<A>>,
+    audience: Audience,
+    ask: impl Fn(Option<(f32, f32)>) -> A + 'static,
+) -> Option<Rc<dyn Fn()>> {
+    let offered = audience == Audience::Owner && installed.with(|opener| opener.borrow().is_some());
+    if !offered {
+        return None;
+    }
     Some(Rc::new(move || {
-        open(Asked {
-            node: node.clone(),
-            window,
-            at: POINTER.with(Cell::get),
-        })
+        let opener = installed.with(|opener| opener.borrow().clone());
+        if let Some(open) = opener {
+            open(ask(POINTER.with(Cell::get)));
+        }
     }))
 }
 

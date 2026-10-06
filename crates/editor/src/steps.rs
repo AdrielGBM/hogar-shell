@@ -1,8 +1,8 @@
 //! What one keyboard step changes in the layout: the selection moved one slot, cell, edge or anchor over, made one size bigger or smaller, or taken away — planned against the draft as it stands, so each repeat of a held key goes one step further than the last.
 //!
-//! **Moves.** An instance on a bar or a dock moves along it one place at a time, from zone to zone at the end of one and on to the nearest bar of the same kind that way at the end of the last; across the bar it goes to that bar straight away. An instance or a group in a grid moves one cell, what it lands on moving out of its way, and an instance in a stack leaves it for cells of its own ([`crate::modes::desktop`]). A bar or a dock moves to the edge the arrow points at, a bar fitted beside the bars already there, and a bar shorter than its edge slides along it instead, never onto its neighbour. A stack steps its anchor, an area placed by a rectangle moves by a hundredth of the screen, and a wallpaper region moves its two edges across the arrow with its neighbours following, so the screen stays tiled ([`crate::modes::regions`]).
+//! **Moves.** An instance on a bar or a dock moves along it one place at a time, from zone to zone at the end of one and on to the nearest bar of the same kind that way at the end of the last; across the bar it goes to that bar straight away. An instance or a group in a grid moves one cell, what it lands on moving out of its way, and an instance in a stack leaves it for cells of its own ([`crate::modes::desktop`]); a child of a container takes the next place in its order, the next cell of its inner grid or a step of its box ([`crate::modes::container`]). A bar or a dock moves to the edge the arrow points at, a bar fitted beside the bars already there, and a bar shorter than its edge slides along it instead, never onto its neighbour. A stack steps its anchor, an area placed by a rectangle moves by a hundredth of the screen, and a wallpaper region moves its two edges across the arrow with its neighbours following, so the screen stays tiled ([`crate::modes::regions`]).
 //!
-//! **Sizes.** A widget steps S, M, L as far as its module draws it; a grid group spans one cell more or less, both reflowing what they grow over; a bar is thicker away from its edge and longer along it, up to the next bar; a stack is wider; a rectangle grows or shrinks from its right and bottom edges; a wallpaper region pushes its edge ahead of the arrow that way, or where that is the screen's edge pulls the one behind it, its neighbours following.
+//! **Sizes.** A widget steps S, M, L as far as its module draws it, and a child of a container takes a bigger or smaller weight, span or box; a grid group spans one cell more or less, both reflowing what they grow over; a bar is thicker away from its edge and longer along it, up to the next bar; a stack is wider; a rectangle grows or shrinks from its right and bottom edges; a wallpaper region pushes its edge ahead of the arrow that way, or where that is the screen's edge pulls the one behind it, its neighbours following.
 //!
 //! **Where it is written.** A change lands where [`Written`] says the layout decides the thing. A move reorders instances within the groups the edited layout writes itself, since a layout laid over another can add to an inherited group but never reorder it.
 
@@ -18,7 +18,7 @@ use crate::modes::desktop::SIZES;
 use crate::popover::AreaDraft;
 use crate::popover::handles::{SHORTEST, THICKNESS};
 use crate::session::{EditError, Selection};
-use crate::written::Written;
+use crate::written::{Work, Written};
 
 /// How far one step moves or resizes an area placed by a rectangle, as a fraction of the screen.
 const RECT_STEP: f32 = 0.01;
@@ -208,27 +208,35 @@ fn move_instance(
         .iter()
         .find(|group| group.children.iter().any(|child| child.id == *id))
         .ok_or_else(|| EditError::gone(&target.node.area))?;
-    let horizontal = match &target.area.kind {
-        ResolvedAreaKind::Grid { .. } if holding.children.len() == 1 => {
-            return move_group(target, draft, &holding.id, direction);
-        }
-        ResolvedAreaKind::Grid { .. } => {
-            let GroupKind::Cell { col, row, .. } = holding.kind else {
-                return Err(target.cannot());
-            };
-            let (dx, dy) = delta(direction);
-            let landing = crate::modes::desktop::Landing::Cell {
-                col: stepped(col, dx).ok_or_else(|| target.cannot())?,
-                row: stepped(row, dy).ok_or_else(|| target.cannot())?,
-            };
-            return crate::modes::desktop::dropped(
+    if target.area.kind.places_on_cells() {
+        if crate::modes::container::arranges(holding) {
+            return crate::modes::container::stepped(
                 draft,
                 &target.desktop,
                 &target.node,
-                &target.area.id,
-                &landing,
+                direction,
             );
         }
+        if holding.children.len() == 1 {
+            return move_group(target, draft, &holding.id, direction);
+        }
+        let GroupKind::Cell { col, row, .. } = holding.kind else {
+            return Err(target.cannot());
+        };
+        let (dx, dy) = delta(direction);
+        let landing = crate::modes::desktop::Landing::Cell {
+            col: stepped(col, dx).ok_or_else(|| target.cannot())?,
+            row: stepped(row, dy).ok_or_else(|| target.cannot())?,
+        };
+        return crate::modes::desktop::dropped(
+            draft,
+            &target.desktop,
+            &target.node,
+            &target.area.id,
+            &landing,
+        );
+    }
+    let horizontal = match &target.area.kind {
         ResolvedAreaKind::Bar { edge, .. } | ResolvedAreaKind::Dock { edge, .. } => {
             !edge.is_vertical()
         }
@@ -372,6 +380,31 @@ pub(crate) fn writes_as_shown(written: &Written, group: &ResolvedGroup) -> Resul
     }
 }
 
+/// The child `node` names moved to `to` among its siblings in `group`, where the edited layout writes them as the screen shows them.
+pub(crate) fn reordered(
+    work: &mut Work,
+    node: &Node,
+    group: &ResolvedGroup,
+    to: usize,
+) -> Result<(), EditError> {
+    let Part::Instance(_, id) = &node.part else {
+        return Err(EditError::nothing());
+    };
+    let written = work.written(node.layer, &node.area)?;
+    writes_as_shown(&written, group)?;
+    let spot = Spot {
+        site: written.site.clone(),
+        area: node.area.clone(),
+        group: group.id.clone(),
+    };
+    work.apply(vec![LayoutOp::MoveInstance {
+        from: spot.clone(),
+        to: spot,
+        id: id.template(),
+        index: to.min(group.children.len().saturating_sub(1)),
+    }])
+}
+
 /// The operation that writes a change to the group `id` where the area is written: in place where the rule writes the group, as a partial entry naming only what changed where it inherits it.
 fn group_op(written: &Written, id: &GroupId, change: impl FnOnce(&mut Group)) -> Vec<LayoutOp> {
     let mut area = written.area.clone();
@@ -402,7 +435,7 @@ fn move_group(
     let group = target.group(id)?;
     let (dx, dy) = delta(direction);
     let kind = match (&target.area.kind, group.kind) {
-        (ResolvedAreaKind::Grid { .. }, GroupKind::Cell { col, row, .. }) => {
+        (kind, GroupKind::Cell { col, row, .. }) if kind.places_on_cells() => {
             let to = (
                 stepped(col, dx).ok_or_else(|| target.cannot())?,
                 stepped(row, dy).ok_or_else(|| target.cannot())?,
@@ -682,6 +715,9 @@ fn resize_instance(
                 .map(|child| (group, child))
         })
         .ok_or_else(|| EditError::gone(&target.node.area))?;
+    if target.area.kind.places_on_cells() && crate::modes::container::arranges(group) {
+        return crate::modes::container::grown(draft, &target.desktop, &target.node, direction);
+    }
     let no_size = || {
         EditError::refused(telar::t!(
             "editor.keys.no_size",
@@ -700,7 +736,7 @@ fn resize_instance(
         false => SIZES[..at].iter().rev().copied().find(|size| drawn(*size)),
     }
     .ok_or_else(no_size)?;
-    if matches!(target.area.kind, ResolvedAreaKind::Grid { .. }) {
+    if target.area.kind.places_on_cells() {
         return crate::modes::desktop::resized_to(draft, &target.desktop, &target.node, next);
     }
     let written = target.written(draft)?.instance(&group.id, id);

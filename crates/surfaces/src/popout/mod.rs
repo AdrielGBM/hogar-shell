@@ -10,7 +10,7 @@ use ui::chrome::Chrome;
 use ui::descriptor;
 use ui::host::{Host, Instance, Representation, Size};
 
-use crate::transient::{self, Anchor, Place, Spec};
+use crate::transient::{self, Place, Spec};
 
 /// One popout at a time: a second card on screen would be two readouts competing for the same glance.
 const ID: &str = "popout";
@@ -56,8 +56,8 @@ pub fn close() {
 }
 
 /// Both directions are scheduled rather than acted on: an instant open would fire on a bar the pointer is only crossing, and an instant close while it crosses towards the card. The card is the hovered chip's instance's, sized by its options.
-pub fn hover(instance: &Instance, anchor: Anchor, entered: bool) {
-    let config = config::config_for(anchor.output.as_deref());
+pub fn hover(instance: &Instance, place: Place, entered: bool) {
+    let config = config::config_for(place.output().as_deref());
     if !config.popouts.enabled {
         return;
     }
@@ -70,7 +70,7 @@ pub fn hover(instance: &Instance, anchor: Anchor, entered: bool) {
         let instance = instance.clone();
         timeout(config.popouts.open_after(), move || {
             if current(generation) {
-                open(&instance, anchor);
+                open(&instance, place);
             }
         });
     } else {
@@ -99,7 +99,7 @@ fn keep_open(entered: bool) {
     });
 }
 
-fn open(instance: &Instance, anchor: Anchor) {
+fn open(instance: &Instance, place: Place) {
     let module_id = &*instance.module;
     if !descriptor::has_popout(module_id) {
         return;
@@ -112,7 +112,7 @@ fn open(instance: &Instance, anchor: Anchor) {
     let instance = instance.clone();
     transient::open(Spec::new(
         ID,
-        Place::Beside(anchor),
+        place,
         Rc::new(move |chrome: &Chrome| popout_content(&instance, chrome)),
     ));
 }

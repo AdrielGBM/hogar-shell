@@ -20,7 +20,7 @@ platform_wayland::watch(battery::subscribe, move |b| {
 });
 
 [view]
-icon_glyph name:(Reactive::of(move || glyph::battery(charging_glyph.get()).to_string())) tint:(Reactive::of(move || glyph::battery_tint(level_tint.get(), charging_tint.get(), theme, fg))) size:(host.icon_size())
+icon_glyph name:(Reactive::of(move || glyph::battery(charging_glyph.get()).to_string())) tint:(Reactive::of(move || glyph::battery_tint(level_tint.get(), charging_tint.get(), theme, fg))) size:(host.live_icon_size())
 
 [preview "Battery" fixture:ui::preview::bar_chip]
 battery

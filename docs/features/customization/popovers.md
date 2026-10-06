@@ -29,8 +29,8 @@ A secondary press opens one; so does the Menu key (or Shift+F10) on what has the
 or on the item when the keyboard asked, and never past the edge of the screen.
 
 - **On an item** — its module's own actions, **Customize…**, a move to an area that draws it the other way
-  (chip to widget and back, keeping its id, options and state), **Save group as komponent…**, **Remove**, and
-  **Edit <layer>…**. On a child of a [komponent](bundles.md#komponents) the menu has the module's actions, the use's
+  (chip to widget and back, keeping its id, options and state), **Save group as komponent…**, **Give it a panel** (and
+  **Give it a panel along the whole bar** in a bar) or **Edit its panel**, **Remove**, and **Edit <layer>…**. On a child of a [komponent](bundles.md#komponents) the menu has the module's actions, the use's
   parameters, **Detach** and **Edit <layer>…** instead.
 - **On an area** — its own bound actions, **Customize…**, what its kind adds (a bar's split and join, a stack's
   routes) and **Edit <layer>…**.
@@ -57,7 +57,9 @@ only from its edit mode.
   which takes its options and its style off where the popover writes, and **Remove**. Inside a container that arranges
   its children a line says its size is the container's to give.
 - **An area's** card has the tools of its kind first — a bar's edge, thickness, length, offset, shape, auto-hide;
-  a grid's cell size, gap and anchor; a stack's anchor, width, routes and screens; a region's picture, fit and transition;
+  a grid's cell size, gap and anchor; a panel's shape (beside its owner, or along its owner's bar), its columns and rows
+  (only its depth along a bar), cell size and gap, with a handle on the corner it grows from (or the far side along a
+  bar) that steps whole cells as it is dragged; a stack's anchor, width, routes and screens; a region's picture, fit and transition;
   a texture's paint — and then what every area has:
   - **This workspace only**, which writes the change into that workspace's rule instead (see
     [Layouts](layouts.md#output-rules-and-workspace-rules)), except on the top layer;

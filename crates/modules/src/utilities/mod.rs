@@ -175,7 +175,7 @@ pub fn utilities_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     icon_view(
         || glyph::utilities().to_string(),
         move || fg,
-        host.icon_size(),
+        host.live_icon_size(),
     )
 }
 

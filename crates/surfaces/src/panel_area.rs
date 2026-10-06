@@ -5,7 +5,7 @@ use layout::Sides;
 use telar::Rect;
 use ui::host::Footprint;
 
-use crate::transient::{DEFAULT_GAP, beside_chip, kept_inside};
+use crate::transient::{DEFAULT_GAP, beside_chip, hung_off, kept_inside};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PanelShape {
@@ -64,22 +64,17 @@ pub fn place(
 
 fn beside_owner(owner: Rect, edge: Option<Edge>, usable: Rect, size: (f32, f32)) -> Rect {
     let (width, height) = size;
-    let gap = DEFAULT_GAP;
-    let (margin, (x, y)) = match edge {
-        Some(edge) => (0.0, beside_chip(edge, gap, owner, size, usable)),
-        None => {
-            let below = owner.y + owner.height + gap;
-            let fits = below + height <= usable.y + usable.height - gap;
-            let y = if fits { below } else { owner.y - gap - height };
-            (gap, (owner.x + owner.width / 2.0 - width / 2.0, y))
+    let (x, y) = match edge {
+        Some(edge) => {
+            let (x, y) = beside_chip(edge, DEFAULT_GAP, owner, size, usable);
+            (
+                kept_inside(x, usable.x, usable.width, width, 0.0),
+                kept_inside(y, usable.y, usable.height, height, 0.0),
+            )
         }
+        None => hung_off(owner, DEFAULT_GAP, size, usable),
     };
-    Rect::new(
-        kept_inside(x, usable.x, usable.width, width, margin),
-        kept_inside(y, usable.y, usable.height, height, margin),
-        width,
-        height,
-    )
+    Rect::new(x, y, width, height)
 }
 
 fn along_bar(bar: BarSite, usable: Rect, shape: PanelShape) -> Rect {
@@ -378,6 +373,36 @@ mod tests {
                 assert!(
                     inside(desktop, bounds),
                     "desktop {edge:?} {owner:?} {desktop:?}"
+                );
+            }
+        }
+    }
+
+    /// A drawer and an owned panel opened from the same chip on no edge open on the same side of it, whatever its size and wherever the chip is.
+    #[test]
+    fn a_drawer_and_an_owned_panel_from_one_chip_on_no_edge_open_on_the_same_side() {
+        let bounds = usable(Edge::Top, 40.0);
+        for y in [40.0, 300.0, 500.0, 620.0, 760.0, 1040.0] {
+            let owner = Rect::new(800.0, y, 40.0, 40.0);
+            for rows in [1, 4, 8, 12, 19] {
+                let shape = shape(6, rows);
+                let panel = place(owner, None, false, bounds, shape).rect;
+                let drawer = crate::transient::chips::Site {
+                    output: None,
+                    layer: layout::LayerKind::Top,
+                    edge: None,
+                    chrome: ui::chrome::Chrome::global(
+                        std::sync::Arc::new(config::Config::default()),
+                        None,
+                    ),
+                    gap: DEFAULT_GAP,
+                }
+                .beside(owner);
+                let laid = Rect::new(0.0, 0.0, panel.width, panel.height);
+                assert_eq!(
+                    crate::transient::settled_in(&drawer, laid, bounds),
+                    panel,
+                    "owner at {y}, {rows} rows"
                 );
             }
         }

@@ -14,11 +14,13 @@ pub fn install() {
     variant::install();
     popover::install();
     context::install();
+    shell_menu::install();
     keys::install();
     for layer in layout::LayerKind::SESSION {
         host::add_tool(layer, select::tool);
     }
     modes::install();
     tools::install();
+    select::install();
     theme::install();
 }

@@ -14,7 +14,7 @@ let fg = host.foreground;
 platform_wayland::watch(volume::subscribe, move |v: volume::Volume| state.set(v));
 
 [view]
-icon_glyph name:(Reactive::of(move || glyph::volume(read.get()).to_string())) tint:(Reactive::of(move || fg)) size:(host.icon_size())
+icon_glyph name:(Reactive::of(move || glyph::volume(read.get()).to_string())) tint:(Reactive::of(move || fg)) size:(host.live_icon_size())
 
 [preview "Volume" fixture:ui::preview::bar_chip]
 volume

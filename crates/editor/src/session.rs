@@ -289,7 +289,7 @@ impl From<TransactionError> for EditError {
 pub struct Edit(Rc<Pending>);
 
 struct Pending {
-    label: String,
+    label: RefCell<String>,
     transaction: Transaction<Layout>,
     ops: RefCell<Vec<LayoutOp>>,
     refused: RefCell<Option<String>>,
@@ -300,7 +300,7 @@ impl Edit {
     pub fn new(label: impl Into<String>) -> Self {
         let transaction = Transaction::new(draft_signal());
         let pending = Rc::new(Pending {
-            label: label.into(),
+            label: RefCell::new(label.into()),
             transaction,
             ops: RefCell::default(),
             refused: RefCell::default(),
@@ -324,8 +324,13 @@ impl Edit {
         self.0.transaction
     }
 
-    pub fn label(&self) -> &str {
-        &self.0.label
+    pub fn label(&self) -> String {
+        self.0.label.borrow().clone()
+    }
+
+    /// Calls the edit `label` in the undo history instead, for a gesture that only knows what it made once it previews it.
+    pub fn relabel(&self, label: impl Into<String>) {
+        *self.0.label.borrow_mut() = label.into();
     }
 
     pub fn is_open(&self) -> bool {
@@ -382,7 +387,7 @@ impl Pending {
         }
         let committed = match layouts::read(|store| store.active_id().clone()) {
             Some(active) => layouts::commit(layout::Transaction::new(
-                self.label.clone(),
+                self.label.borrow().clone(),
                 active.clone(),
                 ops,
             ))
@@ -391,7 +396,7 @@ impl Pending {
         };
         if let Err(why) = committed {
             tracing::warn!(
-                edit = self.label,
+                edit = self.label.borrow().as_str(),
                 "the edit was not recorded: {}",
                 why.english()
             );
@@ -433,7 +438,7 @@ pub fn begin(label: impl Into<String>) -> Result<Edit, EditError> {
 pub fn undo() -> Result<String, String> {
     if let Some(edit) = open() {
         edit.revert().map_err(|why| why.to_string())?;
-        return Ok(edit.label().to_string());
+        return Ok(edit.label());
     }
     layouts::undo().map_err(|why| why.render())
 }

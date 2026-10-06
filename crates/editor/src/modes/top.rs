@@ -8,7 +8,7 @@
 //!
 //! **Reservation re-tiles on commit only.** Every drag previews through [`crate::session::Edit`], which the windows draw without re-reserving (`surfaces::reconcile::preview`), so the user's windows re-tile once, when the drag is let go (F-6.7).
 //!
-//! **Every drag has a key (WCAG 2.5.7).** Ctrl+Shift+arrows make a bar on the edge the arrow points at, `s` splits the selected bar in half (or just before the selected chip), Alt+Shift+arrows join it with the bar that way along its edge, and `o` sends the bar to the next screen; the generic Shift+arrows and Ctrl+arrows move and resize bars and chips. A bar's menu has the same rows, and "Move to <screen>" for each other screen: moving a bar between screens is the menu's and the keyboard's until a drag across outputs is checked live on two (F-6.8).
+//! **Every drag has a key (WCAG 2.5.7).** Ctrl+Shift+arrows make a bar on the edge the arrow points at, `s` splits the selected bar in half (or just before the selected chip), Alt+Shift+arrows join it with the bar that way along its edge, `o` sends the bar to the next screen, and Shift+N puts an empty group on a plate in it for chips to be dragged into; the generic Shift+arrows and Ctrl+arrows move and resize bars and chips. A bar's menu has the same rows, and "Move to <screen>" for each other screen: moving a bar between screens is the menu's and the keyboard's until a drag across outputs is checked live on two.
 //!
 //! **One undo entry each.** A new bar, a move, a split, a join, a chip carried and a bar sent to another screen are each one edit.
 
@@ -68,10 +68,20 @@ const NEW_BARS: [StripButton; 4] = [
 pub(crate) fn install() {
     crate::popover::add_area_tool("bar", bar_tool);
     crate::host::add_tool(LayerKind::Top, super::bars::tool);
+    crate::host::add_tool(LayerKind::Top, super::widgets::tool);
     for button in NEW_BARS {
-        crate::host::add_toolbar_button(LayerKind::Top, button);
+        crate::host::add_adding_button(LayerKind::Top, button);
     }
     context::add_area_rows("bar", bar_rows);
+    keys::add_mode_key_op(
+        LayerKind::Top,
+        KeyOp {
+            name: "plate-create",
+            keys: vec![Chord::char('n').shift()],
+            label: || telar::t!("editor.keys.op.plate-create"),
+            run: Run::Act(|_| super::container::create()),
+        },
+    );
     keys::add_mode_key_op(
         LayerKind::Top,
         KeyOp {
@@ -711,62 +721,7 @@ pub(crate) fn chip_moved(
         .find(|group| group.id == *from_group)
         .ok_or_else(EditError::nothing)?;
     crate::steps::writes_as_shown(&work.written(layer, &node.area)?, holding)?;
-    let target = bar(&work, &landing.area)?;
-    let zone_groups: Vec<&ResolvedGroup> = target
-        .groups
-        .iter()
-        .filter(|group| {
-            group.kind == GroupKind::Zone { zone: landing.zone } && group.arrange.is_none()
-        })
-        .collect();
-    let others = |group: &ResolvedGroup| {
-        group
-            .children
-            .iter()
-            .filter(|child| child.id != *id)
-            .count()
-    };
-    let mut left = landing.index;
-    let mut into: Option<(GroupId, usize)> = None;
-    for group in &zone_groups {
-        let count = others(group);
-        if left <= count {
-            into = Some((group.id.clone(), left));
-            break;
-        }
-        left -= count;
-    }
-    let (group, index) = match into.or_else(|| {
-        zone_groups
-            .last()
-            .map(|group| (group.id.clone(), others(group)))
-    }) {
-        Some((group, index)) => {
-            let held = target
-                .groups
-                .iter()
-                .find(|held| held.id == group)
-                .ok_or_else(EditError::nothing)?;
-            crate::steps::writes_as_shown(&work.written(layer, &landing.area)?, held)?;
-            (group, index)
-        }
-        None => {
-            let group = layout::ops::free_group_id(
-                &work.layout,
-                &work.known,
-                layer,
-                &landing.area,
-                zone_name(landing.zone),
-            );
-            let made = Group {
-                id: group.clone(),
-                kind: Some(GroupKind::Zone { zone: landing.zone }),
-                ..Group::default()
-            };
-            work.rewrite(layer, &landing.area, |written| written.groups.push(made))?;
-            (group, 0)
-        }
-    };
+    let (group, index) = zone_slot(&mut work, landing, Some(id))?;
     let now = holding.children.iter().position(|child| child.id == *id);
     if node.area == landing.area && group == *from_group && now == Some(index) {
         return Ok(Vec::new());
@@ -788,6 +743,140 @@ pub(crate) fn chip_moved(
         index,
     }])?;
     Ok(work.done())
+}
+
+/// A group the edited layout only inherits is refused.
+fn zone_slot(
+    work: &mut Work,
+    landing: &ChipLanding,
+    carried: Option<&InstanceId>,
+) -> Result<(GroupId, usize), EditError> {
+    let layer = work.layer;
+    let target = bar(work, &landing.area)?;
+    let zone_groups: Vec<&ResolvedGroup> = target
+        .groups
+        .iter()
+        .filter(|group| {
+            group.kind == GroupKind::Zone { zone: landing.zone } && group.arrange.is_none()
+        })
+        .collect();
+    let others = |group: &ResolvedGroup| {
+        group
+            .children
+            .iter()
+            .filter(|child| Some(&child.id) != carried)
+            .count()
+    };
+    let mut left = landing.index;
+    let mut into: Option<(GroupId, usize)> = None;
+    for group in &zone_groups {
+        let count = others(group);
+        if left <= count {
+            into = Some((group.id.clone(), left));
+            break;
+        }
+        left -= count;
+    }
+    match into.or_else(|| {
+        zone_groups
+            .last()
+            .map(|group| (group.id.clone(), others(group)))
+    }) {
+        Some((group, index)) => {
+            let held = target
+                .groups
+                .iter()
+                .find(|held| held.id == group)
+                .ok_or_else(EditError::nothing)?;
+            crate::steps::writes_as_shown(&work.written(layer, &landing.area)?, held)?;
+            Ok((group, index))
+        }
+        None => {
+            let group = layout::ops::free_group_id(
+                &work.layout,
+                &work.known,
+                layer,
+                &landing.area,
+                zone_name(landing.zone),
+            );
+            let made = Group {
+                id: group.clone(),
+                kind: Some(GroupKind::Zone { zone: landing.zone }),
+                ..Group::default()
+            };
+            work.rewrite(layer, &landing.area, |written| written.groups.push(made))?;
+            Ok((group, 0))
+        }
+    }
+}
+
+/// Puts a new, empty group on a plate in the selected bar, in the zone of what is selected there (the start zone of the layer's first bar otherwise), as one undo entry, and selects it. A bar's zones lay their chips out themselves, so what is made is a group of chips drawn on a plate, never a container.
+pub(crate) fn plate() -> Result<(), EditError> {
+    let mode = crate::mode::required()?;
+    let desktop = reconcile::desktop_now(Some(&mode.output)).ok_or_else(EditError::no_output)?;
+    let (bar, zone) = super::container::bar_near(&desktop, mode.layer)
+        .ok_or_else(|| EditError::refused(telar::t!("editor.container.no_bar")))?;
+    let (ops, id) =
+        super::container::in_bar(&session::draft().peek(), &desktop, mode.layer, &bar, zone)?;
+    context::commit(plated(&id), ops)?;
+    session::select(Selection::Group(
+        Node::area(Some(&mode.output), mode.layer, &bar).group(&id),
+    ));
+    Ok(())
+}
+
+/// What the history calls putting the group `id` on a plate in a bar.
+pub(crate) fn plated(id: &GroupId) -> String {
+    telar::t!("editor.top.plate.made", name = id.to_string())
+}
+
+pub(crate) fn chip_added(
+    layout: &Layout,
+    desktop: &Desktop,
+    layer: LayerKind,
+    module: &str,
+    landing: &ChipLanding,
+) -> Result<(Vec<LayoutOp>, InstanceId), EditError> {
+    let descriptor = ui::descriptor::find(module).ok_or_else(|| {
+        EditError::refused(telar::t!("editor.desktop.unknown_module", module = module))
+    })?;
+    if descriptor.representations.chip.is_none() {
+        return Err(EditError::refused(telar::t!(
+            "editor.top.no_chip",
+            name = descriptor.name
+        )));
+    }
+    let mut work = Work::new(layout, desktop, layer);
+    let instance = super::desktop::fresh(&work, module, layout::Representation::Chip)?;
+    let id = instance.id.clone();
+    let (group, index) = zone_slot(&mut work, landing, None)?;
+    work.rewrite(layer, &landing.area, |written| {
+        put_chip(written, (&group, landing.zone), index, instance)
+    })?;
+    Ok((work.done(), id))
+}
+
+/// Puts `instance` at `index` of the group `group` of `bar`, making that group in `zone` where the bar does not write it.
+pub(crate) fn put_chip(
+    bar: &mut Area,
+    (group, zone): (&GroupId, Zone),
+    index: usize,
+    instance: layout::Instance,
+) {
+    let at = match bar.groups.iter().position(|held| held.id == *group) {
+        Some(at) => at,
+        None => {
+            bar.groups.push(Group {
+                id: group.clone(),
+                kind: Some(GroupKind::Zone { zone }),
+                ..Group::default()
+            });
+            bar.groups.len() - 1
+        }
+    };
+    let held = &mut bar.groups[at];
+    held.children
+        .insert(index.min(held.children.len()), instance);
 }
 
 fn zone_name(zone: Zone) -> &'static str {

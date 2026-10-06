@@ -26,7 +26,7 @@ const SEARCH_WIDTH: f32 = 220.0;
 /// The bar chip: a gear that opens the settings panel.
 pub fn settings_chip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let fg = host.foreground;
-    icon_view(|| "settings".to_string(), move || fg, host.icon_size())
+    icon_view(|| "settings".to_string(), move || fg, host.live_icon_size())
 }
 
 /// What the application spends on its own title bar, search row and padding before any form is drawn, subtracted from the surface to size the scrolling page area.

@@ -34,6 +34,7 @@ use util::broadcast::Store;
 use crate::osd::OsdKind;
 use swipe::Column;
 
+pub mod sample;
 pub(crate) mod swipe;
 
 /// One card in the column, and the module that owns it.

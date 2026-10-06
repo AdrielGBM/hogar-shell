@@ -44,9 +44,26 @@ instance on the focused screen, then on any screen, then `[modules.<id>]` alone.
 ## A panel the layout arranges
 
 A layout can give one instance a `panel` area of its own, sized in cells and holding widgets like a grid (see
-[Layouts](../customization/layouts.md)). Pressing that instance — or pulling its chip away from the bar — opens the
-layout's panel instead of the module's, unless the layout binds an action to the press. It opens beside its owner,
-or along the whole length of its owner's bar with `along`, and is drawn in the owner's window as a drawer is.
+[Layouts](../customization/layouts.md)). It opens beside its owner, or along the whole length of its owner's bar
+with `along`, and is drawn in the owner's window as a drawer is.
+
+### What a press opens
+
+A press on an instance — a chip on a bar or a dock, a widget on the desktop, a widget inside a panel — runs the
+first of these that answers:
+
+1. the action the layout binds to its `press`;
+2. the panel the layout gives the instance;
+3. for a chip, the module's own: its own press, else its module's panel. A placeholder chip, standing in for a
+   module this build does not have, opens the settings window here instead.
+
+What a widget draws that answers a press itself — a button, a slider — keeps that press; the order is for the
+rest of it.
+
+Pulling a chip away from its bar opens what the second and third would, and never runs a bound action.
+`hogar-shell panel toggle <instance>` follows the same order from the second step: the panel the layout gives the
+instance, else its module's panel hung off that instance's chip. Given a module id instead, it toggles the module's
+panel as it always has. An instance on the focused screen is found first.
 
 The panel is drawn from its own `style`, over the theme's surface where the style says nothing:
 
@@ -102,6 +119,10 @@ panel closes on everything that closes a drawer, and on Esc once a press inside 
 region covers the whole usable area — that is how a press beside it dismisses it — so a window opening
 underneath is a window that is painted, unreachable, and dismissed rather than used by the first press that
 goes near it.
+
+What opens from inside another — a drawer opened from a chip inside a layout's panel — is its child rather than
+the next drawer in turn: opening it leaves the panel open, Esc and a press outside close the child first, and
+closing the panel closes the child with it.
 
 **Nothing closes a float.** It is the presentation you choose when you want a panel to stay put, so opening a
 drawer, pressing a chip, opening the notification centre or opening a second float all leave it exactly where it

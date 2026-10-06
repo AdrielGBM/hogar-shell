@@ -338,6 +338,7 @@ mod tests {
             Key::Named(NamedKey::ArrowRight),
             ModifiersState {
                 is_alt: true,
+                is_shift: true,
                 ..NONE
             }
         ));
