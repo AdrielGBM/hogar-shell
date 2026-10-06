@@ -60,7 +60,7 @@ pub const ID: &str = "editor:popover";
 /// How wide a popover's card is.
 const WIDTH: f32 = 360.0;
 /// The most of the usable height a card takes before its rows scroll.
-const TALLEST: f32 = 0.7;
+pub(crate) const TALLEST: f32 = 0.7;
 
 /// What one tool adds to a popover: rows for its card, and handles laid over the item it customizes.
 #[derive(Default)]

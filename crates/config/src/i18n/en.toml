@@ -9,6 +9,8 @@ unknown_accent = "there is no accent called '{name}', so the palette's own accen
 unknown_token = "there is no colour token called '{name}', so this colour is not applied"
 [option]
 titles = "Show titles"
+pinned = "Pinned apps"
+magnification = "Magnification"
 variant = "Variant"
 accent = "Accent"
 open = "Open"

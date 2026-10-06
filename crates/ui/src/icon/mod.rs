@@ -13,15 +13,17 @@ use telar::{
 use util::asset::{Load, Loader, Retry};
 
 use crate::chrome::Chrome;
+use config::IconMask;
 use config::theme::NordTheme;
 
 mod freedesktop;
+mod mask;
 mod picker;
-pub use freedesktop::{AppIcon, resolve_app_icon};
+pub use freedesktop::{AppIcon, IconTheme, installed_icon_themes, resolve_app_icon};
 pub(crate) use picker::grid_preview;
 pub use picker::icon_picker_overlay;
 
-/// An **application's own** icon at `size`, or `None` when `reference` resolves to nothing.
+/// An **application's own** icon at `size`, cut to `[icons] mask`, or `None` when `reference` resolves to nothing.
 ///
 /// Distinct from [`icon_view`], which fetches a themable Iconify glyph and tints it: this renders the app's artwork untinted and at its own colours, which is what a notification card, a window chip and a launcher row all want. Resolution follows the freedesktop icon spec via [`resolve_app_icon`] and is memoized per surface.
 pub fn app_icon_view(
@@ -33,11 +35,40 @@ pub fn app_icon_view(
 
 /// [`app_icon_view`] with an optional flat tint, for a surface that wants the application's artwork to take the bar's own colour instead of its own — the tray's `recolour`.
 ///
-/// Only vector artwork can be tinted; a raster icon is drawn as it is, since repainting decoded pixels would mean either discarding them or guessing which of them are "the shape".
+/// Only vector artwork can be tinted; a raster icon is drawn as it is, since repainting decoded pixels would mean either discarding them or guessing which of them are "the shape". A tinted icon is a silhouette of its own and is never cut to the mask.
 pub fn app_icon_view_tinted(
     reference: &str,
     size: f32,
     tint: Option<Color>,
+) -> Result<Option<Box<dyn LayoutItem>>, LayoutError> {
+    let mask = match tint.is_some() || is_symbolic(reference) {
+        true => IconMask::None,
+        false => configured_mask(),
+    };
+    app_icon_masked(reference, size, tint, mask)
+}
+
+/// An icon a theme names beside a menu entry's label, at `size` and never cut to the mask: it marks the entry, not the application.
+pub fn menu_icon_view(
+    reference: &str,
+    size: f32,
+) -> Result<Option<Box<dyn LayoutItem>>, LayoutError> {
+    app_icon_masked(reference, size, None, IconMask::None)
+}
+
+/// `icon`, `size` across, cut to `[icons] mask` — for an application's artwork that did not come from an icon theme, such as a tray item's own pixels.
+pub fn masked_app_icon(
+    icon: Box<dyn LayoutItem>,
+    size: f32,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    mask::masked(icon, size, configured_mask())
+}
+
+fn app_icon_masked(
+    reference: &str,
+    size: f32,
+    tint: Option<Color>,
+    mask: IconMask,
 ) -> Result<Option<Box<dyn LayoutItem>>, LayoutError> {
     let Some(icon) = resolve_app_icon(reference) else {
         return Ok(None);
@@ -57,7 +88,24 @@ pub fn app_icon_view_tinted(
             || ObjectFit::Contain,
         )?),
     };
-    Ok(Some(widget))
+    mask::masked(widget, size, mask).map(Some)
+}
+
+/// Whether `reference` names a symbolic icon: a one-colour glyph drawn to be tinted, which a mask would only clip.
+fn is_symbolic(reference: &str) -> bool {
+    let stem = [".svg", ".png"]
+        .iter()
+        .find_map(|extension| reference.strip_suffix(extension))
+        .unwrap_or(reference);
+    stem.ends_with("-symbolic")
+}
+
+/// `[icons] mask` as the chrome in scope says it, else as the running config does.
+fn configured_mask() -> IconMask {
+    Chrome::current()
+        .map(|chrome| chrome.config.icons.mask)
+        .or_else(|| config::config().map(|config| config.icons.mask))
+        .unwrap_or_default()
 }
 
 /// A transient download failure (the shell often starts before the network is up at login) keeps the icon on its spinner and re-tries a bounded number of times, so icons self-heal once connectivity arrives without hammering the endpoint over a genuine 404.
@@ -106,13 +154,13 @@ struct FetchConfig {
     cache_dir: PathBuf,
 }
 
-/// The process-wide icon registry: a glyph or a set's names is a signal that starts `Loading` and advances as its download lands. All surfaces share the UI thread, so one store serves them all, rebuilt when the `[icons]` config it was built from changes.
+/// The process-wide icon registry: a glyph or a set's names is a signal that starts `Loading` and advances as its download lands. All surfaces share the UI thread, so one store serves them all, rebuilt when the provider or the default set it was built from changes.
 struct IconStore {
     glyphs: Loader<IconId, Arc<SvgData>>,
     collections: Loader<String, Vec<String>>,
     cache_dir: PathBuf,
     default_set: String,
-    config: config::IconsConfig,
+    provider: String,
 }
 
 impl IconStore {
@@ -147,7 +195,7 @@ impl IconStore {
             collections,
             cache_dir: cache_dir(),
             default_set: icons.default_set.clone(),
-            config: icons.clone(),
+            provider: icons.provider.clone(),
         }
     }
 
@@ -261,12 +309,12 @@ fn icons_config() -> config::IconsConfig {
         .unwrap_or_default()
 }
 
-/// Builds the process-wide icon store. Idempotent: a call with the same `[icons]` config is a no-op, so the reload path can call it unconditionally, and a changed one replaces the store — freeing every signal the old one handed out and stopping its workers — which is how editing the provider or default set takes effect.
+/// Builds the process-wide icon store. Idempotent: a call with the same provider and default set is a no-op, whatever the rest of `[icons]` says, so the reload path can call it unconditionally, and a changed one replaces the store — freeing every signal the old one handed out and stopping its workers — which is how editing the provider or default set takes effect.
 pub fn init_store(icons: &config::IconsConfig) {
     let unchanged = STORE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .is_some_and(|store| store.config == *icons)
+        s.borrow().as_ref().is_some_and(|store| {
+            store.provider == icons.provider && store.default_set == icons.default_set
+        })
     });
     if unchanged {
         return;
@@ -442,6 +490,15 @@ mod tests {
             was_requested("bell"),
             "an unchanged config must not tear the store down — doing so cancels every in-flight download"
         );
+        init_store(&IconsConfig {
+            app_icon_theme: "Papirus".to_string(),
+            mask: config::IconMask::Squircle,
+            ..base.clone()
+        });
+        assert!(
+            was_requested("bell"),
+            "nor must a change the store does not read, such as the app icon theme or the mask"
+        );
 
         let changed = IconsConfig {
             default_set: "mdi".to_string(),
@@ -534,5 +591,100 @@ mod tests {
                 "lucide:home".to_string(),
             ]
         );
+    }
+    /// What an application's icon is drawn through, for each mask: nothing for `none`, a rounded box half its size round for `circle`, a path for `squircle` — and the artwork itself inside every one.
+    #[test]
+    fn an_app_icon_is_drawn_through_the_shape_its_mask_names() {
+        use telar::{
+            AvailableSpace, ComponentList, Container, DrawCommand, LayerMask, compute_layout,
+            reset_layout_runtime,
+        };
+
+        let dir = std::env::temp_dir().join(format!("hogar-shell-mask-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let icon = dir.join("app.svg");
+        fs::write(
+            &icon,
+            r##"<svg viewBox="0 0 16 16"><path fill="#ff8800" d="M0 0h16v16H0z"/></svg>"##,
+        )
+        .unwrap();
+        let reference = icon.to_str().expect("a UTF-8 path");
+
+        let drawn = |mask: IconMask| {
+            reset_layout_runtime();
+            let item = app_icon_masked(reference, 32.0, None, mask)
+                .expect("it builds")
+                .expect("the file resolves");
+            let page = Container::new(LayoutStyle::new().width(32.0).height(32.0), vec![item])
+                .expect("a page");
+            let root = page.layout_node();
+            let tree = ComponentList::new(page);
+            compute_layout(
+                root,
+                AvailableSpace::Definite(32.0),
+                AvailableSpace::Definite(32.0),
+            )
+            .expect("it lays out");
+            tree.commands().to_vec()
+        };
+        let shape = |commands: &[DrawCommand]| -> Vec<DrawCommand> {
+            let mut inside = false;
+            let mut found = Vec::new();
+            for command in commands {
+                match command {
+                    DrawCommand::PushLayer {
+                        mask: LayerMask::Source,
+                        ..
+                    } => inside = true,
+                    DrawCommand::PopLayer => inside = false,
+                    DrawCommand::Rect { .. } | DrawCommand::Path { .. } if inside => {
+                        found.push(command.clone())
+                    }
+                    _ => {}
+                }
+            }
+            found
+        };
+        let paints_the_artwork = |commands: &[DrawCommand]| {
+            commands
+                .iter()
+                .any(|command| matches!(command, DrawCommand::Path { .. }))
+        };
+
+        let plain = drawn(IconMask::None);
+        assert!(shape(&plain).is_empty(), "{plain:?}");
+        assert!(paints_the_artwork(&plain));
+
+        let circle = drawn(IconMask::Circle);
+        match shape(&circle).as_slice() {
+            [DrawCommand::Rect { style, .. }] => assert_eq!(style.radius.top_left, 16.0),
+            other => panic!("a circle is one round box: {other:?}"),
+        }
+        assert!(paints_the_artwork(&circle));
+
+        let squircle = drawn(IconMask::Squircle);
+        assert!(
+            matches!(shape(&squircle).as_slice(), [DrawCommand::Path { .. }]),
+            "{squircle:?}"
+        );
+        assert!(
+            squircle.iter().any(|command| matches!(
+                command,
+                DrawCommand::PushLayer {
+                    mask: LayerMask::Apply,
+                    ..
+                }
+            )),
+            "the artwork is shown through it"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_symbolic_icon_is_never_cut() {
+        assert!(is_symbolic("network-wireless-symbolic"));
+        assert!(is_symbolic("/usr/share/icons/a/battery-050-symbolic.svg"));
+        assert!(!is_symbolic("org.mozilla.firefox"));
+        assert!(!is_symbolic("/opt/app/icon.png"));
     }
 }

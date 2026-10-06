@@ -531,6 +531,14 @@ fn eager_subscriptions(
             }),
         },
         Eager {
+            name: "motion",
+            reason: "the desktop's reduced-motion setting reshapes every surface's transitions, so it \
+                     rebuilds them all rather than belonging to any one; silently absent with no portal",
+            subscribe: Box::new(|| {
+                platform_wayland::watch(services::motion::subscribe, services::motion::on_change);
+            }),
+        },
+        Eager {
             name: "battery",
             reason: "low-battery warnings must fire whether or not the user put a battery chip on a bar, and \
                      the producer retires on a machine with no battery to read",
@@ -815,6 +823,7 @@ mod startup_tests {
                 "ipc",
                 "shortcuts",
                 "scheme",
+                "motion",
                 "battery",
                 "lock",
                 "session",

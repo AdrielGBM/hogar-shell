@@ -451,8 +451,8 @@ pub const ALL: &[Entry] = &[
             system: false,
         },
         need: Need::Optional,
-        what: "registering the shell's actions as global shortcuts",
-        without: "bind the IPC commands in the compositor's own config instead",
+        what: "registering the shell's actions as global shortcuts, and reading the desktop's reduced-motion setting",
+        without: "bind the IPC commands in the compositor's own config instead, and set `[animation] reduced` to reduce motion",
     },
     Entry {
         dep: Dep::Qalc,

@@ -27,9 +27,15 @@ Nothing bounds the title's length. The chip gives up width when its side of the 
 
 How the shell moves (`[animation]`).
 
-Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration — a panel opening.
+Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration — a panel opening, a bar hiding itself.
 
-`duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, which is the accessibility answer (and what a user on a remote desktop wants) rather than a per-surface opt-out.
+`duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, for a user on a remote desktop who wants no motion at all.
+
+`reduced` is the accessibility answer: while motion is reduced, a panel, drawer or popout that would slide in fades instead, a bar that hides itself moves at once, and no transition runs longer than 100 ms. `auto` follows the desktop's own reduced-motion setting, read from the desktop portal; with no portal, motion is as configured here.
+
+- **`autohide_duration_ms`** · default `160`
+
+  How long a bar that hides itself takes to slide away or back, before `duration_scale`.
 
 - **`curve`** · default `"gentle"`
 
@@ -44,6 +50,10 @@ Two curve families rather than one, because rsx has two motion models and they a
 - **`panel_duration_ms`** · default `180`
 
   How long a panel takes to enter or leave, before `duration_scale`.
+
+- **`reduced`** · default `"auto"`
+
+  Whether motion is reduced: `auto` follows the desktop's reduced-motion setting, `on` and `off` decide regardless of it.
 
 ## `[audio]`
 
@@ -248,6 +258,16 @@ The two intervals are here rather than on the services they read because the cos
 
   Which pages the dashboard offers, in order: `dash`, `media`, `performance` and `weather`. An id it doesn't have is left out rather than failing the whole config parse, which would cost the user every other section over one typo — and is reported, by `hogar-shell config check` and in the notice the running shell keeps up while a problem lasts. A list with no page it has left in it shows every page.
 
+## `[dock]`
+
+The `windows` strip placed in a dock area (`[dock]`). `pinned` lists desktop-entry ids, in the order the dock shows them, that stay on the dock whether or not they are running; pinning, unpinning and dragging a pin on the dock writes this list. `magnification` is how large the entry under the pointer grows, as a multiple of its size; `1` turns it off.
+
+- **`magnification`** · default `1.5`
+
+  Range: 1 to 2.5, step 0.05.
+
+- **`pinned`** · default `[]`
+
 ## `[general]`
 
 App-wide settings that don't belong to a specific visual section. `language` is a BCP-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os-release`.
@@ -281,10 +301,17 @@ The graphics processor (`[gpu]`).
 
 ## `[icons]`
 
-Where bar icons come from: an Iconify-compatible HTTP endpoint (`{provider}/{set}/{name}.svg`) and the default set applied to a bare icon name. A name may override the set inline as `set:name` (e.g. `mdi:home`), so multiple icon sets work through one endpoint. `provider` is configurable because Iconify is self-hostable/mirrorable. `app_icon_theme` names the freedesktop icon theme used to resolve notification app icons (empty = detect from GTK settings, falling back to `hicolor`).
+Where bar icons come from: an Iconify-compatible HTTP endpoint (`{provider}/{set}/{name}.svg`) and the default set applied to a bare icon name. A name may override the set inline as `set:name` (e.g. `mdi:home`), so multiple icon sets work through one endpoint. `provider` is configurable because Iconify is self-hostable/mirrorable.
 
 - **`app_icon_theme`** · default `""`
+
+  The freedesktop icon theme applications' own icons are looked up in — on the tray, in the launcher, on notifications and window chips. Empty follows the GTK settings, falling back to `hicolor`.
+
 - **`default_set`** · default `"lucide"`
+- **`mask`** · default `"none"`
+
+  The shape every application's own icon is cut to: `none` draws it as its theme made it, `circle` and `squircle` give every app the same silhouette. Symbolic glyphs, menu entries and a tray icon recoloured to the bar's ink are never cut.
+
 - **`provider`** · default `"https://api.iconify.design"`
 
 ## `[idle]`
@@ -820,24 +847,36 @@ Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dy
 
 - **`size`** · unset by default
 - **`weight`** · unset by default
+
+  From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+
 - **`italic`** · unset by default
 
 #### `[theme.fonts.caption]`
 
 - **`size`** · unset by default
 - **`weight`** · unset by default
+
+  From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+
 - **`italic`** · unset by default
 
 #### `[theme.fonts.display]`
 
 - **`size`** · unset by default
 - **`weight`** · unset by default
+
+  From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+
 - **`italic`** · unset by default
 
 #### `[theme.fonts.title]`
 
 - **`size`** · unset by default
 - **`weight`** · unset by default
+
+  From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+
 - **`italic`** · unset by default
 
 ### `[theme.scale]`

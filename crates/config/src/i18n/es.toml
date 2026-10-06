@@ -9,6 +9,8 @@ unknown_accent = "no hay ningún acento llamado '{name}', así que se usa el ace
 unknown_token = "no hay ningún color llamado '{name}', así que este color no se aplica"
 [option]
 titles = "Mostrar los títulos"
+pinned = "Aplicaciones fijadas"
+magnification = "Ampliación"
 variant = "Variante"
 accent = "Acento"
 open = "Se abre como"

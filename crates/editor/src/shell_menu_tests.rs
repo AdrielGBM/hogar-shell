@@ -144,7 +144,14 @@ mod tests {
 
         assert_eq!(
             context::rows(),
-            strings(&["Add", "Customize grid…", "Theme…", "Edit", "Lock"])
+            strings(&[
+                "Add",
+                "Customize grid…",
+                "Theme…",
+                "New layout from template…",
+                "Edit",
+                "Lock"
+            ])
         );
         assert_eq!(
             context::sub_rows("Add"),

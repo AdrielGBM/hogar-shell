@@ -12,6 +12,7 @@ prompt_contrast = "the prompt's text is {ratio}:1 against this card, under the {
 unknown_key = "`{key}` is not a key of {holder}"
 invalid_value = "`{key} = {value}` is not valid for {holder}: {why}"
 gradient_stops = "a gradient is drawn from at most {most} stops and this one has {count}, so the last {extra} would never appear"
+region_range = "`{key}` runs from 0 to {most}, so {value} is drawn as {drawn}"
 bar_radius = "a bar is rounded by its `shape.radius`, so this one is not drawn"
 fillet_negative = "a fillet cannot be negative, and this one is {fillet}"
 fillet_mode = "a fillet curves the usable area out of a bar drawn as one strip, so it is not drawn on a bar in `sections` or `chips` mode"
@@ -159,6 +160,8 @@ bundle_not_text = "`{path}` is not UTF-8 text"
 bundle_bidi = "`{text}` holds U+{code}, which changes the direction text is shown in: a command, an address or an action has no use for it, and with it what you are shown is not what runs"
 unreadable_display_name = "`{name}` holds U+{code}, a control character or one that changes the direction text is shown in, which a name has no use for"
 unreadable_name = "`{name}` holds U+{code}, which hides, reorders or rewrites what is around it: an id, a name or a key is something you read and type, so it holds only characters that show as themselves"
+template_unknown = "there is no template called `{name}`; the shell ships {known}"
+template_taken = "a layout called `{name}` exists already: give the new one another name"
 
 [finding.holder]
 area = "an area"
@@ -205,3 +208,7 @@ behind = "a picture or a texture is behind everything a press lands on, so a ges
 unknown = "'{trigger}' is not a gesture ({gestures})"
 trust = "`{line}` would trust a bundle from a gesture, and trust is yours to give: run `layout trust` yourself"
 no_command = "`{line}` is not a command this shell has"
+
+[template.showcase]
+title = "Showcase"
+description = "A desktop of weather, media, processor, clock and visualiser widgets, and a full top bar"

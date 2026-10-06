@@ -39,6 +39,20 @@ pub fn hold_moved(output: &str, dragged: ManagedToplevelId, onto: ManagedTopleve
     });
 }
 
+pub fn hold_grouped(output: &str, windows: &[ManagedToplevel], apps: &[String]) {
+    HELD.with(|held| {
+        let mut held = held.borrow_mut();
+        let order = held.entry(output.to_string()).or_default();
+        let mut shown = arranged(windows, order, &[]);
+        shown.sort_by_key(|window| {
+            apps.iter()
+                .position(|app| *app == window.app_id)
+                .unwrap_or(usize::MAX)
+        });
+        *order = shown.iter().map(|window| window.id).collect();
+    });
+}
+
 /// Windows already held keep their places; a new one joins the last window of its own application, else takes the place its application was remembered at, else goes last.
 pub fn arranged(
     windows: &[ManagedToplevel],
@@ -111,19 +125,19 @@ pub fn remembered_after(shown: &[ManagedToplevel], before: &[String]) -> Vec<Str
     apps
 }
 
-pub fn landing(spans: &[(ManagedToplevelId, f32, f32)], point: f32) -> Option<ManagedToplevelId> {
+pub fn landing<K: Clone>(spans: &[(K, f32, f32)], point: f32) -> Option<K> {
     let first = spans.first()?;
     let last = spans.last()?;
     if point < first.1 {
-        return Some(first.0);
+        return Some(first.0.clone());
     }
     if point >= last.2 {
-        return Some(last.0);
+        return Some(last.0.clone());
     }
     spans
         .iter()
         .find(|(_, start, end)| point >= *start && point < *end)
-        .map(|(id, ..)| *id)
+        .map(|(key, ..)| key.clone())
 }
 
 const NARROW: f32 = 64.0;
@@ -263,6 +277,19 @@ mod tests {
     }
 
     #[test]
+    fn holding_by_application_puts_each_applications_windows_together_in_their_order() {
+        let open = [
+            window(1, "kitty"),
+            window(2, "firefox"),
+            window(3, "kitty"),
+            window(4, "code"),
+        ];
+        arrange("grouped", &open, &[]);
+        hold_grouped("grouped", &open, &apps(&["code", "kitty", "firefox"]));
+        assert_eq!(ids(&arrange("grouped", &open, &[])), vec![4, 1, 3, 2]);
+    }
+
+    #[test]
     fn what_is_remembered_follows_the_strip_and_keeps_closed_applications_beside_their_neighbours()
     {
         let shown = [window(3, "code"), window(1, "kitty"), window(4, "kitty")];
@@ -293,7 +320,7 @@ mod tests {
             None,
             "the gap between two is neither"
         );
-        assert_eq!(landing(&[], 5.0), None);
+        assert_eq!(landing::<ManagedToplevelId>(&[], 5.0), None);
     }
 
     fn size(width: f32, height: f32) -> Size {

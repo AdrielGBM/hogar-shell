@@ -480,6 +480,11 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
         (StackFlow::Row, _) => telar::Edge::Bottom,
     };
     let tween = config.animation.tween_ms(200, 2_000);
+    let arrival = match config.animation.is_reduced() {
+        true => Transition::fade(tween),
+        false => Transition::slide(slide_from, TRAVEL, tween),
+    };
+    let travel = config.animation.travel_tween_ms(200, 2_000);
     // The transition is set once the list has built, so what it holds then appears settled, and only a card arriving after that slides in.
     let drawn = ReactiveList::with_style(
         pinned::flowing(LayoutStyle::new(), flow),
@@ -499,8 +504,8 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
                 StackFlow::Column => list,
                 StackFlow::Row => list.as_row(),
             }
-            .with_transition(Transition::slide(slide_from, TRAVEL, tween))
-            .animate_layout(tween);
+            .with_transition(arrival)
+            .animate_layout(travel);
             Ok(Box::new(list))
         },
     )?;

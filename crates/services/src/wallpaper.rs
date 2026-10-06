@@ -130,6 +130,11 @@ pub fn reload() -> usize {
         .len()
 }
 
+/// Stands `entries` in for the scanned library, so a picker draws the pictures it is given whatever the folder holds.
+pub fn seed_library(entries: Vec<Entry>) {
+    LIBRARY.update(|library| *library = entries);
+}
+
 static WATCHER: OnceLock<()> = OnceLock::new();
 
 fn ensure_watching() {
@@ -397,6 +402,72 @@ pub fn cached_thumbnail(source: &Path, size: u32) -> Option<PathBuf> {
     cached.exists().then_some(cached)
 }
 
+/// What a wallpaper on one screen answers to besides its picture: whether an application window covers the screen, and where the workspace up on it sits among the screen's workspaces.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Desk {
+    pub covered: bool,
+    /// From 0 on the screen's first workspace to 1 on its last, and 0.5 where it has only one; `None` while the compositor has not said which is up.
+    pub along: Option<f32>,
+}
+
+/// The desk of `output` (any screen, for `None`) from what the compositor says.
+///
+/// `workspaces` is the protocol's list, ordered by the coordinates the compositor gives them where every one has some. A window covers the screen where `windows_on` knows how many windows the workspace up holds and it holds one; where it does not know, which is every compositor without an IPC that counts them, a maximized or fullscreen window of `toplevels` on the screen does, since the toplevel protocol says nothing of workspaces.
+pub fn desk(
+    output: Option<&str>,
+    workspaces: &[platform_wayland::Workspace],
+    windows_on: impl Fn(&platform_wayland::Workspace) -> Option<u32>,
+    toplevels: &[platform_wayland::ManagedToplevel],
+) -> Desk {
+    let on_screen =
+        |outputs: &[String]| output.is_none_or(|name| outputs.iter().any(|on| on == name));
+    let mut shown: Vec<&platform_wayland::Workspace> = workspaces
+        .iter()
+        .filter(|workspace| !workspace.hidden && on_screen(&workspace.outputs))
+        .collect();
+    if shown
+        .iter()
+        .all(|workspace| !workspace.coordinates.is_empty())
+    {
+        shown.sort_by(|a, b| a.coordinates.cmp(&b.coordinates));
+    }
+    let up = shown.iter().position(|workspace| workspace.active);
+    let along = up.map(|at| match shown.len() {
+        0 | 1 => 0.5,
+        count => at as f32 / (count - 1) as f32,
+    });
+    let counted = up.and_then(|at| windows_on(shown[at]));
+    let covered = match counted {
+        Some(windows) => windows > 0,
+        None => toplevels.iter().any(|window| {
+            !window.minimized
+                && (window.maximized || window.fullscreen)
+                && on_screen(&window.outputs)
+        }),
+    };
+    Desk { covered, along }
+}
+
+/// [`desk`] as the compositor last said, the window counts taken from Hyprland's socket where there is one.
+pub fn desk_now(output: Option<&str>) -> Desk {
+    let counts = crate::hyprland::socket_dir()
+        .and_then(|_| crate::hyprland::current_workspaces())
+        .map(|snapshot| snapshot.workspaces);
+    desk(
+        output,
+        &platform_wayland::current_workspaces(),
+        |workspace| {
+            counts.as_ref().and_then(|counted| {
+                counted
+                    .iter()
+                    .find(|held| held.handle == Some(workspace.id) || held.name == workspace.name)
+                    .map(|held| held.windows)
+            })
+        },
+        &platform_wayland::current_managed_toplevels(),
+    )
+}
+
 /// Small enough to be pointless, large enough to be the original: neither is a thumbnail.
 fn clamp_size(size: u32) -> u32 {
     size.clamp(32, 1024)
@@ -650,5 +721,105 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn workspace(name: &str, output: &str, active: bool) -> platform_wayland::Workspace {
+        platform_wayland::Workspace {
+            name: name.to_string(),
+            outputs: vec![output.to_string()],
+            active,
+            ..platform_wayland::Workspace::default()
+        }
+    }
+
+    fn window(output: &str, maximized: bool, minimized: bool) -> platform_wayland::ManagedToplevel {
+        platform_wayland::ManagedToplevel {
+            outputs: vec![output.to_string()],
+            maximized,
+            minimized,
+            ..platform_wayland::ManagedToplevel::default()
+        }
+    }
+
+    /// Where the compositor counts windows, the workspace up holding one covers its screen and an empty one does not, whatever windows sit on the screen's other workspaces.
+    #[test]
+    fn a_counted_workspace_covers_its_screen_while_it_holds_a_window() {
+        let screens = [
+            workspace("1", "DP-1", false),
+            workspace("2", "DP-1", true),
+            workspace("3", "HDMI-A-1", true),
+        ];
+        let counts = |held: u32| {
+            move |workspace: &platform_wayland::Workspace| match workspace.name.as_str() {
+                "2" => Some(held),
+                _ => Some(4),
+            }
+        };
+        let maximized = [window("DP-1", true, false)];
+        assert!(desk(Some("DP-1"), &screens, counts(1), &[]).covered);
+        assert!(
+            !desk(Some("DP-1"), &screens, counts(0), &maximized).covered,
+            "the count is what says"
+        );
+        assert!(desk(Some("HDMI-A-1"), &screens, counts(0), &[]).covered);
+    }
+
+    /// Where nothing counts windows, a maximized or fullscreen window on the screen covers it, and one minimized or on another screen does not.
+    #[test]
+    fn an_uncounted_screen_is_covered_by_a_maximized_window_on_it() {
+        let screens = [workspace("1", "DP-1", true)];
+        let uncounted = |_: &platform_wayland::Workspace| None;
+        let covered = |windows: &[platform_wayland::ManagedToplevel]| {
+            desk(Some("DP-1"), &screens, uncounted, windows).covered
+        };
+        assert!(!covered(&[]));
+        assert!(covered(&[window("DP-1", true, false)]));
+        assert!(!covered(&[window("DP-1", true, true)]), "minimized");
+        assert!(
+            !covered(&[window("HDMI-A-1", true, false)]),
+            "on another screen"
+        );
+        assert!(
+            !covered(&[window("DP-1", false, false)]),
+            "a window that leaves the picture showing"
+        );
+        let fullscreen = platform_wayland::ManagedToplevel {
+            fullscreen: true,
+            ..window("DP-1", false, false)
+        };
+        assert!(covered(&[fullscreen]));
+    }
+
+    /// The workspace up is placed along the screen's own workspaces, in the order their coordinates give, half way where it is the only one, and nowhere while none is up.
+    #[test]
+    fn the_workspace_up_is_placed_along_the_screens_workspaces() {
+        let numbered = |name: &str, at: u32, active: bool| platform_wayland::Workspace {
+            coordinates: vec![at],
+            ..workspace(name, "DP-1", active)
+        };
+        let none = |_: &platform_wayland::Workspace| None;
+        let screens = [
+            numbered("3", 3, false),
+            numbered("1", 1, false),
+            numbered("2", 2, true),
+            workspace("9", "HDMI-A-1", false),
+        ];
+        assert_eq!(desk(Some("DP-1"), &screens, none, &[]).along, Some(0.5));
+        let last = [
+            numbered("1", 1, false),
+            numbered("2", 2, false),
+            numbered("3", 3, true),
+        ];
+        assert_eq!(desk(Some("DP-1"), &last, none, &[]).along, Some(1.0));
+        let first = [numbered("2", 2, false), numbered("1", 1, true)];
+        assert_eq!(desk(Some("DP-1"), &first, none, &[]).along, Some(0.0));
+        assert_eq!(
+            desk(Some("DP-1"), &[workspace("1", "DP-1", true)], none, &[]).along,
+            Some(0.5)
+        );
+        assert_eq!(
+            desk(Some("DP-1"), &[workspace("1", "DP-1", false)], none, &[]).along,
+            None
+        );
     }
 }

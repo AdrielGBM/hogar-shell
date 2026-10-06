@@ -27,9 +27,22 @@ pub struct App {
     pub keywords: Vec<String>,
     /// The entry asks to run inside a terminal emulator.
     pub terminal: bool,
+    /// `StartupWMClass`: the application id its windows carry when that is not the entry's own id.
+    pub wm_class: String,
 }
 
 impl App {
+    /// Whether a window whose application id is `app_id` is one of this entry's: the id itself, the entry's `StartupWMClass`, or the two agreeing on the last part of a reverse-DNS name (`org.mozilla.firefox` and `firefox`), all without regard to case.
+    pub fn owns_window(&self, app_id: &str) -> bool {
+        fn same(a: &str, b: &str) -> bool {
+            !a.is_empty() && a.eq_ignore_ascii_case(b)
+        }
+        fn last(id: &str) -> &str {
+            id.rsplit('.').next().unwrap_or(id)
+        }
+        same(&self.id, app_id) || same(&self.wm_class, app_id) || same(last(&self.id), last(app_id))
+    }
+
     /// Everything a search should match against, not just the name: `keywords` is where an entry lists the words users actually type (`www`, `browser`) and `description` catches the rest.
     pub fn haystack(&self) -> String {
         let mut text = self.name.clone();
@@ -128,6 +141,7 @@ fn parse_entry(id: &str, text: &str) -> Option<App> {
         categories: split("Categories"),
         keywords: split("Keywords"),
         terminal: fields.get("Terminal").is_some_and(|v| *v == "true"),
+        wm_class: fields.get("StartupWMClass").unwrap_or(&"").to_string(),
     })
 }
 
@@ -291,6 +305,29 @@ Exec=firefox --new-window
         assert_eq!(app.exec, "firefox", "the %u field code is stripped");
         assert_eq!(app.keywords, vec!["Internet", "WWW", "Browser"]);
         assert!(!app.terminal);
+    }
+
+    #[test]
+    fn an_entry_owns_the_windows_its_id_or_its_wm_class_names() {
+        let entry = |id: &str, class: &str| App {
+            id: id.to_string(),
+            wm_class: class.to_string(),
+            ..App::default()
+        };
+        assert!(entry("firefox", "").owns_window("firefox"));
+        assert!(entry("firefox", "").owns_window("Firefox"), "case aside");
+        assert!(entry("org.mozilla.firefox", "").owns_window("firefox"));
+        assert!(entry("nautilus", "").owns_window("org.gnome.Nautilus"));
+        assert!(entry("code", "Code-OSS").owns_window("code-oss"));
+        assert!(!entry("code", "").owns_window("kitty"));
+        assert!(!entry("", "").owns_window(""), "an empty id owns nothing");
+
+        let parsed = parse_entry(
+            "code",
+            "[Desktop Entry]\nType=Application\nName=Code\nExec=code\nStartupWMClass=Code\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.wm_class, "Code");
     }
 
     #[test]

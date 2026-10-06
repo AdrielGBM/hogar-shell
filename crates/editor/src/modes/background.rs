@@ -25,13 +25,14 @@ use crate::host::{self, HOTSPOT, passthrough, whole};
 use crate::keys::{self, Chord, KeyOp, Run};
 use crate::mode::{Mode, said};
 use crate::popover::area::{chosen, rect_rows, variants};
-use crate::popover::rows::{self, label};
+use crate::popover::rows::label;
 use crate::popover::{AreaDraft, Inspector, help, kind_field, kind_read};
 use crate::session::{self, Edit, EditError, Selection};
 use crate::snap;
 use crate::written::Work;
 
 use super::gesture;
+use super::picture;
 use super::regions::{self, Cut, Plan, Tile};
 use super::texture;
 
@@ -534,13 +535,14 @@ fn edge_grip(
     )
 }
 
-/// A wallpaper region's popover: its picture — one from the wallpaper library, a path, or whatever `[background]` says (F-10.22) — its fit and transition and its rectangle.
+/// A wallpaper region's popover: its picture — one from the wallpaper library, a path, or whatever `[background]` says (F-10.22) — its fit, the point `cover` keeps in view, its transition, how it answers windows and workspaces, and its rectangle; with a dot on the region for the focus.
 fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     let ResolvedAreaKind::WallpaperRegion {
         rect,
         source,
         fit,
         transition,
+        ..
     } = draft.resolved.kind.clone()
     else {
         return Ok(Inspector::default());
@@ -548,10 +550,7 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     let picture = draft.setting(
         "source",
         "source",
-        {
-            let source = source.clone();
-            kind_read!(WallpaperRegion { source }, source)
-        },
+        kind_read!(WallpaperRegion { source }, source),
         |area, path: &String| {
             kind_field!(
                 area,
@@ -561,22 +560,7 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
             )
         },
     );
-    let mut list = vec![draft.marked(
-        &["source"],
-        rows::together(vec![
-            rows::listed(
-                label!("editor.area.source"),
-                help("AreaKind::WallpaperRegion", "source"),
-                picture,
-                Rc::from(library(&source)),
-            )?,
-            rows::text(
-                label!("editor.area.source"),
-                help("AreaKind::WallpaperRegion", "source"),
-                picture,
-            )?,
-        ])?,
-    )?];
+    let mut list = vec![picture::picture_rows(draft, picture)?];
     list.extend(chosen(
         draft,
         "fit",
@@ -586,6 +570,8 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         kind_read!(WallpaperRegion { fit }, fit),
         |area, fit: Fit| kind_field!(area, "wallpaper_region", WallpaperRegion { fit }, fit),
     )?);
+    let focus = picture::focus_of(draft);
+    list.push(picture::focus_rows(draft, focus)?);
     list.extend(chosen(
         draft,
         "transition",
@@ -607,30 +593,16 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
             )
         },
     )?);
+    list.extend(picture::under_windows_rows(draft)?);
     list.extend(rect_rows(draft, rect)?);
     Ok(Inspector {
         rows: list,
-        handles: Vec::new(),
+        handles: vec![picture::focus_handle(
+            draft,
+            focus,
+            draft.shared::<String>("fit"),
+        )?],
     })
-}
-
-/// What a region's picture can be picked from: whatever `[background]` says first, then every picture in the wallpaper library, and the region's own where the library does not hold it.
-fn library(current: &str) -> Vec<(String, String)> {
-    let mut choices = vec![(String::new(), telar::t!("editor.region.follow"))];
-    for entry in services::wallpaper::all() {
-        let shown = match entry.folder.is_empty() {
-            true => entry.name.clone(),
-            false => format!("{}/{}", entry.folder, entry.name),
-        };
-        choices.push((entry.path.display().to_string(), shown));
-    }
-    if !current.is_empty() && !choices.iter().any(|(path, _)| path == current) {
-        let name = std::path::Path::new(current)
-            .file_name()
-            .map_or_else(|| current.to_string(), |name| name.to_string_lossy().into());
-        choices.push((current.to_string(), name));
-    }
-    choices
 }
 
 /// A region's menu rows: its two splits, and a texture laid over it.

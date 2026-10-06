@@ -15,7 +15,7 @@ use services::dbusmenu::{self, MenuItem, Toggle};
 use services::tray::TrayItem;
 use surfaces::transient::{self, Place, Spec};
 use ui::chrome::{Chrome, content_radius, panel_fill};
-use ui::icon::{app_icon_view, icon_view};
+use ui::icon::{icon_view, menu_icon_view};
 use ui::scale::{corner, space};
 
 /// The shell's id for the menu transient. One at a time: a second tray menu on screen would be two context menus at once, which no desktop does.
@@ -180,7 +180,7 @@ fn row(
     if let Some(glyph) = toggle_glyph(item.toggle) {
         content.push(icon_view(move || glyph.to_string(), move || fg, icon_size)?);
     } else if !item.icon_name.is_empty()
-        && let Some(icon) = app_icon_view(&item.icon_name, icon_size)?
+        && let Some(icon) = menu_icon_view(&item.icon_name, icon_size)?
     {
         content.push(icon);
     }

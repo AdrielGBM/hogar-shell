@@ -297,6 +297,7 @@ status mirrors that — see [Scripting](../guides/scripting.md).
 | `export` | `<bundle-path> [layout]` | write a layout (the one being drawn unless named), the layouts it extends, the komponents it draws and the pictures it shows to a new bundle directory |
 | `import` | `<bundle-path>` | add a bundle's layouts, komponents and pictures, read in the background; every command and address it brings, and every action that does more than show a panel or move a control, stays off until `layout trust` |
 | `trust` | `[bundle] [item\|--all <set>] [--decline] \| --dialog` | list what imported bundles run, or accept one item of a bundle by its id or everything listed by the set id the listing prints (refuse with --decline), or open the dialog that answers for what waits |
+| `template` | `list \| use <name> [as <layout-name>]` | list the starting layouts the shell ships, or make a new layout from one, called <layout-name> or after the template, and draw it; the layout drawn until then is left as it was |
 
 ## `komponent`
 

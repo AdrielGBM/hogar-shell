@@ -81,7 +81,7 @@ fn icon_widget(
         return Ok(widget);
     }
     if let Some(pixmap) = item.icon_pixmap() {
-        return pixmap_widget(pixmap, size);
+        return ui::icon::masked_app_icon(pixmap_widget(pixmap, size)?, size);
     }
     icon_view(|| FALLBACK_GLYPH.to_string(), move || tint, size)
 }

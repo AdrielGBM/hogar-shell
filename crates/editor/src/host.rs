@@ -258,6 +258,7 @@ pub(crate) fn close_transients() {
     transient::close(crate::context::ID);
     transient::close(crate::modes::palette::ID);
     crate::modes::palette::unpick();
+    transient::close(crate::command_palette::ID);
     transient::close(crate::modes::lock::PRIVACY);
     transient::close(crate::theme::ID);
 }

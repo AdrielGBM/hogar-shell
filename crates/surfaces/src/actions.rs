@@ -9,7 +9,7 @@ use std::rc::Rc;
 use telar::{LayoutItem, PointerButton, StyledContainer, track_layout};
 
 use layout::{Action, AreaId, LayerKind, Trigger};
-use ui::host::Audience;
+use ui::host::{Audience, OwnSecondary};
 
 use crate::rects::Node;
 
@@ -26,6 +26,7 @@ pub struct Bound {
     menu: Option<Rc<dyn Fn()>>,
     owner: Option<Node>,
     own_press: Option<Rc<dyn Fn()>>,
+    own_secondary: Option<OwnSecondary>,
 }
 
 impl Bound {
@@ -58,11 +59,20 @@ impl Bound {
         Self { own_press, ..self }
     }
 
+    /// The same, a secondary press nothing bound asking what the module offers there before the menu.
+    pub fn with_own_secondary(self, own_secondary: OwnSecondary) -> Self {
+        Self {
+            own_secondary: Some(own_secondary),
+            ..self
+        }
+    }
+
     /// Whether nothing is bound and no menu offered, so there is nothing to answer.
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
             && self.menu.is_none()
             && self.own_press.is_none()
+            && self.own_secondary.is_none()
             && !self.opens_panel()
     }
 
@@ -113,9 +123,20 @@ impl Bound {
         self.runs(Trigger::LongPress)
     }
 
-    /// A secondary press runs its bound action, else the context menu, where one is offered: what the layout binds wins.
+    /// A secondary press runs its bound action, else what the module offers there, else the context menu, where one is offered: what the layout binds wins.
     pub fn secondary(&self) -> Option<Rc<dyn Fn()>> {
-        self.runs(Trigger::Secondary).or_else(|| self.menu.clone())
+        let bound = self.runs(Trigger::Secondary);
+        let Some(own) = self.own_secondary.clone().filter(|_| bound.is_none()) else {
+            return bound.or_else(|| self.menu.clone());
+        };
+        let menu = self.menu.clone();
+        Some(Rc::new(move || {
+            if !own.answer()
+                && let Some(menu) = &menu
+            {
+                menu();
+            }
+        }))
     }
 
     /// The middle and secondary presses, as one handler for [`StyledContainer::on_alt_press`].
@@ -210,6 +231,7 @@ impl Bound {
     pub fn has_presses(&self) -> bool {
         self.menu.is_some()
             || self.own_press.is_some()
+            || self.own_secondary.is_some()
             || self.opens_panel()
             || [
                 Trigger::Press,
@@ -370,6 +392,40 @@ mod tests {
             !Bound::of(&BTreeMap::new(), Audience::Owner)
                 .with_menu(menu())
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_secondary_press_runs_the_bound_action_then_the_modules_own_then_the_menu() {
+        recording();
+        let answers = Rc::new(std::cell::Cell::new(true));
+        let own = OwnSecondary::default();
+        own.offer({
+            let answers = Rc::clone(&answers);
+            move || {
+                RAN.with(|ran| ran.borrow_mut().push("own".to_string()));
+                answers.get()
+            }
+        });
+        let bound = BTreeMap::from([(Trigger::Secondary, Action(vec!["dock pin".to_string()]))]);
+        secondary(
+            &Bound::of(&bound, Audience::Owner)
+                .with_menu(menu())
+                .with_own_secondary(own.clone()),
+        );
+        assert_eq!(ran(), ["dock pin"], "the layout's action first, alone");
+
+        let unbound = Bound::of(&BTreeMap::new(), Audience::Owner)
+            .with_menu(menu())
+            .with_own_secondary(own);
+        secondary(&unbound);
+        assert_eq!(ran(), ["own"]);
+        answers.set(false);
+        secondary(&unbound);
+        assert_eq!(
+            ran(),
+            ["own", "menu"],
+            "what the module declines opens the menu"
         );
     }
 }

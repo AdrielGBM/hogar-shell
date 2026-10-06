@@ -1,6 +1,8 @@
 //! What a module is told about the place it is built into, instead of reading it from ambient globals: a Rust builder takes the [`Host`] as its argument, and a parameterless `.rsx` entrypoint reads it with [`Host::current`].
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, Once};
 
 use platform_wayland::EventSender;
@@ -12,6 +14,31 @@ use config::{Config, Edge, ModuleOptions, ModuleOverride, ResolvedShape};
 use crate::chrome::Chrome;
 
 use crate::descriptor::FieldDef;
+
+/// The secondary press a module answers itself, asked by the instance it is placed as after the action the layout binds to that press and before the instance's menu. Answering `false` passes the press on to the menu.
+#[derive(Clone, Default)]
+pub struct OwnSecondary(Rc<RefCell<Option<Answer>>>);
+
+type Answer = Rc<dyn Fn() -> bool>;
+
+impl OwnSecondary {
+    pub fn provide(&self) {
+        telar::set_context(self.clone());
+    }
+
+    pub fn current() -> Option<Self> {
+        telar::context::<Self>()
+    }
+
+    pub fn offer(&self, answer: impl Fn() -> bool + 'static) {
+        *self.0.borrow_mut() = Some(Rc::new(answer));
+    }
+
+    pub fn answer(&self) -> bool {
+        let answer = self.0.borrow().clone();
+        answer.is_some_and(|answer| answer())
+    }
+}
 
 /// Which placed instance of a module is being built.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -323,6 +350,7 @@ pub struct Host {
     /// The monitor the instance is on; `None` is the compositor's active output.
     pub output: Option<String>,
     pub audience: Audience,
+    docked: bool,
     /// The module defaults [`Host::options`] lays the instance's own options over, and every behaviour key.
     config: Arc<Config>,
 }
@@ -361,6 +389,7 @@ impl Host {
             foreground,
             output,
             audience: Audience::Owner,
+            docked: false,
             config,
         }
     }
@@ -392,6 +421,7 @@ impl Host {
             foreground,
             output,
             audience: Audience::Owner,
+            docked: false,
             config,
         }
     }
@@ -415,6 +445,7 @@ impl Host {
             foreground: theme.text,
             output: chrome.output.clone(),
             audience: Audience::Owner,
+            docked: false,
             config: Arc::clone(&chrome.config),
         }
     }
@@ -476,6 +507,15 @@ impl Host {
     pub fn shown_to(mut self, audience: Audience) -> Self {
         self.audience = audience;
         self
+    }
+
+    pub fn in_dock(mut self, docked: bool) -> Self {
+        self.docked = docked;
+        self
+    }
+
+    pub fn is_docked(&self) -> bool {
+        self.docked && self.axis.is_some()
     }
 
     /// Whether this build may draw `field`: any field for the owner, and for anyone else only one the field itself says they may see.

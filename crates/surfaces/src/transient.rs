@@ -940,6 +940,7 @@ fn transition(motion: Motion, config: &Config) -> Transition {
             telar::motion::Easing::Linear,
         )),
         Motion::Fade => Transition::fade(tween),
+        Motion::Slide(_) if config.animation.is_reduced() => Transition::fade(tween),
         Motion::Slide(edge) => Transition::slide(slide_from(edge), 24.0, tween),
     }
 }
@@ -1385,6 +1386,37 @@ mod tests {
         width: 1920.0,
         height: 1046.0,
     };
+
+    #[test]
+    fn reduced_motion_turns_a_slide_into_a_fade_on_the_same_easing() {
+        let with = |reduced: config::ReducedMotion| {
+            let mut config = Config::default();
+            config.animation.reduced = reduced;
+            config.animation.easing = "ease-in-out".to_string();
+            config
+        };
+        let reduced = with(config::ReducedMotion::On);
+        let tween = reduced.animation.panel_tween();
+        assert_eq!(tween.easing, telar::motion::Easing::EaseInOut);
+        for edge in Edge::ALL {
+            assert_eq!(
+                transition(Motion::Slide(edge), &reduced),
+                Transition::fade(tween),
+                "{edge:?}"
+            );
+        }
+        assert_eq!(transition(Motion::Fade, &reduced), Transition::fade(tween));
+
+        let moving = with(config::ReducedMotion::Off);
+        let tween = moving.animation.panel_tween();
+        for edge in Edge::ALL {
+            assert_eq!(
+                transition(Motion::Slide(edge), &moving),
+                Transition::slide(slide_from(edge), 24.0, tween),
+                "{edge:?}"
+            );
+        }
+    }
 
     #[test]
     fn a_transient_hangs_off_its_chip_and_stays_on_screen_on_every_edge() {

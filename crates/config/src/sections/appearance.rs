@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::scheme;
-use crate::theme::NordTheme;
+use crate::theme::{FontRole, NordTheme};
 use util::paths;
 use util::report::{Finding, Report};
 
@@ -69,13 +69,16 @@ pub enum Variant {
     Filled,
 }
 
-/// Where bar icons come from: an Iconify-compatible HTTP endpoint (`{provider}/{set}/{name}.svg`) and the default set applied to a bare icon name. A name may override the set inline as `set:name` (e.g. `mdi:home`), so multiple icon sets work through one endpoint. `provider` is configurable because Iconify is self-hostable/mirrorable. `app_icon_theme` names the freedesktop icon theme used to resolve notification app icons (empty = detect from GTK settings, falling back to `hicolor`).
+/// Where bar icons come from: an Iconify-compatible HTTP endpoint (`{provider}/{set}/{name}.svg`) and the default set applied to a bare icon name. A name may override the set inline as `set:name` (e.g. `mdi:home`), so multiple icon sets work through one endpoint. `provider` is configurable because Iconify is self-hostable/mirrorable.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(default)]
 pub struct IconsConfig {
     pub provider: String,
     pub default_set: String,
+    /// The freedesktop icon theme applications' own icons are looked up in — on the tray, in the launcher, on notifications and window chips. Empty follows the GTK settings, falling back to `hicolor`.
     pub app_icon_theme: String,
+    /// The shape every application's own icon is cut to: `none` draws it as its theme made it, `circle` and `squircle` give every app the same silhouette. Symbolic glyphs, menu entries and a tray icon recoloured to the bar's ink are never cut.
+    pub mask: IconMask,
 }
 
 impl Default for IconsConfig {
@@ -84,7 +87,36 @@ impl Default for IconsConfig {
             provider: "https://api.iconify.design".to_string(),
             default_set: "lucide".to_string(),
             app_icon_theme: String::new(),
+            mask: IconMask::None,
         }
+    }
+}
+
+/// The shape an application's icon is cut to.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IconMask {
+    /// As the icon theme drew it.
+    #[default]
+    None,
+    Circle,
+    /// A superellipse: a square with continuously rounded sides.
+    Squircle,
+}
+
+impl IconMask {
+    pub const ALL: [IconMask; 3] = [IconMask::None, IconMask::Circle, IconMask::Squircle];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            IconMask::None => "none",
+            IconMask::Circle => "circle",
+            IconMask::Squircle => "squircle",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|mask| mask.id() == id.trim())
     }
 }
 
@@ -170,6 +202,7 @@ impl TokenOverrides {
 #[serde(default)]
 pub struct FontSpec {
     pub size: Option<f32>,
+    /// From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
     pub weight: Option<u16>,
     pub italic: Option<bool>,
 }
@@ -194,11 +227,33 @@ pub struct FontsConfig {
     pub caption: FontSpec,
 }
 
+impl FontsConfig {
+    pub fn spec(&self, role: FontRole) -> FontSpec {
+        match role {
+            FontRole::Display => self.display,
+            FontRole::Title => self.title,
+            FontRole::Body => self.body,
+            FontRole::Caption => self.caption,
+        }
+    }
+
+    pub fn spec_mut(&mut self, role: FontRole) -> &mut FontSpec {
+        match role {
+            FontRole::Display => &mut self.display,
+            FontRole::Title => &mut self.title,
+            FontRole::Body => &mut self.body,
+            FontRole::Caption => &mut self.caption,
+        }
+    }
+}
+
 /// How the shell moves (`[animation]`).
 ///
-/// Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration — a panel opening.
+/// Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid-flight — the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration — a panel opening, a bar hiding itself.
 ///
-/// `duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, which is the accessibility answer (and what a user on a remote desktop wants) rather than a per-surface opt-out.
+/// `duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, for a user on a remote desktop who wants no motion at all.
+///
+/// `reduced` is the accessibility answer: while motion is reduced, a panel, drawer or popout that would slide in fades instead, a bar that hides itself moves at once, and no transition runs longer than 100 ms. `auto` follows the desktop's own reduced-motion setting, read from the desktop portal; with no portal, motion is as configured here.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct AnimationConfig {
@@ -210,6 +265,10 @@ pub struct AnimationConfig {
     pub easing: String,
     /// How long a panel takes to enter or leave, before `duration_scale`.
     pub panel_duration_ms: u64,
+    /// How long a bar that hides itself takes to slide away or back, before `duration_scale`.
+    pub autohide_duration_ms: u64,
+    /// Whether motion is reduced: `auto` follows the desktop's reduced-motion setting, `on` and `off` decide regardless of it.
+    pub reduced: ReducedMotion,
 }
 
 impl Default for AnimationConfig {
@@ -220,11 +279,56 @@ impl Default for AnimationConfig {
             curve: "gentle".to_string(),
             easing: "ease-out".to_string(),
             panel_duration_ms: 180,
+            autohide_duration_ms: 160,
+            reduced: ReducedMotion::Auto,
+        }
+    }
+}
+
+/// Whether the shell reduces its motion.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReducedMotion {
+    /// As the desktop's reduced-motion setting says.
+    #[default]
+    Auto,
+    /// Always reduced.
+    On,
+    /// Never reduced.
+    Off,
+}
+
+impl ReducedMotion {
+    pub const ALL: [ReducedMotion; 3] =
+        [ReducedMotion::Auto, ReducedMotion::On, ReducedMotion::Off];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            ReducedMotion::Auto => "auto",
+            ReducedMotion::On => "on",
+            ReducedMotion::Off => "off",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|reduced| reduced.id() == id.trim())
+    }
+
+    pub fn applies(self, desktop_reduced: bool) -> bool {
+        match self {
+            ReducedMotion::Auto => desktop_reduced,
+            ReducedMotion::On => true,
+            ReducedMotion::Off => false,
         }
     }
 }
 
 impl AnimationConfig {
+    /// The longest any transition runs while motion is reduced.
+    pub const REDUCED_CEILING: Duration = Duration::from_millis(100);
+
     /// The multiplier, bounded: `0` (or a negative, or NaN) would make every animation instant by accident rather than by the `enabled` switch that says so, and an unbounded one makes the shell feel broken.
     fn scale(&self) -> f32 {
         if self.duration_scale.is_finite() {
@@ -234,12 +338,22 @@ impl AnimationConfig {
         }
     }
 
-    /// `base` scaled by `duration_scale`, or zero while animation is off. The one place a duration is derived, so every surface shortens and lengthens together instead of each carrying its own constant.
+    /// Whether motion is reduced now: `reduced`, with `auto` answered by the desktop.
+    pub fn is_reduced(&self) -> bool {
+        self.reduced
+            .applies(crate::motion::desktop_prefers_reduced())
+    }
+
+    /// `base` scaled by `duration_scale` and held to [`Self::REDUCED_CEILING`] while motion is reduced, or zero while animation is off. The one place a duration is derived, so every surface shortens and lengthens together instead of each carrying its own constant.
     pub fn duration(&self, base: Duration) -> Duration {
         if !self.enabled {
             return Duration::ZERO;
         }
-        base.mul_f32(self.scale())
+        let scaled = base.mul_f32(self.scale());
+        match self.is_reduced() {
+            true => scaled.min(Self::REDUCED_CEILING),
+            false => scaled,
+        }
     }
 
     /// The spring every chase-a-moving-target animation uses.
@@ -266,12 +380,25 @@ impl AnimationConfig {
         self.tween_ms(self.panel_duration_ms, 2_000)
     }
 
+    /// How a bar that hides itself slides away and back: at once while motion is reduced.
+    pub fn autohide_tween(&self) -> telar::motion::Tween {
+        self.travel_tween_ms(self.autohide_duration_ms, 2_000)
+    }
+
     /// A tween of `base_ms`, scaled and eased by `[animation]`, and bounded by `max_ms` so a mistyped duration is a slow transition rather than one that never ends. The general form `panel_tween` is a preset of.
     pub fn tween_ms(&self, base_ms: u64, max_ms: u64) -> telar::motion::Tween {
         telar::motion::tween(
             self.duration(Duration::from_millis(base_ms.clamp(0, max_ms))),
             self.easing(),
         )
+    }
+
+    /// [`Self::tween_ms`] for something that travels across the screen rather than fading in place, which reduced motion makes instant.
+    pub fn travel_tween_ms(&self, base_ms: u64, max_ms: u64) -> telar::motion::Tween {
+        match self.is_reduced() {
+            true => telar::motion::tween(Duration::ZERO, self.easing()),
+            false => self.tween_ms(base_ms, max_ms),
+        }
     }
 }
 
@@ -280,7 +407,7 @@ impl AnimationConfig {
 /// An absolute override answers "what should the radius be"; a scale answers "make everything a bit rounder", which is the question a user actually has and the one that keeps a palette's proportions intact. Applied last in [`Config::resolve_theme`], so scaling a token the user also pinned scales *their* number, not the palette's — otherwise the two settings would silently fight.
 ///
 /// `font` scales the base size every other role steps off, so one number moves all the text at once.
-#[derive(Deserialize, Serialize, Clone, Copy, Debug)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(default)]
 pub struct ScaleConfig {
     pub rounding: f32,
@@ -319,7 +446,7 @@ impl ScaleConfig {
 }
 
 /// Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dynamic` (a palette generated from the current wallpaper); the rest override individual tokens on top of it — numbers directly, `[theme.scale]` proportionally, and `[theme.colors]` per-token hex (`base = "#2e3440"`), keyed by the same names [`NordTheme::accent_by_name`] uses. Any unset field keeps the built-in's value.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct ThemeConfig {
     pub name: String,
@@ -352,7 +479,7 @@ pub struct ThemeConfig {
 /// Where the resolved palette is written for the rest of the desktop to read (`[theme.export]`).
 ///
 /// A wallpaper-driven scheme is only worth having if the applications around the shell follow it, and none of them reads `config.toml`. Each switch writes one flat file of the same tokens into `dir`: `scheme.json`, `scheme.css` (GTK `@define-color`), `scheme.conf` (an ini for Qt/Kvantum themes) and `scheme.sh` plus `sequences` (shell variables and the OSC escapes that recolour a running terminal). Once the files are on disk the shell raises `colors_changed`, which is where a `[[rules]]` entry running `gsettings` or `makoctl reload` belongs.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(default)]
 pub struct SchemeExportConfig {
     pub enabled: bool,

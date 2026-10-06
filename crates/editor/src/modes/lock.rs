@@ -115,6 +115,10 @@ fn region_added(
             source: None,
             fit: None,
             transition: None,
+            focus: None,
+            dim: None,
+            blur: None,
+            parallax: None,
         }),
         ..Area::default()
     };

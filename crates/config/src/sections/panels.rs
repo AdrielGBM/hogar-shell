@@ -297,6 +297,36 @@ impl Default for WindowsConfig {
     }
 }
 
+/// The `windows` strip placed in a dock area (`[dock]`). `pinned` lists desktop-entry ids, in the order the dock shows them, that stay on the dock whether or not they are running; pinning, unpinning and dragging a pin on the dock writes this list. `magnification` is how large the entry under the pointer grows, as a multiple of its size; `1` turns it off.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct DockConfig {
+    pub pinned: Vec<String>,
+    /// Range: 1 to 2.5, step 0.05.
+    pub magnification: f32,
+}
+
+impl Default for DockConfig {
+    fn default() -> Self {
+        Self {
+            pinned: Vec::new(),
+            magnification: 1.5,
+        }
+    }
+}
+
+impl DockConfig {
+    pub const MAX_MAGNIFICATION: f32 = 2.5;
+
+    /// The magnification the dock draws with: a mistyped value is no magnification, or the largest one, rather than an entry that shrinks or fills the screen.
+    pub fn magnification(&self) -> f32 {
+        match self.magnification.is_finite() {
+            true => self.magnification.clamp(1.0, Self::MAX_MAGNIFICATION),
+            false => 1.0,
+        }
+    }
+}
+
 /// How a rendered label is cased. Applied after the template, so it works on `{name}` (which Hyprland reports however the user named the workspace) without every template having to spell the casing out.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

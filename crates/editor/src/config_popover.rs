@@ -5,8 +5,8 @@ use std::path::Path;
 
 use serde::Serialize;
 use telar::{
-    LayoutItem, LayoutStyle, RectStyle, RwSignal, StyledContainer, Transaction, effect,
-    register_transaction, signal, use_theme,
+    Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, RwSignal, StyledContainer,
+    Transaction, box_item, effect, register_transaction, signal, use_theme,
 };
 
 use config::Config;
@@ -50,24 +50,63 @@ pub(crate) fn close(id: &str, open: Option<RwSignal<bool>>) {
 
 /// The card such a popover is, `width` across, at the top right of what the bars of `output` leave.
 pub(crate) fn card(output: &str, width: f32, rows: Vec<Box<dyn LayoutItem>>) -> Built {
+    framed(output, width, rows, Vec::new())
+}
+
+/// [`card`] with `footer` under its rows and always in view: the rows scroll once they are taller than the screen leaves them.
+pub(crate) fn framed(
+    output: &str,
+    width: f32,
+    rows: Vec<Box<dyn LayoutItem>>,
+    footer: Vec<Box<dyn LayoutItem>>,
+) -> Built {
     let theme = use_theme::<NordTheme>();
+    let pad = ui::scale::space::lg();
+    let gap = ui::scale::space::md();
+    let inner = width - 2.0 * pad;
+    let column = |items| {
+        Container::new(
+            LayoutStyle::new().flex_column().gap(gap).width(inner),
+            items,
+        )
+    };
+    let footer = match footer.is_empty() {
+        true => None,
+        false => Some(column(footer)?),
+    };
+    let footer_tall = match &footer {
+        Some(footer) => Some(telar::track_layout(footer.layout_node()).ok_or_else(|| {
+            LayoutError::Engine("a popover's footer has no layout node".to_string())
+        })?),
+        None => None,
+    };
+    let room = {
+        let output = output.to_string();
+        move || {
+            let usable = host::usable(Some(&output));
+            let below = footer_tall.map_or(0.0, |tall| tall.get().height + gap);
+            (usable.height * crate::popover::TALLEST - below - 2.0 * pad).max(0.0)
+        }
+    };
+    let (rows, _) = crate::popover::capped_rows(box_item(column(rows)?), inner, room)?;
+    let mut children = vec![rows];
+    children.extend(footer.map(box_item));
     let placed = output.to_string();
     let card = StyledContainer::new(
         LayoutStyle::new(),
         move |_| RectStyle::filled(theme.surface, ui::scale::corner::xl()),
-        rows,
+        children,
     )?
     .styled_by(move || {
         let usable = host::usable(Some(&placed));
-        let margin = ui::scale::space::lg();
         LayoutStyle::new()
             .absolute()
-            .inset_start(usable.x + usable.width - width - margin)
-            .inset_top(usable.y + 4.0 * margin)
+            .inset_start(usable.x + usable.width - width - pad)
+            .inset_top(usable.y + 4.0 * pad)
             .width(width)
             .flex_column()
-            .gap(ui::scale::space::md())
-            .padding_all(ui::scale::space::lg())
+            .gap(gap)
+            .padding_all(pad)
     })
     .input_opaque();
     Ok(Box::new(passthrough(whole(), vec![Box::new(card)])?))

@@ -112,10 +112,16 @@ pub const PAGES: &[Page] = &[
                 crate::sections::shape::ShapeProps::props().build(),
                 telar::Children::default(),
             )),
-            section!("icons", ["icons"], || crate::sections::icons::icons(
-                crate::sections::icons::IconsProps::props().build(),
-                telar::Children::default(),
-            )),
+            section!(
+                "theme_presets",
+                ["theme"],
+                crate::sections::appearance::theme_presets_section
+            ),
+            section!(
+                "icons",
+                ["icons"],
+                crate::sections::appearance::icons_section
+            ),
             section!("animation", ["animation"], || {
                 crate::sections::animation::animation(
                     crate::sections::animation::AnimationProps::props().build(),
@@ -173,6 +179,10 @@ pub const PAGES: &[Page] = &[
                     telar::Children::default(),
                 )
             ),
+            section!("dock", ["dock"], || crate::sections::dock::dock(
+                crate::sections::dock::DockProps::props().build(),
+                telar::Children::default(),
+            )),
             section!("status_icons", ["status_icons"], || {
                 crate::sections::status_icons::status_icons(
                     crate::sections::status_icons::StatusIconsProps::props().build(),

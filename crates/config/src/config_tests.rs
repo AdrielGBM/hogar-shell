@@ -398,6 +398,49 @@ mod tests {
     }
 
     #[test]
+    fn a_weight_per_role_reaches_that_roles_text_and_no_other() {
+        use crate::theme::{FONT_WEIGHT_RANGE, FontRole};
+
+        let cfg: Config = toml::from_str(
+            "[theme.fonts.title]\nweight = 650\n[theme.fonts.caption]\nweight = 2000\n",
+        )
+        .unwrap();
+        let theme = cfg.resolve_theme();
+        let weight = |role| theme.text_style(role, Color::WHITE).font_weight;
+        assert_eq!(cfg.theme.fonts.spec(FontRole::Title).weight, Some(650));
+        assert_eq!(weight(FontRole::Title), 650);
+        assert_eq!(weight(FontRole::Caption), *FONT_WEIGHT_RANGE.end());
+        let bare = Config::default().resolve_theme();
+        assert_eq!(
+            weight(FontRole::Body),
+            bare.text_style(FontRole::Body, Color::WHITE).font_weight
+        );
+        let mut fonts = FontsConfig::default();
+        fonts.spec_mut(FontRole::Display).weight = Some(300);
+        assert_eq!(fonts.display.weight, Some(300));
+    }
+
+    #[test]
+    fn the_icon_mask_defaults_to_none_and_parses_each_shape() {
+        let bare: Config = toml::from_str("").unwrap();
+        assert_eq!(bare.icons.mask, IconMask::None);
+        for mask in IconMask::ALL {
+            let cfg: Config =
+                toml::from_str(&format!("[icons]\nmask = \"{}\"\n", mask.id())).unwrap();
+            assert_eq!(cfg.icons.mask, mask);
+            assert_eq!(IconMask::from_id(mask.id()), Some(mask));
+        }
+        assert!(toml::from_str::<Config>("[icons]\nmask = \"star\"\n").is_err());
+        assert_eq!(IconMask::from_id("star"), None);
+        let written = toml::to_string(&IconsConfig {
+            mask: IconMask::Squircle,
+            ..IconsConfig::default()
+        })
+        .unwrap();
+        assert!(written.contains("mask = \"squircle\""), "{written}");
+    }
+
+    #[test]
     fn spacing_and_radius_fall_back_to_the_theme() {
         let theme = NordTheme::new();
         let bare: Config = toml::from_str("").unwrap();
@@ -979,6 +1022,79 @@ accent = "orange"
     }
 
     #[test]
+    fn the_autohide_duration_is_the_bars_own_and_scales_with_the_rest() {
+        let slow: Config = toml::from_str("[animation]\nautohide_duration_ms = 400\n").unwrap();
+        assert_eq!(
+            slow.animation.autohide_tween(),
+            telar::motion::tween(Duration::from_millis(400), telar::motion::Easing::EaseOut)
+        );
+        assert_eq!(
+            slow.animation.panel_tween().duration,
+            Duration::from_millis(180),
+            "a panel keeps its own duration"
+        );
+
+        let quick = AnimationConfig {
+            autohide_duration_ms: 400,
+            duration_scale: 0.5,
+            easing: "linear".to_string(),
+            ..AnimationConfig::default()
+        };
+        assert_eq!(
+            quick.autohide_tween(),
+            telar::motion::tween(Duration::from_millis(200), telar::motion::Easing::Linear)
+        );
+        let off = AnimationConfig {
+            enabled: false,
+            ..quick
+        };
+        assert_eq!(off.autohide_tween().duration, Duration::ZERO);
+    }
+
+    #[test]
+    fn reduced_motion_makes_travel_instant_and_holds_every_fade_short() {
+        let config: Config =
+            toml::from_str("[animation]\nreduced = \"on\"\npanel_duration_ms = 400\n").unwrap();
+        let reduced = config.animation;
+        assert!(reduced.is_reduced());
+        assert_eq!(
+            reduced.panel_tween().duration,
+            AnimationConfig::REDUCED_CEILING
+        );
+        assert_eq!(
+            reduced.tween_ms(60, 2_000).duration,
+            Duration::from_millis(60),
+            "a fade already shorter than the ceiling keeps its length"
+        );
+        assert_eq!(reduced.autohide_tween().duration, Duration::ZERO);
+        assert_eq!(reduced.travel_tween_ms(200, 2_000).duration, Duration::ZERO);
+
+        let kept = AnimationConfig {
+            reduced: ReducedMotion::Off,
+            panel_duration_ms: 400,
+            ..AnimationConfig::default()
+        };
+        assert!(!kept.is_reduced());
+        assert_eq!(kept.panel_tween().duration, Duration::from_millis(400));
+        assert_eq!(kept.autohide_tween().duration, Duration::from_millis(160));
+    }
+
+    #[test]
+    fn auto_follows_the_desktop_and_an_override_does_not() {
+        for desktop in [false, true] {
+            assert_eq!(ReducedMotion::Auto.applies(desktop), desktop);
+            assert!(ReducedMotion::On.applies(desktop));
+            assert!(!ReducedMotion::Off.applies(desktop));
+        }
+        assert_eq!(AnimationConfig::default().reduced, ReducedMotion::Auto);
+        for reduced in ReducedMotion::ALL {
+            assert_eq!(ReducedMotion::from_id(reduced.id()), Some(reduced));
+        }
+        assert_eq!(ReducedMotion::from_id("sometimes"), None);
+        assert!(toml::from_str::<Config>("[animation]\nreduced = \"sometimes\"\n").is_err());
+    }
+
+    #[test]
     fn the_two_named_curve_families_resolve_and_fall_back() {
         let with = |curve: &str, easing: &str| AnimationConfig {
             curve: curve.to_string(),
@@ -1353,6 +1469,28 @@ accent = "orange"
         for (at, edge) in Edge::ALL.into_iter().enumerate() {
             assert_eq!(edge.index(), at, "{edge:?}");
         }
+    }
+
+    #[test]
+    fn a_dock_pins_nothing_until_told_and_magnifies_within_its_bounds() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.dock.pinned.is_empty());
+        assert_eq!(cfg.dock.magnification(), 1.5);
+        let cfg: Config =
+            toml::from_str("[dock]\npinned = [\"firefox\", \"kitty\"]\nmagnification = 9.0\n")
+                .unwrap();
+        assert_eq!(cfg.dock.pinned, ["firefox", "kitty"]);
+        assert_eq!(cfg.dock.magnification(), DockConfig::MAX_MAGNIFICATION);
+        let shrinking = DockConfig {
+            magnification: 0.5,
+            ..DockConfig::default()
+        };
+        assert_eq!(shrinking.magnification(), 1.0, "an entry never shrinks");
+        let unread = DockConfig {
+            magnification: f32::NAN,
+            ..DockConfig::default()
+        };
+        assert_eq!(unread.magnification(), 1.0);
     }
 
     #[test]

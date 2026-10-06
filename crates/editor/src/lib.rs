@@ -23,4 +23,5 @@ pub fn install() {
     tools::install();
     select::install();
     theme::install();
+    templates::install();
 }

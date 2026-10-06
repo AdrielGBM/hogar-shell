@@ -258,6 +258,10 @@ mod tests {
                 source: Some("/pictures/middle.png".to_string()),
                 fit: Some(Fit::Contain),
                 transition: Some(Transition::Slide),
+                focus: None,
+                dim: None,
+                blur: None,
+                parallax: None,
             }),
             ..Area::default()
         });
@@ -268,6 +272,10 @@ mod tests {
                 source: None,
                 fit: None,
                 transition: None,
+                focus: None,
+                dim: None,
+                blur: None,
+                parallax: None,
             }),
             ..Area::default()
         });
@@ -500,6 +508,10 @@ mod tests {
                 source: Some("/pictures/right.png".to_string()),
                 fit: None,
                 transition: None,
+                focus: None,
+                dim: None,
+                blur: None,
+                parallax: None,
             }),
             "the workspace's entry names what the popover changed and nothing else"
         );
@@ -530,6 +542,10 @@ mod tests {
                     source: Some("/pictures/here.png".to_string()),
                     fit: None,
                     transition: None,
+                    focus: None,
+                    dim: None,
+                    blur: None,
+                    parallax: None,
                 }),
                 ..Area::default()
             });
@@ -1013,6 +1029,10 @@ mod tests {
                 source: None,
                 fit: None,
                 transition: None,
+                focus: None,
+                dim: None,
+                blur: None,
+                parallax: None,
             }),
             "let go, the edge is where it was dragged to"
         );

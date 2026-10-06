@@ -808,6 +808,10 @@ mod tests {
                     source: None,
                     fit: None,
                     transition: None,
+                    focus: None,
+                    dim: None,
+                    blur: None,
+                    parallax: None,
                 }),
                 ..Area::default()
             });

@@ -37,6 +37,7 @@ pub(crate) const CURVES: &[&str] = &["gentle", "snappy", "bouncy"];
 pub(crate) const VARIANT_STYLES: &[&str] = &["default", "filled"];
 pub(crate) const OPEN_MODES: &[&str] = &["drawer", "float"];
 pub(crate) const EASINGS: &[&str] = &["linear", "ease-in", "ease-out", "ease-in-out"];
+pub(crate) const REDUCED_MOTION: &[&str] = &["auto", "on", "off"];
 /// How long after the last keystroke a live-preview form applies itself. Long enough that typing a font name is one apply rather than nine, short enough to read as a preview rather than as a delay.
 const LIVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(700);
 

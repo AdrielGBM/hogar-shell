@@ -1,4 +1,7 @@
+mod dock;
+mod lens;
 mod order;
+mod pins;
 mod targets;
 
 use std::cell::{Cell, RefCell};
@@ -18,6 +21,7 @@ use ui::host::Host;
 use ui::icon::{app_icon_view, icon_view};
 use ui::scale::space;
 
+pub use dock::dot_fills;
 pub use order::{Arrangement, arrangement};
 
 use targets::Targets;
@@ -43,10 +47,19 @@ pub fn fills(theme: NordTheme) -> (Color, Color) {
     )
 }
 
+pub fn hover_fill(theme: NordTheme) -> Color {
+    theme.text.with_alpha(HOVER_ALPHA)
+}
+
 pub fn strip(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let windows = signal(services::windows::current().unwrap_or_default());
     platform_wayland::watch(services::windows::subscribe, move |open| windows.set(open));
-    strip_over(host, windows)
+    if !host.is_docked() {
+        return strip_over(host, windows);
+    }
+    let apps = signal(services::apps::all());
+    platform_wayland::watch(services::apps::subscribe, move |all| apps.set(all));
+    dock::dock(host, windows, apps, dock::Seams::live())
 }
 
 fn strip_over(
@@ -57,19 +70,7 @@ fn strip_over(
     let output = host.output.clone();
     let key = output.clone().unwrap_or_default();
 
-    let remembered = signal(remembered_on(&services::state::get(), &key));
-    {
-        let key = key.clone();
-        platform_wayland::watch(
-            services::state::subscribe,
-            move |state: services::state::ShellState| {
-                let now = remembered_on(&state, &key);
-                if remembered.peek() != now {
-                    remembered.set(now);
-                }
-            },
-        );
-    }
+    let remembered = remembered(&key);
     let unsupported = signal(false);
     platform_wayland::watch(services::windows::subscribe_unsupported, move |missing| {
         unsupported.set(missing)
@@ -130,8 +131,29 @@ fn strip_over(
     Ok(Box::new(list))
 }
 
+fn remembered(output: &str) -> RwSignal<Vec<String>> {
+    let remembered = signal(remembered_on(&services::state::get(), output));
+    let output = output.to_string();
+    platform_wayland::watch(
+        services::state::subscribe,
+        move |state: services::state::ShellState| {
+            let now = remembered_on(&state, &output);
+            if remembered.peek() != now {
+                remembered.set(now);
+            }
+        },
+    );
+    remembered
+}
+
 fn remembered_on(state: &services::state::ShellState, output: &str) -> Vec<String> {
     state.window_order.get(output).cloned().unwrap_or_default()
+}
+
+fn on_output(output: Option<&str>, window: &ManagedToplevel) -> bool {
+    output.is_none_or(|output| {
+        window.outputs.is_empty() || window.outputs.iter().any(|on| on == output)
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -306,9 +328,7 @@ impl Strip {
     }
 
     fn here(&self, window: &ManagedToplevel) -> bool {
-        self.output.as_deref().is_none_or(|output| {
-            window.outputs.is_empty() || window.outputs.iter().any(|on| on == output)
-        })
+        on_output(self.output.as_deref(), window)
     }
 }
 
@@ -374,7 +394,7 @@ fn entry(
 
     let style = entry_style(strip, column, titles, shape.icon);
     let (rest, active) = fills(theme);
-    let hover = theme.text.with_alpha(HOVER_ALPHA);
+    let hover = hover_fill(theme);
     let radius = strip.radius;
     let focused = move || live.with(|window| window.as_ref().is_some_and(|w| w.activated));
     let dragging = strip.dragging;

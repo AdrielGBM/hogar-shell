@@ -344,18 +344,30 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
                 source,
                 fit,
                 transition,
+                focus,
+                dim,
+                blur,
+                parallax,
             },
             AreaKind::WallpaperRegion {
                 rect: over_rect,
                 source: over_source,
                 fit: over_fit,
                 transition: over_transition,
+                focus: over_focus,
+                dim: over_dim,
+                blur: over_blur,
+                parallax: over_parallax,
             },
         ) => {
             replace_if_set(rect, over_rect);
             replace_if_set(source, over_source);
             replace_if_set(fit, over_fit);
             replace_if_set(transition, over_transition);
+            replace_if_set(focus, over_focus);
+            replace_if_set(dim, over_dim);
+            replace_if_set(blur, over_blur);
+            replace_if_set(parallax, over_parallax);
         }
         (
             AreaKind::Texture {

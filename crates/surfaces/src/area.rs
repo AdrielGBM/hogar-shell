@@ -32,14 +32,15 @@ use crate::transient::chips::Site;
 use config::theme::{FontRole, NordTheme};
 use config::{Align, Config, Edge};
 use layout::{
-    Anchor, AreaId, Blend, Fit, GroupId, GroupKind, InstanceId as PlacedId, LayerKind,
+    Anchor, AreaId, Blend, Fit, Focus, GroupId, GroupKind, InstanceId as PlacedId, LayerKind,
     Paint as AreaPaint, Rect, Representation as Placed, ResolvedArea, ResolvedAreaKind,
     ResolvedGroup, ResolvedInstance, Sides, Style, Tile, Transition, Zone,
 };
-use services::wallpaper;
+use services::wallpaper::{self, Desk};
 use ui::descriptor::{Built, ChipDef};
 use ui::host::{
-    Audience, Extent, Footprint, Host, Instance, InstanceId, Representation, Size, WidgetSize,
+    Audience, Extent, Footprint, Host, Instance, InstanceId, OwnSecondary, Representation, Size,
+    WidgetSize,
 };
 use ui::keynav::Move;
 use ui::layout::{align_items, fill, justify, painted_chrome};
@@ -297,7 +298,7 @@ pub fn grid(
     surround: Surround,
 ) -> Built {
     let live = placing(area, surround);
-    let slide = surround.config.animation.tween_ms(200, 2_000);
+    let slide = surround.config.animation.travel_tween_ms(200, 2_000);
     let placed = area
         .groups
         .iter()
@@ -593,11 +594,32 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
         source,
         fit,
         transition,
+        focus,
+        dim,
+        blur,
+        parallax,
     } = &area.kind
     else {
         unreachable!("build only routes a WallpaperRegion area here")
     };
-    let (rect, fit, transition) = (*rect, *fit, *transition);
+    let (rect, fit, transition, dim, blur) = (*rect, *fit, *transition, *dim, *blur);
+    let reduced = surround.config.animation.is_reduced();
+    let transition = match transition {
+        Transition::Slide if reduced => Transition::Fade,
+        transition => transition,
+    };
+    let laying = Laying {
+        fit,
+        size: inside(within(rect, surround.bounds), area.style.padding),
+        focus: *focus,
+        parallax: match fit == Fit::Cover && !reduced {
+            true => *parallax,
+            false => 0.0,
+        },
+    };
+    if laying.parallax > 0.0 || dim > 0.0 || blur > 0.0 {
+        crate::desk::follow(surround.output);
+    }
 
     let key = (surround.output.map(str::to_string), area.id.clone());
     let follows_background = source.is_empty();
@@ -618,7 +640,6 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
     }
     let fades_from = before.filter(|was| wanted.as_deref() != Some(was.path.as_path()));
 
-    let object_fit = to_object_fit(fit);
     let (read_fade, set_fade) = fade_control(surround.config, transition);
     let handover = match fades_from {
         Some(was) => {
@@ -628,19 +649,20 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
         }
         None => Handover::new(arriving, set_fade),
     };
+    let along = slid_along(surround, laying.parallax > 0.0);
     let layer_a = image_layer(
         handover.a.read_only(),
-        read_fade.clone(),
-        0.0,
+        (read_fade.clone(), 0.0),
         transition,
-        object_fit,
+        laying,
+        Rc::clone(&along),
     )?;
     let layer_b = image_layer(
         handover.b.read_only(),
-        read_fade,
-        1.0,
+        (read_fade, 1.0),
         transition,
-        object_fit,
+        laying,
+        along,
     )?;
 
     if follows_background {
@@ -656,7 +678,9 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
         );
     }
 
-    let stack = Container::new(fill(), vec![layer_a, layer_b])?;
+    let mut layers = vec![layer_a, layer_b];
+    layers.extend(veil(surround, dim, blur)?);
+    let stack = ClippedItem::new(Box::new(Container::new(fill(), layers)?), Clip::both());
     let mut painted = picture(
         &area.style,
         Some(surround.theme.base),
@@ -704,29 +728,37 @@ impl Handover {
     }
 }
 
-/// How the layers are handed over: reading the current position, and moving it.
-///
-/// Two shapes behind one pair of closures. An animated transition drives an `Animated`, built at `0.0` and retargeted — never at its destination, which would leave it inert. `transition = "none"` (and animation switched off globally) drives a plain signal instead of an `Animated` with a zero-length tween, because a tween that has no duration to divide by is a division waiting to happen, and "no transition" should not go anywhere near the ticker.
+/// How the layers are handed over: reading the current position, and moving it ([`eased`]).
 fn fade_control(config: &Config, transition: Transition) -> FadeControl {
     let instant = transition == Transition::None
         || !config.animation.enabled
         || config.background.transition_ms == 0;
-    if instant {
-        let at = signal(0.0f32);
-        let reading = at.read_only();
-        return (
-            Rc::new(move || reading.get()),
-            Box::new(move |to| at.set(to)),
-        );
-    }
     let tween = config
         .animation
         .tween_ms(config.background.transition_ms, 10_000);
-    let fade = Animated::new(0.0f32, tween);
-    let reading = fade;
+    eased(0.0, (!instant).then_some(tween))
+}
+
+/// A value read and moved through a pair of closures, starting at `from`: tweened by `tween`, or set at once without one.
+///
+/// An `Animated` is retargeted, never built at its destination, which would leave it inert; and no tween at all drives a plain signal rather than an `Animated` with a zero-length tween, which has no duration to divide by.
+fn eased(from: f32, tween: Option<telar::motion::Tween>) -> FadeControl {
+    let Some(tween) = tween else {
+        let at = signal(from);
+        let reading = at.read_only();
+        return (
+            Rc::new(move || reading.get()),
+            Box::new(move |to| {
+                if at.peek() != to {
+                    at.set(to)
+                }
+            }),
+        );
+    };
+    let moving = Animated::new(from, tween);
     (
-        Rc::new(move || reading.get()),
-        Box::new(move |to| fade.retarget(to)),
+        Rc::new(move || moving.get()),
+        Box::new(move |to| moving.retarget(to)),
     )
 }
 
@@ -785,47 +817,158 @@ fn decoded(key: &RegionKey, path: &Path) -> Option<Arc<ImageData>> {
     Some(image)
 }
 
-/// One image slot: filling its region, shown in proportion to how close `fade` is to `visible_at`.
+/// How a region lays its picture: the fit, the box it fills, and for `cover` the point it keeps in view and how far it slides across the workspaces.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Laying {
+    fit: Fit,
+    size: (f32, f32),
+    focus: Focus,
+    parallax: f32,
+}
+
+/// How long the picture takes to dim and blur as a window covers the screen, and to come back, before `[animation]` scales it.
+const VEIL_MS: u64 = 240;
+/// How long the picture takes to slide to where the workspace switched to puts it, before `[animation]` scales it.
+const PARALLAX_MS: u64 = 450;
+
+fn inside(rect: telar::Rect, padding: Option<Sides>) -> (f32, f32) {
+    let sides = padding.unwrap_or_default();
+    (
+        (rect.width - sides.horizontal()).max(0.0),
+        (rect.height - sides.vertical()).max(0.0),
+    )
+}
+
+/// Where a picture `intrinsic` pixels big lies to cover a box `size` big, from the box's top left: scaled to cover the box widened by `parallax` of its width, and placed so `focus` sits at the middle of that box as far as the picture reaches past it.
+pub fn covering(
+    intrinsic: (f32, f32),
+    size: (f32, f32),
+    focus: Focus,
+    parallax: f32,
+) -> telar::Rect {
+    let (width, height) = (size.0 * (1.0 + parallax.max(0.0)), size.1);
+    if intrinsic.0 <= 0.0 || intrinsic.1 <= 0.0 || width <= 0.0 || height <= 0.0 {
+        return telar::Rect::new(0.0, 0.0, width, height);
+    }
+    let scale = (width / intrinsic.0).max(height / intrinsic.1);
+    let (drawn_width, drawn_height) = (intrinsic.0 * scale, intrinsic.1 * scale);
+    let focus = focus.clamped();
+    let placed = |room: f32, length: f32, at: f32| {
+        (room / 2.0 - at * length).clamp((room - length).min(0.0), 0.0)
+    };
+    telar::Rect::new(
+        placed(width, drawn_width, focus.x),
+        placed(height, drawn_height, focus.y),
+        drawn_width,
+        drawn_height,
+    )
+}
+
+/// How far left a picture with `parallax` is slid in a box `width` wide, with the workspace up `along` the screen's workspaces.
+pub fn parallax_shift(width: f32, parallax: f32, along: f32) -> f32 {
+    -(width * parallax.max(0.0) * along.clamp(0.0, 1.0))
+}
+
+/// How far along the screen's workspaces the one up is, eased there as it changes; half way, and never moving, for a region with no parallax.
+fn slid_along(surround: Surround, slides: bool) -> Rc<dyn Fn() -> f32> {
+    if !slides {
+        return Rc::new(|| 0.5);
+    }
+    let output = surround.output.map(str::to_string);
+    let animation = &surround.config.animation;
+    let tween = animation
+        .enabled
+        .then(|| animation.travel_tween_ms(PARALLAX_MS, 2_000));
+    let resting = crate::desk::now(surround.output).along.unwrap_or(0.5);
+    let (along, slide_to) = eased(resting, tween);
+    telar::effect(move || slide_to(crate::desk::of(output.as_deref()).along.unwrap_or(0.5)));
+    along
+}
+
+/// What darkens and blurs the picture while a window covers the screen: nothing for a region with neither.
+fn veil(surround: Surround, dim: f32, blur: f32) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
+    if dim <= 0.0 && blur <= 0.0 {
+        return Ok(Vec::new());
+    }
+    let output = surround.output.map(str::to_string);
+    let veiling = |desk: Desk| match desk.covered {
+        true => 1.0,
+        false => 0.0,
+    };
+    let animation = &surround.config.animation;
+    let tween = animation
+        .enabled
+        .then(|| animation.tween_ms(VEIL_MS, 2_000));
+    let (veiled, veil_to) = eased(veiling(crate::desk::now(surround.output)), tween);
+    telar::effect(move || veil_to(veiling(crate::desk::of(output.as_deref()))));
+    let blurring = Rc::clone(&veiled);
+    let blurred =
+        StyledContainer::new(fill().absolute_fill(), |_| RectStyle::default(), Vec::new())?
+            .with_backdrop_blur(move || blur * blurring());
+    let dimmed = StyledContainer::new(
+        fill().absolute_fill(),
+        move |_| RectStyle::filled(Color::BLACK.with_alpha(dim * veiled()), 0.0),
+        Vec::new(),
+    )?;
+    Ok(vec![Box::new(blurred), Box::new(dimmed)])
+}
+
+/// One image slot, shown in proportion to how close `fade` is to `visible_at` (0 or 1) and laid as `laying` says, its picture slid by `along` where it has parallax.
 ///
-/// The image itself is rebuilt whenever the slot's signal changes — `Image::new` takes the data as a closure, so the layer is one node for the life of the surface and swapping the picture is a signal write, not a re-layout.
+/// The image takes its data as a closure, so the layer is one node for the life of the surface and swapping the picture is a signal write, not a rebuild.
 fn image_layer(
     slot: telar::ReadSignal<Option<Arc<ImageData>>>,
-    fade: Rc<dyn Fn() -> f32>,
-    visible_at: f32,
+    (fade, visible_at): (Rc<dyn Fn() -> f32>, f32),
     transition: Transition,
-    fit: ObjectFit,
+    laying: Laying,
+    along: Rc<dyn Fn() -> f32>,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let data = slot;
+    let covers = laying.fit == Fit::Cover;
+    let object_fit = match covers {
+        true => ObjectFit::Fill,
+        false => to_object_fit(laying.fit),
+    };
     let image = Image::new(
         fill(),
-        move || data.get().unwrap_or_else(blank),
+        move || slot.get().unwrap_or_else(blank),
         || Raster::Smooth,
-        move || fit,
+        move || object_fit,
     )?;
 
-    let present = slot;
+    let laid = move |held: Option<Arc<ImageData>>| match (covers, held) {
+        (true, Some(image)) => pixels(covering(
+            (image.width as f32, image.height as f32),
+            laying.size,
+            laying.focus,
+            laying.parallax,
+        )),
+        _ => fill().absolute_fill(),
+    };
     let opacity_fade = Rc::clone(&fade);
     let mut layer = StyledContainer::new(
-        fill().absolute_fill(),
+        laid(slot.peek()),
         |_| RectStyle::default(),
         vec![box_item(image)],
     )?
+    .styled_by(move || laid(slot.get()))
     .with_opacity(move || {
         // Both read before the early return: a slot that is empty this frame must still re-run when it fills.
         let at = opacity_fade();
-        let filled = present.get().is_some();
-        if !filled {
+        if slot.with(Option::is_none) {
             return 0.0;
         }
-        // `visible_at` is 0 or 1, so this is "how close the hand-over has got to me".
         1.0 - (at - visible_at).abs()
     });
 
-    if transition == Transition::Slide {
-        // A slide is the incoming layer sliding over the outgoing one, so only the layer being *left* moves — the arriving one has to end up at rest exactly where the other was. `r.width` is this layer's own laid-out width, already resolved from `region`'s percent geometry, so the distance scales with whatever this region's real size turns out to be.
-        layer = layer.with_transform(move |r| {
-            let distance = (fade() - visible_at).abs();
-            (distance != 0.0).then_some([1.0, 0.0, 0.0, 1.0, distance * r.width, 0.0])
+    let slides = transition == Transition::Slide;
+    if slides || laying.parallax > 0.0 {
+        // A slide moves only the layer being left, so the arriving one comes to rest exactly where the other was.
+        layer = layer.with_transform(move |_| {
+            let mut by = parallax_shift(laying.size.0, laying.parallax, along());
+            if slides {
+                by += (fade() - visible_at).abs() * laying.size.0;
+            }
+            (by != 0.0).then_some([1.0, 0.0, 0.0, 1.0, by, 0.0])
         });
     }
     Ok(Box::new(layer))
@@ -1617,7 +1760,7 @@ fn contained(
     let audience = surround.audience;
     let shares = telar::memo(move || held.with(|group| Share::all(group, (cell, gap), audience)));
     let kept = Rc::new(Kept::of(surround));
-    let slide = surround.config.animation.tween_ms(200, 2_000);
+    let slide = surround.config.animation.travel_tween_ms(200, 2_000);
     let (group_id, instance_at) = (group.id.clone(), at.clone());
     let children = telar::fragment(
         move || shares.get(),
@@ -1853,7 +1996,7 @@ fn run(
                 node,
                 extent,
                 Some(edge),
-                (fill(), Frame::Bare),
+                (fill(), Frame::Docked),
                 surround,
             )
         },
@@ -1875,10 +2018,11 @@ fn along(edge: Edge, thickness: f32) -> LayoutStyle {
     }
 }
 
-/// How a chip is drawn where it is placed: bare, laid out by its module alone as a grid or a dock places one, or in the chip shell a bar puts it in, which pads it, lights it on hover and takes its presses.
+/// How a chip is drawn where it is placed: bare, laid out by its module alone as a grid places one, docked, bare too but told it runs along a dock, or in the chip shell a bar puts it in, which pads it, lights it on hover and takes its presses.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Frame {
     Bare,
+    Docked,
     Shell,
 }
 
@@ -1956,11 +2100,18 @@ fn placed(
         foreground,
         surround.output.map(str::to_string),
     )
-    .shown_to(surround.audience);
+    .shown_to(surround.audience)
+    .in_dock(frame == Frame::Docked);
+    let own_secondary = (frame == Frame::Docked && surround.audience == Audience::Owner)
+        .then(OwnSecondary::default);
     let gestures = Bound::of(&instance.actions, surround.audience)
         .with_menu(crate::menu::on(node.clone(), surround.audience))
         .owning(node.clone())
         .with_own_press(crate::panel::chip_press(&host, node));
+    let gestures = match &own_secondary {
+        Some(own) => gestures.with_own_secondary(own.clone()),
+        None => gestures,
+    };
     let wheel = gestures.wheel(
         chip.filter(|_| surround.audience == Audience::Owner)
             .and_then(|chip| crate::bar::wheel(&chip, &host)),
@@ -1977,7 +2128,13 @@ fn placed(
     );
     let item = match shell {
         Some(chip) => shelled(&host, chip, (&gestures, wheel), node, style, plate)?,
-        None => bare(&host, (&gestures, wheel), style, plate)?,
+        None => bare(
+            &host,
+            (&gestures, wheel),
+            style,
+            plate,
+            own_secondary.as_ref(),
+        )?,
     };
     if chip.is_some()
         && surround.audience == Audience::Owner
@@ -2001,6 +2158,7 @@ fn bare(
     (gestures, wheel): (&Bound, Option<Wheel>),
     style: LayoutStyle,
     plate: Option<Look>,
+    own_secondary: Option<&OwnSecondary>,
 ) -> Built {
     let module = host.module();
     if gestures.is_empty() && wheel.is_none() && plate.is_none() {
@@ -2012,15 +2170,21 @@ fn bare(
         true => ui::placeholder::Presses::fixing(),
         false => ui::placeholder::Presses::default(),
     };
-    let placed = match plate {
-        Some(look) => {
-            let placed = telar::Scope::with(|| {
+    let placed = match (plate, own_secondary) {
+        (None, None) => ui::descriptor::place_answering(module, host, inner, answering)?,
+        (plate, own_secondary) => telar::Scope::with(|| {
+            if let Some(own) = own_secondary {
+                own.provide();
+            }
+            if plate.is_some() {
                 ui::chrome::Plated::provide();
-                ui::descriptor::place_answering(module, host, inner, answering)
-            })?;
-            Box::new(look::cut(placed, look.radius, false))
-        }
-        None => ui::descriptor::place_answering(module, host, inner, answering)?,
+            }
+            ui::descriptor::place_answering(module, host, inner, answering)
+        })?,
+    };
+    let placed: Box<dyn LayoutItem> = match plate {
+        Some(look) => Box::new(look::cut(placed, look.radius, false)),
+        None => placed,
     };
     let wrapper = StyledContainer::new(
         style.flex_column(),
@@ -2817,6 +2981,10 @@ mod tests {
                 source: source.display().to_string(),
                 fit: Fit::Cover,
                 transition,
+                focus: Focus::MIDDLE,
+                dim: 0.0,
+                blur: 0.0,
+                parallax: 0.0,
             },
             Vec::new(),
         )
@@ -3098,6 +3266,318 @@ mod tests {
                 "`{id}` draws its own picture"
             );
         }
+    }
+
+    fn wide_picture(dir: &Path, name: &str, (width, height): (u32, u32)) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("a scratch directory");
+        let path = dir.join(name);
+        image::RgbaImage::from_pixel(width, height, image::Rgba([90, 120, 200, 255]))
+            .save(&path)
+            .expect("a picture on disk");
+        path
+    }
+
+    fn laid_region(
+        source: &Path,
+        focus: Focus,
+        (dim, blur, parallax): (f32, f32, f32),
+    ) -> ResolvedArea {
+        test_rig::area(
+            "laid",
+            ResolvedAreaKind::WallpaperRegion {
+                rect: Rect::default(),
+                source: source.display().to_string(),
+                fit: Fit::Cover,
+                transition: Transition::None,
+                focus,
+                dim,
+                blur,
+                parallax,
+            },
+            Vec::new(),
+        )
+    }
+
+    fn unanimated(reduced: config::ReducedMotion) -> Arc<Config> {
+        let mut config = Config::starter();
+        config.animation.enabled = false;
+        config.animation.reduced = reduced;
+        Arc::new(config)
+    }
+
+    /// Where every picture the tree draws is laid, placed by the translations around it but not cut by any clip.
+    fn laid_pictures(tree: &telar::ComponentList) -> Vec<telar::Rect> {
+        let mut offsets: Vec<(f32, f32)> = vec![(0.0, 0.0)];
+        let mut found = Vec::new();
+        for command in tree.commands().iter() {
+            let here = *offsets.last().expect("the page's own origin");
+            match command {
+                telar::DrawCommand::PushMatrix { matrix } => {
+                    offsets.push((here.0 + matrix[4], here.1 + matrix[5]))
+                }
+                telar::DrawCommand::PopMatrix => {
+                    offsets.pop();
+                }
+                telar::DrawCommand::Image { data, rect, .. } if !Arc::ptr_eq(data, &blank()) => {
+                    found.push(telar::Rect::new(
+                        rect.x + here.0,
+                        rect.y + here.1,
+                        rect.width,
+                        rect.height,
+                    ));
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    /// How far the tree blurs what is under a layer, and how dark it paints a black wash, at most.
+    fn veiled(tree: &telar::ComponentList) -> (f32, f32) {
+        tree.commands()
+            .iter()
+            .fold((0.0, 0.0), |(blur, dim), command| match command {
+                telar::DrawCommand::PushLayer { backdrop_blur, .. } => {
+                    (blur.max(*backdrop_blur), dim)
+                }
+                telar::DrawCommand::Rect { style, .. } => match style.fill {
+                    Some(Paint::Solid(colour))
+                        if colour.r == 0.0 && colour.g == 0.0 && colour.b == 0.0 =>
+                    {
+                        (blur, dim.max(colour.a))
+                    }
+                    _ => (blur, dim),
+                },
+                _ => (blur, dim),
+            })
+    }
+
+    /// `cover` scales a picture to the smallest size that covers the box and centres the focus in it as far as the picture reaches past the box, so the focus never leaves the box; parallax widens the box the picture covers.
+    #[test]
+    fn cover_centres_the_focus_as_far_as_the_picture_reaches() {
+        let at = |intrinsic, focus: (f32, f32), parallax| {
+            let rect = covering(
+                intrinsic,
+                (100.0, 100.0),
+                Focus {
+                    x: focus.0,
+                    y: focus.1,
+                },
+                parallax,
+            );
+            (rect.x, rect.y, rect.width, rect.height)
+        };
+        assert_eq!(
+            at((400.0, 200.0), (0.5, 0.5), 0.0),
+            (-50.0, 0.0, 200.0, 100.0)
+        );
+        assert_eq!(
+            at((400.0, 200.0), (0.0, 0.5), 0.0),
+            (0.0, 0.0, 200.0, 100.0),
+            "the left edge"
+        );
+        assert_eq!(
+            at((400.0, 200.0), (1.0, 0.5), 0.0),
+            (-100.0, 0.0, 200.0, 100.0),
+            "the right edge"
+        );
+        assert_eq!(
+            at((400.0, 200.0), (0.375, 0.5), 0.0),
+            (-25.0, 0.0, 200.0, 100.0),
+            "centred on it"
+        );
+        assert_eq!(
+            at((100.0, 400.0), (0.5, 0.1), 0.0),
+            (0.0, 0.0, 100.0, 400.0),
+            "held at the top"
+        );
+        assert_eq!(
+            at((100.0, 400.0), (0.5, 0.5), 0.0),
+            (0.0, -150.0, 100.0, 400.0)
+        );
+        assert_eq!(
+            at((100.0, 400.0), (0.5, 2.0), 0.0),
+            (0.0, -300.0, 100.0, 400.0),
+            "a focus past the edge is the edge"
+        );
+        assert_eq!(
+            at((400.0, 200.0), (0.5, 0.5), 0.5),
+            (-25.0, 0.0, 200.0, 100.0),
+            "covering a box half as wide again"
+        );
+        assert_eq!(
+            at((200.0, 200.0), (0.5, 0.5), 0.5),
+            (0.0, -25.0, 150.0, 150.0)
+        );
+        assert_eq!(
+            at((0.0, 0.0), (0.5, 0.5), 0.0),
+            (0.0, 0.0, 100.0, 100.0),
+            "nothing to scale fills the box"
+        );
+    }
+
+    /// The picture slides by the share of the region's width parallax gives it, from none on the first workspace to all of it on the last.
+    #[test]
+    fn parallax_slides_the_picture_by_where_the_workspace_up_is() {
+        assert_eq!(parallax_shift(1000.0, 0.1, 0.0), 0.0);
+        assert_eq!(parallax_shift(1000.0, 0.1, 0.5), -50.0);
+        assert_eq!(parallax_shift(1000.0, 0.1, 1.0), -100.0);
+        assert_eq!(
+            parallax_shift(1000.0, 0.1, 3.0),
+            -100.0,
+            "never past the last"
+        );
+        assert_eq!(parallax_shift(1000.0, 0.0, 1.0), 0.0, "off");
+    }
+
+    /// A region drawn with `cover` lays its picture so the focus stays in view: at the left edge for a focus there, at the right for one there.
+    #[test]
+    fn a_covering_region_lays_its_picture_around_its_focus() {
+        reset_layout_runtime();
+        let wide = wide_picture(&scratch("focus"), "wide.png", (400, 100));
+        let config = unanimated(config::ReducedMotion::Off);
+        set_theme(config.resolve_theme());
+        let _scope = telar::owner_scope();
+
+        for (x, laid_at) in [(0.0, 0.0), (0.5, -1100.0), (1.0, -2200.0)] {
+            let tree = drawn(
+                build(
+                    &laid_region(&wide, Focus { x, y: 0.5 }, (0.0, 0.0, 0.0)),
+                    surrounded(&config),
+                )
+                .expect("a region builds"),
+            );
+            assert_eq!(
+                laid_pictures(&tree),
+                vec![telar::Rect::new(laid_at, 0.0, 3200.0, 800.0)],
+                "a focus at {x}"
+            );
+            assert_eq!(
+                pictures(&tree)
+                    .into_iter()
+                    .map(|(_, reach)| reach)
+                    .collect::<Vec<_>>(),
+                vec![telar::Rect::new(0.0, 0.0, PAGE.0, PAGE.1)],
+                "and cut to the region"
+            );
+        }
+    }
+
+    /// While a window covers the screen the picture is dimmed and blurred as far as the region says, and it clears as the screen is uncovered.
+    #[test]
+    fn a_window_covering_the_screen_dims_and_blurs_the_picture() {
+        reset_layout_runtime();
+        let wide = wide_picture(&scratch("veil"), "veiled.png", (400, 200));
+        let config = unanimated(config::ReducedMotion::Off);
+        set_theme(config.resolve_theme());
+        let _scope = telar::owner_scope();
+        crate::desk::show(None, Desk::default());
+
+        let tree = drawn(
+            build(
+                &laid_region(&wide, Focus::MIDDLE, (0.4, 12.0, 0.0)),
+                surrounded(&config),
+            )
+            .expect("a region builds"),
+        );
+        assert_eq!(veiled(&tree), (0.0, 0.0), "nothing covers the screen");
+
+        crate::desk::show(
+            None,
+            Desk {
+                covered: true,
+                along: None,
+            },
+        );
+        let (blur, dim) = veiled(&tree);
+        assert_eq!(blur, 12.0);
+        assert!((dim - 0.4).abs() < 1e-6, "dimmed by {dim}");
+
+        crate::desk::show(None, Desk::default());
+        assert_eq!(veiled(&tree), (0.0, 0.0), "uncovered again");
+
+        let plain = drawn(
+            build(
+                &laid_region(&wide, Focus::MIDDLE, (0.0, 0.0, 0.0)),
+                surrounded(&config),
+            )
+            .expect("a region builds"),
+        );
+        crate::desk::show(
+            None,
+            Desk {
+                covered: true,
+                along: None,
+            },
+        );
+        assert_eq!(
+            veiled(&plain),
+            (0.0, 0.0),
+            "a region that asks for neither keeps its picture as it is"
+        );
+        crate::desk::show(None, Desk::default());
+    }
+
+    /// With parallax the picture covers a box wider by that share of the region and slides across it as the workspace up moves along the screen's; reduced motion holds it still.
+    #[test]
+    fn parallax_slides_the_picture_with_the_workspace_up() {
+        reset_layout_runtime();
+        let square = wide_picture(&scratch("parallax"), "square.png", (100, 100));
+        let config = unanimated(config::ReducedMotion::Off);
+        set_theme(config.resolve_theme());
+        let _scope = telar::owner_scope();
+        crate::desk::show(
+            None,
+            Desk {
+                covered: false,
+                along: Some(0.0),
+            },
+        );
+
+        let tree = drawn(
+            build(
+                &laid_region(&square, Focus::MIDDLE, (0.0, 0.0, 0.2)),
+                surrounded(&config),
+            )
+            .expect("a region builds"),
+        );
+        let covers = |x: f32| vec![telar::Rect::new(x, -200.0, 1200.0, 1200.0)];
+        assert_eq!(
+            laid_pictures(&tree),
+            covers(0.0),
+            "the first workspace shows the left edge"
+        );
+        crate::desk::show(
+            None,
+            Desk {
+                covered: false,
+                along: Some(1.0),
+            },
+        );
+        assert_eq!(laid_pictures(&tree), covers(-200.0), "the last its right");
+        crate::desk::show(
+            None,
+            Desk {
+                covered: false,
+                along: Some(0.5),
+            },
+        );
+        assert_eq!(laid_pictures(&tree), covers(-100.0));
+
+        let reduced = unanimated(config::ReducedMotion::On);
+        let still = drawn(
+            build(
+                &laid_region(&square, Focus::MIDDLE, (0.0, 0.0, 0.2)),
+                surrounded(&reduced),
+            )
+            .expect("a region builds"),
+        );
+        assert_eq!(
+            laid_pictures(&still),
+            vec![telar::Rect::new(0.0, -100.0, 1000.0, 1000.0)],
+            "reduced motion covers the region alone and holds it there"
+        );
+        crate::desk::show(None, Desk::default());
     }
 
     thread_local! {

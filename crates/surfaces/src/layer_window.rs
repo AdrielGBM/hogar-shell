@@ -1600,6 +1600,10 @@ mod tests {
                 source: "~/pictures/wall.png".into(),
                 fit: layout::Fit::Cover,
                 transition: layout::Transition::Fade,
+                focus: layout::Focus::MIDDLE,
+                dim: 0.0,
+                blur: 0.0,
+                parallax: 0.0,
             },
             Vec::new(),
         )
@@ -2375,6 +2379,10 @@ mod tests {
                 source: source.to_string(),
                 fit: layout::Fit::Cover,
                 transition: layout::Transition::Fade,
+                focus: layout::Focus::MIDDLE,
+                dim: 0.0,
+                blur: 0.0,
+                parallax: 0.0,
             },
             Vec::new(),
         )

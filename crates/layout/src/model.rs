@@ -631,6 +631,18 @@ pub enum AreaKind {
         fit: Option<Fit>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transition: Option<Transition>,
+        /// The point of the picture `fit = "cover"` keeps in view when it crops, as fractions of the picture's width and height from its top left: the crop is centred on it as far as the picture reaches. The other fits crop nothing and ignore it. The middle unless set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        focus: Option<Focus>,
+        /// How dark the picture goes while an application window covers the screen, from 0 (not at all) to 1 (black). A window covers the screen when the workspace up on it holds one, where the compositor says how many windows a workspace holds, and otherwise when a maximized or fullscreen window is on it. 0 unless set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dim: Option<f32>,
+        /// How far the picture is blurred while an application window covers the screen, as a radius in logical pixels up to 64. 0 unless set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blur: Option<f32>,
+        /// How far the picture slides across the screen's workspaces, as a fraction of the region's width up to 0.5: on the first workspace it shows its left edge and on the last its right, moving as the workspace up changes. Only `fit = "cover"` has picture to spare, and reduced motion holds it still. 0, which is off, unless set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parallax: Option<f32>,
     },
     /// An image or gradient painted over what is behind it.
     Texture {
@@ -695,6 +707,10 @@ pub enum AreaKind {
 }
 
 impl AreaKind {
+    /// The widest blur a wallpaper region takes under windows, in logical pixels.
+    pub const MOST_BLUR: f32 = 64.0;
+    /// The farthest a wallpaper region's picture slides across its workspaces, as a fraction of its width.
+    pub const MOST_PARALLAX: f32 = 0.5;
     /// How big a grid's or a panel's cell is where it does not say, in logical pixels.
     pub const CELL: f32 = 80.0;
     /// The space between two cells of a grid or a panel where it does not say.
@@ -921,6 +937,38 @@ pub enum Fit {
     Contain,
     Stretch,
     Tile,
+}
+
+/// A point of a picture, as fractions of its width and height from its top left.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Focus {
+    /// How far across, from 0 at the left edge to 1 at the right.
+    pub x: f32,
+    /// How far down, from 0 at the top edge to 1 at the bottom.
+    pub y: f32,
+}
+
+impl Focus {
+    pub const MIDDLE: Focus = Focus { x: 0.5, y: 0.5 };
+
+    /// Both fractions held between 0 and 1, the middle standing in for one that is not a number.
+    pub fn clamped(self) -> Focus {
+        let held = |value: f32| match value.is_nan() {
+            true => 0.5,
+            false => value.clamp(0.0, 1.0),
+        };
+        Focus {
+            x: held(self.x),
+            y: held(self.y),
+        }
+    }
+}
+
+impl Default for Focus {
+    fn default() -> Self {
+        Self::MIDDLE
+    }
 }
 
 /// How a wallpaper changes to the next one.

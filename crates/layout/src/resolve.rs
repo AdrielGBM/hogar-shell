@@ -261,11 +261,16 @@ pub enum ResolvedAreaKind {
         routes: Vec<Route>,
         launcher: bool,
     },
+    /// `dim` held between 0 and 1, `blur` between 0 and [`AreaKind::MOST_BLUR`] and `parallax` between 0 and [`AreaKind::MOST_PARALLAX`].
     WallpaperRegion {
         rect: Rect,
         source: String,
         fit: Fit,
         transition: Transition,
+        focus: Focus,
+        dim: f32,
+        blur: f32,
+        parallax: f32,
     },
     Texture {
         rect: Rect,
@@ -850,6 +855,13 @@ fn answer_area(area: &Area, answering: Answering<'_>, report: &mut Report) -> Op
     })
 }
 
+/// `value` held between 0 and `most`, and 0 where it is unset or not a number.
+fn up_to(value: Option<f32>, most: f32) -> f32 {
+    value
+        .filter(|value| !value.is_nan())
+        .map_or(0.0, |value| value.clamp(0.0, most))
+}
+
 fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<ResolvedAreaKind> {
     let name = kind.name();
     let mut need = |present: bool, field: &str| {
@@ -911,12 +923,20 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
             source,
             fit,
             transition,
+            focus,
+            dim,
+            blur,
+            parallax,
         } => Some(ResolvedAreaKind::WallpaperRegion {
             rect: rect.unwrap_or_default(),
             // A region with no source is not unfinished: it is what one says when it means "whatever `[background]` is set to", so changing the desktop picture stays a `[background]` edit and a `hogar-shell wallpaper set` rather than a layout edit.
             source: source.clone().unwrap_or_default(),
             fit: fit.unwrap_or_default(),
             transition: transition.unwrap_or_default(),
+            focus: focus.unwrap_or_default().clamped(),
+            dim: up_to(*dim, 1.0),
+            blur: up_to(*blur, AreaKind::MOST_BLUR),
+            parallax: up_to(*parallax, AreaKind::MOST_PARALLAX),
         }),
         AreaKind::Texture {
             rect,

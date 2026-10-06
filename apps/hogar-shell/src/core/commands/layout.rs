@@ -7,6 +7,7 @@
 //! **What a verb refuses is as much the point as what it does.** A module nothing answers to, a representation it cannot be drawn as, an area that holds no instances, a control placed on the lock layer: each is a message naming what there is instead of an edit that draws a placeholder the user then has to find.
 
 mod keys;
+mod templates;
 mod verbs;
 
 use std::collections::BTreeSet;
@@ -148,6 +149,12 @@ pub(crate) const LAYOUT: Target = Target {
             help: "list what imported bundles run, or accept one item of a bundle by its id or everything listed by the set id the listing prints (refuse with --decline), or open the dialog that answers for what waits",
             run: |args| super::bundle::trust(args),
         },
+        Command {
+            name: "template",
+            args: "list | use <name> [as <layout-name>]",
+            help: "list the starting layouts the shell ships, or make a new layout from one, called <layout-name> or after the template, and draw it; the layout drawn until then is left as it was",
+            run: templates::template,
+        },
     ],
 };
 
@@ -236,7 +243,15 @@ fn show(name: Option<&str>) -> Result<String, String> {
 ///
 /// Resolution is per output, and which outputs exist is a question only a running compositor answers, so this resolves against one nominal output. That catches everything that does not depend on a monitor's name — a missing prompt, an area with no kind, an instance with no module — and leaves the per-monitor half to the running shell's own notice.
 fn check(name: Option<&str>) -> Result<String, String> {
-    let (mut store, mut report) = LayoutStore::load(layouts::dir());
+    let (store, report) = LayoutStore::load(layouts::dir());
+    check_in(store, report, name)
+}
+
+fn check_in(
+    mut store: LayoutStore,
+    mut report: util::report::Report,
+    name: Option<&str>,
+) -> Result<String, String> {
     store.set_trust(surfaces::bundles::trust_of(
         &services::state::get(),
         super::runs_unasked,
@@ -480,6 +495,10 @@ pub(super) fn show_in_region(
             rect,
             fit,
             transition,
+            focus,
+            dim,
+            blur,
+            parallax,
             ..
         }) = &area.kind
         else {
@@ -493,6 +512,10 @@ pub(super) fn show_in_region(
             source: Some(source.clone()),
             fit: *fit,
             transition: *transition,
+            focus: *focus,
+            dim: *dim,
+            blur: *blur,
+            parallax: *parallax,
         };
         Ok((
             vec![LayoutOp::SetAreaKind {

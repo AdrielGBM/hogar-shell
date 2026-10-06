@@ -44,6 +44,7 @@ const ORDER: &[&str] = &[
     "GradientStop",
     "Tile::NineSlice",
     "Offset",
+    "Focus",
     "Route",
     "Group",
     "GroupKind::Zone",

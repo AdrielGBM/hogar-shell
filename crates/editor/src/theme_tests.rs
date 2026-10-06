@@ -3,7 +3,8 @@ mod tests {
 
     use telar::{Key, ModifiersState, NamedKey};
 
-    use config::Config;
+    use config::theme::FontRole;
+    use config::{Config, IconMask, ThemeConfig, presets};
     use layout::{AreaId, LayerKind};
     use surfaces::{reconcile, transient};
 
@@ -53,9 +54,8 @@ mod tests {
         theme::open().expect("it opens in a mode");
         assert!(transient::is_open(theme::ID));
         let config = Config::default();
-        let start = Look::of(&config);
-        let controls = Controls::of(&start, &config);
-        let card = theme::card(SCREEN, &start, controls).expect("the card builds");
+        let controls = Controls::of(&Look::of(&config), &config);
+        let card = theme::card(SCREEN, controls).expect("the card builds");
         (Card::of(card), controls)
     }
 
@@ -177,6 +177,9 @@ mod tests {
                 radius: Some(12),
                 opacity: 0.8,
                 font: 1.2,
+                weights: [None, Some(650), None, None],
+                mask: IconMask::Circle,
+                ..Look::of(&Config::default())
             },
         )
         .expect("it writes");
@@ -190,7 +193,17 @@ mod tests {
         assert_eq!(read.theme.radius, Some(12));
         assert_eq!(read.theme.opacity, 0.8);
         assert_eq!(read.theme.scale.font, 1.2);
+        assert_eq!(read.theme.fonts.spec(FontRole::ALL[1]).weight, Some(650));
+        assert_eq!(read.icons.mask, IconMask::Circle);
         assert_eq!(read.lock.max_tries, 7);
+
+        std::fs::write(&path, "[theme]\nname = \"nord\"\n").expect("a config");
+        theme::write(&path, &Look::of(&Config::default())).expect("it writes");
+        let written = std::fs::read_to_string(&path).expect("the config");
+        assert!(
+            !written.contains("[icons]"),
+            "icons the look leaves as they were are not written: {written}"
+        );
     }
 
     /// A pending theme the lock prompt would be unreadable on is reported in the popover before it is saved: the prompt's own fill stays put while the palette's text flips from light to dark.
@@ -264,5 +277,136 @@ mod tests {
         );
         assert_eq!(stored(&rig), layout);
         assert!(mode::current().is_some(), "and the mode stays up");
+    }
+    /// The presets beside the running config, gone again when the test ends.
+    struct Presets;
+
+    impl Drop for Presets {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(presets::dir(&Config::default_path()));
+        }
+    }
+
+    fn shown() -> Config {
+        (*reconcile::desktop_now(Some(SCREEN))
+            .expect("the screen is drawn")
+            .config)
+            .clone()
+    }
+
+    fn role(wanted: FontRole) -> usize {
+        FontRole::ALL
+            .iter()
+            .position(|role| *role == wanted)
+            .expect("every role has a row")
+    }
+
+    /// A weight per role, the app icon theme and the app icon shape preview on every window as they are chosen, and Esc puts every one of them back without writing anything.
+    #[test]
+    fn weights_and_the_icon_rows_preview_live_and_esc_puts_them_back() {
+        let _rig = rig("theme-type");
+        let _owner = Owner::new();
+        let before = running_file();
+        let _host = enter(LayerKind::Top);
+        let (_card, controls) = opened();
+
+        controls.weights[role(FontRole::Body)].set("600".to_string());
+        controls.weights[role(FontRole::Title)].set("800".to_string());
+        controls.mask.set("squircle".to_string());
+        controls.app_icon_theme.set("Papirus".to_string());
+        let now = shown();
+        assert_eq!(now.theme.fonts.body.weight, Some(600));
+        assert_eq!(
+            now.resolve_theme()
+                .text_style(FontRole::Title, telar::Color::WHITE)
+                .font_weight,
+            800
+        );
+        assert_eq!(now.theme.fonts.caption.weight, None);
+        assert_eq!(now.icons.mask, IconMask::Squircle);
+        assert_eq!(now.icons.app_icon_theme, "Papirus");
+        assert_eq!(
+            running_file(),
+            before,
+            "nothing is written while it is open"
+        );
+
+        assert!(tap(Key::Named(NamedKey::Escape), NONE));
+        let now = shown();
+        assert_eq!(now.theme.fonts.body.weight, None);
+        assert_eq!(now.theme.fonts.title.weight, None);
+        assert_eq!(now.icons.mask, IconMask::None);
+        assert_eq!(now.icons.app_icon_theme, "");
+        assert_eq!(running_file(), before);
+    }
+
+    /// A preset picked in the popover previews the whole `[theme]` it keeps — keys the popover has no row for included — and Esc puts back the theme the popover opened with.
+    #[test]
+    fn a_preset_picked_previews_its_whole_theme_and_esc_puts_it_back() {
+        let _rig = rig("theme-preset-pick");
+        let _owner = Owner::new();
+        let _presets = Presets;
+        let before = running_file();
+        let mut dusk = ThemeConfig {
+            name: "rose-pine".to_string(),
+            radius: Some(19),
+            ..ThemeConfig::default()
+        };
+        dusk.fonts.title.weight = Some(600);
+        dusk.colors
+            .insert("base".to_string(), "#101010".to_string());
+        presets::save(&Config::default_path(), "dusk", &dusk).expect("a preset");
+        let _host = enter(LayerKind::Top);
+        let was = shown_radius();
+
+        let (mut card, controls) = opened();
+        assert!(card.shows("dusk"), "{:?}", card.said());
+        card.press("Use");
+        let now = shown();
+        assert_eq!(now.theme.name, "rose-pine");
+        assert_eq!(now.theme.radius, Some(19));
+        assert_eq!(now.theme.fonts.title.weight, Some(600));
+        assert_eq!(
+            now.theme.colors.get("base").map(String::as_str),
+            Some("#101010")
+        );
+        assert_eq!(controls.name.peek(), "rose-pine");
+        assert_eq!(controls.radius.peek(), 19.0);
+
+        assert!(tap(Key::Named(NamedKey::Escape), NONE));
+        assert_eq!(shown_radius(), was);
+        assert_eq!(shown().theme, Config::default().theme);
+        assert_eq!(running_file(), before);
+    }
+
+    /// The look the controls say is kept as a preset under a name the rules allow, listed at once, and deleted again from its row.
+    #[test]
+    fn a_look_is_saved_as_a_preset_and_deleted_from_the_popover() {
+        let _rig = rig("theme-preset-save");
+        let _owner = Owner::new();
+        let _presets = Presets;
+        let path = Config::default_path();
+        let _host = enter(LayerKind::Top);
+        let (mut card, controls) = opened();
+        assert!(!card.shows("Delete"), "{:?}", card.said());
+
+        controls.accent.set("#ff8800".to_string());
+        controls.preset_name.set("Not Allowed".to_string());
+        card.press("Save as preset");
+        assert!(card.shows_part_of("lowercase letters"), "{:?}", card.said());
+        assert!(presets::list(&path).is_empty());
+
+        controls.preset_name.set("mine".to_string());
+        card.press("Save as preset");
+        assert_eq!(presets::list(&path), vec!["mine"]);
+        assert_eq!(
+            presets::load(&path, "mine").expect("it is kept").accent,
+            "#ff8800"
+        );
+        assert!(card.shows("Delete"), "{:?}", card.said());
+
+        card.press("Delete");
+        assert!(presets::list(&path).is_empty());
+        assert!(!card.shows("Delete"), "{:?}", card.said());
     }
 }

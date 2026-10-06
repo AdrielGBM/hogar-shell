@@ -12,6 +12,7 @@ prompt_contrast = "el texto del campo de contraseña tiene un contraste de {rati
 unknown_key = "`{key}` no es una clave de {holder}"
 invalid_value = "`{key} = {value}` no es válido para {holder}: {why}"
 gradient_stops = "un degradado se dibuja con {most} paradas como mucho y este tiene {count}, así que las últimas {extra} nunca se verían"
+region_range = "`{key}` va de 0 a {most}, así que {value} se dibuja como {drawn}"
 bar_radius = "una barra se redondea con su `shape.radius`, así que este no se dibuja"
 fillet_negative = "un empalme no puede ser negativo, y este es {fillet}"
 fillet_mode = "un empalme curva el área útil saliendo de una barra dibujada como una sola tira, así que no se dibuja en una barra en modo `sections` o `chips`"
@@ -159,6 +160,8 @@ bundle_not_text = "`{path}` no es texto UTF-8"
 bundle_bidi = "`{text}` contiene U+{code}, que cambia la dirección en que se muestra el texto: una orden, una dirección o una acción no lo necesita, y con él lo que ves no es lo que se ejecuta"
 unreadable_display_name = "`{name}` contiene U+{code}, un carácter de control o uno que cambia la dirección en que se muestra el texto, que un nombre no necesita"
 unreadable_name = "`{name}` contiene U+{code}, que oculta, reordena o reescribe lo que lo rodea: un identificador, un nombre o una clave es algo que lees y escribes, así que solo contiene caracteres que se muestran como son"
+template_unknown = "no hay ninguna plantilla llamada `{name}`; el shell trae {known}"
+template_taken = "ya existe un diseño llamado `{name}`: dale otro nombre al nuevo"
 
 [finding.holder]
 area = "un área"
@@ -205,3 +208,7 @@ behind = "una imagen o una textura queda detrás de todo lo que recibe una pulsa
 unknown = "'{trigger}' no es un gesto ({gestures})"
 trust = "`{line}` confiaría en un paquete desde un gesto, y la confianza solo la das tú: ejecuta `layout trust` tú mismo"
 no_command = "`{line}` no es un comando de este shell"
+
+[template.showcase]
+title = "Escaparate"
+description = "Un escritorio con el tiempo, la música, el procesador, un reloj y un visualizador, y una barra superior completa"

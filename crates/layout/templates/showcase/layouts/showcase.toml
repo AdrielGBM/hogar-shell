@@ -1,0 +1,211 @@
+name = "Showcase"
+
+[[outputs]]
+match = "*"
+
+[[outputs.layers.background.areas]]
+id = "background"
+kind = "wallpaper_region"
+
+[[outputs.layers.desktop.areas]]
+id = "widgets"
+kind = "grid"
+anchor = "top_left"
+within = "usable"
+style = { padding = 32 }
+
+[[outputs.layers.desktop.areas.groups]]
+id = "weather"
+place = "cell"
+col = 0
+row = 0
+
+[[outputs.layers.desktop.areas.groups.children]]
+id = "weather"
+module = "weather"
+representation = "widget_m"
+
+[[outputs.layers.desktop.areas.groups]]
+id = "media"
+place = "cell"
+col = 0
+row = 2
+
+[[outputs.layers.desktop.areas.groups.children]]
+id = "media"
+module = "media"
+representation = "widget_m"
+
+[[outputs.layers.desktop.areas.groups]]
+id = "cpu"
+place = "cell"
+col = 4
+row = 0
+
+[[outputs.layers.desktop.areas.groups.children]]
+id = "cpu"
+module = "cpu"
+representation = "widget_s"
+
+[[outputs.layers.desktop.areas]]
+id = "centre"
+kind = "free"
+rect = { x = 0, y = 0, w = 1, h = 1 }
+anchor = "center"
+within = "usable"
+
+[[outputs.layers.desktop.areas.groups]]
+id = "clock"
+place = "zone"
+zone = "center"
+
+[[outputs.layers.desktop.areas.groups.children]]
+id = "clock-2"
+module = "clock"
+representation = "widget_m"
+
+[[outputs.layers.desktop.areas]]
+id = "foot"
+kind = "free"
+rect = { x = 0, y = 0, w = 1, h = 1 }
+anchor = "bottom"
+within = "usable"
+style = { padding = 32 }
+
+[[outputs.layers.desktop.areas.groups]]
+id = "visualiser"
+place = "zone"
+zone = "center"
+
+[[outputs.layers.desktop.areas.groups.children]]
+id = "visualiser"
+module = "visualiser"
+representation = "widget_m"
+
+[[outputs.layers.top.areas]]
+id = "bar-top"
+kind = "bar"
+edge = "top"
+thickness = 34
+length = "fill"
+offset = 0
+shape = { mode = "bar", gap = 0 }
+style = { padding = 4 }
+
+[[outputs.layers.top.areas.groups]]
+id = "start"
+place = "zone"
+zone = "start"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "workspaces"
+module = "workspaces"
+representation = "chip"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "windows"
+module = "windows"
+representation = "chip"
+
+[[outputs.layers.top.areas.groups]]
+id = "center"
+place = "zone"
+zone = "center"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "clock"
+module = "clock"
+representation = "chip"
+
+[[outputs.layers.top.areas.groups]]
+id = "end"
+place = "zone"
+zone = "end"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "notes"
+module = "notes"
+representation = "chip"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "tray"
+module = "tray"
+representation = "chip"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "network"
+module = "network"
+representation = "chip"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "volume"
+module = "volume"
+representation = "chip"
+
+[[outputs.layers.top.areas.groups.children]]
+id = "battery"
+module = "battery"
+representation = "chip"
+
+[[outputs.layers.overlay.areas]]
+id = "stack"
+kind = "stack"
+anchor = "top_right"
+width = 380
+flow = "column"
+output_policy = "focused"
+within = "usable"
+
+[[outputs.layers.lock.areas]]
+id = "lock-readings"
+kind = "grid"
+rect = { x = 0, y = 0.12, w = 1, h = 0.3 }
+anchor = "top"
+
+[[outputs.layers.lock.areas.groups]]
+id = "clock"
+place = "cell"
+col = 0
+row = 0
+
+[[outputs.layers.lock.areas.groups.children]]
+id = "lock-clock"
+module = "clock"
+representation = "widget_m"
+
+[[outputs.layers.lock.areas.groups]]
+id = "user"
+place = "cell"
+col = 0
+row = 2
+
+[[outputs.layers.lock.areas.groups.children]]
+id = "lock-user"
+module = "user"
+representation = "widget_m"
+
+[[outputs.layers.lock.areas.groups]]
+id = "media"
+place = "cell"
+col = 4
+row = 0
+
+[[outputs.layers.lock.areas.groups.children]]
+id = "lock-media"
+module = "media"
+representation = "widget_m"
+
+[[outputs.layers.lock.areas.groups]]
+id = "notifications"
+place = "cell"
+col = 4
+row = 2
+
+[[outputs.layers.lock.areas.groups.children]]
+id = "lock-notifications"
+module = "notifications"
+representation = "widget_m"
+
+[[outputs.layers.lock.areas]]
+id = "prompt"
+kind = "prompt"

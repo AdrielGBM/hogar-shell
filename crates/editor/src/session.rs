@@ -52,6 +52,8 @@ thread_local! {
     static SELECTION: RwSignal<Selection> = detached(|| signal(Selection::None));
     static DRAFT: RwSignal<Layout> = detached(|| signal(stored().unwrap_or_else(layout::built_in)));
     static EDITS: RefCell<Vec<Weak<Pending>>> = const { RefCell::new(Vec::new()) };
+    static ENTRY: RefCell<Option<Layout>> = const { RefCell::new(None) };
+    static PEEKING: RwSignal<bool> = detached(|| signal(false));
 }
 
 /// Keeps the selection, the draft and the screen in step with the mode, the store and each other. Installed once, on the driver thread.
@@ -61,6 +63,7 @@ pub(crate) fn install() {
             mode::active().with(|_| ());
             SELECTION.with(|selection| selection.set(Selection::None));
         });
+        effect(keep_the_entry);
         effect(follow_the_layout);
         effect(follow_the_store);
         effect(|| layouts::preview(&DRAFT.with(RwSignal::get)));
@@ -179,6 +182,7 @@ fn follow_the_store() {
     let Some(stored) = stored() else {
         return;
     };
+    end_peek();
     if let Some(edit) = open() {
         if edit.0.transaction.before().as_ref() == Some(&stored) {
             return;
@@ -190,6 +194,57 @@ fn follow_the_store() {
             draft.set(stored);
         }
     });
+}
+
+/// Keeps the layout as it was when the mode opened for as long as a mode is up; switching layers keeps it, since it is the whole layout.
+fn keep_the_entry() {
+    let in_mode = mode::active().with(Option::is_some);
+    if !in_mode {
+        end_peek();
+    }
+    ENTRY.with(|entry| {
+        let mut entry = entry.borrow_mut();
+        match (in_mode, entry.is_some()) {
+            (true, false) => *entry = stored(),
+            (false, true) => *entry = None,
+            _ => {}
+        }
+    });
+}
+
+/// Whether the draft is showing the layout as it was when the mode opened, as a signal the strip says so from.
+pub fn peeking() -> ReadSignal<bool> {
+    PEEKING.with(|peeking| peeking.read_only())
+}
+
+/// Shows the layout as it was when the mode opened in place of the draft, until [`end_peek`]. Nothing is recorded or written: the draft is only what the screen draws.
+pub fn begin_peek() -> Result<(), EditError> {
+    if PEEKING.with(RwSignal::peek) {
+        return Ok(());
+    }
+    if open().is_some() {
+        return Err(EditError::Nested);
+    }
+    let entry = ENTRY
+        .with(|entry| entry.borrow().clone())
+        .ok_or(EditError::NotOpen)?;
+    PEEKING.with(|peeking| peeking.set(true));
+    DRAFT.with(|draft| draft.set(entry));
+    Ok(())
+}
+
+/// Puts the draft back to what the store holds, taking back an edit begun while peeking, which was planned against the entry layout.
+pub fn end_peek() {
+    if !PEEKING.with(RwSignal::peek) {
+        return;
+    }
+    if let Some(edit) = open() {
+        let _ = edit.revert();
+    }
+    PEEKING.with(|peeking| peeking.set(false));
+    if let Some(stored) = stored() {
+        DRAFT.with(|draft| draft.set(stored));
+    }
 }
 
 fn stored() -> Option<Layout> {
@@ -223,6 +278,8 @@ pub enum EditError {
     /// Another edit is open. Edits do not nest: the one open owns the draft until it is committed or reverted.
     Nested,
     NotOpen,
+    /// The layout shown is the one from when the mode opened, which nothing can change.
+    Peeking,
     /// The shell was started with `--safe-layout`, which refuses every edit (F-10.35).
     Safe,
     /// The layout refused the operations, or the store refused the transaction.
@@ -258,6 +315,7 @@ impl EditError {
         match self {
             Self::Nested => util::message!("editor.draft.nested"),
             Self::NotOpen => util::message!("editor.draft.not_open"),
+            Self::Peeking => util::message!("editor.draft.peeking"),
             Self::Safe => StoreError::Safe.message(),
             Self::Refused(why) => why.clone(),
         }
@@ -349,6 +407,9 @@ impl Edit {
 
     pub fn begin(&self) -> Result<(), EditError> {
         refuse_under_safe_layout()?;
+        if PEEKING.with(RwSignal::peek) {
+            return Err(EditError::Peeking);
+        }
         self.0.transaction.begin()?;
         self.0.ops.borrow_mut().clear();
         Ok(())

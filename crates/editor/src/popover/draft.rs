@@ -1260,6 +1260,10 @@ fn blank(kind: &str) -> Option<AreaKind> {
             source: None,
             fit: None,
             transition: None,
+            focus: None,
+            dim: None,
+            blur: None,
+            parallax: None,
         },
         "texture" => AreaKind::Texture {
             rect: None,

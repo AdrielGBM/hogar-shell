@@ -42,6 +42,7 @@ pub struct Config {
     pub lyrics: LyricsConfig,
     pub workspaces: WorkspacesConfig,
     pub windows: WindowsConfig,
+    pub dock: DockConfig,
     pub launcher: LauncherConfig,
     pub audio: AudioConfig,
     pub visualiser: VisualiserConfig,
@@ -407,24 +408,48 @@ impl Config {
         name: &str,
         value: &T,
     ) -> Result<Saved, SaveError> {
+        Self::save_sections(path, &[SectionEdit::new(name, value)?])
+    }
+
+    /// [`save_section`](Self::save_section) for several tables in one write, for an edit that spans them: the reload it causes sees all of them or none.
+    pub fn save_sections(path: &Path, sections: &[SectionEdit]) -> Result<Saved, SaveError> {
         let read = std::fs::read_to_string(path).ok();
         let mut doc = read
             .as_deref()
             .unwrap_or_default()
             .parse::<DocumentMut>()
             .map_err(SaveError::Parse)?;
-        let rendered = toml::to_string(value).map_err(SaveError::Serialize)?;
-        let section = rendered.parse::<DocumentMut>().map_err(SaveError::Parse)?;
-        match doc.get_mut(name) {
-            Some(Item::Table(existing)) => update_table(existing, section.as_table()),
-            _ => {
-                doc.insert(name, Item::Table(section.as_table().clone()));
+        for edit in sections {
+            let section = edit
+                .rendered
+                .parse::<DocumentMut>()
+                .map_err(SaveError::Parse)?;
+            match doc.get_mut(&edit.name) {
+                Some(Item::Table(existing)) => update_table(existing, section.as_table()),
+                _ => {
+                    doc.insert(&edit.name, Item::Table(section.as_table().clone()));
+                }
             }
         }
         keep_subtables_with_their_parent(&mut doc);
         let written = doc.to_string();
         writer::write(path, written.clone().into_bytes()).map_err(SaveError::Io)?;
         Ok(Saved { read, written })
+    }
+}
+
+/// One `[name]` table, as [`Config::save_sections`] writes it.
+pub struct SectionEdit {
+    name: String,
+    rendered: String,
+}
+
+impl SectionEdit {
+    pub fn new<T: Serialize>(name: &str, value: &T) -> Result<Self, SaveError> {
+        Ok(Self {
+            name: name.to_string(),
+            rendered: toml::to_string(value).map_err(SaveError::Serialize)?,
+        })
     }
 }
 

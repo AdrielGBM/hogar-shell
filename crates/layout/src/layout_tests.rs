@@ -1529,6 +1529,10 @@ mod tests {
                 source: Some("a.png".into()),
                 fit: Some(Fit::Cover),
                 transition: Some(Transition::Fade),
+                focus: None,
+                dim: None,
+                blur: None,
+                parallax: None,
             },
             AreaKind::Texture {
                 rect: Some(Rect::default()),
@@ -2588,6 +2592,75 @@ mod tests {
             report
                 .findings()
                 .any(|f| f.message.key() == Some("finding.gradient_stops")),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// A region's focus, dim, blur and parallax are read from the file, laid over by a workspace rule key by key, held to what they run to where they are drawn, and reported where they run past it.
+    #[test]
+    fn a_regions_focus_veil_and_parallax_are_read_merged_held_and_reported() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.background.areas]]
+            id = "wall"
+            kind = "wallpaper_region"
+            focus = { x = 0.2, y = 1.5 }
+            dim = 0.4
+            blur = 90.0
+            parallax = 0.1
+            [[outputs.workspaces]]
+            match = "2"
+            [[outputs.workspaces.layers.background.areas]]
+            id = "wall"
+            kind = "wallpaper_region"
+            dim = 0.0
+            "#,
+        );
+        let drawn = |workspace: Option<&str>| {
+            let active = workspace.map(|name| ActiveWorkspace {
+                name: name.to_string(),
+                id: None,
+                special: None,
+            });
+            let (resolved, _) = resolve(&parsed, &Library::default(), "DP-1", active.as_ref());
+            resolved
+                .area(LayerKind::Background, &AreaId::new("wall"))
+                .map(|area| area.kind.clone())
+        };
+        assert_eq!(
+            drawn(None),
+            Some(ResolvedAreaKind::WallpaperRegion {
+                rect: Rect::default(),
+                source: String::new(),
+                fit: Fit::Cover,
+                transition: Transition::Fade,
+                focus: Focus { x: 0.2, y: 1.0 },
+                dim: 0.4,
+                blur: AreaKind::MOST_BLUR,
+                parallax: 0.1,
+            })
+        );
+        assert!(matches!(
+            drawn(Some("2")),
+            Some(ResolvedAreaKind::WallpaperRegion { dim, parallax, .. }) if dim == 0.0 && parallax == 0.1
+        ));
+
+        let report = validate(&parsed, &Modules);
+        let reported: Vec<String> = report
+            .findings()
+            .filter(|f| f.message.key() == Some("finding.region_range"))
+            .map(|f| f.key.clone())
+            .collect();
+        assert_eq!(
+            reported,
+            [
+                "outputs.*.layers.background.areas.wall.focus.y",
+                "outputs.*.layers.background.areas.wall.blur",
+            ],
             "{}",
             report.render()
         );

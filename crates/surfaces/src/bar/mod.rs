@@ -510,7 +510,7 @@ impl Hiding {
             on_hover: hide.on_hover,
             away,
             // Built at 0 and retargeted rather than at its destination, which would leave it inert — the same rule the wallpaper's cross-fade follows.
-            shown: Animated::new(0.0f32, chrome.config.animation.tween_ms(160, 1_000)),
+            shown: Animated::new(0.0f32, chrome.config.animation.autohide_tween()),
             pulling: telar::signal(false),
             hovered: telar::signal(false),
             held: telar::signal(false),
@@ -3165,6 +3165,110 @@ mod tests {
                     "{edge:?}: {claim:?} reaches past the {PEEK}px peek, which is all of the bar left on screen (F-10.30)"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_hiding_bar_comes_back_over_the_autohide_duration_and_at_once_when_motion_is_reduced() {
+        const PEEK: f32 = 2.0;
+        const SIZE: f32 = 32.0;
+        const SCREEN: (f32, f32) = (600.0, 600.0);
+        let revealed_after = |animation: config::AnimationConfig, edge: Edge, after: [u64; 3]| {
+            telar::reset_layout_runtime();
+            set_theme(NordTheme::new());
+            let _scope = telar::owner_scope();
+            let config = Config {
+                animation,
+                ..Config::default()
+            };
+            let area = shaped_bar_area(
+                edge,
+                SIZE,
+                [&[], &["dummy"], &[]],
+                BarShape::default(),
+                Some(layout::AutoHide {
+                    peek: PEEK,
+                    on_hover: true,
+                }),
+            );
+            let bar = built(&config, &area, &registry(), SCREEN).expect("the bar builds");
+            let page = Container::new(
+                LayoutStyle::new().width(SCREEN.0).height(SCREEN.1),
+                vec![bar],
+            )
+            .expect("a screen to stand the bar on");
+            let root = page.layout_node();
+            let mut tree = telar::ComponentList::new(page);
+            let lay_out = || {
+                telar::compute_layout(
+                    root,
+                    telar::AvailableSpace::Definite(SCREEN.0),
+                    telar::AvailableSpace::Definite(SCREEN.1),
+                )
+                .expect("the bar lays out");
+            };
+            let deepest = || {
+                let on_screen = telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1);
+                telar::interactive_rects()
+                    .into_iter()
+                    .filter_map(|rect| rect.intersect(on_screen))
+                    .map(|rect| match edge.is_horizontal() {
+                        true => rect.height,
+                        false => rect.width,
+                    })
+                    .fold(0.0, f32::max)
+            };
+            lay_out();
+            let (x, y) = match edge {
+                Edge::Top => (300.0, 1.0),
+                Edge::Bottom => (300.0, SCREEN.1 - 1.0),
+                Edge::Left => (1.0, 300.0),
+                Edge::Right => (SCREEN.0 - 1.0, 300.0),
+            };
+            tree.on_event(&telar::Event::PointerMoved {
+                x: f64::from(x),
+                y: f64::from(y),
+                source: telar::PointerSource::Mouse,
+            });
+            let start = std::time::Instant::now();
+            telar::motion::tick(start);
+            after.map(|ms| {
+                telar::motion::tick(start + std::time::Duration::from_millis(ms));
+                lay_out();
+                deepest()
+            })
+        };
+
+        let slow = config::AnimationConfig {
+            autohide_duration_ms: 400,
+            easing: "linear".to_string(),
+            reduced: config::ReducedMotion::Off,
+            ..config::AnimationConfig::default()
+        };
+        let reduced = config::AnimationConfig {
+            reduced: config::ReducedMotion::On,
+            ..slow.clone()
+        };
+        for edge in Edge::ALL {
+            let [early, half, done] = revealed_after(slow.clone(), edge, [0, 200, 400]);
+            assert!(
+                early <= PEEK + 0.5,
+                "{edge:?}: {early} on screen as the reveal starts"
+            );
+            assert!(
+                (half - (PEEK + SIZE) / 2.0).abs() <= 1.0,
+                "{edge:?}: halfway through a 400 ms reveal shows {half} of {SIZE}"
+            );
+            assert_eq!(
+                done, SIZE,
+                "{edge:?}: the reveal ends at the autohide duration"
+            );
+
+            let [_, next_frame, _] = revealed_after(reduced.clone(), edge, [0, 16, 200]);
+            assert_eq!(
+                next_frame, SIZE,
+                "{edge:?}: reduced motion brings the bar back on the next frame"
+            );
         }
     }
 

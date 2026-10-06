@@ -34,9 +34,16 @@ Default: \fBtrue\fR
 .SS [animation]
 How the shell moves (`[animation]`).
 .sp
-Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid\-flight \(em the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration \(em a panel opening.
+Two curve families rather than one, because rsx has two motion models and they answer different questions. `curve` names a **spring**, for motion that chases a target that can move mid\-flight \(em the workspace indicator, which has to bend its path when you hold a workspace key rather than restart. `easing` names a **timing function**, for a transition with a start, an end and a duration \(em a panel opening, a bar hiding itself.
 .sp
-`duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, which is the accessibility answer (and what a user on a remote desktop wants) rather than a per\-surface opt\-out.
+`duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, for a user on a remote desktop who wants no motion at all.
+.sp
+`reduced` is the accessibility answer: while motion is reduced, a panel, drawer or popout that would slide in fades instead, a bar that hides itself moves at once, and no transition runs longer than 100 ms. `auto` follows the desktop's own reduced\-motion setting, read from the desktop portal; with no portal, motion is as configured here.
+.TP
+.B autohide_duration_ms
+How long a bar that hides itself takes to slide away or back, before `duration_scale`.
+.sp
+Default: \fB160\fR
 .TP
 .B curve
 The spring preset for continuous motion: `gentle`, `snappy` or `bouncy`.
@@ -58,6 +65,11 @@ Default: \fBtrue\fR
 How long a panel takes to enter or leave, before `duration_scale`.
 .sp
 Default: \fB180\fR
+.TP
+.B reduced
+Whether motion is reduced: `auto` follows the desktop's reduced\-motion setting, `on` and `off` decide regardless of it.
+.sp
+Default: \fB"auto"\fR
 .SS [audio]
 Audio control (`[audio]`). `increment` is what one wheel notch over the volume or microphone chip moves and what `hogar\-shell volume up` steps by. `max_volume` is the ceiling the sink can be raised to: PipeWire lets a sink boost past 100 %, which rescues a quiet laptop and wrecks a good speaker, so it belongs to the user rather than to a constant in the code.
 .TP
@@ -288,6 +300,16 @@ Default: \fB1000\fR
 Which pages the dashboard offers, in order: `dash`, `media`, `performance` and `weather`. An id it doesn't have is left out rather than failing the whole config parse, which would cost the user every other section over one typo \(em and is reported, by `hogar\-shell config check` and in the notice the running shell keeps up while a problem lasts. A list with no page it has left in it shows every page.
 .sp
 Default: \fB["dash", "media", "performance", "weather"]\fR
+.SS [dock]
+The `windows` strip placed in a dock area (`[dock]`). `pinned` lists desktop\-entry ids, in the order the dock shows them, that stay on the dock whether or not they are running; pinning, unpinning and dragging a pin on the dock writes this list. `magnification` is how large the entry under the pointer grows, as a multiple of its size; `1` turns it off.
+.TP
+.B magnification
+Range: 1 to 2.5, step 0.05.
+.sp
+Default: \fB1.5\fR
+.TP
+.B pinned
+Default: \fB[]\fR
 .SS [general]
 App\-wide settings that don't belong to a specific visual section. `language` is a BCP\-47 tag (`"en"`, `"es"`); empty means "follow the OS locale, else English". `logo` is the icon the `logo` module shows; empty detects the distribution from `/etc/os\-release`.
 .TP
@@ -336,13 +358,20 @@ Default: \fB""\fR
 .B enabled
 Default: \fBtrue\fR
 .SS [icons]
-Where bar icons come from: an Iconify\-compatible HTTP endpoint (`{provider}/{set}/{name}.svg`) and the default set applied to a bare icon name. A name may override the set inline as `set:name` (e.g. `mdi:home`), so multiple icon sets work through one endpoint. `provider` is configurable because Iconify is self\-hostable/mirrorable. `app_icon_theme` names the freedesktop icon theme used to resolve notification app icons (empty = detect from GTK settings, falling back to `hicolor`).
+Where bar icons come from: an Iconify\-compatible HTTP endpoint (`{provider}/{set}/{name}.svg`) and the default set applied to a bare icon name. A name may override the set inline as `set:name` (e.g. `mdi:home`), so multiple icon sets work through one endpoint. `provider` is configurable because Iconify is self\-hostable/mirrorable.
 .TP
 .B app_icon_theme
+The freedesktop icon theme applications' own icons are looked up in \(em on the tray, in the launcher, on notifications and window chips. Empty follows the GTK settings, falling back to `hicolor`.
+.sp
 Default: \fB""\fR
 .TP
 .B default_set
 Default: \fB"lucide"\fR
+.TP
+.B mask
+The shape every application's own icon is cut to: `none` draws it as its theme made it, `circle` and `squircle` give every app the same silhouette. Symbolic glyphs, menu entries and a tray icon recoloured to the bar's ink are never cut.
+.sp
+Default: \fB"none"\fR
 .TP
 .B provider
 Default: \fB"https://api.iconify.design"\fR
@@ -997,6 +1026,8 @@ Default: \fBfalse\fR
 Unset by default.
 .TP
 .B weight
+From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+.sp
 Unset by default.
 .TP
 .B italic
@@ -1007,6 +1038,8 @@ Unset by default.
 Unset by default.
 .TP
 .B weight
+From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+.sp
 Unset by default.
 .TP
 .B italic
@@ -1017,6 +1050,8 @@ Unset by default.
 Unset by default.
 .TP
 .B weight
+From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+.sp
 Unset by default.
 .TP
 .B italic
@@ -1027,6 +1062,8 @@ Unset by default.
 Unset by default.
 .TP
 .B weight
+From `100` (thin) to `900` (black): `400` is regular and `700` bold. Unset keeps the role's own.
+.sp
 Unset by default.
 .TP
 .B italic
@@ -1588,6 +1625,18 @@ How the picture is fitted to the region.
 .TP
 .B transition
 How a wallpaper changes to the next one.
+.TP
+.B focus
+The point of the picture `fit = "cover"` keeps in view when it crops, as fractions of the picture's width and height from its top left: the crop is centred on it as far as the picture reaches. The other fits crop nothing and ignore it. The middle unless set.
+.TP
+.B dim
+How dark the picture goes while an application window covers the screen, from 0 (not at all) to 1 (black). A window covers the screen when the workspace up on it holds one, where the compositor says how many windows a workspace holds, and otherwise when a maximized or fullscreen window is on it. 0 unless set.
+.TP
+.B blur
+How far the picture is blurred while an application window covers the screen, as a radius in logical pixels up to 64. 0 unless set.
+.TP
+.B parallax
+How far the picture slides across the screen's workspaces, as a fraction of the region's width up to 0.5: on the first workspace it shows its left edge and on the last its right, moving as the workspace up changes. Only `fit = "cover"` has picture to spare, and reduced motion holds it still. 0, which is off, unless set.
 .SS AreaKind::Texture
 An image or gradient painted over what is behind it.
 .TP
@@ -1765,6 +1814,14 @@ How far right, or left where it is negative.
 .TP
 .B y
 How far down, or up where it is negative.
+.SS Focus
+A point of a picture, as fractions of its width and height from its top left.
+.TP
+.B x
+How far across, from 0 at the left edge to 1 at the right.
+.TP
+.B y
+How far down, from 0 at the top edge to 1 at the bottom.
 .SS Route
 Which cards a stack accepts. An empty field matches anything.
 .TP

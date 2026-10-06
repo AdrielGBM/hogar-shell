@@ -51,6 +51,8 @@ let icon = icon_of(layer);
 let said = telar::t!("editor.editing", layer = name_of(layer), output = output.clone());
 let rad = ::ui::scale::corner::md();
 let variant = memo(move || crate::variant::workspace().map(|workspace| telar::t!("editor.variant.editing", workspace = workspace.0)).unwrap_or_default());
+let peeking = crate::session::peeking();
+let peek_said = signal(telar::t!("editor.peek.said"));
 let refusal = memo(move || mode::refusal().get().unwrap_or_default());
 let confirmation = memo(move || mode::confirmation().get().unwrap_or_default());
 let add = crate::host::add_of(layer);
@@ -114,6 +116,8 @@ col align:center gap:(::ui::scale::space::xs()) pad_x:(::ui::scale::space::lg())
     switcher current:layer
     if !$variant.is_empty()
         text "{$variant}" color:$theme.accent font_size:$theme.font(FontRole::Caption)
+    if $peeking
+        text "{$peek_said}" color:$theme.accent font_size:$theme.font(FontRole::Caption)
     if !$confirmation.is_empty()
         text "{$confirmation}" color:$theme.text font_size:$theme.font(FontRole::Caption)
     if !$refusal.is_empty()

@@ -42,7 +42,7 @@ An **area** has a `kind` that says what it is, and the keys of that kind follow 
 | Kind | What it is | Holds modules |
 | --- | --- | --- |
 | `bar` | A strip along one edge, in three zones (`start`, `center`, `end`). Several per edge are fine. | yes |
-| `dock` | A strip that sizes itself to its contents, like the audio visualiser's. | yes |
+| `dock` | A strip that sizes itself to its contents, like the audio visualiser's, or the [windows](../modules/windows.md#in-a-dock) strip as a dock with pinned apps. | yes |
 | `grid` | Cells that widgets are placed into by explicit coordinates. | yes |
 | `stack` | A column or a row that notification, toast and volume cards land in, by its `flow`. | yes |
 | `free` | A rectangle placed by hand. | yes |
@@ -117,6 +117,27 @@ The built-in layout is named `default`. It is read-only, and **the first edit to
 `custom-2` and so on if that is taken — and switches to the copy, so there is always a layout that works to go back to.
 No file stands in for it: a `layouts/default.toml` is never read, whether at startup or on a reload, and a warning names the file and says
 to give it another name, so `extends = "default"` and `layout use default` always mean the layout that ships. `layout check` prints the same warning.
+
+## Templates
+
+A template is a starting layout the shell ships, carried inside it as a [bundle](bundles.md) of one layout. Using one
+makes a new layout file from it and draws that, leaving the layout drawn until then exactly as it was: switch back with
+`layout use`. The copy is a layout of your own from then on — nothing in it waits for `layout trust`, since nobody
+imported it — and editing it never changes the template.
+
+```sh
+hogar-shell layout template list
+hogar-shell layout template use showcase as work
+```
+
+Without `as`, the new layout is named after the template, numbered (`showcase-2`) when that is taken. A name a layout
+already has, `default` included, or a file in `layouts/` that does not parse, is refused rather than written over. In
+an edit mode, **New layout from template…** on the strip, in the shell menu and at the end of every context menu
+opens the same gallery, each template by its name and what it holds.
+
+| Template | What it holds |
+| --- | --- |
+| `showcase` | A desktop grid with the weather, media and a processor gauge in its corner, a clock face in the middle and the visualiser at the foot; a top bar with the workspaces and the windows, the clock, and notes, the tray, network, volume and battery; notifications top right; and a lock screen with the time, the user, what is playing and how many notifications wait, above the prompt. |
 
 ## Building on another layout
 
@@ -292,6 +313,7 @@ What a reading may show on the lock screen, and how expressions are evaluated th
 | --- | --- |
 | `layout list`, `layout show [name]` | The layouts on disk, and one as it is stored. With no name, `show` and `check` mean the built-in layout, not the one being drawn. |
 | `layout use <name>` | Draw this layout from now on. |
+| `layout template list`, `layout template use <name> [as <layout-name>]` | The [templates](#templates) the shell ships, and a new layout made from one and drawn. `list` answers in the command-line process. |
 | `layout check [name]` | Everything wrong with a layout, without applying it. |
 | `layout add`, `remove`, `move`, `set`, `duplicate`, `order`, `panel`, `rename`, `reset` | Edit the layout being drawn; each is one transaction. |
 | `layout undo [n]`, `layout redo [n]`, `layout history` | Take back or redo the last edit or the last n, whatever made them, and list what they walk through. |

@@ -414,6 +414,10 @@ mod tests {
                     source: None,
                     fit: None,
                     transition: None,
+                    focus: None,
+                    dim: None,
+                    blur: None,
+                    parallax: None,
                 }),
                 ..Area::default()
             });
@@ -746,6 +750,65 @@ mod tests {
             Some(instance(LayerKind::Top, "bar-bottom", "center", "clock")),
             "the selection follows it"
         );
+        mode::leave();
+    }
+
+    fn bottom_ids() -> Vec<String> {
+        shown(LayerKind::Top, "bar-bottom")
+            .expect("the bottom bar")
+            .groups[0]
+            .children
+            .iter()
+            .map(|child| child.id.to_string())
+            .collect()
+    }
+
+    /// Holding `\` shows the layout as it was when the mode opened, on whichever layer; letting go or Esc puts the draft back. Nothing is recorded or written, and no edit gets in while it is held.
+    #[test]
+    fn holding_backslash_shows_the_layout_from_when_the_mode_opened() {
+        let rig = rig_with("keys-peek", top_layout);
+        let _scope = Owner::new();
+        let _host = enter(LayerKind::Top);
+        place(&top_placed());
+        let peek = Key::Char('\\');
+        let entry = bottom_ids();
+
+        assert!(session::select(Selection::of(instance(
+            LayerKind::Top,
+            "bar-top",
+            "center",
+            "clock"
+        ))));
+        assert!(tap(arrow(Direction::Down), SHIFT));
+        let edited = bottom_ids();
+        assert_ne!(edited, entry, "the move went through");
+        let stored = rig.store.borrow().active().clone();
+        let label = rig.undo_label();
+
+        assert!(down(&peek, NONE, Press::First));
+        assert_eq!(bottom_ids(), entry, "the screen shows the entry layout");
+        assert!(session::peeking().peek());
+        assert!(down(&arrow(Direction::Up), SHIFT, Press::First));
+        assert!(down(&named(NamedKey::Delete), NONE, Press::First));
+        assert_eq!(bottom_ids(), entry, "edit keys do nothing while it is held");
+        assert!(down(&peek, NONE, Press::Repeat));
+        assert!(session::begin("Anything").is_err(), "no edit begins");
+
+        telar::observe_keyboard(&Event::KeyReleased {
+            key: peek.clone(),
+            modifiers: NONE,
+        });
+        assert!(keys::settle_peek());
+        assert_eq!(bottom_ids(), edited, "letting go restores the draft");
+        assert!(!session::peeking().peek());
+        assert_eq!(rig.undo_label(), label, "no undo entry");
+        assert_eq!(*rig.store.borrow().active(), stored, "nothing was written");
+
+        assert!(down(&peek, NONE, Press::First));
+        assert_eq!(bottom_ids(), entry);
+        assert!(tap(named(NamedKey::Escape), NONE));
+        assert_eq!(bottom_ids(), edited, "Esc releases the peek");
+        assert!(!session::peeking().peek());
         mode::leave();
     }
 

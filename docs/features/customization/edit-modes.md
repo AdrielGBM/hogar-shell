@@ -92,10 +92,18 @@ edit. `lock` is refused while the session is locked.
   | `u` | move the four corners or sides together, or each on its own |
   | `.` | reach the quick bar: arrows, Home and End walk its buttons, Enter or Space presses one, Esc or `.` hands the keyboard back |
   | `?` or F1 | list the keys of this mode |
+  | Ctrl+K, or Ctrl+Shift+P | the command palette (only Ctrl+Shift+P under `[keynav] vim`, where Ctrl+K makes the selection taller) |
+  | `\` (held) | before and after: show the layout as it was when the mode opened, on every layer, until you let go or press Esc; the strip says "As it was when you started", editing keys do nothing meanwhile, and nothing is recorded or written |
 
   A held key is one undo entry however long the keyboard repeats it, and is previewed until you let go.
   No tool takes `h`, `j`, `k`, `l`, `g` or `G`, which `[keynav] vim` keeps for moving the selection.
   A focused control — a handle, a quick bar button — answers its own keys first, and the mode's keys get what it leaves.
+- **The command palette.** Ctrl+K opens one searchable list of everything the mode can do: every key of the mode's
+  key list with its chord — a key that goes four ways, or both ends, is one entry per way — every widget, container
+  and komponent the add palette offers, the strip's actions (Theme…), each step of the history to jump to, the other
+  modes and Done. Typing narrows it — the letters in order, word starts counting most, or a chord such as
+  `Shift+←` — the arrows walk it, and Enter or a click runs the entry against the selection, as one undo entry; Esc
+  closes it and hands the keyboard back. What the selection would refuse stays listed, dimmed, with the reason.
 - **Copies and stacking order.** Duplicate (Ctrl+D, or the menu) gives every instance it copies an id of its own, and a
   copied komponent use stays a use of that komponent. What there is one of or that tiles its layer is refused with why:
   the lock's prompt, a panel (it belongs to the widget that opens it), a wallpaper region (split one instead), a grid

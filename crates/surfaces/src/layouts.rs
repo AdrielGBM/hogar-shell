@@ -131,6 +131,18 @@ pub fn with_komponent<R, E>(
     })
 }
 
+/// Adds the layout `made` puts in the store and draws it from now on, as `layout use` would, leaving the one drawn until now as it was.
+pub fn start(
+    made: impl FnOnce(&mut LayoutStore) -> Result<LayoutId, Message>,
+) -> Result<LayoutId, Message> {
+    change(|store| {
+        let id = made(store)?;
+        store.use_layout(&id).map_err(|why| why.message())?;
+        services::state::update(|state| state.layout = Some(id.to_string()));
+        Ok(id)
+    })
+}
+
 /// Where the komponents live: `components/` beside [`dir`].
 pub fn komponents_dir() -> PathBuf {
     layout::components_beside(&dir())

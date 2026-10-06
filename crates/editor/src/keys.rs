@@ -309,6 +309,8 @@ enum Does {
     Dismiss,
     Switch,
     Help,
+    Peek,
+    Palette,
     Tool(Run),
 }
 
@@ -336,6 +338,8 @@ thread_local! {
     static MODE_OPS: RefCell<Vec<(LayerKind, KeyOp)>> = const { RefCell::new(Vec::new()) };
     static HELD: RefCell<Option<Held>> = const { RefCell::new(None) };
     static REVERTED: RefCell<Option<Chord>> = const { RefCell::new(None) };
+    static PEEK: RefCell<Option<(Key, u64)>> = const { RefCell::new(None) };
+    static PEEK_FOLD: Fold = const { RefCell::new(None) };
     static SERIAL: Cell<u64> = const { Cell::new(0) };
     static HELP: RwSignal<bool> = detached(|| signal(false));
     static SELECTION_FOLD: Fold = const { RefCell::new(None) };
@@ -373,6 +377,7 @@ pub(crate) fn install() {
         effect(|| {
             mode::active().with(|_| ());
             settle();
+            end_peek();
             pie::shown().set(false);
             HELP.with(|help| help.set(false));
         });
@@ -402,6 +407,7 @@ pub(crate) fn reclaim() {
         (&SELECTION_FOLD, session::clear_selection as fn()),
         (&HELD_FOLD, revert_held as fn()),
         (&HELP_FOLD, fold_help as fn()),
+        (&PEEK_FOLD, end_peek as fn()),
     ] {
         if let Some(stale) = slot.with(|held| held.borrow_mut().take()) {
             drop(stale);
@@ -438,6 +444,9 @@ pub(crate) fn press_as(key: &Key, modifiers: ModifiersState, press: Press) -> bo
         settle();
         return false;
     }
+    if PEEK.with(|peek| peek.borrow().is_some()) {
+        return true;
+    }
     if pie::shown().peek() {
         settle();
         return on_pie(&mode, key, modifiers);
@@ -461,7 +470,7 @@ pub(crate) fn press_as(key: &Key, modifiers: ModifiersState, press: Press) -> bo
     let Some(row) = matched(&mode, key, modifiers) else {
         return false;
     };
-    if mode.refused.is_some() && !matches!(row.does, Does::Switch | Does::Help) {
+    if mode.refused.is_some() && !matches!(row.does, Does::Switch | Does::Help | Does::Palette) {
         return false;
     }
     if press == Press::Repeat && !repeats(row.does) {
@@ -590,6 +599,8 @@ fn run(mode: &Mode, row: &Row, chord: &Chord) -> Result<bool, EditError> {
         Does::Dismiss => return Ok(false),
         Does::Switch => pie::shown().update(|open| *open = !*open),
         Does::Help => HELP.with(|help| help.update(|shown| *shown = !*shown)),
+        Does::Peek => peek(chord)?,
+        Does::Palette => crate::command_palette::open()?,
         Does::Tool(Run::Act(act)) => act(&session::selected())?,
         Does::Tool(Run::Step(plan)) => {
             let label = telar::t!(
@@ -688,6 +699,44 @@ pub(crate) fn handle_step(
             context::commit(label, ops)
         }
     }
+}
+
+fn peek(chord: &Chord) -> Result<(), EditError> {
+    session::begin_peek()?;
+    let serial = SERIAL.with(util::serial::next_serial);
+    PEEK.with(|peek| *peek.borrow_mut() = Some((chord.key.clone(), serial)));
+    fold_while(&PEEK_FOLD, true, end_peek);
+    watch_peek(serial);
+    Ok(())
+}
+
+fn watch_peek(serial: u64) {
+    platform_wayland::timeout(RELEASE_POLL, move || {
+        let current =
+            PEEK.with(|peek| peek.borrow().as_ref().map(|(_, held)| *held)) == Some(serial);
+        if current && !settle_peek() {
+            watch_peek(serial);
+        }
+    });
+}
+
+/// Puts the draft back once the peek key is no longer down, answering whether it did.
+pub(crate) fn settle_peek() -> bool {
+    let released = PEEK.with(|peek| {
+        peek.borrow()
+            .as_ref()
+            .is_some_and(|(key, _)| !telar::key_held(key))
+    });
+    if released {
+        end_peek();
+    }
+    released
+}
+
+fn end_peek() {
+    PEEK.with(|peek| peek.borrow_mut().take());
+    fold_while(&PEEK_FOLD, false, end_peek);
+    session::end_peek();
 }
 
 /// Commits the held edit once its key is let go. Looked at on a timer because a key's release is heard by the window, never by the tree.
@@ -811,8 +860,22 @@ fn vim_of(chord: &Chord) -> Option<Chord> {
     })
 }
 
+/// The key that shows the layout as it was when the mode opened for as long as it is held.
+fn peek_key() -> Chord {
+    Chord::char('\\')
+}
+
 fn switcher_key() -> Chord {
     Chord::char('m')
+}
+
+/// The chords that open the command palette. Under `[keynav] vim` Ctrl+K makes the selection taller, so only Ctrl+Shift+P opens it there.
+pub(crate) fn command_palette_chords(vim: bool) -> Vec<Chord> {
+    let mut chords = vec![Chord::char('p').ctrl().shift()];
+    if !vim {
+        chords.insert(0, Chord::char('k').ctrl());
+    }
+    chords
 }
 
 /// Every keyboard operation of the mode of `layer`: the generic rows, then what the tools added for the mode, then what they added for area kinds, which answer in every mode an area of theirs is in.
@@ -945,6 +1008,18 @@ pub(crate) fn table_for(layer: LayerKind, vim: bool) -> Vec<Row> {
             vec![Chord::char('?'), Chord::named(NamedKey::F1)],
             || telar::t!("editor.keys.op.keys"),
             Does::Help,
+        ),
+        (
+            "peek",
+            vec![peek_key()],
+            || telar::t!("editor.keys.op.peek"),
+            Does::Peek,
+        ),
+        (
+            "command-palette",
+            command_palette_chords(vim),
+            || telar::t!("editor.keys.op.command-palette"),
+            Does::Palette,
         ),
     ];
     let mut rows: Vec<Row> = generic
@@ -1118,6 +1193,17 @@ pub struct KeyLine {
 
 /// The key list the strip shows for the mode of `layer`: each row's chords and what they do, for the rows that can answer on this screen — a tool's row only where an area of its kind is on the edited layer.
 pub fn help_rows(layer: LayerKind) -> Vec<KeyLine> {
+    listed(layer)
+        .into_iter()
+        .map(|row| KeyLine {
+            keys: spell(&row.keys),
+            what: (row.label)(),
+        })
+        .collect()
+}
+
+/// The rows of the `layer` mode's table that can answer on this screen: a tool's row only where an area of its kind is on the edited layer.
+pub(crate) fn listed(layer: LayerKind) -> Vec<Row> {
     let kinds: Vec<&'static str> = mode::current()
         .and_then(|mode| reconcile::desktop(Some(&mode.output)))
         .and_then(|desktop| {
@@ -1131,11 +1217,108 @@ pub fn help_rows(layer: LayerKind) -> Vec<KeyLine> {
             Scope::Kind(kind) => kinds.contains(&kind),
             Scope::Every | Scope::Mode(_) => true,
         })
-        .map(|row| KeyLine {
-            keys: spell(&row.keys),
-            what: (row.label)(),
-        })
         .collect()
+}
+
+impl Row {
+    /// One chord for each different thing the row does: an arrow each for a row that goes the way its key points, both ends, both ways round the areas, every step of the stacking order, and the first chord of any other row, whose other chords do the same.
+    pub(crate) fn ways(&self) -> Vec<Chord> {
+        let named = |chord: &&Chord| matches!(chord.key, Key::Named(_));
+        match self.does {
+            Does::Select | Does::Ends | Does::Move | Does::Resize | Does::Tool(Run::Toward(_)) => {
+                self.keys.iter().filter(named).cloned().collect()
+            }
+            Does::Cycle | Does::Restack => self.keys.clone(),
+            _ => self.keys.iter().take(1).cloned().collect(),
+        }
+    }
+}
+
+/// Why pressing `chord` for `row` would be refused with the selection and the draft as they are, found without changing either; `None` where it would run.
+pub(crate) fn refusal(row: &Row, chord: &Chord) -> Option<EditError> {
+    let mode = mode::current()?;
+    if let Some(why) = &mode.refused
+        && !matches!(row.does, Does::Switch | Does::Help | Does::Palette)
+    {
+        return Some(EditError::refused(why.clone()));
+    }
+    if let Scope::Kind(kind) = row.scope
+        && selected_kind() != Some(kind)
+    {
+        return Some(EditError::refused(util::message!(
+            "editor.command.only_for",
+            kind = kind_name(&mode, kind)
+        )));
+    }
+    let selection = session::selected();
+    let draft = session::draft().peek();
+    let tried = |planned: Result<Vec<LayoutOp>, EditError>| {
+        let mut after = draft.clone();
+        planned
+            .and_then(|ops| layout::ops::apply_all(&mut after, &ops).map_err(EditError::from))
+            .err()
+    };
+    let direction = direction_of(&navigation(), &chord.key);
+    match (row.does, direction) {
+        (Does::Customize | Does::Menu | Does::Remove | Does::Duplicate | Does::Restack, _)
+            if selection == Selection::None =>
+        {
+            Some(EditError::nothing())
+        }
+        (Does::Remove, _) if !matches!(selection, Selection::Instance(_)) => {
+            tried(steps::removal(&selection, &draft))
+        }
+        (Does::Move, Some(direction)) => tried(steps::moved(&selection, &draft, direction)),
+        (Does::Resize, Some(direction)) => tried(steps::resized(&selection, &draft, direction)),
+        (Does::Tool(Run::Step(plan)), _) => tried(plan(&selection, &draft)),
+        (Does::Tool(Run::Toward(plan)), Some(direction)) => {
+            tried(plan(&selection, &draft, direction))
+        }
+        (Does::History, _) => {
+            let history = crate::history::current();
+            match session::history_key(&chord.key, chord.modifiers)? {
+                session::Way::Undo if history.undo.is_empty() => {
+                    Some(EditError::refused(util::message!("editor.command.no_undo")))
+                }
+                session::Way::Redo if history.redo.is_empty() => {
+                    Some(EditError::refused(util::message!("editor.command.no_redo")))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn kind_name(mode: &Mode, kind: &str) -> String {
+    reconcile::desktop_now(Some(&mode.output))
+        .and_then(|desktop| {
+            desktop
+                .resolved
+                .layer(mode.layer)?
+                .areas
+                .iter()
+                .find(|area| area.kind.name() == kind)
+                .map(|area| context::kind_name(&area.kind))
+        })
+        .unwrap_or_else(|| kind.to_string())
+}
+
+/// Runs `row` as pressing `chord` would, from somewhere other than the keyboard, and commits what it changed at once as one entry in the history: no key is held whose release would.
+pub(crate) fn perform(row: &Row, chord: &Chord) -> Result<(), EditError> {
+    let mode = mode::required()?;
+    if let Some(why) = refusal(row, chord) {
+        return Err(why);
+    }
+    settle();
+    mode::clear_refusal();
+    if let Does::Dismiss = row.does {
+        telar::dismiss_top();
+        return Ok(());
+    }
+    let done = run(&mode, row, chord);
+    settle();
+    done.map(drop)
 }
 
 /// The first chord of the row called `name` in the mode that is up, as a key list spells it: what a control that does what the row does says its key is.

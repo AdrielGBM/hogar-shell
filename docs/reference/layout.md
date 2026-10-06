@@ -181,6 +181,10 @@ A region of the output that draws a wallpaper of its own.
 | `source` | A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out or empty, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one. An empty one is how a rule says so over a region another level gave a picture. |
 | `fit` | How the picture is fitted to the region. |
 | `transition` | How a wallpaper changes to the next one. |
+| `focus` | The point of the picture `fit = "cover"` keeps in view when it crops, as fractions of the picture's width and height from its top left: the crop is centred on it as far as the picture reaches. The other fits crop nothing and ignore it. The middle unless set. |
+| `dim` | How dark the picture goes while an application window covers the screen, from 0 (not at all) to 1 (black). A window covers the screen when the workspace up on it holds one, where the compositor says how many windows a workspace holds, and otherwise when a maximized or fullscreen window is on it. 0 unless set. |
+| `blur` | How far the picture is blurred while an application window covers the screen, as a radius in logical pixels up to 64. 0 unless set. |
+| `parallax` | How far the picture slides across the screen's workspaces, as a fraction of the region's width up to 0.5: on the first workspace it shows its left edge and on the last its right, moving as the workspace up changes. Only `fit = "cover"` has picture to spare, and reduced motion holds it still. 0, which is off, unless set. |
 
 ## `AreaKind::Texture`
 
@@ -338,6 +342,15 @@ How far something pinned to one of the nine anchors is moved from where the anch
 | --- | --- |
 | `x` | How far right, or left where it is negative. |
 | `y` | How far down, or up where it is negative. |
+
+## `Focus`
+
+A point of a picture, as fractions of its width and height from its top left.
+
+| Key | What it is |
+| --- | --- |
+| `x` | How far across, from 0 at the left edge to 1 at the right. |
+| `y` | How far down, from 0 at the top edge to 1 at the bottom. |
 
 ## `Route`
 

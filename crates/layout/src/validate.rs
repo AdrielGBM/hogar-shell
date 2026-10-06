@@ -121,6 +121,7 @@ pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
         check_panels(level, &mut report);
         check_panel_reserve(&rule.layers, &scope, &at, &file, &mut report);
         check_gradients(&rule.layers, &at, &file, &mut report);
+        check_wallpaper_regions(&rule.layers, &at, &file, &mut report);
         check_bar_corners(&rule.layers, &scope, &at, &file, &mut report);
         check_cell_areas(&rule.layers, &at, &file, &mut report);
         check_styles(&rule.layers, &at, &file, &mut report);
@@ -593,6 +594,51 @@ fn check_gradients(layers: &Layers, at: &str, file: &str, report: &mut Report) {
                         most = MOST_STOPS,
                         count = gradient.stops.len(),
                         extra = gradient.stops.len() - MOST_STOPS
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// A wallpaper region's focus, dim, blur and parallax past what they run to, each reported with what is drawn instead.
+fn check_wallpaper_regions(layers: &Layers, at: &str, file: &str, report: &mut Report) {
+    for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            let Some(AreaKind::WallpaperRegion {
+                focus,
+                dim,
+                blur,
+                parallax,
+                ..
+            }) = &area.kind
+            else {
+                continue;
+            };
+            let written = [
+                ("focus.x", focus.map(|focus| focus.x), 1.0, Focus::MIDDLE.x),
+                ("focus.y", focus.map(|focus| focus.y), 1.0, Focus::MIDDLE.y),
+                ("dim", *dim, 1.0, 0.0),
+                ("blur", *blur, AreaKind::MOST_BLUR, 0.0),
+                ("parallax", *parallax, AreaKind::MOST_PARALLAX, 0.0),
+            ];
+            for (key, value, most, unset) in written {
+                let Some(value) = value.filter(|value| !(0.0..=most).contains(value)) else {
+                    continue;
+                };
+                let drawn = match value.is_nan() {
+                    true => unset,
+                    false => value.clamp(0.0, most),
+                };
+                report.warn(Finding::new(
+                    file,
+                    format!("{at}.layers.{kind}.areas.{}.{key}", area.id),
+                    util::message!(
+                        "finding.region_range",
+                        key = key,
+                        most = most,
+                        value = value,
+                        drawn = drawn
                     ),
                 ));
             }

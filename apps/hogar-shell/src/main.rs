@@ -93,6 +93,12 @@ fn main() -> ExitCode {
         {
             answer_locally(&args)
         }
+        Some("layout")
+            if args.get(1).map(String::as_str) == Some("template")
+                && args.get(2).map(String::as_str) == Some("list") =>
+        {
+            answer_locally(&args)
+        }
         // The shell reads the bundle, from wherever it was started: a path the user typed means where they typed it.
         Some("layout") if args.get(1).map(String::as_str) == Some("import") => {
             let mut request = args.clone();

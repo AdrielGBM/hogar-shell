@@ -384,36 +384,115 @@ pub fn read(dir: &Path) -> Result<Bundle, Report> {
             None
         }
         _ => match read_text(&root, MANIFEST) {
-            Ok(text) => match toml::from_str::<Manifest>(&text) {
-                Ok(manifest) => Some(manifest),
-                Err(why) => {
-                    report.error(Finding::new(
-                        &manifest_path,
-                        "",
-                        Message::verbatim(why.to_string()),
-                    ));
-                    None
-                }
-            },
+            Ok(text) => manifest_of(&text, &manifest_path, &mut report),
             Err(why) => {
                 report.error(Finding::new(&manifest_path, "", why));
                 None
             }
         },
     };
-    if let Some(manifest) = &manifest
-        && !is_komponent_name(&manifest.name)
-    {
+    let layout_files = toml_files(&root, LAYOUTS, &mut report);
+    let komponent_files = toml_files(&root, COMPONENTS, &mut report);
+    let mut parsed = parsed(dir, layout_files, komponent_files, &mut report);
+    let assets = named_assets(&root, &mut parsed.layouts, &mut report);
+    match (manifest, report.errors.is_empty()) {
+        (Some(manifest), true) => Ok(Bundle {
+            manifest,
+            layouts: parsed.layouts,
+            komponents: parsed.komponents,
+            assets,
+            texts: parsed.texts,
+        }),
+        _ => Err(report),
+    }
+}
+
+/// The bundle written as `manifest` and the `layouts` and `komponents` given by name with their text, read by the rules [`read`] reads a directory by and said to be at `dir`: one the shell carries inside itself rather than finds on disk. It carries no pictures, so a layout naming one is a finding.
+pub fn of_texts(
+    dir: &Path,
+    manifest: &str,
+    layouts: &[(&str, &str)],
+    komponents: &[(&str, &str)],
+) -> Result<Bundle, Report> {
+    let mut report = Report::default();
+    let manifest = manifest_of(manifest, &dir.join(MANIFEST), &mut report);
+    let files = |under: &str, named: &[(&str, &str)], report: &mut Report| {
+        named
+            .iter()
+            .filter_map(|(stem, text)| {
+                let path = dir.join(under).join(format!("{stem}.toml"));
+                if !is_komponent_name(stem) {
+                    report.error(Finding::new(
+                        &path,
+                        "",
+                        util::message!("finding.bundle_file_name", name = *stem),
+                    ));
+                    return None;
+                }
+                Some((path, stem.to_string(), text.to_string()))
+            })
+            .collect::<Vec<_>>()
+    };
+    let layout_files = files(LAYOUTS, layouts, &mut report);
+    let komponent_files = files(COMPONENTS, komponents, &mut report);
+    let mut parsed = parsed(dir, layout_files, komponent_files, &mut report);
+    for layout in parsed.layouts.values_mut() {
+        let file = dir.join(layout_path(&layout.id));
+        for (key, path) in asset_paths_mut(layout) {
+            if !path.is_empty() {
+                report.error(Finding::new(
+                    &file,
+                    key,
+                    util::message!("finding.bundle_asset_path", path = path.as_str()),
+                ));
+            }
+        }
+    }
+    match (manifest, report.errors.is_empty()) {
+        (Some(manifest), true) => Ok(Bundle {
+            manifest,
+            layouts: parsed.layouts,
+            komponents: parsed.komponents,
+            assets: BTreeMap::new(),
+            texts: parsed.texts,
+        }),
+        _ => Err(report),
+    }
+}
+
+fn manifest_of(text: &str, path: &Path, report: &mut Report) -> Option<Manifest> {
+    let manifest = match toml::from_str::<Manifest>(text) {
+        Ok(manifest) => manifest,
+        Err(why) => {
+            report.error(Finding::new(path, "", Message::verbatim(why.to_string())));
+            return None;
+        }
+    };
+    if !is_komponent_name(&manifest.name) {
         report.error(Finding::new(
-            &manifest_path,
+            path,
             "name",
             util::message!("finding.bundle_name", name = &manifest.name),
         ));
     }
+    Some(manifest)
+}
 
+struct Parsed {
+    layouts: BTreeMap<LayoutId, Layout>,
+    komponents: BTreeMap<KomponentId, Komponent>,
+    texts: BTreeMap<String, String>,
+}
+
+fn parsed(
+    dir: &Path,
+    layout_files: Vec<(PathBuf, String, String)>,
+    komponent_files: Vec<(PathBuf, String, String)>,
+    report: &mut Report,
+) -> Parsed {
     let mut texts = BTreeMap::new();
     let mut layouts = BTreeMap::new();
-    for (path, stem, text) in toml_files(&root, LAYOUTS, &mut report) {
+    for (path, stem, text) in layout_files {
         if stem == BUILT_IN {
             report.error(Finding::new(
                 &path,
@@ -432,7 +511,7 @@ pub fn read(dir: &Path) -> Result<Bundle, Report> {
         }
     }
     let mut komponents = BTreeMap::new();
-    for (path, stem, text) in toml_files(&root, COMPONENTS, &mut report) {
+    for (path, stem, text) in komponent_files {
         match toml::from_str::<Komponent>(&text) {
             Ok(komponent) => {
                 let id = KomponentId::new(&stem);
@@ -454,12 +533,12 @@ pub fn read(dir: &Path) -> Result<Bundle, Report> {
     }
     for layout in layouts.values() {
         let file = dir.join(layout_path(&layout.id));
-        unreadable_in_layout(layout, &file.display().to_string(), &mut report);
-        refuse_bidi(&file, layout_texts(layout), &mut report);
+        unreadable_in_layout(layout, &file.display().to_string(), report);
+        refuse_bidi(&file, layout_texts(layout), report);
     }
     for (id, komponent) in &komponents {
         let file = dir.join(komponent_path(id));
-        unreadable_in_komponent(komponent, &file.display().to_string(), &mut report);
+        unreadable_in_komponent(komponent, &file.display().to_string(), report);
         let texts = komponent_chains(komponent)
             .into_iter()
             .flat_map(|(key, action)| {
@@ -469,19 +548,12 @@ pub fn read(dir: &Path) -> Result<Bundle, Report> {
                     .map(move |line| (key.clone(), line.as_str()))
             })
             .collect();
-        refuse_bidi(&file, texts, &mut report);
+        refuse_bidi(&file, texts, report);
     }
-
-    let assets = named_assets(&root, &mut layouts, &mut report);
-    match (manifest, report.errors.is_empty()) {
-        (Some(manifest), true) => Ok(Bundle {
-            manifest,
-            layouts,
-            komponents,
-            assets,
-            texts,
-        }),
-        _ => Err(report),
+    Parsed {
+        layouts,
+        komponents,
+        texts,
     }
 }
 

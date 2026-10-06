@@ -79,6 +79,10 @@ impl ResolvedAreaKind {
                 source: None,
                 fit: None,
                 transition: None,
+                focus: None,
+                dim: None,
+                blur: None,
+                parallax: None,
             },
             ResolvedAreaKind::Texture { .. } => AreaKind::Texture {
                 rect: None,

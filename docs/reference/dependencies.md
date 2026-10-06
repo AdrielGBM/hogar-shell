@@ -46,7 +46,7 @@ table *for this machine*, and `hogar-shell deps missing` narrows it to what is a
 | `gpu-screen-recorder` | program `gpu-screen-recorder` | screen recording encoded on the GPU, and the only backend that can pause | recording still works through wf-recorder, but cannot be paused |
 | `gamemode` | session bus name `com.feralinteractive.GameMode` | the game-mode toggle | the toggle is greyed out |
 | `fprintd` | system bus name `net.reactivated.Fprint` | unlocking with a fingerprint | the lock screen takes a password only |
-| `xdg-desktop-portal` | session bus name `org.freedesktop.portal.Desktop` | registering the shell's actions as global shortcuts | bind the IPC commands in the compositor's own config instead |
+| `xdg-desktop-portal` | session bus name `org.freedesktop.portal.Desktop` | registering the shell's actions as global shortcuts, and reading the desktop's reduced-motion setting | bind the IPC commands in the compositor's own config instead, and set `[animation] reduced` to reduce motion |
 | `qalc` | program `qalc` | currencies, constants and dates in the launcher's `=` mode | a built-in evaluator handles the ordinary arithmetic |
 
 ## How each is probed

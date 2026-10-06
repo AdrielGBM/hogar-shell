@@ -8,7 +8,7 @@ compositor: any
 config: [theme]
 commands: [scheme]
 deps: []
-see_also: [dynamic-scheme, export, tokens]
+see_also: [dynamic-scheme, export, tokens, presets, typography-and-icons]
 ---
 
 # Palettes
@@ -47,7 +47,8 @@ driving a mode change yet.
 
 ## Type and scale
 
-`[theme] font_family` and `[theme.fonts.*]` — `display`, `title`, `body`, `caption` — set the type.
+`[theme] font_family` and `[theme.fonts.*]` — `display`, `title`, `body`, `caption`, each with a size, a
+weight and a slant — set the type; [Typography and icons](typography-and-icons.md) has the weights.
 `[theme.scale]` — `font`, `icon`, `rounding`, `spacing` — scales the whole shell without touching every key.
 
 > `[theme.scale]` is a **manual** multiplier. The shell does not ask the compositor for a fractional scale
@@ -56,9 +57,10 @@ driving a mode change yet.
 
 ## Icons
 
-`[icons]` — `provider`, `default_set`, `app_icon_theme`. Icons come from an Iconify-compatible endpoint
+`[icons]` — `provider`, `default_set`. Icons come from an Iconify-compatible endpoint
 (`{provider}/{set}/{name}.svg`); a name may override the set inline as `mdi:home`. The provider is
-configurable because Iconify is self-hostable.
+configurable because Iconify is self-hostable. Applications' own icons — `app_icon_theme` and the `mask` they are
+cut to — are in [Typography and icons](typography-and-icons.md).
 
 ## What it needs
 
@@ -68,3 +70,4 @@ Nothing.
 
 - [Dynamic scheme](dynamic-scheme.md) — deriving a palette from your wallpaper.
 - [Export](export.md) — handing the palette to the rest of the desktop.
+- [Theme presets](presets.md) — keeping a whole `[theme]` under a name.

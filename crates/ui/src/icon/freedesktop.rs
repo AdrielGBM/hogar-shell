@@ -19,8 +19,8 @@ pub enum AppIcon {
 }
 
 thread_local! {
-    /// Memoizes each reference's resolution per surface thread, so a snapshot-driven card rebuild doesn't re-walk the theme directories (or re-decode the file) on every render.
-    static CACHE: RefCell<HashMap<String, Option<AppIcon>>> = RefCell::new(HashMap::new());
+    /// Memoizes each reference's resolution per surface thread and icon theme, so a snapshot-driven card rebuild doesn't re-walk the theme directories (or re-decode the file) on every render, and a theme picked since resolves afresh.
+    static CACHE: RefCell<HashMap<(String, String), Option<AppIcon>>> = RefCell::new(HashMap::new());
 }
 
 /// Resolves a freedesktop notification icon `reference` — an absolute path, a `file://` URI, or an icon name per the [Icon Theme Specification](https://specifications.freedesktop.org/icon-theme-spec/latest/) — to a loaded icon, or `None` when it is empty, unresolvable, or of an undecodable format. Memoized per thread.
@@ -28,14 +28,15 @@ pub fn resolve_app_icon(reference: &str) -> Option<AppIcon> {
     if reference.is_empty() {
         return None;
     }
-    if let Some(hit) = CACHE.with(|c| c.borrow().get(reference).cloned()) {
-        return hit;
-    }
     let theme = Chrome::current()
         .map(|chrome| chrome.config.icons.app_icon_theme.clone())
         .unwrap_or_default();
-    let icon = locate(reference, &theme).and_then(|path| load(&path));
-    CACHE.with(|c| c.borrow_mut().insert(reference.to_string(), icon.clone()));
+    let key = (theme, reference.to_string());
+    if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let icon = locate(reference, &key.0).and_then(|path| load(&path));
+    CACHE.with(|c| c.borrow_mut().insert(key, icon.clone()));
     icon
 }
 
@@ -72,6 +73,55 @@ fn load(path: &Path) -> Option<AppIcon> {
             ))))
         }
     }
+}
+
+/// An icon theme installed where [`resolve_app_icon`] looks: the directory `[icons] app_icon_theme` names it by, and what it calls itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IconTheme {
+    pub id: String,
+    pub name: String,
+}
+
+/// Every icon theme there is to pick, once each and by name. A cursor theme has an `index.theme` too, but no directories of icons, so it is not one; nor is a theme that asks to be hidden from a picker.
+pub fn installed_icon_themes() -> Vec<IconTheme> {
+    themes_in(&icon_base_dirs())
+}
+
+fn themes_in(bases: &[PathBuf]) -> Vec<IconTheme> {
+    let mut themes: Vec<IconTheme> = Vec::new();
+    for base in bases {
+        let Ok(entries) = fs::read_dir(base) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Some(id) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if themes.iter().any(|theme| theme.id == id) {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(entry.path().join("index.theme")) else {
+                continue;
+            };
+            let index = parse_ini(&text);
+            let Some(about) = index.get("Icon Theme") else {
+                continue;
+            };
+            let has_icons = about
+                .get("Directories")
+                .is_some_and(|dirs| !dirs.trim().is_empty());
+            let hidden = about
+                .get("Hidden")
+                .is_some_and(|hidden| hidden.eq_ignore_ascii_case("true"));
+            if !has_icons || hidden {
+                continue;
+            }
+            let name = about.get("Name").cloned().unwrap_or_else(|| id.clone());
+            themes.push(IconTheme { id, name });
+        }
+    }
+    themes.sort_by_key(|theme| theme.name.to_lowercase());
+    themes
 }
 
 /// The base directories searched for icon themes, in the spec's precedence: per-user (`$HOME/.icons`, `$XDG_DATA_HOME/icons`) before system (`$XDG_DATA_DIRS/icons`), so a user override wins.
@@ -413,6 +463,54 @@ mod tests {
                 &["Test".to_string()]
             )
             .is_none()
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn installed_themes_are_the_ones_with_icons_once_each_by_name() {
+        let root = std::env::temp_dir().join(format!("hogar-shell-themes-{}", std::process::id()));
+        let (user, system) = (root.join("user"), root.join("system"));
+        let theme = |base: &Path, id: &str, index: &str| {
+            fs::create_dir_all(base.join(id)).unwrap();
+            fs::write(base.join(id).join("index.theme"), index).unwrap();
+        };
+        theme(
+            &user,
+            "Papirus",
+            "[Icon Theme]\nName=Papirus\nDirectories=48x48/apps\n",
+        );
+        theme(
+            &system,
+            "Papirus",
+            "[Icon Theme]\nName=Papirus (system)\nDirectories=48x48/apps\n",
+        );
+        theme(
+            &system,
+            "adwaita",
+            "[Icon Theme]\nName=Adwaita\nDirectories=scalable/apps\n",
+        );
+        theme(&system, "Bibata", "[Icon Theme]\nName=Bibata cursors\n");
+        theme(
+            &system,
+            "secret",
+            "[Icon Theme]\nName=Secret\nDirectories=a\nHidden=true\n",
+        );
+        fs::create_dir_all(system.join("no-index")).unwrap();
+
+        let found = themes_in(&[user, system]);
+        assert_eq!(
+            found,
+            vec![
+                IconTheme {
+                    id: "adwaita".to_string(),
+                    name: "Adwaita".to_string()
+                },
+                IconTheme {
+                    id: "Papirus".to_string(),
+                    name: "Papirus".to_string()
+                },
+            ]
         );
         fs::remove_dir_all(&root).ok();
     }

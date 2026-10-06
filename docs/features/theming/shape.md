@@ -7,7 +7,7 @@ status: stable
 compositor: any
 config: [shape, animation, keynav, panels]
 commands: [layout]
-deps: []
+deps: [xdg-desktop-portal]
 see_also: [bars, panels, palettes, widgets]
 ---
 
@@ -38,10 +38,31 @@ places the clock and the visualiser with.
 
 ## Motion
 
-`[animation]` — `enabled`, `curve`, `easing`, `duration_scale`, `panel_duration_ms`.
+`[animation]` — `enabled`, `curve`, `easing`, `duration_scale`, `panel_duration_ms`, `autohide_duration_ms`,
+`reduced`.
 
-`duration_scale` is the one to reach for: it scales every animation at once, and `0` switches motion off
-without changing anything else.
+`duration_scale` is the one to reach for: it scales every animation at once. `enabled = false` switches motion
+off without changing anything else.
+
+Panels, drawers and popouts open and close on the one `easing`, over `panel_duration_ms`; a bar that hides
+itself slides away and back on the same easing, over `autohide_duration_ms`.
+
+### Reduced motion
+
+While motion is reduced, whatever would slide in fades in its place — a panel, drawer or popout opened from a
+bar, a notification card, a wallpaper region set to `slide` — a hiding bar and a rearranged grid move at once,
+and no transition runs longer than 100 ms.
+
+`reduced = "auto"`, the default, follows the desktop: the portal's `org.freedesktop.appearance`
+`reduced-motion` setting, or, from a portal without it, GNOME's `enable-animations` or KDE's
+`AnimationDurationFactor` at 0. The shell follows a change as it happens. `"on"` and `"off"` decide regardless of
+the desktop.
+
+```toml
+[animation]
+autohide_duration_ms = 240
+reduced = "on"
+```
 
 ## Keyboard navigation
 
@@ -51,7 +72,8 @@ without changing anything else.
 
 ## What it needs
 
-Nothing.
+Nothing. `reduced = "auto"` reads the desktop through `xdg-desktop-portal` when it is there; without it, motion
+is as `[animation]` says.
 
 ## Related
 

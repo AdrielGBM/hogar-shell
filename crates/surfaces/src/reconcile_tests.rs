@@ -162,6 +162,10 @@ mod tests {
                 source: None,
                 fit: None,
                 transition: None,
+                focus: None,
+                dim: None,
+                blur: None,
+                parallax: None,
             }),
             style: layout::Style {
                 backdrop: Some(layout::Backdrop::Blur),

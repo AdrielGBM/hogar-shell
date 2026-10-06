@@ -12,10 +12,13 @@ use telar::{
 };
 
 use crate::form::*;
-use config::theme::{ACCENTS, BUILT_IN_THEMES, NordTheme, THEME_TOKENS};
-use config::{Config, ScaleConfig, ThemeConfig};
+use config::presets;
+use config::theme::{ACCENTS, BUILT_IN_THEMES, FontRole, NordTheme, THEME_TOKENS};
+use config::{Config, IconMask, IconsConfig, ScaleConfig, ThemeConfig};
 use ui::form::enum_row::{EnumRowProps, enum_row};
 use ui::form::labelled::labelled;
+use ui::form::listed_row::{keeping_current, listed_row};
+use ui::form::named_list::{NamedActions, named_list};
 use ui::form::swatch_row::{SwatchRowProps, swatch_row};
 use ui::form::text_row::{TextRowProps, text_row};
 use ui::form::theme_tiles::theme_tiles;
@@ -127,6 +130,7 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let scale_spacing = signal(t.scale.spacing.to_string());
     let scale_font = signal(t.scale.font.to_string());
     let scale_icon = signal(t.scale.icon.to_string());
+    let weights = FontRole::ALL.map(|role| signal(opt_num(t.fonts.spec(role).weight)));
 
     // What the pickers below and the preview above them all read: the palette the *pending* selection resolves to, not the one the shell is currently wearing. A swatch row showing the saved theme while the user is choosing another one is a preview of the wrong thing.
     let pending = pending_palette(
@@ -136,7 +140,7 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
         accent.read_only(),
     );
 
-    let rows = vec![
+    let mut rows = vec![
         palette_preview(pending.clone(), theme)?,
         theme_swatches(name, mode.read_only(), config.clone())?,
         accent_row(accent)?,
@@ -253,6 +257,13 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
             Children::default(),
         )?,
     ];
+    for (weight, role) in weights.into_iter().zip(FontRole::ALL) {
+        rows.push(listed_row(
+            weight_label(role),
+            weight,
+            weight_options(&weight.peek()),
+        )?);
+    }
 
     let base = t.clone();
     let path = path.to_path_buf();
@@ -279,8 +290,7 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
                         font: parse_f32(&scale_font.peek(), base.scale.font),
                         icon: parse_f32(&scale_icon.peek(), base.scale.icon),
                     },
-                    // Carried through unchanged, like `colors`: per-role overrides and the export switches are nested tables the flat panel has no rows for, and rewriting the section must not drop them.
-                    fonts: base.fonts,
+                    fonts: with_weights(base.fonts, weights.map(|weight| weight.peek())),
                     export: base.export.clone(),
                     colors: base.colors.clone(),
                 };
@@ -290,6 +300,199 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
         telar::Children::default(),
     )?;
     section(|| telar::t!("settings.section.theme"), rows, save, theme)
+}
+
+fn weight_label(role: FontRole) -> Reactive<String> {
+    match role {
+        FontRole::Display => Reactive::of(|| telar::t!("settings.field.weight_display")),
+        FontRole::Title => Reactive::of(|| telar::t!("settings.field.weight_title")),
+        FontRole::Body => Reactive::of(|| telar::t!("settings.field.weight_body")),
+        FontRole::Caption => Reactive::of(|| telar::t!("settings.field.weight_caption")),
+    }
+}
+
+/// The role's own weight, every hundred a font can be drawn at, and `current` where it is none of them.
+fn weight_options(current: &str) -> Rc<[(String, String)]> {
+    let mut options = vec![(String::new(), telar::t!("settings.field.weight_default"))];
+    options.extend(
+        config::theme::font_weights().map(|weight| (weight.to_string(), weight.to_string())),
+    );
+    keeping_current(options, current)
+}
+
+fn with_weights(mut fonts: config::FontsConfig, weights: [String; 4]) -> config::FontsConfig {
+    for (role, weight) in FontRole::ALL.into_iter().zip(weights) {
+        fonts.spec_mut(role).weight =
+            opt_u32(&weight).and_then(|weight| u16::try_from(weight).ok());
+    }
+    fonts
+}
+
+/// Where icons come from and how an application's own is drawn. In Rust rather than `.rsx` because the icon themes it offers are the ones installed on this machine.
+pub(crate) fn icons_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let (config, path) = crate::form::source();
+    let theme = telar::use_theme::<NordTheme>();
+    let icons = &config.icons;
+    let provider = signal(icons.provider.clone());
+    let default_set = signal(icons.default_set.clone());
+    let app_icon_theme = signal(icons.app_icon_theme.clone());
+    let mask = signal(icons.mask.id().to_string());
+
+    let mut themes = vec![(String::new(), telar::t!("settings.field.icon_theme_auto"))];
+    themes.extend(
+        ui::icon::installed_icon_themes()
+            .into_iter()
+            .map(|theme| (theme.id, theme.name)),
+    );
+    let masks: Vec<(String, String)> = IconMask::ALL
+        .into_iter()
+        .map(|mask| {
+            let shown = match mask {
+                IconMask::None => telar::t!("settings.field.mask_none"),
+                IconMask::Circle => telar::t!("settings.field.mask_circle"),
+                IconMask::Squircle => telar::t!("settings.field.mask_squircle"),
+            };
+            (mask.id().to_string(), shown)
+        })
+        .collect();
+
+    let rows = vec![
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.provider")))
+                .value(provider)
+                .placeholder("https://api.iconify.design")
+                .build(),
+            Children::default(),
+        )?,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.default_set")))
+                .value(default_set)
+                .placeholder("lucide")
+                .build(),
+            Children::default(),
+        )?,
+        listed_row(
+            Reactive::of(|| telar::t!("settings.field.app_icon_theme")),
+            app_icon_theme,
+            keeping_current(themes, &app_icon_theme.peek()),
+        )?,
+        listed_row(
+            Reactive::of(|| telar::t!("settings.field.icon_mask")),
+            mask,
+            Rc::from(masks),
+        )?,
+    ];
+
+    let path = path.to_path_buf();
+    let save = save_button(
+        SaveButtonProps::props()
+            .label(Reactive::of(|| telar::t!("settings.save.icons")))
+            .on_press(Rc::new(move || {
+                persist(
+                    &path,
+                    "icons",
+                    &IconsConfig {
+                        provider: provider.peek(),
+                        default_set: default_set.peek(),
+                        app_icon_theme: app_icon_theme.peek(),
+                        mask: IconMask::from_id(&mask.peek()).unwrap_or_default(),
+                    },
+                );
+            }))
+            .build(),
+        Children::default(),
+    )?;
+    section(|| telar::t!("settings.section.icons"), rows, save, theme)
+}
+
+/// The theme presets kept beside the config: each one put into `[theme]` or deleted, and the theme the file says now kept under a new name.
+///
+/// Putting one into `[theme]` writes the file without vouching for the window, so the reload it causes rebuilds every form here from the theme it put there.
+pub(crate) fn theme_presets_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let (_, path) = crate::form::source();
+    let theme = telar::use_theme::<NordTheme>();
+    let names = signal(presets::list(&path));
+    let naming = signal(String::new());
+    let status = signal(String::new());
+    let refresh = {
+        let path = path.clone();
+        move || names.set(presets::list(&path))
+    };
+    let said = move |result: Result<String, presets::PresetError>| match result {
+        Ok(done) => status.set(done),
+        Err(why) => status.set(telar::t!("settings.presets.failed", why = why.to_string())),
+    };
+
+    let actions = NamedActions {
+        pick: Rc::new(|| telar::t!("settings.presets.apply")),
+        on_pick: Rc::new({
+            let path = path.clone();
+            move |name: &str| {
+                said(
+                    presets::apply(&path, name)
+                        .map(|_| telar::t!("settings.presets.applied", name = name)),
+                )
+            }
+        }),
+        remove: Rc::new(|| telar::t!("settings.presets.delete")),
+        on_remove: Rc::new({
+            let (path, refresh) = (path.clone(), refresh.clone());
+            move |name: &str| {
+                said(
+                    presets::delete(&path, name)
+                        .map(|()| telar::t!("settings.presets.deleted", name = name)),
+                );
+                refresh();
+            }
+        }),
+    };
+    let rows = vec![
+        named_list(
+            names.read_only(),
+            || telar::t!("settings.presets.empty"),
+            actions,
+        )?,
+        text_row(
+            TextRowProps::props()
+                .label(Reactive::of(|| telar::t!("settings.field.preset_name")))
+                .value(naming)
+                .placeholder("dusk")
+                .build(),
+            Children::default(),
+        )?,
+        Box::new(telar::Text::new(
+            move || status.get(),
+            LayoutStyle::new(),
+            move || theme.text_style(FontRole::Caption, theme.subtle),
+        )?) as Box<dyn LayoutItem>,
+    ];
+    let save = telar::button(
+        telar::ButtonProps::props()
+            .label(Reactive::of(|| telar::t!("settings.presets.save")))
+            .on_press(Rc::new(move || {
+                let name = naming.peek().trim().to_string();
+                if !presets::is_name(&name) {
+                    status.set(telar::t!("settings.presets.bad_name"));
+                    return;
+                }
+                let current = Config::load_or_default(&path).theme;
+                said(
+                    presets::save(&path, &name, &current)
+                        .map(|()| telar::t!("settings.presets.saved", name = name)),
+                );
+                refresh();
+            }))
+            .build(),
+        Children::default(),
+    )?;
+    section(
+        || telar::t!("settings.section.theme_presets"),
+        rows,
+        save,
+        theme,
+    )
 }
 
 /// K13, first half: the maps whose keys are enumerable.
@@ -377,6 +580,24 @@ mod tests {
             telar::Color::from_hex("#ff8800").expect("a colour")
         );
         assert!(!ACCENTS.contains(&accent.peek().as_str()));
+    }
+
+    #[test]
+    fn each_weight_row_writes_its_own_role_and_an_empty_one_unsets_it() {
+        let mut fonts = config::FontsConfig::default();
+        fonts.caption.weight = Some(300);
+        fonts.body.size = Some(15.0);
+        let rows = FontRole::ALL.map(|role| match role {
+            FontRole::Title => "650".to_string(),
+            FontRole::Body => "500".to_string(),
+            _ => String::new(),
+        });
+        let saved = with_weights(fonts, rows);
+        assert_eq!(saved.title.weight, Some(650));
+        assert_eq!(saved.body.weight, Some(500));
+        assert_eq!(saved.body.size, Some(15.0), "the rest of a role stays");
+        assert_eq!(saved.caption.weight, None);
+        assert_eq!(saved.display.weight, None);
     }
 
     #[test]

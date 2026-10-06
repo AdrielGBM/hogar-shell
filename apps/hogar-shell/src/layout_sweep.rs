@@ -654,6 +654,247 @@ fn the_windows_strip_lays_each_window_along_its_bar_on_every_edge_and_shape() {
     );
 }
 
+const DOCK: f32 = 60.0;
+const PINS: [&str; 2] = ["firefox", "gimp"];
+const MAGNIFIED: f32 = 1.8;
+
+fn pin_world() {
+    let mut config = Config::starter();
+    config.dock.pinned = PINS.map(str::to_string).to_vec();
+    config.dock.magnification = MAGNIFIED;
+    config.animation.enabled = false;
+    config::set_config(Arc::new(config));
+}
+
+fn windows_dock(edge: Edge) -> layout::ResolvedArea {
+    use layout::{GroupKind, Representation as Placed, ResolvedAreaKind, Zone};
+    layout::ResolvedArea {
+        reserve: true,
+        ..area_of(
+            format!("windows-dock-{edge:?}"),
+            ResolvedAreaKind::Dock {
+                edge,
+                thickness: DOCK,
+            },
+            vec![group(
+                GroupKind::Zone { zone: Zone::Center },
+                vec![instance("windows", Placed::Chip)],
+            )],
+        )
+    }
+}
+
+struct Docked {
+    rest: Vec<DrawCommand>,
+    hovered: Vec<DrawCommand>,
+    reserved: f32,
+}
+
+fn docked(
+    area: &layout::ResolvedArea,
+    edge: Edge,
+    size: (f32, f32),
+) -> Result<Docked, LayoutError> {
+    let config = config::config().expect("the sweep published a config");
+    let theme = config.resolve_theme();
+    let built = built_area(area, size)?;
+    let page = Container::new(LayoutStyle::new().width(size.0).height(size.1), vec![built])?;
+    let root = page.layout_node();
+    let mut tree = ComponentList::new(page);
+    let lay_out = || {
+        compute_layout(
+            root,
+            AvailableSpace::Definite(size.0),
+            AvailableSpace::Definite(size.1),
+        )
+    };
+    lay_out()?;
+    let rest = tree.commands().to_vec();
+    let under = dock_entries(&rest, theme)
+        .get(1)
+        .map(|rect| (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0))
+        .ok_or_else(|| LayoutError::Engine("the dock has no second entry".into()))?;
+    telar::batch(|| {
+        tree.on_event(&telar::Event::PointerMoved {
+            x: f64::from(under.0),
+            y: f64::from(under.1),
+            source: telar::PointerSource::Mouse,
+        })
+    });
+    lay_out()?;
+    let hovered = tree.commands().to_vec();
+    let resolved = layout::Resolved::of(
+        "SWEPT-1",
+        [(
+            layout::LayerKind::Desktop,
+            layout::ResolvedLayer {
+                areas: vec![area.clone()],
+            },
+        )],
+    );
+    let reserved = surfaces::layer_window::Reserved::of(&resolved, &config).on(edge);
+    Ok(Docked {
+        rest,
+        hovered,
+        reserved,
+    })
+}
+
+fn dock_entries(commands: &[DrawCommand], theme: config::theme::NordTheme) -> Vec<Rect> {
+    let (rest, active) = modules::windows::fills(theme);
+    let painted = [rest, active, modules::windows::hover_fill(theme)].map(Paint::Solid);
+    commands
+        .iter()
+        .filter_map(|command| match command {
+            DrawCommand::Rect { rect, style }
+                if style
+                    .fill
+                    .as_ref()
+                    .is_some_and(|fill| painted.contains(fill)) =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn grown(commands: &[DrawCommand]) -> Vec<f32> {
+    commands
+        .iter()
+        .filter_map(|command| match command {
+            DrawCommand::PushMatrix { matrix } if matrix[0] > 1.0 + 1e-3 => Some(matrix[0]),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **A dock holds its pins and its windows, marks what runs and magnifies in place**: the `windows` strip in a dock on every edge, in `bar`, `sections` and `chips`, on every monitor, with two pins (one running, one not) and three open windows, draws one entry per pin and per other application along the dock and on the screen, a dot per running entry with the focused one lit, and under the pointer grows the entries near it without moving a laid-out box or the edge the dock reserves.
+#[test]
+fn a_windows_dock_holds_its_pins_and_windows_and_magnifies_in_place_on_every_edge_shape_and_monitor()
+ {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut faults = Vec::new();
+    for mode in MODES {
+        for size in MONITORS {
+            for edge in Edge::ALL {
+                reset_layout_runtime();
+                seed_world(Edge::Top, mode, None);
+                pin_world();
+                let theme = config::config()
+                    .expect("the sweep published a config")
+                    .resolve_theme();
+                let area = windows_dock(edge);
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let measured = docked(&area, edge, size);
+                drop(scope);
+                telar::dispose_owner(owner);
+                let at = format!("{edge:?} on {}x{} in {mode:?}", size.0, size.1);
+                let Docked {
+                    rest,
+                    hovered,
+                    reserved,
+                } = match measured {
+                    Ok(docked) => docked,
+                    Err(error) => {
+                        faults.push(format!("{at}: {error}"));
+                        continue;
+                    }
+                };
+                let entries = dock_entries(&rest, theme);
+                if entries.len() != 4 {
+                    faults.push(format!(
+                        "{at}: {} entries, not 2 pins and 2 other applications",
+                        entries.len()
+                    ));
+                    continue;
+                }
+                let (_, active) = modules::windows::fills(theme);
+                let lit = rest
+                    .iter()
+                    .filter(|command| matches!(command, DrawCommand::Rect { style, .. } if style.fill == Some(Paint::Solid(active))))
+                    .count();
+                if lit != 1 {
+                    faults.push(format!(
+                        "{at}: {lit} entries on the accent, not the focused one"
+                    ));
+                }
+                let band = match edge {
+                    Edge::Top => (0.0, DOCK),
+                    Edge::Bottom => (size.1 - DOCK, size.1),
+                    Edge::Left => (0.0, DOCK),
+                    Edge::Right => (size.0 - DOCK, size.0),
+                };
+                let across = |rect: &Rect| match edge.is_horizontal() {
+                    true => (rect.y, rect.y + rect.height),
+                    false => (rect.x, rect.x + rect.width),
+                };
+                let along = |rect: &Rect| match edge.is_horizontal() {
+                    true => (rect.x, rect.x + rect.width),
+                    false => (rect.y, rect.y + rect.height),
+                };
+                for rect in &entries {
+                    let (from, to) = across(rect);
+                    if from < band.0 - SLACK || to > band.1 + SLACK {
+                        faults.push(format!("{at}: an entry at {rect:?} is off the dock"));
+                    }
+                }
+                for pair in entries.windows(2) {
+                    if along(&pair[1]).0 < along(&pair[0]).1 - SLACK {
+                        faults.push(format!(
+                            "{at}: {:?} and {:?} are not one after the other",
+                            pair[0], pair[1]
+                        ));
+                    }
+                }
+                let (plain, focused) = modules::windows::dot_fills(theme);
+                let count = |fill| {
+                    rest.iter()
+                        .filter(|command| matches!(command, DrawCommand::Rect { style, .. } if style.fill == Some(Paint::Solid(fill))))
+                        .count()
+                };
+                if (count(plain), count(focused)) != (2, 1) {
+                    faults.push(format!(
+                        "{at}: {} plain and {} lit dots, not 2 and 1",
+                        count(plain),
+                        count(focused)
+                    ));
+                }
+                let stray = off_screen(&rest, size);
+                if !stray.is_empty() {
+                    faults.push(format!("{at}: ink off the screen at {stray:?}"));
+                }
+                if !grown(&rest).is_empty() {
+                    faults.push(format!("{at}: grown with no pointer on it"));
+                }
+                let largest = grown(&hovered).into_iter().fold(1.0, f32::max);
+                if (largest - MAGNIFIED).abs() > 1e-3 {
+                    faults.push(format!(
+                        "{at}: the entry under the pointer grew to {largest}, not {MAGNIFIED}"
+                    ));
+                }
+                if dock_entries(&hovered, theme) != entries {
+                    faults.push(format!("{at}: magnifying moved a laid-out entry"));
+                }
+                if reserved != DOCK {
+                    faults.push(format!(
+                        "{at}: the dock reserves {reserved}, not its {DOCK}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} windows dock(s) drew wrong:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
 /// Sub-pixel slack, for the same reason [`COLLAPSED`] has some: layout lands a fraction under a whole pixel routinely, and the question asked is whether a rect is claimed, not whether the arithmetic is exact.
 const SLACK: f32 = 0.5;
 
@@ -1119,6 +1360,10 @@ fn every_area(mode: Shape) -> Vec<layout::ResolvedArea> {
             source: String::new(),
             fit: layout::Fit::Cover,
             transition: layout::Transition::Fade,
+            focus: layout::Focus::MIDDLE,
+            dim: 0.0,
+            blur: 0.0,
+            parallax: 0.0,
         },
         Vec::new(),
     ));
@@ -1215,7 +1460,10 @@ fn measure_area_beside(
     beside: &[layout::ResolvedArea],
     size: (f32, f32),
 ) -> Result<Vec<DrawCommand>, LayoutError> {
-    let built = built_area_beside(area, beside, size)?;
+    laid_out(built_area_beside(area, beside, size)?, size)
+}
+
+fn laid_out(built: Box<dyn LayoutItem>, size: (f32, f32)) -> Result<Vec<DrawCommand>, LayoutError> {
     let page = || LayoutStyle::new().width(size.0).height(size.1);
     let root_node = new_container(page(), &[built.layout_node()])?;
     let tree = ComponentList::new(Container::new(page(), vec![built])?);
@@ -2408,6 +2656,100 @@ fn a_styled_dock_draws_a_plate_per_group_and_a_box_per_chip_on_every_edge_and_sh
     assert!(
         faults.is_empty(),
         "{} styled dock(s) drew wrong:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
+/// `area` of `resolved`, on the layer it is written on, built on an output of `size` that holds all of `resolved`, so what its bars reserve is taken off.
+fn measure_resolved_area(
+    resolved: &layout::Resolved,
+    layer: layout::LayerKind,
+    area: &layout::ResolvedArea,
+    size: (f32, f32),
+) -> Result<Vec<DrawCommand>, LayoutError> {
+    let config = config::config().expect("the sweep published a config");
+    surfaces::reconcile::publish(&[crate::test_support::measured(
+        "SWEPT-1",
+        Arc::clone(&config),
+        resolved.clone(),
+        size,
+    )]);
+    let surround = surfaces::area::Surround {
+        config: &config,
+        theme: config.resolve_theme(),
+        output: Some("SWEPT-1"),
+        layer,
+        bounds: Rect::new(0.0, 0.0, size.0, size.1),
+        reserved: surfaces::layer_window::Reserved::of(resolved, &config),
+        audience: match layer {
+            layout::LayerKind::Lock => ui::host::Audience::Anyone,
+            _ => ui::host::Audience::Owner,
+        },
+    };
+    let built = telar::batch(|| surfaces::area::build(area, surround))
+        .unwrap_or_else(|| Err(LayoutError::Engine("nothing builds this area".into())))?;
+    laid_out(built, size)
+}
+
+/// The showcase template, resolved and drawn whole on a laptop, a large monitor and a portrait one: it resolves and validates with no finding, and every area of every layer lays out, draws something and keeps all of it on the screen. The prompt is the lock session's to draw, and validation is what places it.
+#[test]
+fn the_showcase_template_draws_on_every_monitor_with_no_finding() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let template = layout::templates::named("showcase").expect("the showcase ships");
+    let shipped = template.layout().expect("its layout").clone();
+    let library = layout::Library::of_layouts([layout::built_in(), shipped.clone()]);
+    let mut faults = Vec::new();
+    for size in MONITORS {
+        reset_layout_runtime();
+        seed_world(Edge::Top, Shape::Bar, None);
+        layout::set_running(Arc::new(shipped.clone()));
+        surfaces::area::set_stack_builder(modules::stack::area);
+        modules::stack::show_osd(modules::osd::OsdKind::Brightness);
+        let config = config::config().expect("the sweep published a config");
+        let (resolved, mut report) = layout::resolve(&shipped, &library, "SWEPT-1", None);
+        report.merge(layout::validate_resolved(
+            &resolved,
+            "layouts/showcase.toml",
+            &config.resolve_theme(),
+        ));
+        let on = format!("{}x{}", size.0, size.1);
+        if !report.is_clean() {
+            faults.push(format!("{on}: {}", report.render()));
+        }
+        let areas: Vec<(layout::LayerKind, layout::ResolvedArea)> = resolved
+            .areas()
+            .filter(|(_, area)| !matches!(area.kind, layout::ResolvedAreaKind::Prompt { .. }))
+            .map(|(layer, area)| (layer, area.clone()))
+            .collect();
+        for (layer, area) in areas {
+            let scope = telar::owner_scope();
+            let owner = scope.id();
+            let measured = measure_resolved_area(&resolved, layer, &area, size);
+            drop(scope);
+            let at = format!("{layer:?} {} on {on}", area.id);
+            match measured {
+                Err(error) => faults.push(format!("{at}: {error}")),
+                Ok(commands) => {
+                    if !commands.iter().any(paints) {
+                        faults.push(format!("{at}: drew nothing"));
+                    }
+                    for rect in off_screen(&commands, size) {
+                        faults.push(format!(
+                            "{at}: {}x{} at {},{} is off the screen",
+                            rect.width, rect.height, rect.x, rect.y
+                        ));
+                    }
+                }
+            }
+            telar::dispose_owner(owner);
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "the showcase template broke on {} count(s):\n  {}",
         faults.len(),
         faults.join("\n  ")
     );

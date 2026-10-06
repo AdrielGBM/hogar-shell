@@ -6,7 +6,9 @@
 //!
 //! Nothing here reads the pointer or draws: the edit mode's controls and keys ([`super::background`]) call these, and so can any layer whose preview has regions.
 
-use layout::{Area, AreaId, AreaKind, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind, Within};
+use layout::{
+    Area, AreaId, AreaKind, Focus, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind, Within,
+};
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::Node;
 
@@ -325,6 +327,10 @@ impl<'a> Plan<'a> {
             source,
             fit,
             transition,
+            focus,
+            dim,
+            blur,
+            parallax,
             ..
         } = work.area(self.layer, id)?.kind
         else {
@@ -337,6 +343,10 @@ impl<'a> Plan<'a> {
                 source: (!source.is_empty()).then_some(source),
                 fit: Some(fit),
                 transition: Some(transition),
+                focus: (focus != Focus::MIDDLE).then_some(focus),
+                dim: (dim > 0.0).then_some(dim),
+                blur: (blur > 0.0).then_some(blur),
+                parallax: (parallax > 0.0).then_some(parallax),
             }),
             within: (tile.within != Within::Output).then_some(tile.within),
             ..Area::default()

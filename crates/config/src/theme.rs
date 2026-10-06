@@ -1,9 +1,9 @@
 use telar::{Color, Declared, TextStyle, ThemeTokens};
 
-use crate::{FontSpec, FontsConfig};
+use crate::FontsConfig;
 
 /// Semantic text sizes, each a step off the theme's base [`font_size`](NordTheme::font_size).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontRole {
     /// Small secondary text: badges, pills, chip labels, notification bodies.
     Caption,
@@ -13,6 +13,24 @@ pub enum FontRole {
     Title,
     /// Large display text, e.g. the clock face.
     Display,
+}
+
+impl FontRole {
+    pub const ALL: [FontRole; 4] = [
+        FontRole::Display,
+        FontRole::Title,
+        FontRole::Body,
+        FontRole::Caption,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            FontRole::Display => "display",
+            FontRole::Title => "title",
+            FontRole::Body => "body",
+            FontRole::Caption => "caption",
+        }
+    }
 }
 
 /// The metrics travel with the colours. Without them a catalogue component sizes itself from the trait's own defaults — 4px radius, 8px spacing, 14px text — which is a different design from the one the user configured, on the same screen as the bars that follow it.
@@ -115,6 +133,14 @@ pub const OPACITY_RANGE: std::ops::RangeInclusive<f32> = 0.2..=1.0;
 
 /// What `[theme.scale] font` and the theme popover may scale text by.
 pub const FONT_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=1.4;
+
+/// The weights `[theme.fonts.<role>] weight` may name; one outside is drawn at the nearest.
+pub const FONT_WEIGHT_RANGE: std::ops::RangeInclusive<u16> = 100..=900;
+
+/// Every weight a picker offers: the hundreds across [`FONT_WEIGHT_RANGE`].
+pub fn font_weights() -> impl Iterator<Item = u16> {
+    FONT_WEIGHT_RANGE.step_by(100)
+}
 
 /// A colour written `#rrggbb`, or `#rrggbbaa` where a translucent one means something; the one spelling every colour the user types is read in.
 pub fn parse_hex(text: &str) -> Option<Color> {
@@ -711,16 +737,7 @@ impl NordTheme {
             FontRole::Title => self.font_size + 1.0,
             FontRole::Display => (self.font_size * 2.4).round(),
         };
-        self.font_spec(role).size_for(derived)
-    }
-
-    fn font_spec(&self, role: FontRole) -> FontSpec {
-        match role {
-            FontRole::Caption => self.fonts.caption,
-            FontRole::Body => self.fonts.body,
-            FontRole::Title => self.fonts.title,
-            FontRole::Display => self.fonts.display,
-        }
+        self.fonts.spec(role).size_for(derived)
     }
 
     /// A [`TextStyle`] carrying everything `[theme.fonts.<role>]` has to say — size, weight and slant.
@@ -737,10 +754,12 @@ impl NordTheme {
         paint: impl Into<telar::Paint>,
         size: f32,
     ) -> TextStyle {
-        let spec = self.font_spec(role);
+        let spec = self.fonts.spec(role);
         let mut style = TextStyle::new(size, paint);
         if let Some(weight) = spec.weight {
-            style = style.with_font_weight(weight.clamp(100, 900));
+            style = style.with_font_weight(
+                weight.clamp(*FONT_WEIGHT_RANGE.start(), *FONT_WEIGHT_RANGE.end()),
+            );
         }
         if let Some(italic) = spec.italic {
             // Three-valued now, and a config that asks for upright says so rather than saying nothing.

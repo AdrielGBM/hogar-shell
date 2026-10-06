@@ -41,7 +41,7 @@ not repeated here.
 | [Volume](modules/volume.md) | The default output's level and mute. | `pw-dump`, `wpctl` |
 | [Weather](modules/weather.md) | The sky and the temperature where you are, as a widget; not yet placeable on its own. | — |
 | [Window info](modules/windowinfo.md) | What the compositor knows about the focused window, and four things to do to it. **(Hyprland only)** | `ext-image-copy-capture`, `wlr-screencopy` |
-| [Windows](modules/windows.md) | Every open window as one entry on a strip — a taskbar. | `wlr-foreign-toplevel-management` |
+| [Windows](modules/windows.md) | Every open window as one entry on a strip — a taskbar, or a dock with pinned apps. | `wlr-foreign-toplevel-management` |
 | [Workspaces](modules/workspaces.md) | Which workspaces the bar shows, and what each pill says. **(Hyprland only)** | `ext-workspace` |
 
 ## Surfaces — where the shell draws
@@ -84,8 +84,10 @@ not repeated here.
 | [Dynamic scheme](theming/dynamic-scheme.md) | A palette derived from the current wallpaper, in OkLCH, with a contrast pass over the result. | — |
 | [Theme export](theming/export.md) | Writing the palette out so the rest of the desktop matches it. | — |
 | [Palettes](theming/palettes.md) | Twelve built-in schemes, light/dark modes, and your own colours on top. | — |
-| [Shape and motion](theming/shape.md) | Bar shape, screen corners, and how much the shell animates. | — |
+| [Theme presets](theming/presets.md) | A whole `[theme]` kept under a name, and put back with one click. | — |
+| [Shape and motion](theming/shape.md) | Bar shape, screen corners, and how much the shell animates. | `xdg-desktop-portal` |
 | [Design tokens](theming/tokens.md) | The unstable surface underneath `[theme]`, for when a key does not exist yet. | — |
+| [Typography and icons](theming/typography-and-icons.md) | A weight for each kind of text, the icon theme applications are drawn from, and one shape for every app icon. | — |
 
 ## Customization — arranging the shell, and extending it
 
