@@ -609,7 +609,7 @@ pub enum AreaKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<Anchor>,
     },
-    /// A box one instance, its `owner`, opens and closes: the panel that instance opens, arranged by the user, beside the owner or, for an owner in a bar, along the bar's whole length. It holds cell groups like a grid and is sized in cells, so a widget fits it exactly. It reserves nothing, so a workspace rule may add one, and the lock layer has none, since it opens nothing. Read and checked, but not drawn yet: until it is, a press on the owner does what it does without one.
+    /// A box one instance, its `owner`, opens and closes: the panel that instance opens, arranged by the user, beside the owner or, for an owner in a bar, along the bar's whole length. It holds cell groups like a grid and is sized in cells, so a widget fits it exactly. It reserves nothing, so a workspace rule may add one, and the lock layer has none, since it opens nothing. A press on the owner opens it where nothing is bound to the press, and it closes as a drawer does: the owner pressed again, Esc, a press outside it, or any window opening.
     Panel {
         /// The id of the instance that opens it: one on the same layer of the same output, not itself inside a panel, and opening no other panel. Required.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -950,6 +950,10 @@ impl Corners {
     pub fn largest(self) -> f32 {
         self.0.into_iter().fold(0.0, f32::max)
     }
+
+    pub fn to_array(self) -> [f32; 4] {
+        self.0
+    }
 }
 
 impl From<Corners> for telar::BorderRadius {
@@ -1027,6 +1031,10 @@ impl Sides {
 
     pub fn largest(self) -> f32 {
         self.0.into_iter().fold(0.0, f32::max)
+    }
+
+    pub fn to_array(self) -> [f32; 4] {
+        self.0
     }
 }
 

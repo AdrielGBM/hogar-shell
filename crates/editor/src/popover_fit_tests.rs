@@ -8,7 +8,7 @@ mod tests {
     };
 
     use config::theme::NordTheme;
-    use layout::{Area, AreaId, Expr, GroupId, LayerKind, Layout, OutputMatch, OutputRule, Unset};
+    use layout::{Area, AreaId, Expr, LayerKind, Layout, OutputMatch, OutputRule};
     use surfaces::rects::{self, Node};
     use surfaces::transient;
 
@@ -164,7 +164,7 @@ mod tests {
         layout.outputs.push(screen);
     }
 
-    /// The bar's popover is taller than a card may be, so it scrolls: its last row is not where the card ends before the wheel turns, a press on the end group's Remove lands once it has, and the card never leaves the screen.
+    /// The bar's popover is taller than a card may be, so it scrolls: its last row is not where the card ends before the wheel turns, a press on the bar's own Remove at its foot lands once it has, and the card never leaves the screen.
     #[test]
     fn the_last_row_of_a_tall_popover_is_scrolled_to_and_pressed() {
         let rig = rig_with("fit-scroll", inheriting_a_repeat);
@@ -185,7 +185,7 @@ mod tests {
             card.height <= SCREEN_HEIGHT * 0.7 + 1.0,
             "and no taller than it may be: {card:?}"
         );
-        let remove = screen.where_is("Remove");
+        let remove = screen.where_is("Remove bar-top");
         assert!(
             !inside(remove, card),
             "the row is past the card's end until it is scrolled to: {remove:?} in {card:?}"
@@ -195,7 +195,7 @@ mod tests {
         for _ in 0..40 {
             screen.wheel(over_rows, 100.0);
         }
-        let remove = screen.where_is("Remove");
+        let remove = screen.where_is("Remove bar-top");
         assert!(
             inside(remove, card),
             "scrolled to the end, it is in the card: {remove:?} in {card:?}"
@@ -204,21 +204,17 @@ mod tests {
             remove.x + remove.width / 2.0,
             remove.y + remove.height / 2.0,
         ));
-        transient::close(popover::ID);
-        let store = rig.store.borrow();
-        let end = store.active().outputs[1]
-            .layers
-            .top
-            .areas
-            .iter()
-            .find(|area| area.id.as_str() == "bar-top")
-            .and_then(|area| {
-                area.groups
-                    .iter()
-                    .find(|group| group.id == GroupId::new("end"))
-            })
-            .expect("a partial entry for the group");
-        assert_eq!(end.unset, [Unset::Repeat], "the press reached Remove");
+        assert_eq!(
+            rig.undo_label().as_deref(),
+            Some("Remove bar-top"),
+            "the press reached Remove"
+        );
+        assert!(
+            surfaces::reconcile::desktops()[0]
+                .resolved
+                .area(LayerKind::Top, &AreaId::new("bar-top"))
+                .is_none()
+        );
     }
 
     /// Keyboard focus moving down the rows takes the view along, so the row it lands on is never behind the card's clip.

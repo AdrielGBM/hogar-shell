@@ -11,7 +11,7 @@ use telar::{
 };
 
 use config::theme::NordTheme;
-use layout::{AreaId, Arrange, GroupId, InstanceId, LayerKind, ResolvedArea, ResolvedAreaKind};
+use layout::{AreaId, GroupId, InstanceId, LayerKind, ResolvedArea, ResolvedAreaKind};
 use surfaces::reconcile;
 use surfaces::rects::{self, Node, Part};
 use ui::descriptor::Built;
@@ -173,8 +173,7 @@ fn landing_tag(grids: &[(Geometry, ResolvedArea)], onto: &AreaId, landing: &Land
                 .filter(|(geometry, _)| geometry.area == *onto)
                 .flat_map(|(_, area)| &area.groups)
                 .find(|held| held.id == *group)
-                .and_then(|held| held.arrange)
-                .is_some_and(|arrange| arrange != Arrange::Pages);
+                .is_some_and(surfaces::container::arranges);
             match contained {
                 true => telar::t!("editor.pointer.into"),
                 false => telar::t!("editor.pointer.stack"),

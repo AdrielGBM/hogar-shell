@@ -214,7 +214,7 @@ A rectangle placed by hand.
 
 ## `AreaKind::Panel`
 
-A box one instance, its `owner`, opens and closes: the panel that instance opens, arranged by the user, beside the owner or, for an owner in a bar, along the bar's whole length. It holds cell groups like a grid and is sized in cells, so a widget fits it exactly. It reserves nothing, so a workspace rule may add one, and the lock layer has none, since it opens nothing. Read and checked, but not drawn yet: until it is, a press on the owner does what it does without one.
+A box one instance, its `owner`, opens and closes: the panel that instance opens, arranged by the user, beside the owner or, for an owner in a bar, along the bar's whole length. It holds cell groups like a grid and is sized in cells, so a widget fits it exactly. It reserves nothing, so a workspace rule may add one, and the lock layer has none, since it opens nothing. A press on the owner opens it where nothing is bound to the press, and it closes as a drawer does: the owner pressed again, Esc, a press outside it, or any window opening.
 
 | Key | What it is |
 | --- | --- |

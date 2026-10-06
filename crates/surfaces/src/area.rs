@@ -13,14 +13,14 @@ use std::time::SystemTime;
 
 use telar::{
     AlignItems, BlendMode, ChildSlot, Clip, ClippedItem, Color, ConsumedKeys, Container, Gradient,
-    Image, ImageData, ImageSlice, Insets, Key, LayoutError, LayoutItem, LayoutStyle, ObjectFit,
-    Paint, Point, Raster, ReactiveList, RectStyle, Role, RwSignal, SizeDimension, StyledContainer,
-    TemplateTrack, box_item, motion::Animated, signal,
+    Image, ImageData, ImageSlice, Insets, Key, LayoutError, LayoutItem, LayoutStyle, Memo,
+    ObjectFit, Paint, Point, Raster, ReactiveList, RectStyle, Role, RwSignal, SizeDimension,
+    StyledContainer, TemplateTrack, Text, box_item, motion::Animated, signal,
 };
 
 use crate::actions::{Bound, EmptySpace, NOTCH};
 use crate::container;
-use crate::expressions::{Expressions, Overlay, Repeat};
+use crate::expressions::{self, Expressions, Overlay, Repeat};
 use crate::layer_window::{
     AreaContext, Areas, Blur, Building, LayerWindowContext, Reserved, WindowAreas, blur_of,
     build_window_areas,
@@ -28,7 +28,7 @@ use crate::layer_window::{
 use crate::look::{self, Look, Rest};
 use crate::reconcile::Desktop;
 use crate::rects;
-use config::theme::NordTheme;
+use config::theme::{FontRole, NordTheme};
 use config::{Align, Config, Edge};
 use layout::{
     Anchor, AreaId, Blend, Fit, GroupId, GroupKind, InstanceId as PlacedId, LayerKind,
@@ -180,6 +180,7 @@ fn drawn(area: &ResolvedArea, surround: Surround) -> Option<Built> {
         ResolvedAreaKind::Stack { .. } => STACK
             .with(|stack| stack.get())
             .map(|build| build(area, surround)),
+        // A panel is drawn where its owner opens it, not where it is written: see `crate::panel`.
         _ => None,
     }?;
     if let Ok(node) = &built {
@@ -321,6 +322,34 @@ pub fn grid(
     )))
 }
 
+/// A panel's groups on its own `cols` × `rows` cells, each placed as a grid places it.
+pub(crate) fn panel_cells(area: &ResolvedArea, surround: Surround) -> Built {
+    let ResolvedAreaKind::Panel {
+        cols,
+        rows,
+        cell,
+        gap,
+        ..
+    } = area.kind
+    else {
+        return Err(LayoutError::Engine(format!("'{}' is no panel", area.id)));
+    };
+    let live = signal(area.clone());
+    let placed = area
+        .groups
+        .iter()
+        .map(|group| cell_group(area, group, (cell, gap), live, surround))
+        .collect::<Result<Vec<_>, LayoutError>>()?;
+    let room = Footprint {
+        columns: cell_span(cols),
+        rows: cell_span(rows),
+    };
+    Ok(Box::new(Container::new(
+        tracks(room.holding(covered(area)), cell, gap),
+        placed,
+    )?))
+}
+
 /// Which grid a live placement is of: the output, the window it is drawn in, the layer it is written on and its id.
 type GridKey = (Option<String>, LayerKind, LayerKind, AreaId);
 
@@ -395,20 +424,47 @@ pub fn move_cells(
     !alive.is_empty()
 }
 
-/// Whether `now` is `was` with its groups on other cells and nothing else changed: the same grid holding the same groups, in the same order, with the same instances. A grid changed that way keeps its nodes and slides them ([`move_cells`]) rather than being built again.
+/// Whether `now` is `was` with its groups on other cells and its containers rearranged, and nothing else changed: the same grid holding the same groups, in the same order, with the same instances outside its containers. A container may take another span, arrangement or gap, and its children other places, another order, or be added or taken out, as long as each child it keeps is otherwise as it was. A grid changed that way keeps its nodes and slides them ([`move_cells`]) rather than being built again.
 pub fn moves_only(was: &ResolvedArea, now: &ResolvedArea) -> bool {
     if !matches!(now.kind, ResolvedAreaKind::Grid { .. }) || was.groups.len() != now.groups.len() {
         return false;
     }
     let mut placed_as_before = now.clone();
     for (group, before) in placed_as_before.groups.iter_mut().zip(&was.groups) {
-        // A container's span is what its children share out, so a new span builds them again at their new shares.
-        if container::arranges(group) && cells_of(group) != cells_of(before) {
-            return false;
+        if keyed(group) && keyed(before) {
+            if !rearranges(before, group) {
+                return false;
+            }
+            group.arrange = before.arrange;
+            group.cols = before.cols;
+            group.rows = before.rows;
+            group.gap = before.gap;
+            group.children.clone_from(&before.children);
         }
         group.kind = before.kind;
     }
     placed_as_before == *was
+}
+
+/// A container whose children are built one by one by instance id, so a change to how it shares its box out keeps them ([`contained`]). Copies of a repeated one are not instances of their own and are built with the group.
+fn keyed(group: &ResolvedGroup) -> bool {
+    container::arranges(group) && group.repeat.is_none()
+}
+
+/// Whether every child `now` holds that `was` held too is as it was but for where it sits.
+fn rearranges(was: &ResolvedGroup, now: &ResolvedGroup) -> bool {
+    now.children.iter().all(|child| {
+        was.children
+            .iter()
+            .find(|held| held.id == child.id)
+            .is_none_or(|held| {
+                *held
+                    == ResolvedInstance {
+                        placement: held.placement,
+                        ..child.clone()
+                    }
+            })
+    })
 }
 /// How many cells a grid `area` placed at `region` has room for: every whole cell that fits inside its padding, never less than one each way.
 fn room_in(area: &ResolvedArea, region: telar::Rect, cell: f32, gap: f32) -> Footprint {
@@ -1220,10 +1276,10 @@ pub(crate) fn copies(
     vec![slot]
 }
 
-/// What a copy draws when building it failed outright, below the error boundary every module is built in: nothing, rather than taking the group with it.
+/// What a child built on its own draws when building it failed outright, below the error boundary every module is built in: nothing, rather than taking the group with it.
 fn or_nothing(built: Built) -> Built {
     built.or_else(|failed| {
-        tracing::warn!("a copy of a repeated group could not be built: {failed}");
+        tracing::warn!("a child of a group could not be built: {failed}");
         Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?))
     })
 }
@@ -1488,14 +1544,16 @@ fn cell_group(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let id = group.id.clone();
     let fallback = group.clone();
-    let follows = move || {
-        live.with(|now| match now.groups.iter().find(|held| held.id == id) {
-            Some(now) => on_cells(now, gap),
-            None => on_cells(&fallback, gap),
-        })
-    };
+    let held = telar::memo(move || {
+        live.with(|now| now.groups.iter().find(|held| held.id == id).cloned())
+            .unwrap_or_else(|| fallback.clone())
+    });
+    if keyed(group) {
+        return contained(area, group, held, (cell, gap), surround);
+    }
+    let follows = move || held.with(|now| on_cells(now, gap));
     let build: BuildPlaced = match container::arranges(group) {
-        true => contained(group, (cell, gap)),
+        true => shared_out(group, (cell, gap)),
         false => Box::new(move |instance, node, surround| {
             place(
                 instance,
@@ -1519,8 +1577,154 @@ fn cell_group(
 
 type BuildPlaced = Box<dyn Fn(&ResolvedInstance, &rects::Node, Surround) -> Built>;
 
-/// Each child of a container in its share of the box the container's cells make, drawn at what fits there and cut to it.
-fn contained(group: &ResolvedGroup, (cell, gap): (f32, f32)) -> BuildPlaced {
+/// A container on its cells: each child in its share of the box they make, drawn at what fits there and cut to it, and an empty one saying so while its layer's edit mode is up. Each child is built once and kept by its instance id through whatever [`moves_only`] lets through, which only lays it out again. One is built again, alone, when what it is told it has changes, since a module sizes what it draws to that.
+fn contained(
+    area: &ResolvedArea,
+    group: &ResolvedGroup,
+    held: Memo<ResolvedGroup>,
+    (cell, gap): (f32, f32),
+    surround: Surround,
+) -> Built {
+    let at = rects::Node::area(surround.output, surround.layer, &area.id);
+    let audience = surround.audience;
+    let shares = telar::memo(move || held.with(|group| Share::all(group, (cell, gap), audience)));
+    let kept = Rc::new(Kept::of(surround));
+    let slide = surround.config.animation.tween_ms(200, 2_000);
+    let (group_id, instance_at) = (group.id.clone(), at.clone());
+    let children = telar::fragment(
+        move || shares.get(),
+        move |share: &Share| {
+            let told = share.told(cell);
+            (
+                share.instance.id.clone(),
+                share.representation.as_str(),
+                told.width.to_bits(),
+                told.height.to_bits(),
+            )
+        },
+        move |share: Share| {
+            let node = instance_at.instance(&group_id, &share.instance.id);
+            let (id, last) = (share.instance.id.clone(), share.rect);
+            let follows = move || {
+                slot_at(shares.with(|now| {
+                    now.iter()
+                        .find(|now| now.instance.id == id)
+                        .map_or(last, |now| now.rect)
+                }))
+            };
+            let built = or_nothing(in_share(
+                &share,
+                &node,
+                cell,
+                kept.surround(),
+                Some(Box::new(follows)),
+            ))?;
+            rects::track(node, built.layout_node());
+            Ok(Box::new(telar::animate_layout(built, slide)) as Box<dyn LayoutItem>)
+        },
+        0.0,
+    );
+    let (output, layer, theme) = (
+        surround.output.map(str::to_string),
+        surround.layer,
+        surround.theme,
+    );
+    let hint = telar::fragment(
+        move || {
+            let shown =
+                shares.with(Vec::is_empty) && expressions::is_edited(output.as_deref(), layer);
+            shown.then_some(()).into_iter().collect()
+        },
+        |_: &()| (),
+        move |()| empty_hint(theme),
+        0.0,
+    );
+    let follows = move || held.with(|now| on_cells(now, gap));
+    let node = group_box(
+        on_cells(group, gap),
+        vec![children, hint],
+        plate_of(group, surround.theme),
+        Some(Box::new(follows)),
+    )?;
+    rects::track(at.group(&group.id), node.layout_node());
+    Ok(node)
+}
+
+fn empty_hint(theme: NordTheme) -> Built {
+    let text = Text::new(
+        || telar::t!("container.empty"),
+        LayoutStyle::new(),
+        move || theme.text_style(FontRole::Caption, theme.subtle),
+    )?;
+    Ok(Box::new(Container::new(
+        LayoutStyle::new()
+            .absolute()
+            .inset_start(0.0)
+            .inset_top(0.0)
+            .width(SizeDimension::Percent(1.0))
+            .height(SizeDimension::Percent(1.0))
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .justify_content(telar::JustifyContent::CENTER),
+        vec![box_item(text)],
+    )?))
+}
+
+/// One child of a container in its share of the container's box, at the representation that fits there.
+#[derive(Clone, PartialEq)]
+struct Share {
+    instance: ResolvedInstance,
+    representation: Placed,
+    rect: telar::Rect,
+}
+
+impl Share {
+    fn of(
+        instance: &ResolvedInstance,
+        rect: telar::Rect,
+        grid: (f32, f32),
+        audience: Audience,
+    ) -> Self {
+        let room = Size {
+            width: rect.width,
+            height: rect.height,
+        };
+        Self {
+            instance: instance.clone(),
+            representation: container::fitted(&instance.module, room, grid, audience),
+            rect,
+        }
+    }
+
+    fn all(group: &ResolvedGroup, (cell, gap): (f32, f32), audience: Audience) -> Vec<Self> {
+        let size = cells_of(group).extent(cell, gap);
+        group
+            .children
+            .iter()
+            .zip(container::shares(
+                group,
+                size,
+                container::gap_of(group, false),
+            ))
+            .map(|(instance, rect)| Self::of(instance, rect, (cell, gap), audience))
+            .collect()
+    }
+
+    /// The box the child is told it has: its whole share, or as much of it as a chip takes.
+    fn told(&self, cell: f32) -> Size {
+        let room = Size {
+            width: self.rect.width,
+            height: self.rect.height,
+        };
+        match self.representation {
+            Placed::Chip => container::chip_extent(room, cell),
+            _ => room,
+        }
+    }
+}
+
+/// Each child of a repeated container in its share of the box the container's cells make, built with the group.
+fn shared_out(group: &ResolvedGroup, (cell, gap): (f32, f32)) -> BuildPlaced {
     let size = cells_of(group).extent(cell, gap);
     let shares: HashMap<PlacedId, telar::Rect> = group
         .children
@@ -1534,47 +1738,37 @@ fn contained(group: &ResolvedGroup, (cell, gap): (f32, f32)) -> BuildPlaced {
         .collect();
     let whole = telar::Rect::new(0.0, 0.0, size.width, size.height);
     Box::new(move |instance, node, surround| {
-        let share = shares.get(&instance.id).copied().unwrap_or(whole);
-        shared(instance, node, share, (cell, gap), surround)
+        let rect = shares.get(&instance.id).copied().unwrap_or(whole);
+        let share = Share::of(instance, rect, (cell, gap), surround.audience);
+        in_share(&share, node, cell, surround, None)
     })
 }
 
-fn shared(
-    instance: &ResolvedInstance,
+/// `share`'s child in a slot at its share, kept there by `follows` where the share moves, and cut to it.
+fn in_share(
+    share: &Share,
     node: &rects::Node,
-    share: telar::Rect,
-    (cell, gap): (f32, f32),
+    cell: f32,
     surround: Surround,
+    follows: Option<Box<dyn Fn() -> LayoutStyle>>,
 ) -> Built {
-    let room = Size {
-        width: share.width,
-        height: share.height,
-    };
-    let representation = container::fitted(&instance.module, room, (cell, gap), surround.audience);
     let drawn = ResolvedInstance {
-        representation,
-        ..instance.clone()
+        representation: share.representation,
+        ..share.instance.clone()
     };
-    let child = match representation {
-        Placed::Chip => place(
-            &drawn,
-            node,
-            container::chip_extent(room, cell),
-            None,
-            LayoutStyle::new(),
-            surround,
-        )?,
-        _ => place(&drawn, node, room, None, fill(), surround)?,
+    let style = match share.representation {
+        Placed::Chip => LayoutStyle::new(),
+        _ => fill(),
     };
-    let slot = Container::new(
-        pixels(share)
-            .flex_row()
-            .align_items(AlignItems::CENTER)
-            .justify_content(telar::JustifyContent::CENTER),
-        vec![child],
-    )?;
+    let child = place(&drawn, node, share.told(cell), None, style, surround)?;
+    let slot = Container::new(slot_at(share.rect), vec![child])?;
+    let slot = match follows {
+        Some(follows) => slot.styled_by(follows),
+        None => slot,
+    };
     // A styled child cuts its own content to its plate, so the share only has to stop short of the plate's shadow.
-    let shadow = instance
+    let shadow = share
+        .instance
         .style
         .shadow
         .and_then(ui::scale::elevation::shadow)
@@ -1583,6 +1777,13 @@ fn shared(
         Box::new(slot),
         Clip::both().inset(-shadow),
     )))
+}
+
+fn slot_at(share: telar::Rect) -> LayoutStyle {
+    pixels(share)
+        .flex_row()
+        .align_items(AlignItems::CENTER)
+        .justify_content(telar::JustifyContent::CENTER)
 }
 
 /// One group's share of a dock: an equal part of the strip's length, across the whole of its thickness, its instances packed towards its own zone.
@@ -1695,7 +1896,8 @@ fn placed(
     )
     .shown_to(surround.audience);
     let gestures = Bound::of(&instance.actions, surround.audience)
-        .with_menu(crate::menu::on(node.clone(), surround.audience));
+        .with_menu(crate::menu::on(node.clone(), surround.audience))
+        .owning(node.clone());
     let plate = Look::of_instance(
         &instance.style,
         bound,

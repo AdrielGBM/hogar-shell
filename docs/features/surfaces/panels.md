@@ -41,6 +41,28 @@ A panel is toggled by module id from three places and only a press has a chip in
 options apply is fixed: a press takes the pressed chip's instance, and IPC or a keybind the module's first
 instance on the focused screen, then on any screen, then `[modules.<id>]` alone.
 
+## A panel the layout arranges
+
+A layout can give one instance a `panel` area of its own, sized in cells and holding widgets like a grid (see
+[Layouts](../customization/layouts.md)). Pressing that instance — or pulling its chip away from the bar — opens the
+layout's panel instead of the module's, unless the layout binds an action to the press. It opens beside its owner,
+or along the whole length of its owner's bar with `along`, and is drawn in the owner's window as a drawer is.
+
+The panel is drawn from its own `style`, over the theme's surface where the style says nothing:
+
+- `visible` is honoured as it is on any area. A panel whose `visible` reads false does not open, and one that is open
+  closes when it turns false. In the edit mode of its layer it opens anyway, drawn dim so it can be selected, and
+  leaving the mode closes it again if the expression still hides it.
+- `backdrop = "blur"` asks the compositor to blur behind the panel's box through `ext-background-effect-v1`, together
+  with whatever the window's areas ask for, and takes it back when the panel goes. The protocol takes rectangles, so
+  the blur runs past the rounded corners; without the protocol the panel stays translucent and unblurred, as an area
+  does. On the background layer the shell blurs what its own surface drew under the panel instead.
+- What the panel holds is cut to its `radius`, never rounder than half its short side.
+- While the panel slides in or out, the travel is cut to the box it ends in, so nothing is repainted outside it; once
+  it has settled nothing is cut that was not before. Drawers are cut the same way.
+
+`panel list` names it as `<instance>@<output>` (`<instance>@` where the layout has a single, unnamed output), and `hogar-shell panel close <instance>@<output>` closes it.
+
 ## Configuring
 
 `[panels]` — `drag_threshold`.
@@ -72,7 +94,8 @@ per-panel namespaces reaches now.
 
 ## What closes one
 
-Pressing the chip again, `hogar-shell panel close <module>`, and — for a drawer — a press outside it.
+Pressing the chip again, `hogar-shell panel close <module>`, and — for a drawer — a press outside it. A layout's
+panel closes on everything that closes a drawer, and on Esc once a press inside it has given it the keyboard.
 
 **A drawer is also closed by any window opening**: the [launcher](launcher.md), a float, the
 [notification centre](notification-centre.md). A drawer is a glance, and while it is up its window's input
@@ -93,7 +116,8 @@ you opened the picker to photograph.
 
 A panel that has never been opened does not exist. What the *layout* describes — bars, the wallpaper, desktop
 widgets — is reconciled on every reload; what the *user* opened is tracked separately, which is what keeps a
-reload from closing what you had open.
+reload from closing what you had open. A layout's panel stays open across a reload for as long as the layout still
+gives its owner one, and follows what the reload changed about it.
 
 ## Related
 

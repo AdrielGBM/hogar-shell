@@ -78,6 +78,11 @@ pub(crate) fn applies_to(node: &Node) -> bool {
     mode::current().is_some_and(|mode| node.output.as_deref() == Some(mode.output.as_str()))
 }
 
+/// Where an edit of what `node` names made now lands: [`editing`] where the variant [`applies_to`] it, every workspace anywhere else.
+pub(crate) fn editing_for(node: &Node) -> Option<WorkspaceMatch> {
+    applies_to(node).then(editing).flatten()
+}
+
 fn refusal(layer: LayerKind) -> Option<String> {
     match layer {
         LayerKind::Background | LayerKind::Desktop | LayerKind::Overlay => None,

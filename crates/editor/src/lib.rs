@@ -19,5 +19,6 @@ pub fn install() {
         host::add_tool(layer, select::tool);
     }
     modes::install();
+    tools::install();
     theme::install();
 }

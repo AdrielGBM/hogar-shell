@@ -643,3 +643,400 @@ mod built {
         }
     }
 }
+
+#[cfg(test)]
+mod kept {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use config::Config;
+    use layout::{
+        Anchor, AreaId, Arrange, GroupId, GroupKind, InstanceId, LayerKind, Placement, Rect,
+        Representation as Placed, ResolvedArea, ResolvedAreaKind, ResolvedGroup, ResolvedInstance,
+        Sides, Style,
+    };
+    use platform_wayland::Layer;
+    use telar::{
+        Color, ComponentList, Container, DrawCommand, LayoutItem, LayoutStyle, RectStyle,
+        StyledContainer, reset_layout_runtime, set_theme, signal,
+    };
+    use ui::descriptor::{Built, Category, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::host::{Audience, Host, WidgetSize};
+    use ui::layout::fill;
+
+    use crate::area::Surround;
+    use crate::expressions::set_edited;
+    use crate::layer_window::{Demands, LayerWindowContext, Reserved};
+    use crate::rects;
+
+    const SCREEN: &str = "SCREEN-1";
+    const PAGE: (u32, u32) = (1000, 400);
+    /// Four 80 px cells 16 px apart across and two down, at the grid's top left corner.
+    const BOX: telar::Rect = telar::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 368.0,
+        height: 176.0,
+    };
+
+    thread_local! {
+        static BUILT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// A widget that fills its share in a colour of its own, so two of them swapped draw something else.
+    fn swatch(host: &Host) -> Built {
+        BUILT.with(|built| built.borrow_mut().push(host.instance.as_str().to_string()));
+        let tint = match host.instance.as_str() {
+            "a" => Color::rgb(1.0, 0.0, 0.0),
+            "b" => Color::rgb(0.0, 0.0, 1.0),
+            _ => Color::rgb(0.0, 1.0, 0.0),
+        };
+        Ok(Box::new(StyledContainer::new(
+            fill(),
+            move |_| RectStyle::filled(tint, 0.0),
+            Vec::new(),
+        )?))
+    }
+
+    static SWATCHES: &[ModuleDescriptor] = &[ModuleDescriptor {
+        id: "swatch",
+        name: "swatch",
+        icon: "circle",
+        category: Category::Info,
+        options: &[],
+        representations: Representations {
+            chip: None,
+            widget: Some(WidgetDef {
+                sizes: &WidgetSize::ALL,
+                build: swatch,
+                input: Input::ReadOnly,
+            }),
+            card: None,
+            panel: None,
+            popout: None,
+        },
+        actions: &[],
+        sources: &[],
+    }];
+
+    fn child(id: &str, placement: Placement) -> ResolvedInstance {
+        ResolvedInstance {
+            id: InstanceId::new(id),
+            module: "swatch".to_string(),
+            representation: Placed::WidgetM,
+            options: toml::Table::new(),
+            bindings: BTreeMap::new(),
+            style: Style::default(),
+            placement: Some(placement),
+            actions: BTreeMap::new(),
+        }
+    }
+
+    fn container(arrange: Arrange, children: Vec<ResolvedInstance>) -> ResolvedGroup {
+        ResolvedGroup {
+            id: GroupId::new("box"),
+            kind: GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 4,
+                row_span: 2,
+            },
+            arrange: Some(arrange),
+            cols: Arrange::TRACKS,
+            rows: Arrange::TRACKS,
+            gap: Some(8.0),
+            repeat: None,
+            komponent: None,
+            style: Style {
+                padding: Some(Sides::all(0.0)),
+                ..Style::default()
+            },
+            children,
+        }
+    }
+
+    /// A loose widget well clear of the container, which nothing done to the container may repaint.
+    fn beside() -> ResolvedGroup {
+        ResolvedGroup {
+            id: GroupId::new("beside"),
+            kind: GroupKind::Cell {
+                col: 6,
+                row: 0,
+                col_span: 2,
+                row_span: 2,
+            },
+            arrange: None,
+            children: vec![ResolvedInstance {
+                representation: Placed::WidgetS,
+                placement: None,
+                ..child("c", Placement::Weight(1.0))
+            }],
+            ..container(Arrange::Row, Vec::new())
+        }
+    }
+
+    fn grid(container: ResolvedGroup) -> ResolvedArea {
+        ResolvedArea {
+            id: AreaId::new("widgets"),
+            kind: ResolvedAreaKind::Grid {
+                rect: Rect::default(),
+                cell: 80.0,
+                gap: 16.0,
+                anchor: Anchor::TopLeft,
+            },
+            reserve: false,
+            above_fullscreen: false,
+            within: layout::Within::Output,
+            style: Style::default(),
+            visible: None,
+            actions: Default::default(),
+            groups: vec![container, beside()],
+        }
+    }
+
+    /// `area` built into a desktop window of [`SCREEN`], as the window builds it, and laid out on a page that size.
+    struct Window {
+        tree: ComponentList,
+        _scope: telar::OwnerGuard,
+    }
+
+    impl Window {
+        fn of(area: &ResolvedArea) -> Self {
+            reset_layout_runtime();
+            let mut config = Config::starter();
+            config.animation.enabled = false;
+            let config = Arc::new(config);
+            set_theme(config.resolve_theme());
+            ui::descriptor::install(SWATCHES);
+            BUILT.with(|built| built.borrow_mut().clear());
+            let scope = telar::owner_scope();
+            telar::set_context(LayerWindowContext {
+                layer: LayerKind::Desktop,
+                output: Some(SCREEN.to_string()),
+                demands: Rc::new(Demands::new(Layer::Bottom)),
+                mapped: signal(true).read_only(),
+            });
+            let page = (PAGE.0 as f32, PAGE.1 as f32);
+            let surround = Surround {
+                config: &config,
+                theme: config.resolve_theme(),
+                output: Some(SCREEN),
+                layer: LayerKind::Desktop,
+                bounds: telar::Rect::new(0.0, 0.0, page.0, page.1),
+                reserved: Reserved::default(),
+                audience: Audience::Owner,
+            };
+            let ResolvedAreaKind::Grid {
+                rect,
+                cell,
+                gap,
+                anchor,
+            } = area.kind
+            else {
+                unreachable!("every area here is a grid");
+            };
+            let built = crate::area::grid(area, rect, cell, gap, anchor, surround)
+                .expect("the grid builds");
+            let root = Container::new(LayoutStyle::new().width(page.0).height(page.1), vec![built])
+                .expect("a page");
+            let node = root.layout_node();
+            let tree = telar::testing::mount(root, PAGE.0, PAGE.1);
+            telar::compute_layout(
+                node,
+                telar::AvailableSpace::Definite(page.0),
+                telar::AvailableSpace::Definite(page.1),
+            )
+            .expect("a laid out page");
+            Self {
+                tree,
+                _scope: scope,
+            }
+        }
+
+        fn frame(&self) -> Vec<DrawCommand> {
+            telar::relayout_if_dirty();
+            self.tree.commands().to_vec()
+        }
+
+        fn shows(&self, text: &str) -> bool {
+            telar::relayout_if_dirty();
+            telar::testing::find_text(&self.tree, text)
+        }
+    }
+
+    /// What the window does with a layout edit to `area`: keeps its nodes and moves them where it can, which every change here has to be.
+    fn edit(was: &ResolvedArea, now: &ResolvedArea) {
+        assert!(crate::area::moves_only(was, now), "kept, not rebuilt");
+        assert!(crate::area::move_cells(
+            Some(SCREEN),
+            LayerKind::Desktop,
+            LayerKind::Desktop,
+            now
+        ));
+    }
+
+    fn built() -> Vec<String> {
+        BUILT.with(|built| built.borrow().clone())
+    }
+
+    fn at(id: &str) -> telar::Rect {
+        let node = rects::Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("widgets"))
+            .instance(&GroupId::new("box"), &InstanceId::new(id));
+        rects::rect(&node).expect("the child is placed")
+    }
+
+    fn inside(rect: &telar::Rect, of: telar::Rect) -> bool {
+        rect.x >= of.x
+            && rect.y >= of.y
+            && rect.x + rect.width <= of.x + of.width
+            && rect.y + rect.height <= of.y + of.height
+    }
+
+    #[test]
+    fn reordering_two_children_keeps_both_and_repaints_only_the_container() {
+        let was = grid(container(
+            Arrange::Row,
+            vec![
+                child("a", Placement::Weight(1.0)),
+                child("b", Placement::Weight(1.0)),
+            ],
+        ));
+        let window = Window::of(&was);
+        let before = window.frame();
+        let (a, b) = (at("a"), at("b"));
+        assert!(a.x < b.x, "a first");
+        let builds = built();
+        assert_eq!(
+            builds.len(),
+            3,
+            "each child and the widget beside: {builds:?}"
+        );
+
+        let mut now = was.clone();
+        now.groups[0].children.reverse();
+        edit(&was, &now);
+        let after = window.frame();
+
+        assert_eq!(
+            built(),
+            builds,
+            "neither child nor anything beside is built again"
+        );
+        assert_eq!(
+            (at("a"), at("b")),
+            (b, a),
+            "each is laid out at the other's share"
+        );
+        let damaged =
+            telar::testing::damage(&after, &before).expect("a change the container bounds");
+        assert!(
+            damaged
+                .iter()
+                .any(|rect| rect.width > 0.0 && rect.height > 0.0),
+            "the swap is repainted: {damaged:?}"
+        );
+        assert!(
+            damaged.iter().all(|rect| inside(rect, BOX)),
+            "and nothing outside the container is: {damaged:?}"
+        );
+    }
+
+    #[test]
+    fn moving_a_child_lays_it_out_again_and_resizing_one_builds_that_one_alone() {
+        let free = |a: Rect| {
+            grid(container(
+                Arrange::Free,
+                vec![
+                    child("a", Placement::Rect(a)),
+                    child(
+                        "b",
+                        Placement::Rect(Rect {
+                            x: 0.5,
+                            y: 0.5,
+                            w: 0.5,
+                            h: 0.5,
+                        }),
+                    ),
+                ],
+            ))
+        };
+        let was = free(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.5,
+            h: 0.5,
+        });
+        let window = Window::of(&was);
+        window.frame();
+        let (a, b) = (at("a"), at("b"));
+        let builds = built();
+
+        let moved = free(Rect {
+            x: 0.5,
+            y: 0.0,
+            w: 0.5,
+            h: 0.5,
+        });
+        edit(&was, &moved);
+        window.frame();
+        assert_eq!(built(), builds, "a move builds nothing");
+        assert_eq!(
+            at("a"),
+            telar::Rect::new(BOX.width / 2.0, 0.0, a.width, a.height)
+        );
+        assert_eq!(at("b"), b);
+
+        let resized = free(Rect {
+            x: 0.5,
+            y: 0.0,
+            w: 0.25,
+            h: 0.5,
+        });
+        edit(&moved, &resized);
+        window.frame();
+        let mut expected = builds.clone();
+        expected.push("a".to_string());
+        assert_eq!(
+            built(),
+            expected,
+            "a child told another size is built again, alone"
+        );
+        assert_eq!(at("a").width, BOX.width / 4.0);
+        assert_eq!(at("b"), b);
+    }
+
+    #[test]
+    fn an_empty_container_says_so_only_while_its_layers_edit_mode_is_up() {
+        let empty = grid(container(Arrange::Row, Vec::new()));
+        let hint = telar::t!("container.empty");
+        let window = Window::of(&empty);
+        assert!(!window.shows(&hint), "not outside edit mode");
+
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Top)));
+        assert!(!window.shows(&hint), "nor in another layer's");
+
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Desktop)));
+        assert!(window.shows(&hint), "but in its own");
+        let drawn = telar::testing::rect_of(&window.tree, &hint).expect("drawn");
+        assert!(inside(&drawn, BOX), "inside the container: {drawn:?}");
+
+        let filled = grid(container(
+            Arrange::Row,
+            vec![child("a", Placement::Weight(1.0))],
+        ));
+        edit(&empty, &filled);
+        assert!(
+            !window.shows(&hint),
+            "a container that holds something says nothing"
+        );
+        assert_eq!(at("a"), BOX, "and what it holds takes the whole box");
+
+        edit(&filled, &empty);
+        assert!(window.shows(&hint), "until it is empty again");
+
+        set_edited(None);
+        assert!(!window.shows(&hint), "and the edit mode closing hides it");
+    }
+}

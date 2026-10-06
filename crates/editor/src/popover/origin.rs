@@ -100,6 +100,10 @@ impl Measure {
         }
     }
 
+    pub(crate) fn screen(&self) -> Option<Rc<Resolved>> {
+        self.screen.get()
+    }
+
     /// Whether what the level `site` names writes is laid over `writer` on the popover's screen ([`layout::lays_over`]).
     pub(crate) fn lays_over(&self, site: &Site, writer: &Origin) -> bool {
         self.lays_over_in(&self.layout(), site, writer)

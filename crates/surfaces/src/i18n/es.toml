@@ -59,3 +59,6 @@ poll = "Comando, ejecutado a intervalos"
 listen = "Comando, en ejecución continua"
 http = "Dirección, consultada a intervalos"
 action = "Línea de acción, ejecutada al hacer su gesto"
+
+[container]
+empty = "Contenedor vacío"

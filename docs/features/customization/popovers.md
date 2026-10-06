@@ -51,25 +51,58 @@ only from its edit mode.
 
 - **An item's** card is generated from its module's options: each option the module declares gets the row that fits its
   type — a number to scrub, a stepper, a toggle, a swatch, a choice — with the option's own documentation as its
-  explanation. It also has **Drawn as** (the size of the representation), the item's
-  [bindings](data-and-rules.md#bindings), **Reset** and **Remove**.
+  explanation. It also has **Drawn as** (the size of the representation, not shown inside a container that arranges its children), the item's
+  [bindings](data-and-rules.md#bindings), its **Look** — fill, corner radius (all four and each corner), opacity, border
+  width and colour, shadow; its accent stays an option of its module — its **Actions**, **Reset options and look**,
+  which takes its options and its style off where the popover writes, and **Remove**. Inside a container that arranges
+  its children a line says its size is the container's to give.
 - **An area's** card has the tools of its kind first — a bar's edge, thickness, length, offset, shape, auto-hide;
   a grid's cell size, gap and anchor; a stack's anchor, width, routes and screens; a region's picture, fit and transition;
   a texture's paint — and then what every area has:
   - **This workspace only**, which writes the change into that workspace's rule instead (see
     [Layouts](layouts.md#output-rules-and-workspace-rules)), except on the top layer;
+  - on a grid, how many cells it has room for on this screen — what its cell, gap, padding and rectangle come to, read
+    only;
   - **Shown while**, an expression that decides whether the area is drawn;
   - for each of its groups, **Repeated over a list** or **Drawn once** — the group's `repeat`;
-  - **Look**: fill (a theme swatch), corner radius, opacity, padding and backdrop;
+  - **Look**: fill, corner radius (all four, then each corner; a bar rounds itself by its shape instead), opacity,
+    padding (all four sides, then each) where the area holds groups (a grid, a panel, a free area, a dock or a bar),
+    border width and colour, shadow (its kind's, none, soft, medium or strong) and backdrop. Where nothing writes a
+    radius or a padding, its row shows the one drawn, marked default, and writes only once you change it: a panel's
+    radius is the theme's beside its owner and square along a bar. A picture or a texture has no border or shadow;
+  - **Actions**, below;
   - **Behaviour**: whether it keeps windows out of its edge, whether it stays above fullscreen windows — with the note that
-    this keeps the screen off direct scanout — and which box it is measured in.
-- **A group that draws a komponent** gets that komponent's parameters, each with the komponent's default shown beside it.
+    this keeps the screen off direct scanout — and which box it is measured in;
+  - **Remove**, on every area but the lock screen's prompt.
+- **A group's** card has its arrangement — a loose run, a column, a row, a grid, free, or **One at a time (Smart Stack)**;
+  a group in a bar's run is a loose run or one at a time — with the inner grid's columns and rows under a grid and the
+  gap between children under any arrangement but one at a time (the plate's own gap, tighter on a bar, until you set
+  one); what it repeats over; the parameters of the komponent it draws, each with the komponent's default shown beside it;
+  its **Look**, as an area's without the backdrop and with padding only while it arranges its children; on a grid, how
+  many columns and rows it covers, moving what it grows over out of its way; and **Remove**. A double-click on a selected
+  group, or Enter on it, opens it.
 - **The theme**, from **Theme…** on an edit mode's strip or in-mode menu, has the palette, accent, base radius, plate opacity
   and text size. It edits `[theme]` in `config.toml` rather than the layout, so it previews on every window, is written
   when it closes and stays out of the undo history — see [Edit modes](edit-modes.md#the-theme).
 
+**Remove** on a card puts back whatever the popover previewed, takes the item away as an entry of its own in the undo
+history, and closes the card.
+
 Where the card goes: beside what it customizes, on the side that item faces, and always inside what the bars leave of the
 screen.
+
+### Actions
+
+An area's and an item's card list what each gesture runs: one row per bound gesture — press, long press, wheel up, wheel
+down, middle and secondary press — with the chain of [commands](../reference/commands.md) it runs, `;` between them,
+and **Add action**, which adds a row for the first gesture nothing binds yet. The row is written only once its chain
+runs something, so a gesture keeps whatever answers it until then, and a chain emptied again takes its binding off here.
+A gesture can be bound once: moving a row to one that is already bound is refused. Every line is checked as `layout set`
+checks it over IPC — a line the shell has no command for is refused, and so is `layout trust …`, since trust is yours to
+give and never a gesture's — and a refused line is said under its row while the chain keeps what it had. A row says where
+its chain comes from, like every other row; **Remove** beside one this level binds takes it off here. On an area the note
+says what its gestures are: **an area receives the gestures that land between its widgets**, never those that land on
+one. Nothing is bound on the lock screen, on the background layer, or on a picture or a texture.
 
 ## One transaction
 
@@ -117,7 +150,7 @@ Handles are points laid over the real item, each the pointer's way to a value th
 - **A bar** — its thickness, where it starts and ends along its edge, how far it floats off the edge, and a handle at
   each corner for its radius.
 - **A texture** — the four cuts of a nine-sliced image, and for a gradient its angle and a handle on each stop.
-- **A widget** — a corner handle that steps its size through S, M and L.
+- **A widget** — a corner handle that steps its size through S, M and L, unless a container arranges it.
 - **A stack** — the nine anchor points of its screen, and its first card, dragged, to pin and offset it.
 
 Every handle has a row for the same value, which is its alternative for a single pointer or a keyboard: you never need
@@ -132,10 +165,13 @@ double-click or Enter — **the one convention every number in the shell uses**:
 | Shift | ×10 |
 | Alt | ×0.1 |
 
-A handle you *drag* follows the pointer instead of stepping, so on a corner handle Alt means something else: it **isolates
-that corner**, leaving the other three where they were, where a plain drag rounds all four together. The popover has a
-row for each corner and one for all four. A corner radius stops at half the area's short side, where two arcs would meet,
-and says it is clamped. Arrow keys on a focused corner handle move that corner alone.
+The four corners (and, with the padding tool, the four sides) are **linked** until you press `u`, which unlinks them —
+and links them again — for the rest of the session. Linked, a corner handle dragged, or stepped by an arrow once it has
+the focus, rounds all four corners together, and Alt held **isolates that corner**, leaving the other three where they
+were; unlinked, each moves only its own. A handle you *drag* follows the pointer instead of stepping, so there Alt only
+isolates; an arrow with Alt both isolates and steps a tenth. The popover has a row for each corner and one for all four.
+A corner radius stops at half the area's short side, where two arcs would meet, and says it is clamped. On a short side,
+such as a slim bar, the handles of its two ends slide apart along their edges so none covers another.
 
 A handle asks the compositor for the matching cursor (`grab`, `ew-resize` …) through `wp-cursor-shape-v1`; without it the
 handles still work and the pointer image just does not change.

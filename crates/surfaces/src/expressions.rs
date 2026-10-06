@@ -63,8 +63,18 @@ pub fn set_edited(edited: Option<Edited>) {
         }
     });
 }
+
+/// Whether the edit mode of `layer` on `output` is up, read reactively.
+pub fn is_edited(output: Option<&str>, layer: LayerKind) -> bool {
+    EDITED.with(|edited| {
+        edited.with(|now| {
+            now.as_ref()
+                .is_some_and(|(on, edited)| on.as_deref() == output && *edited == layer)
+        })
+    })
+}
+
 /// The `visible` expression that reads false for the area `node` is in, if it has one that does; the newest registration answers, since a build that replaces another registers before the old one is dropped.
-/// The newest registration of an area answers, since a build that replaces another registers before the old one is dropped.
 pub fn hidden_by(node: &Node) -> Option<String> {
     HIDDEN.with(|hidden| {
         hidden.with(|hidden| {
@@ -197,14 +207,9 @@ impl Expressions {
                 }
             }
         });
-        let shown = telar::memo(move || {
-            held.get()
-                .is_none_or(|held| !matches!(held.get().value, Some(Value::Bool(false))))
-        });
+        let shown = telar::memo(move || held.get().is_none_or(reads_shown));
         let (output, layer) = (node.output.clone(), node.layer);
-        let editing = telar::memo(move || {
-            EDITED.with(|edited| edited.get()) == Some((output.clone(), layer))
-        });
+        let editing = telar::memo(move || is_edited(output.as_deref(), layer));
         let presence = Presence { shown, editing };
         telar::set_context(AreaShown(telar::memo(move || presence.displayed())));
         let registration = REGISTRATIONS.with(|next| next.replace(next.get() + 1));
@@ -221,6 +226,20 @@ impl Expressions {
             });
         });
         presence
+    }
+
+    /// Whether `expr`, a `visible`, reads true now, for what is asked before the area is built — whether a panel may open. One that does not check, or has not answered yet, reads true, as [`Expressions::visible`] draws it.
+    pub fn is_shown_now(&self, expr: &ResolvedExpr) -> bool {
+        telar::Scope::with(|| {
+            let env = self.env();
+            match checked(&env, &expr.expr.0, &Type::Bool) {
+                Ok(compiled) => {
+                    let held = env.bind(compiled, self.gate.clone());
+                    reads_shown(held)
+                }
+                Err(_) => true,
+            }
+        })
     }
 
     /// The list the group `node` names repeats its children over, as it changes; no items while it cannot be read here. Through an evaluation error it keeps its last list. The copies drawn from it are what [`drawn_item`] reads for as long as the current owner lives.
@@ -340,6 +359,11 @@ impl Expressions {
 }
 
 /// `source` checked against `env` to give `ty`, or why it does not yet.
+/// Whether a `visible` held as `held` reads shown: one that has not answered yet does, and only a `false` hides.
+fn reads_shown(held: Memo<Held>) -> bool {
+    !matches!(held.get().value, Some(Value::Bool(false)))
+}
+
 fn checked(env: &Environment, source: &str, ty: &Type) -> Result<Compiled, Unready> {
     env.compile(source)
         .map_err(|errors| Unready::of(env, source, errors))?

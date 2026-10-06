@@ -20,7 +20,8 @@ use telar::{
 use config::theme::NordTheme;
 use config::{Config, Edge, LiveConfig};
 use layout::{
-    AreaId, Backdrop, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedLayer, Within,
+    AreaId, Backdrop, InstanceId, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind,
+    ResolvedLayer, Within,
 };
 use platform_wayland::{
     KeyboardInteractivity, KeyboardMode, Layer, LayerWindowHandle, background_effect_supported,
@@ -236,6 +237,12 @@ impl LayerWindows {
                 .live
                 .iter()
                 .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>(),
+        );
+        crate::panel::prune_owned(
+            &plans
+                .iter()
+                .map(|plan| (plan.output, plan.resolved))
                 .collect::<Vec<_>>(),
         );
         tracing::debug!(
@@ -745,6 +752,8 @@ pub struct Demands {
     sent_keyboard: Cell<KeyboardMode>,
     sent_layer: Cell<Layer>,
     sent_blur: RefCell<Vec<Rect>>,
+    area_blur: RefCell<Vec<Rect>>,
+    held_blur: RefCell<BTreeMap<u64, Rect>>,
 }
 
 impl Demands {
@@ -758,6 +767,8 @@ impl Demands {
             sent_keyboard: Cell::new(KeyboardMode::None),
             sent_layer: Cell::new(home),
             sent_blur: RefCell::new(Vec::new()),
+            area_blur: RefCell::new(Vec::new()),
+            held_blur: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -858,10 +869,36 @@ impl Demands {
         }
     }
 
-    /// Replaces what the areas of this window's layer ask to have blurred behind them, and pushes it only where it differs from what the compositor already has — the protocol's region is double-buffered state, and re-sending the same one is a commit for nothing.
+    /// Replaces what the areas of this window's layer ask to have blurred behind them, and pushes the window's whole region where it differs from what the compositor already has — the protocol's region is double-buffered state, and re-sending the same one is a commit for nothing.
     ///
     /// Rectangles, not rounded rectangles: `ext-background-effect-v1` takes a `wl_region`, so an area's corner radius reaches the paint but not the blur behind it.
     fn set_area_blur(&self, rects: Vec<Rect>) {
+        *self.area_blur.borrow_mut() = rects;
+        self.settle_blur();
+    }
+
+    /// Asks the compositor to blur behind the box `rect` says for as long as the node being built lives: what a transient, which is no area of the layout, asks for. A box with no area asks for nothing.
+    pub fn blur_behind(self: &Rc<Self>, rect: RwSignal<Rect>) {
+        let id = self.token();
+        let demands = Rc::clone(self);
+        effect(move || {
+            let rect = rect.get();
+            match rect.width > 0.0 && rect.height > 0.0 {
+                true => demands.held_blur.borrow_mut().insert(id, rect),
+                false => demands.held_blur.borrow_mut().remove(&id),
+            };
+            demands.settle_blur();
+        });
+        let demands = Rc::clone(self);
+        on_cleanup(move || {
+            demands.held_blur.borrow_mut().remove(&id);
+            demands.settle_blur();
+        });
+    }
+
+    fn settle_blur(&self) {
+        let mut rects = self.area_blur.borrow().clone();
+        rects.extend(self.held_blur.borrow().values().copied());
         if *self.sent_blur.borrow() == rects {
             return;
         }
@@ -1167,17 +1204,22 @@ impl LayerApp {
             let screen = screen.get();
             let theme = seen.theme.unwrap_or_else(|| config.resolve_theme());
             let mut areas = HashMap::with_capacity(drawn.areas.len());
+            let owners = panel_owners(&drawn);
             let list = drawn
                 .areas
                 .iter()
                 .map(|(home, area)| {
                     let at = (*home, area.id.clone());
+                    let around = Around {
+                        screen,
+                        owning: owning(*home, area, &owners),
+                    };
                     let version = match seen.areas.get(&at) {
-                        Some((version, was, placed)) if was == area && *placed == screen => {
+                        Some((version, was, placed)) if was == area && *placed == around => {
                             *version
                         }
                         Some((version, was, placed))
-                            if *placed == screen
+                            if *placed == around
                                 && crate::area::moves_only(was, area)
                                 && crate::area::move_cells(
                                     key.output.as_deref(),
@@ -1193,7 +1235,7 @@ impl LayerApp {
                             seen.next
                         }
                     };
-                    areas.insert(at, (version, area.clone(), screen));
+                    areas.insert(at, (version, area.clone(), around));
                     Drawn {
                         build,
                         version,
@@ -1218,7 +1260,40 @@ struct Seen {
     reconfigured: Option<u64>,
     theme: Option<NordTheme>,
     next: u64,
-    areas: HashMap<(LayerKind, AreaId), (u64, ResolvedArea, Screen)>,
+    areas: HashMap<(LayerKind, AreaId), (u64, ResolvedArea, Around)>,
+}
+
+/// What an area is drawn against beside itself: the screen it is placed on, and which of its instances own a panel.
+#[derive(Clone, Debug, PartialEq)]
+struct Around {
+    screen: Screen,
+    owning: Vec<InstanceId>,
+}
+
+/// Which instances of each layer open a panel the layout gives them.
+fn panel_owners(drawn: &WindowAreas) -> HashSet<(LayerKind, InstanceId)> {
+    drawn
+        .areas
+        .iter()
+        .filter_map(|(home, area)| match &area.kind {
+            ResolvedAreaKind::Panel { owner, .. } => Some((*home, owner.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The instances of `area` that own a panel: a press on one opens it, which is decided when the area is built, so an area whose owners change is built again as if it had.
+fn owning(
+    home: LayerKind,
+    area: &ResolvedArea,
+    owners: &HashSet<(LayerKind, InstanceId)>,
+) -> Vec<InstanceId> {
+    area.groups
+        .iter()
+        .flat_map(|group| &group.children)
+        .filter(|child| owners.contains(&(home, child.id.clone())))
+        .map(|child| child.id.clone())
+        .collect()
 }
 
 /// One area of one build of a window: see [`LayerApp::drawing`].
@@ -3429,3 +3504,7 @@ mod grid_tests {
         assert!(!crate::area::moves_only(&was, &padded));
     }
 }
+
+#[cfg(test)]
+#[path = "panel/owned_tests.rs"]
+mod owned_panel_tests;

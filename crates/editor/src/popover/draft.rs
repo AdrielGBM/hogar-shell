@@ -6,7 +6,7 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -14,8 +14,8 @@ use telar::{LayoutItem, Memo, OwnerId, ReadSignal, Rect, RwSignal, effect, signa
 
 use config::Config;
 use layout::{
-    Area, AreaKind, Expr, Holder, Instance, Layout, LayoutOp, Origin, ResolvedArea,
-    ResolvedInstance, Unset,
+    Action, Area, AreaKind, Expr, Group, GroupId, Holder, Instance, Layout, LayoutOp, Origin,
+    ResolvedArea, ResolvedGroup, ResolvedInstance, Trigger, Unset,
 };
 use surfaces::reconcile::Desktop;
 use surfaces::rects::{self, Node, Part};
@@ -23,6 +23,7 @@ use surfaces::rects::{self, Node, Part};
 use crate::session::Edit;
 use crate::written::{Written, WrittenInstance};
 
+use super::actions::Actions;
 use super::origin::{self, Measure, Provenance};
 use super::value::{self, Path};
 
@@ -31,6 +32,8 @@ type Replay = Rc<dyn Fn(&mut Area)>;
 
 /// Reads one control's value again from the area as drawn, once Reset has taken the key it writes back off.
 type Reseed = Rc<dyn Fn(&ResolvedArea)>;
+
+type Take = Rc<dyn Fn(&mut Area)>;
 
 /// One value the controls of an area share.
 struct Shared<T: 'static> {
@@ -60,10 +63,10 @@ pub struct AreaDraft {
     measure: Measure,
     values: Rc<RefCell<HashMap<&'static str, Box<dyn Any>>>>,
     replays: Rc<RefCell<Vec<Replay>>>,
-    /// What each key Reset takes back reads again, by key.
-    reseeds: Rc<RefCell<Vec<(&'static str, Reseed)>>>,
+    /// What each key Reset takes back reads again, by key: an area's own as the file spells it, a group's under `groups.<id>.`.
+    reseeds: Rc<RefCell<Vec<(String, Reseed)>>>,
     /// The keys Reset has taken back so far, which a change of where the popover writes takes back there too.
-    taken_off: Rc<RefCell<Vec<String>>>,
+    taken_off: Rc<RefCell<Vec<(String, Take)>>>,
     resetting: Resetting,
     /// Moved once a Reset has made its writes, which ends it.
     reset_done: RwSignal<u64>,
@@ -72,7 +75,7 @@ pub struct AreaDraft {
 }
 
 impl AreaDraft {
-    /// A draft of the area `node` names, as `resolved` shows it and `written` writes it, previewing through `edit`.
+    /// A draft of the area `node` names — or of the area holding the group it names — as `resolved` shows it and `written` writes it, previewing through `edit` with whatever `settle` adds.
     pub fn new(
         edit: &Edit,
         node: Node,
@@ -80,16 +83,17 @@ impl AreaDraft {
         config: Arc<Config>,
         screen: (f32, f32),
         written: Written,
+        settle: Option<(Settle, Desktop)>,
     ) -> Self {
         let area = signal(written.area.clone());
         let written = Rc::new(RefCell::new(written));
-        let target = Rc::clone(&written);
+        let (target, settling, previewed) = (Rc::clone(&written), node.clone(), edit.clone());
         previewing(edit, area, move |changed| {
             let written = target.borrow();
-            match *changed == written.area {
-                true => Vec::new(),
-                false => written.ops(changed),
+            if *changed == written.area {
+                return Vec::new();
             }
+            settled(written.ops(changed), settle.as_ref(), &settling, &previewed)
         });
         let entry = telar::memo(move || {
             area.with(|area| {
@@ -162,10 +166,8 @@ impl AreaDraft {
     /// Writes the copy back where `written` says from now on: the copy made again from what that rule writes, with every control that has moved written into it once more.
     fn retarget(&self, written: Written) {
         let mut area = written.area.clone();
-        for key in self.taken_off.borrow().iter() {
-            if let Some(without) = origin::without(&area, key) {
-                area = without;
-            }
+        for (_, take) in self.taken_off.borrow().iter() {
+            take(&mut area);
         }
         for replay in self.replays.borrow().iter() {
             replay(&mut area);
@@ -217,23 +219,37 @@ impl AreaDraft {
 
     /// Takes `keys` off where the popover writes, so they show what they inherit there, and puts every value tied to them ([`AreaDraft::setting`]) where the area now draws it.
     pub fn reset(&self, keys: &[&str]) {
-        for key in keys {
-            update(self.area, |area| {
-                if let Some(without) = origin::without(area, key) {
-                    *area = without;
-                }
-            });
+        let takes = keys
+            .iter()
+            .map(|key| {
+                let key = (*key).to_string();
+                let taking = key.clone();
+                let take: Take = Rc::new(move |area: &mut Area| {
+                    if let Some(without) = origin::without(area, &taking) {
+                        *area = without;
+                    }
+                });
+                (key, take)
+            })
+            .collect();
+        self.take_back(takes);
+    }
+
+    /// Each take is remembered by name, so a change of where the popover writes takes the key back there too.
+    fn take_back(&self, takes: Vec<(String, Take)>) {
+        let names: Vec<String> = takes.iter().map(|(name, _)| name.clone()).collect();
+        for (name, take) in takes {
+            update(self.area, |area| take(area));
             let mut taken_off = self.taken_off.borrow_mut();
-            if !taken_off.iter().any(|taken| taken == key) {
-                taken_off.push((*key).to_string());
-            }
+            taken_off.retain(|(taken, _)| *taken != name);
+            taken_off.push((name, take));
         }
         self.resetting.borrow_mut().get_or_insert_with(Vec::new);
-        self.reseed(keys);
+        self.reseed(&names);
         self.reset_done.update(|count| *count += 1);
     }
 
-    fn reseed(&self, keys: &[&str]) {
+    fn reseed(&self, keys: &[String]) {
         let Some(drawn) = self.drawn() else {
             return;
         };
@@ -345,6 +361,16 @@ impl AreaDraft {
         read: impl Fn(&ResolvedArea) -> T + 'static,
         write: impl Fn(&mut Area, &T) + 'static,
     ) -> RwSignal<T> {
+        self.setting_tied(name, key.to_string(), read, write)
+    }
+
+    fn setting_tied<T: Clone + PartialEq + 'static>(
+        &self,
+        name: &'static str,
+        tied: String,
+        read: impl Fn(&ResolvedArea) -> T + 'static,
+        write: impl Fn(&mut Area, &T) + 'static,
+    ) -> RwSignal<T> {
         if let Some(shared) = self.shared(name) {
             return shared;
         }
@@ -370,7 +396,7 @@ impl AreaDraft {
                 value.set(next);
             }
         });
-        self.reseeds.borrow_mut().push((key, reseed));
+        self.reseeds.borrow_mut().push((tied, reseed));
         value
     }
 
@@ -394,6 +420,159 @@ impl AreaDraft {
             area.kind = Some(blank(kind)?);
         }
         area.kind.as_mut()
+    }
+
+    pub fn actions(&self) -> Actions {
+        let seed = self.area.peek().actions;
+        let written = self.value(
+            "actions",
+            || seed,
+            |area, actions: &BTreeMap<Trigger, Action>| area.actions = actions.clone(),
+        );
+        let unwritten = self.value("actions.unwritten", BTreeSet::new, |_, _| {});
+        let (measure, node) = (self.measure.clone(), self.node.clone());
+        let drawn = Rc::new(move || {
+            measure
+                .screen()
+                .and_then(|screen| {
+                    screen
+                        .area(node.layer, &node.area)
+                        .map(|area| area.actions.clone())
+                })
+                .unwrap_or_default()
+        });
+        let standing = self.clone();
+        Actions::new(
+            written,
+            unwritten,
+            drawn,
+            Rc::new(move |key: &str| standing.provenance(&[key])),
+        )
+    }
+}
+
+pub(crate) fn group_entry<'a>(area: &'a mut Area, id: &GroupId) -> &'a mut Group {
+    let at = match area.groups.iter().position(|group| group.id == *id) {
+        Some(at) => at,
+        None => {
+            area.groups.push(Group {
+                id: id.clone(),
+                ..Group::default()
+            });
+            area.groups.len() - 1
+        }
+    };
+    &mut area.groups[at]
+}
+
+/// Written through a draft of the area that holds it, so it previews, reverts and records as the area's would.
+#[derive(Clone)]
+pub struct GroupDraft {
+    pub area: AreaDraft,
+    pub id: GroupId,
+    /// The group as it was on screen when the popover opened.
+    pub resolved: Rc<ResolvedGroup>,
+}
+
+impl GroupDraft {
+    pub fn new(area: AreaDraft, resolved: ResolvedGroup) -> Self {
+        Self {
+            area,
+            id: resolved.id.clone(),
+            resolved: Rc::new(resolved),
+        }
+    }
+
+    pub fn group(&self) -> Option<Group> {
+        self.area.area.with(|area| {
+            area.groups
+                .iter()
+                .find(|group| group.id == self.id)
+                .cloned()
+        })
+    }
+
+    fn tied(&self, key: &str) -> String {
+        format!("groups.{}.{key}", self.id)
+    }
+
+    pub fn setting<T: Clone + PartialEq + 'static>(
+        &self,
+        name: &'static str,
+        key: &'static str,
+        read: impl Fn(&ResolvedGroup) -> T + 'static,
+        write: impl Fn(&mut Group, &T) + 'static,
+    ) -> RwSignal<T> {
+        let (reading, writing, fallback) =
+            (self.id.clone(), self.id.clone(), Rc::clone(&self.resolved));
+        self.area.setting_tied(
+            name,
+            self.tied(key),
+            move |area| {
+                let drawn = area.groups.iter().find(|group| group.id == reading);
+                read(drawn.unwrap_or(&fallback))
+            },
+            move |area, value| write(group_entry(area, &writing), value),
+        )
+    }
+
+    pub fn provenance(&self, keys: &[&str]) -> Provenance {
+        let site = self.area.written.borrow().site.clone();
+        keys.iter()
+            .map(|key| {
+                self.area.measure.provenance(
+                    &site,
+                    Holder::Group(&self.area.node.area, &self.id),
+                    key,
+                )
+            })
+            .find(|found| *found != Provenance::Default)
+            .unwrap_or(Provenance::Default)
+    }
+
+    pub fn writes(&self, keys: &[&str]) -> bool {
+        self.group()
+            .and_then(|group| origin::table_of(&group))
+            .is_some_and(|entry| keys.iter().any(|key| origin::holds(&entry, key)))
+    }
+
+    /// An entry left naming nothing but its id goes with the keys.
+    pub fn reset(&self, keys: &[&str]) {
+        let takes = keys
+            .iter()
+            .map(|key| {
+                let (id, taking) = (self.id.clone(), (*key).to_string());
+                let take: Take = Rc::new(move |area: &mut Area| {
+                    let Some(at) = area.groups.iter().position(|group| group.id == id) else {
+                        return;
+                    };
+                    if let Some(without) = origin::without(&area.groups[at], &taking) {
+                        area.groups[at] = without;
+                    }
+                    let bare = Group {
+                        id: id.clone(),
+                        ..Group::default()
+                    };
+                    if area.groups[at] == bare {
+                        area.groups.remove(at);
+                    }
+                });
+                (self.tied(key), take)
+            })
+            .collect();
+        self.area.take_back(takes);
+    }
+
+    pub fn marked(&self, keys: &[&'static str], row: Box<dyn LayoutItem>) -> ui::descriptor::Built {
+        let keys: Rc<[&'static str]> = Rc::from(keys);
+        let (standing, writing, resetting) = (self.clone(), self.clone(), self.clone());
+        let (seen, written, taken) = (Rc::clone(&keys), Rc::clone(&keys), keys);
+        origin::marked(
+            row,
+            move || standing.provenance(&seen),
+            move || writing.writes(&written),
+            move || resetting.reset(&taken),
+        )
     }
 }
 
@@ -423,6 +602,11 @@ macro_rules! kind_read {
 }
 pub(crate) use kind_read;
 
+type Gestures = RwSignal<BTreeMap<Trigger, Action>>;
+
+/// The gestures given a row that runs nothing yet, which are not written until it does.
+type Unwritten = RwSignal<BTreeSet<Trigger>>;
+
 /// Writes one change into an instance, again whenever the copy is made afresh.
 type Change = Rc<dyn Fn(&mut Instance)>;
 
@@ -446,6 +630,12 @@ pub struct InstanceDraft {
     reshown: Rc<RefCell<Option<Rc<toml::Table>>>>,
     /// Every change made so far, one per thing changed and in the order they were last made.
     changes: Rc<RefCell<Vec<(String, Change)>>>,
+    /// Moved by every Reset, which builds the rows it touches again from the instance as now drawn.
+    generation: RwSignal<u64>,
+    values: Rc<RefCell<HashMap<&'static str, Box<dyn Any>>>>,
+    actions: Rc<RefCell<Option<(Gestures, Unwritten)>>>,
+    /// What the values its rows share belong to: the popover, so they outlive a rebuild of its rows.
+    owner: Option<OwnerId>,
 }
 
 impl InstanceDraft {
@@ -467,14 +657,7 @@ impl InstanceDraft {
             if *changed == written.instance {
                 return Vec::new();
             }
-            let mut ops = written.ops(changed);
-            if let Some((settle, desktop)) = &settle
-                && let Some(mut after) = previewed.transaction().before()
-                && layout::ops::apply_all(&mut after, &ops).is_ok()
-            {
-                ops.extend(settle(&settling, desktop, &after));
-            }
-            ops
+            settled(written.ops(changed), settle.as_ref(), &settling, &previewed)
         });
         let draft = Self {
             measure: Measure::new(edit, &node),
@@ -487,6 +670,10 @@ impl InstanceDraft {
             edit: edit.clone(),
             reshown: Rc::default(),
             changes: Rc::default(),
+            generation: signal(0),
+            values: Rc::default(),
+            actions: Rc::default(),
+            owner: telar::current_owner(),
         };
         draft.follow_the_variant();
         draft
@@ -608,11 +795,15 @@ impl InstanceDraft {
     }
 
     /// Takes the option at `path` off the instance, so it shows what it inherits there again — a level under the popover's, its presentation or its module's section — which is what a row built for it afterwards starts at.
-    pub fn reset(&self, path: &[value::Step]) {
+    pub fn reset_option(&self, path: &[value::Step]) {
         let at = path.to_vec();
         self.update(option_change(path), move |held| {
             value::unset(&mut held.options, &at)
         });
+        self.reshow();
+    }
+
+    fn reshow(&self) {
         if let Some(reshown) = self.drawn_options() {
             *self.reshown.borrow_mut() = Some(Rc::new(reshown));
         }
@@ -620,6 +811,15 @@ impl InstanceDraft {
 
     /// The instance's options as the screen shows them with the copy as it is now.
     fn drawn_options(&self) -> Option<toml::Table> {
+        let (config, drawn) = self.drawn_on_screen()?;
+        Some(super::instance::shown(
+            &config,
+            &self.resolved.module,
+            &drawn.options,
+        ))
+    }
+
+    fn drawn_on_screen(&self) -> Option<(Arc<Config>, ResolvedInstance)> {
         let Part::Instance(group, id) = &self.node.part else {
             return None;
         };
@@ -640,19 +840,18 @@ impl InstanceDraft {
             .find(|held| held.id == *group)?
             .children
             .iter()
-            .find(|child| child.id == id.template())?;
-        Some(super::instance::shown(
-            &screen.config,
-            &self.resolved.module,
-            &drawn.options,
-        ))
+            .find(|child| child.id == id.template())?
+            .clone();
+        Some((screen.config, drawn))
+    }
+
+    pub fn drawn(&self) -> ResolvedInstance {
+        self.drawn_on_screen()
+            .map_or_else(|| (*self.resolved).clone(), |(_, drawn)| drawn)
     }
 
     /// Where the option at `path` comes from on the screen as drawn now: an option inside a list is the list's, which a level writes whole. Reactive.
-    pub fn provenance(&self, path: &[value::Step]) -> Provenance {
-        let Part::Instance(group, id) = &self.node.part else {
-            return Provenance::Default;
-        };
+    pub fn option_provenance(&self, path: &[value::Step]) -> Provenance {
         let written: Vec<&str> = path
             .iter()
             .map_while(|step| match step {
@@ -660,17 +859,144 @@ impl InstanceDraft {
                 value::Step::Index(_) => None,
             })
             .collect();
-        let key = format!("options.{}", written.join("."));
-        let site = self.written.borrow().area.site.clone();
-        let id = id.template();
-        self.measure
-            .provenance(&site, Holder::Instance(&self.node.area, group, &id), &key)
+        self.provenance(&[&format!("options.{}", written.join("."))])
     }
 
     /// Whether the instance writes the option at `path` itself. Reactive.
-    pub fn writes(&self, path: &[value::Step]) -> bool {
+    pub fn writes_option(&self, path: &[value::Step]) -> bool {
         self.instance
             .with(|held| value::get(&held.options, path).is_some())
+    }
+
+    pub fn provenance(&self, keys: &[&str]) -> Provenance {
+        let Part::Instance(group, id) = &self.node.part else {
+            return Provenance::Default;
+        };
+        let site = self.written.borrow().area.site.clone();
+        let id = id.template();
+        keys.iter()
+            .map(|key| {
+                self.measure
+                    .provenance(&site, Holder::Instance(&self.node.area, group, &id), key)
+            })
+            .find(|found| *found != Provenance::Default)
+            .unwrap_or(Provenance::Default)
+    }
+
+    pub fn writes(&self, keys: &[&str]) -> bool {
+        self.instance.with(|held| {
+            origin::table_of(held)
+                .is_some_and(|entry| keys.iter().any(|key| origin::holds(&entry, key)))
+        })
+    }
+
+    /// The rows are built again rather than reseeded, so they start at what is now inherited.
+    pub fn reset(&self, keys: &[&str]) {
+        for key in keys {
+            let taking = (*key).to_string();
+            self.update(format!("reset.{key}"), move |held| {
+                if let Some(without) = origin::without(held, &taking) {
+                    *held = without;
+                }
+            });
+        }
+        self.generation.update(|built| *built += 1);
+    }
+
+    pub fn reset_all(&self) {
+        self.update("reset", |held| {
+            held.options = toml::Table::new();
+            held.style = layout::Style::default();
+        });
+        self.reshow();
+        self.generation.update(|built| *built += 1);
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    pub fn marked(&self, keys: &[&'static str], row: Box<dyn LayoutItem>) -> ui::descriptor::Built {
+        let keys: Rc<[&'static str]> = Rc::from(keys);
+        let (standing, writing, resetting) = (self.clone(), self.clone(), self.clone());
+        let (seen, written, taken) = (Rc::clone(&keys), Rc::clone(&keys), keys);
+        origin::marked(
+            row,
+            move || standing.provenance(&seen),
+            move || writing.writes(&written),
+            move || resetting.reset(&taken),
+        )
+    }
+
+    pub fn setting<T: Clone + PartialEq + 'static>(
+        &self,
+        name: &'static str,
+        read: impl Fn(&ResolvedInstance) -> T,
+        write: impl Fn(&mut Instance, &T) + 'static,
+    ) -> RwSignal<T> {
+        let seed = read(&self.drawn());
+        let (draft, write) = (self.clone(), Rc::new(write));
+        let value = bound(seed, move |value| {
+            let (value, write) = (value.clone(), Rc::clone(&write));
+            draft.update(name, move |held| write(held, &value));
+        });
+        self.values.borrow_mut().insert(name, Box::new(value));
+        value
+    }
+
+    pub fn view<T: 'static>(&self, name: &'static str, seed: T) -> RwSignal<T> {
+        let value = signal(seed);
+        self.values.borrow_mut().insert(name, Box::new(value));
+        value
+    }
+
+    pub fn shared<T: 'static>(&self, name: &str) -> Option<RwSignal<T>> {
+        self.values
+            .borrow()
+            .get(name)
+            .and_then(|held| held.downcast_ref::<RwSignal<T>>())
+            .copied()
+    }
+
+    pub fn actions(&self) -> Actions {
+        let (written, unwritten) = *self.actions.borrow_mut().get_or_insert_with(|| {
+            let seed = self.instance.peek().actions;
+            let draft = self.clone();
+            telar::with_owner(self.owner, || {
+                let written = bound(seed, move |actions: &BTreeMap<Trigger, Action>| {
+                    let actions = actions.clone();
+                    draft.update("actions", move |held| held.actions = actions.clone());
+                });
+                (written, signal(BTreeSet::new()))
+            })
+        });
+        let (measure, node) = (self.measure.clone(), self.node.clone());
+        let drawn = Rc::new(move || {
+            let Part::Instance(group, id) = &node.part else {
+                return BTreeMap::new();
+            };
+            measure
+                .screen()
+                .and_then(|screen| {
+                    screen
+                        .area(node.layer, &node.area)?
+                        .groups
+                        .iter()
+                        .find(|held| held.id == *group)?
+                        .children
+                        .iter()
+                        .find(|child| child.id == id.template())
+                        .map(|child| child.actions.clone())
+                })
+                .unwrap_or_default()
+        });
+        let standing = self.clone();
+        Actions::new(
+            written,
+            unwritten,
+            drawn,
+            Rc::new(move |key: &str| standing.provenance(&[key])),
+        )
     }
 
     /// Binds the option at `path` (or `accent`) to `expr`, or takes the instance's own binding there off with `None`, replacing what was asked for that path before. An expression of its own makes taking back the one it inherits moot, so binding one drops that.
@@ -767,6 +1093,21 @@ fn update<T: Clone + PartialEq + 'static>(held: RwSignal<T>, change: impl FnOnce
     if held.peek_with(|now| *now != next) {
         held.set(next);
     }
+}
+
+fn settled(
+    mut ops: Vec<LayoutOp>,
+    settle: Option<&(Settle, Desktop)>,
+    node: &Node,
+    edit: &Edit,
+) -> Vec<LayoutOp> {
+    if let Some((settle, desktop)) = settle
+        && let Some(mut after) = edit.transaction().before()
+        && layout::ops::apply_all(&mut after, &ops).is_ok()
+    {
+        ops.extend(settle(node, desktop, &after));
+    }
+    ops
 }
 
 /// A signal starting at `seed` whose every later change is handed to `write`.

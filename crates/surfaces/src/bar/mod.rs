@@ -1321,7 +1321,9 @@ impl ChipKit {
             popout: module.representations.popout.is_some() && config.popouts.enabled,
             drag_open: drag_open_for(config, &module, self.edge),
             site: self.site.clone(),
-            bound: Bound::of(&instance.actions, self.audience).with_menu(menu.clone()),
+            bound: Bound::of(&instance.actions, self.audience)
+                .with_menu(menu.clone())
+                .owning(at.clone()),
         };
         let style = chip_box(&chip, self.edge);
         let built = host.clone();

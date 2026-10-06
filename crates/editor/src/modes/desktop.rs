@@ -505,9 +505,9 @@ pub(crate) fn group_spanned(
     Ok(work.done())
 }
 
-/// What a popover's change to an instance on a grid of `desktop`'s screen brings with it: whatever the instance's group now covers, moved out of its way.
+/// What a popover's change to a group, or to an instance in one, on a grid of `desktop`'s screen brings with it: whatever the group now covers, moved out of its way.
 fn settle(node: &Node, desktop: &Desktop, after: &Layout) -> Vec<LayoutOp> {
-    let Part::Instance(group, _) = &node.part else {
+    let (Part::Instance(group, _) | Part::Group(group)) = &node.part else {
         return Vec::new();
     };
     let mut work = Work::new(after, desktop, node.layer);
@@ -780,7 +780,7 @@ fn grid_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
                 label!("editor.area.gap"),
                 help("AreaKind::Grid", "gap"),
                 gap,
-                Range::whole(0.0, 64.0),
+                crate::popover::handles::GAP,
             )?,
         )?,
     ];
@@ -803,7 +803,7 @@ fn grid_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
 /// A widget's popover rows: its size stepped S, M, L through what its module draws, the stepper beside the corner handle (TA-5).
 fn instance_tool(draft: &InstanceDraft) -> Result<Inspector, LayoutError> {
     let rows = match draft.area_kind {
-        "grid" => size_rows(draft)?,
+        "grid" if !crate::popover::instance::arranged(draft) => size_rows(draft)?,
         _ => Vec::new(),
     };
     Ok(Inspector {

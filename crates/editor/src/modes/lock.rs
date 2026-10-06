@@ -10,8 +10,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use telar::{
-    Children, Cursor, LayoutError, LayoutStyle, ReactiveList, RectStyle, RwSignal, StyledContainer,
-    Text, box_item, detached, effect, signal, use_theme,
+    Children, LayoutError, LayoutStyle, ReactiveList, RwSignal, Text, box_item, detached, effect,
+    signal, use_theme,
 };
 
 use config::theme::{FontRole, NordTheme};
@@ -37,12 +37,10 @@ use crate::mode::{self, Mode, said};
 use crate::popover::area::rect_rows;
 use crate::popover::rows::{self, label};
 use crate::popover::{AreaDraft, Inspector, kind_field, parsed, spelled};
-use crate::session::{self, Edit, EditError, Selection};
-use crate::snap;
+use crate::session::{self, EditError};
 use crate::written::{Written, known};
 
-use super::gesture::{self, pressable};
-use super::{background, desktop, widgets};
+use super::{background, desktop, rect_handles, widgets};
 
 /// The transient the privacy popover is.
 pub const PRIVACY: &str = "editor:privacy";
@@ -53,6 +51,7 @@ const WIDTH: f32 = 360.0;
 pub(crate) fn install() {
     crate::popover::add_area_tool("prompt", prompt_tool);
     host::add_tool(LayerKind::Lock, crate::select::tool);
+    host::add_tool(LayerKind::Lock, rect_handles::bodies);
     host::add_tool(LayerKind::Lock, background::tool);
     host::add_tool(LayerKind::Lock, widgets::tool);
     host::add_tool(LayerKind::Lock, tool);
@@ -235,15 +234,14 @@ fn drawn(layout: &Layout, desktop: &Desktop) -> Built {
     }
 }
 
-/// What lock mode lays over the preview besides the tools it borrows: the prompt, dragged by itself to move it.
+/// What lock mode lays over the preview besides the tools it borrows: the prompt, dragged by itself to move it, kept wholly on its screen. A press on it selects what is under it, as every target does; a secondary press asks for a menu, which the lock layer never has, and the strip says so.
 pub(crate) fn tool(mode: &Mode) -> Built {
     let output = mode.output.clone();
-    let building = output.clone();
     let handles = ReactiveList::with_style(
         whole(),
         move || prompts(&output),
         |node: &Node| node.clone(),
-        move |node: Node| prompt_handle(&building, node),
+        |node: Node| rect_handles::carried_body(node, telar::t!("editor.lock.prompt_moved")),
     )?;
     Ok(Box::new(passthrough(whole(), vec![Box::new(handles)])?))
 }
@@ -263,85 +261,6 @@ fn prompts(output: &str) -> Vec<Node> {
         .map(|area| Node::area(Some(output), LayerKind::Lock, &area.id))
         .filter(|node| rects::rect(node).is_some())
         .collect()
-}
-
-/// Where a drag of the prompt took hold of it: the pointer at the press, the prompt's rectangle as the layout gives it, the box that rectangle is a fraction of, in pixels, and what it snaps to there.
-#[derive(Clone)]
-struct Held {
-    from: (f32, f32),
-    rect: layout::Rect,
-    bounds: telar::Rect,
-    siblings: Vec<layout::Rect>,
-}
-
-impl Held {
-    fn of(output: &str, node: &Node, point: (f32, f32)) -> Option<Self> {
-        let desktop = reconcile::desktop_now(Some(output))?;
-        let layer = desktop.resolved.layer(LayerKind::Lock)?;
-        let area = layer.areas.iter().find(|area| area.id == node.area)?;
-        let ResolvedAreaKind::Prompt { rect } = area.kind else {
-            return None;
-        };
-        Some(Self {
-            from: point,
-            rect,
-            bounds: desktop.reserved.box_of(area.within, desktop.size),
-            siblings: snap::area_siblings(layer, &node.area),
-        })
-    }
-
-    /// Where the prompt is with the pointer at `point`, snapped to what is around it unless `free`, before it is kept on its screen.
-    fn to(&self, point: (f32, f32), free: bool) -> snap::Snapped {
-        let size = (self.bounds.width.max(1.0), self.bounds.height.max(1.0));
-        let carried = layout::Rect {
-            x: self.rect.x + (point.0 - self.from.0) / size.0,
-            y: self.rect.y + (point.1 - self.from.1) / size.1,
-            ..self.rect
-        };
-        snap::snap(carried, &self.siblings, size, snap::Moving::BODY, free)
-    }
-}
-
-/// A box over the prompt that takes its presses and drags: a press selects what is under it, as every target does, a drag moves it, kept wholly on its screen. A secondary press asks for a menu, which the lock layer never has, and the strip says so.
-fn prompt_handle(output: &str, node: Node) -> Built {
-    let edit = Edit::new(telar::t!("editor.lock.prompt_moved"));
-    let placed = node.clone();
-    let area = {
-        let node = node.clone();
-        move || Some(node.clone())
-    };
-    let output = output.to_string();
-    let previewing = edit.clone();
-    let taking = node.clone();
-    Ok(Box::new(gesture::drag(
-        pressable(
-            StyledContainer::new(LayoutStyle::new(), |_| RectStyle::default(), Vec::new())?,
-            area,
-        )
-        .styled_by(move || surfaces::area::at(rects::rect(&placed).unwrap_or_default()))
-        .cursor(Cursor::Grab),
-        edit.transaction(),
-        move |pressed| {
-            let taken = Held::of(&output, &taking, pressed)?;
-            session::select(Selection::Area(taking.clone()));
-            Some(taken)
-        },
-        move |taken: &Held, _| {
-            let (Some(point), Some(before)) =
-                (surfaces::menu::pointer(), previewing.transaction().before())
-            else {
-                return;
-            };
-            let snapped = taken.to(point, snap::free());
-            gesture::show_guides(point, &snapped.guides, taken.bounds);
-            let moved =
-                moved_to(&before, &node, snapped.rect).and_then(|ops| previewing.preview(ops));
-            if let Err(why) = moved {
-                mode::refuse(why);
-            }
-        },
-        |_, _| {},
-    )))
 }
 
 /// The operations that put the prompt `node` names at `to`, kept wholly on its screen and no smaller than a prompt may be — written where the layout decides the prompt.

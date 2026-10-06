@@ -1,12 +1,12 @@
 //! Snapping what a drag moves, and the guide lines that say where it snapped.
 //!
-//! **Wired today.** Dragging the lock prompt snaps its edges and centre to the edges and centres of the regions, textures and free areas of its layer measured in the same box ([`area_siblings`]) and to the start, middle and end of that box, within [`SNAP_PX`] logical pixels ([`snap`] with [`Moving::BODY`]). Region edges and the cuts of a split snap as described next.
+//! **Rectangles.** A rectangle carried whole — the lock prompt, a texture — snaps its edges and centre to the edges and centres of the regions, textures and free areas of its layer measured in the same box ([`area_siblings`]) and to the start, middle and end of that box, within [`SNAP_PX`] logical pixels ([`snap`] with [`Moving::BODY`]). A corner handle resizing a free area, a texture, a grid or the prompt snaps only the two edges it drags, the same way ([`Motion::Start`], [`Motion::End`]); see [`crate::modes::rect_handles`].
 //!
 //! **Region edges.** An edge two wallpaper regions share, and the cut a split makes, snap to the cell lines of the layer's main grid — the desktop's for the background, the lock's own for the lock — in the middle of the gap between two cells: within [`EDGE_TOLERANCE`] of the box for an edge, [`CUT_TOLERANCE`] for a cut. What that gives is then put on [`regions::GRID`], so splits and joins stay exact.
 //!
 //! **Alt drags free.** While Alt is held nothing snaps ([`free`]).
 //!
-//! **Not wired yet.** [`snap`] also takes a resize (`Motion::Start` and `Motion::End`) and [`free_siblings`] lists the other children of a `free` container; no drag calls them until resizing a rectangle and carrying free children use them.
+//! **Not wired yet.** [`free_siblings`] lists the other children of a `free` container; no drag calls it until carrying free children uses it.
 use layout::{
     AreaId, InstanceId, LayerKind, Placement, Rect, ResolvedAreaKind, ResolvedGroup, ResolvedLayer,
 };

@@ -4,9 +4,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use telar::{
-    Color, Container, DismissRegistration, LayoutItem, LayoutStyle, ReactiveList, ReadSignal, Rect,
-    RectStyle, RwSignal, SizeDimension, StyledContainer, Transition, box_item, exits_in_flight,
-    on_cleanup, signal,
+    Component, Container, DismissRegistration, Event, EventResult, LayoutItem, LayoutStyle, NodeId,
+    ReactiveList, ReadSignal, Rect, RectStyle, RenderNode, RwSignal, Shadow, SizeDimension,
+    StyledContainer, Transition, box_item, exits_in_flight, on_cleanup, signal, track_layout,
 };
 
 use config::fingerprint::{Fingerprint, Reload, Stamp};
@@ -15,6 +15,7 @@ use layout::LayerKind;
 use platform_wayland::{KeyboardMode, timeout};
 use ui::chrome::Chrome;
 use ui::descriptor::Built;
+use ui::scale::elevation;
 
 use crate::layer_window::{Concealment, Demand, Demands, Hold, Holder, Screen, WindowKey};
 
@@ -47,6 +48,7 @@ pub enum Place {
         edge: Edge,
         thickness: f32,
     },
+    Owned(Owned),
     Whole,
 }
 
@@ -57,6 +59,24 @@ impl Place {
             _ => None,
         }
     }
+
+    fn home(&self) -> Option<(Option<String>, LayerKind)> {
+        match self {
+            Place::Beside(anchor) | Place::Over(anchor) => {
+                Some((anchor.output.clone(), anchor.layer))
+            }
+            Place::Owned(owned) => Some((owned.output.clone(), owned.layer)),
+            _ => None,
+        }
+    }
+}
+
+/// What an instance opens in the window of the layer it sits on: the box `rect` answers for the usable area, read again whenever anything it reads moves.
+#[derive(Clone)]
+pub struct Owned {
+    pub output: Option<String>,
+    pub layer: LayerKind,
+    pub rect: Rc<dyn Fn(Rect) -> Rect>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +109,8 @@ pub struct Spec {
     pub motion: Motion,
     pub content: Content,
     pub on_close: Option<Rc<dyn Fn()>>,
+    /// The shadow the content casts, read each time the transient moves so a cut around it leaves room for it.
+    pub shadow: Rc<dyn Fn() -> Option<Shadow>>,
 }
 
 impl Spec {
@@ -103,6 +125,7 @@ impl Spec {
             motion: Motion::None,
             content,
             on_close: None,
+            shadow: Rc::new(|| None),
         }
     }
 
@@ -128,6 +151,11 @@ impl Spec {
 
     pub fn motion(mut self, motion: Motion) -> Self {
         self.motion = motion;
+        self
+    }
+
+    pub fn shadow(mut self, shadow: impl Fn() -> Option<Shadow> + 'static) -> Self {
+        self.shadow = Rc::new(shadow);
         self
     }
 
@@ -203,15 +231,12 @@ pub fn focused_output() -> Option<String> {
 }
 
 fn route(spec: &Spec, keys: &[WindowKey]) -> WindowKey {
-    if let Some(anchor) = spec.place.anchor() {
-        let layer = match layer_hidden(anchor.output.as_deref(), anchor.layer) {
+    if let Some((output, layer)) = spec.place.home() {
+        let layer = match layer_hidden(output.as_deref(), layer) {
             true => LayerKind::Overlay,
-            false => anchor.layer,
+            false => layer,
         };
-        return WindowKey {
-            output: anchor.output.clone(),
-            layer,
-        };
+        return WindowKey { output, layer };
     }
     let wanted = spec.output.clone().or_else(focused_output);
     let known = |output: &Option<String>| keys.iter().any(|key| key.output == *output);
@@ -624,16 +649,91 @@ fn row(entry: Rc<Entry>, frame: Frame) -> Built {
     let config = config::config_for(entry.window.output.as_deref());
     let transition = transition(entry.spec.motion, &config);
     let built = Rc::clone(&entry);
+    let extent = signal(None);
+    let arriving = arrival(shown, transition);
     let presence = telar::Presence::with_style(
         whole(),
         move || shown.get(),
         transition,
-        move || placed(&built, &frame, builds),
+        move || placed(&built, &frame, builds, extent),
     )?;
     if entry.is_open() {
         shown.set(true);
     }
-    Ok(Box::new(presence))
+    let shadow = Rc::clone(&entry.spec.shadow);
+    Ok(Box::new(Contained::new(Box::new(presence), move || {
+        let moving = arriving() || !shown.get();
+        cut_to(extent.get(), moving, shadow())
+    })))
+}
+
+/// The box a transient that is `moving` is cut to: where it rests, widened by the reach of the `shadow` it casts so the slide does not cut it, and no cut at all once it is still.
+fn cut_to(extent: Option<Rect>, moving: bool, shadow: Option<Shadow>) -> Option<Rect> {
+    let reach = shadow.map_or(0.0, elevation::reach);
+    extent.filter(|_| moving).map(|rect| {
+        Rect::new(
+            rect.x - reach,
+            rect.y - reach,
+            rect.width + 2.0 * reach,
+            rect.height + 2.0 * reach,
+        )
+    })
+}
+
+/// Whether the transient is still on its way in: from the moment it is shown until a tween of the transition's length has run, so a slide's travel is cut only while it is moving. A transition with no tween is never on its way.
+fn arrival(shown: RwSignal<bool>, transition: Transition) -> impl Fn() -> bool + 'static {
+    let animates = !transition.duration().is_zero();
+    let progress = animates.then(|| {
+        let tween = telar::motion::tween(transition.duration(), telar::motion::Easing::Linear);
+        let progress = telar::motion::Animated::new(0.0f32, tween);
+        telar::effect(move || progress.retarget(if shown.get() { 1.0 } else { 0.0 }));
+        progress
+    });
+    move || progress.is_some_and(|progress| shown.get() && progress.get() < 1.0)
+}
+
+/// `inner` cut to the box `bounds` says while it says one, and drawn whole while it does not: a transition that slides its child travels past where the child rests, and the paint of that travel is damage outside the box it ends in.
+struct Contained {
+    inner: Box<dyn LayoutItem>,
+    bounds: Box<dyn Fn() -> Option<Rect>>,
+}
+
+impl Contained {
+    fn new(inner: Box<dyn LayoutItem>, bounds: impl Fn() -> Option<Rect> + 'static) -> Self {
+        Self {
+            inner,
+            bounds: Box::new(bounds),
+        }
+    }
+}
+
+impl Component for Contained {
+    fn view(&self) -> RenderNode {
+        let bounds = (self.bounds)();
+        let view = self.inner.view();
+        match bounds {
+            Some(rect) => RenderNode::clip(rect, telar::BorderRadius::default(), [view]),
+            None => view,
+        }
+    }
+
+    fn on_event(&mut self, event: &Event) -> EventResult {
+        self.inner.on_event(event)
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "Contained"
+    }
+}
+
+impl LayoutItem for Contained {
+    fn layout_node(&self) -> NodeId {
+        self.inner.layout_node()
+    }
+
+    fn occludes(&self) -> bool {
+        self.inner.occludes()
+    }
 }
 
 fn transition(motion: Motion, config: &Config) -> Transition {
@@ -657,7 +757,12 @@ fn slide_from(edge: Edge) -> telar::Edge {
     }
 }
 
-fn placed(entry: &Rc<Entry>, frame: &Frame, builds: RwSignal<u64>) -> Built {
+fn placed(
+    entry: &Rc<Entry>,
+    frame: &Frame,
+    builds: RwSignal<u64>,
+    extent: RwSignal<Option<Rect>>,
+) -> Built {
     let spec = &entry.spec;
     let id = spec.id.clone();
     *entry.claims.borrow_mut() = Some((
@@ -667,28 +772,27 @@ fn placed(entry: &Rc<Entry>, frame: &Frame, builds: RwSignal<u64>) -> Built {
     let claimed = Rc::clone(entry);
     on_cleanup(move || drop(claimed.claims.borrow_mut().take()));
 
-    let mut children: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(2);
-    if spec.dismiss_on_outside {
-        let id = spec.id.clone();
-        children.push(Box::new(
-            StyledContainer::new(
-                whole(),
-                |_| RectStyle::filled(Color::TRANSPARENT, 0.0),
-                Vec::new(),
-            )?
-            .input_opaque()
-            .on_press(move || close(&id)),
-        ));
-    }
     let content = content(entry, builds, fill_of(&spec.place))?;
-    children.push(position(&spec.place, content, frame.screen)?);
-    Ok(Box::new(passthrough(whole(), children)?))
+    let laid = content.layout_node();
+    let positioned = position(&spec.place, content, frame.screen)?;
+    follow_extent(laid, spec.place.clone(), frame.screen, extent);
+    if !spec.dismiss_on_outside {
+        return Ok(Box::new(passthrough(whole(), vec![positioned])?));
+    }
+    // Plain containers, which draw nothing: a painted box the size of the window, even an empty one, is damage the size of the window every time a drawer opens or closes.
+    let id = spec.id.clone();
+    let outside = Container::new(whole(), Vec::new())?.on_press(move || close(&id));
+    Ok(Box::new(Container::new(
+        whole(),
+        vec![Box::new(outside), positioned],
+    )?))
 }
 
-/// A whole-screen transient is given the screen to lay out in, so what it sizes as a share of its parent is a share of the screen; every other place sizes to what it holds.
+/// A whole-screen transient is given the screen to lay out in, and an owned one the box its rect says, so what either sizes as a share of its parent is a share of that; every other place sizes to what it holds.
 fn fill_of(place: &Place) -> LayoutStyle {
     match place {
         Place::Whole => whole(),
+        Place::Owned(_) => ui::layout::fill(),
         _ => LayoutStyle::new(),
     }
 }
@@ -717,50 +821,64 @@ fn chrome_of(entry: &Entry) -> Chrome {
     }
 }
 
-fn position(place: &Place, content: Box<dyn LayoutItem>, screen: ReadSignal<Screen>) -> Built {
-    let usable = move || {
-        let screen = screen.get();
-        screen.reserved.box_of(layout::Within::Usable, screen.size)
-    };
-    match place.clone() {
+/// Keeps `extent` at where `place` leaves the content at `node`, if it is laid out: one that is not has no extent to cut to, which only costs the slide its cut.
+fn follow_extent(
+    node: NodeId,
+    place: Place,
+    screen: ReadSignal<Screen>,
+    extent: RwSignal<Option<Rect>>,
+) {
+    if let Some(laid) = track_layout(node) {
+        telar::effect(move || extent.set(Some(settled(&place, laid.get(), screen.get()))));
+    }
+}
+
+/// The box `place` leaves content laid out as `laid` in, where it ends up: a place that moves its content after layout says where, and every other leaves it where layout put it.
+fn settled(place: &Place, laid: Rect, screen: Screen) -> Rect {
+    let size = (laid.width, laid.height);
+    let usable = screen.reserved.box_of(layout::Within::Usable, screen.size);
+    match place {
         Place::Beside(anchor) => {
-            let style = LayoutStyle::new()
-                .absolute()
-                .inset_start(0.0)
-                .inset_top(0.0);
-            Ok(Box::new(
-                StyledContainer::new(style, |_| RectStyle::default(), vec![content])?
-                    .with_transform(move |laid| {
-                        let (x, y) = beside(&anchor, (laid.width, laid.height), usable());
-                        Some([1.0, 0.0, 0.0, 1.0, x - laid.x, y - laid.y])
-                    }),
-            ))
+            let (x, y) = beside(anchor, size, usable);
+            Rect::new(x, y, laid.width, laid.height)
         }
         Place::Pinned {
             within,
             anchor,
             offset,
-        } => {
-            let bounds = move || {
-                let screen = screen.get();
-                screen.reserved.box_of(within, screen.size)
-            };
-            Ok(Box::new(
-                StyledContainer::new(
-                    LayoutStyle::new()
-                        .absolute()
-                        .inset_start(0.0)
-                        .inset_top(0.0),
-                    |_| RectStyle::default(),
-                    vec![content],
-                )?
-                .with_transform(move |laid| {
-                    let at =
-                        crate::pinned::pinned(bounds(), anchor, (laid.width, laid.height), offset);
-                    Some([1.0, 0.0, 0.0, 1.0, at.x - laid.x, at.y - laid.y])
-                }),
-            ))
+        } => crate::pinned::pinned(
+            screen.reserved.box_of(*within, screen.size),
+            *anchor,
+            size,
+            *offset,
+        ),
+        _ => laid,
+    }
+}
+
+fn position(place: &Place, content: Box<dyn LayoutItem>, screen: ReadSignal<Screen>) -> Built {
+    let usable = move || {
+        let screen = screen.get();
+        screen.reserved.box_of(layout::Within::Usable, screen.size)
+    };
+    let moved = |place: Place| {
+        move |laid: Rect| {
+            let to = settled(&place, laid, screen.get());
+            Some([1.0, 0.0, 0.0, 1.0, to.x - laid.x, to.y - laid.y])
         }
+    };
+    match place.clone() {
+        Place::Beside(_) | Place::Pinned { .. } => Ok(Box::new(
+            StyledContainer::new(
+                LayoutStyle::new()
+                    .absolute()
+                    .inset_start(0.0)
+                    .inset_top(0.0),
+                |_| RectStyle::default(),
+                vec![content],
+            )?
+            .with_transform(moved(place.clone())),
+        )),
         Place::Centred => Ok(Box::new(
             passthrough(LayoutStyle::new(), vec![content])?.styled_by(move || {
                 at(usable())
@@ -784,6 +902,10 @@ fn position(place: &Place, content: Box<dyn LayoutItem>, screen: ReadSignal<Scre
                     .flex_column()
                     .align_items(telar::AlignItems::STRETCH)
             }),
+        )),
+        Place::Owned(owned) => Ok(Box::new(
+            passthrough(LayoutStyle::new(), vec![content])?
+                .styled_by(move || at((owned.rect)(usable()))),
         )),
         Place::Over(_) | Place::Whole => Ok(Box::new(passthrough(whole(), vec![content])?)),
     }
@@ -1173,6 +1295,59 @@ mod tests {
         close("notes");
         close("notes");
         assert_eq!(said.get(), 1);
+        close_all();
+    }
+
+    #[test]
+    fn a_moving_transient_is_cut_to_its_rest_widened_by_its_shadow_and_a_still_one_is_not() {
+        let rest = Some(Rect::new(100.0, 50.0, 300.0, 200.0));
+        assert_eq!(cut_to(rest, true, None), rest);
+        assert_eq!(cut_to(rest, false, None), None);
+        assert_eq!(cut_to(None, true, None), None);
+
+        let shadow = elevation::shadow(3).expect("a step with a shadow");
+        let reach = elevation::reach(shadow);
+        assert!(reach > 0.0);
+        assert_eq!(
+            cut_to(rest, true, Some(shadow)),
+            Some(Rect::new(
+                100.0 - reach,
+                50.0 - reach,
+                300.0 + 2.0 * reach,
+                200.0 + 2.0 * reach
+            ))
+        );
+        assert_eq!(cut_to(rest, false, Some(shadow)), None);
+    }
+
+    #[test]
+    fn an_extent_of_content_that_is_not_laid_out_is_skipped_rather_than_panicking() {
+        telar::reset_runtime();
+        let _scope = telar::owner_scope();
+        let gone = Container::new(LayoutStyle::new(), Vec::new())
+            .expect("a container")
+            .layout_node();
+        telar::remove_node(gone);
+        let extent = signal(None);
+        follow_extent(
+            gone,
+            Place::Centred,
+            signal(Screen::default()).read_only(),
+            extent,
+        );
+        assert_eq!(extent.get(), None);
+    }
+
+    #[test]
+    fn one_open_transient_is_not_clipped_while_another_exits() {
+        close_all();
+        let spec1 = spec("first", Slot::Free).motion(Motion::Fade);
+        let spec2 = spec("second", Slot::Free).motion(Motion::Slide(Edge::Top));
+        open(spec1);
+        open(spec2);
+        assert_eq!(open_ids(), vec!["first", "second"]);
+        close("second");
+        assert_eq!(open_ids(), vec!["first"]);
         close_all();
     }
 }

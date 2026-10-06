@@ -1522,19 +1522,16 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     });
     let most = handles::most_radius(draft);
     let all = handles::uniform_radius(draft, corners);
-    let corner_labels = [
-        label!("editor.area.top_left"),
-        label!("editor.area.top_right"),
-        label!("editor.area.bottom_right"),
-        label!("editor.area.bottom_left"),
-    ];
     let mut radius = vec![rows::number(
-        label!("editor.area.radius"),
+        label!("editor.look.radius"),
         help("BarShape", "radius"),
         all,
         Range::whole(0.0, most),
     )?];
-    for (corner, label) in corners.into_iter().zip(corner_labels) {
+    for (corner, label) in corners
+        .into_iter()
+        .zip(crate::popover::look::corner_labels())
+    {
         radius.push(rows::number(label, None, corner, Range::whole(0.0, most))?);
     }
     list.push(draft.marked(&["shape.radius"], rows::together(radius)?)?);

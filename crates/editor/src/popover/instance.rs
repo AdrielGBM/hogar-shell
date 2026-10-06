@@ -1,4 +1,4 @@
-//! An instance's inspector, generated from what its module declares it takes (F-3.2): one row per option, its control chosen by the option's type and its help the option's doc comment.
+//! An instance's inspector, generated from what its module declares it takes: one row per option, its control chosen by the option's type and its help the option's doc comment.
 //!
 //! A toggle for a switch, the options side by side for an enum with a few of them and a dropdown for more, a scrub for a number (with − and + for a short run of whole ones), the accents for a colour, a field for text, and a list, a table of names or a table of options as rows of their own under a heading that folds them away.
 
@@ -13,6 +13,7 @@ use toml::Value;
 use config::Config;
 use config::fields::{Control, Number, OptionField};
 use layout::Representation;
+use surfaces::rects::Part;
 use ui::descriptor::Built;
 use ui::host::WidgetSize;
 
@@ -20,13 +21,78 @@ use super::area::{parsed, spelled};
 use super::draft::InstanceDraft;
 use super::rows::{self, Range, Rows, label};
 use super::value::{self, Path, Step};
+use super::{actions, look};
 
 /// Every row of `draft`'s inspector: what it is drawn as where there is a choice, then each of its options in the order its module declares them.
 pub fn rows(draft: &InstanceDraft) -> Rows {
-    let mut list = representation(draft)?;
+    let mut list = container_note(draft)?;
+    list.extend(representation(draft)?);
     for field in ui::descriptor::option_fields(&draft.resolved.module) {
         list.push(option(draft, value::path_of(&field.key), &field)?);
     }
+    Ok(list)
+}
+
+/// Whether the group holding the instance lays its children out itself, which then decide its size and place.
+pub(crate) fn arranged(draft: &InstanceDraft) -> bool {
+    let Part::Instance(group, _) = &draft.node.part else {
+        return false;
+    };
+    surfaces::reconcile::desktop(draft.node.output.as_deref())
+        .and_then(|desktop| {
+            let area = desktop.resolved.area(draft.node.layer, &draft.node.area)?;
+            area.groups
+                .iter()
+                .find(|held| held.id == *group)
+                .map(surfaces::container::arranges)
+        })
+        .unwrap_or(false)
+}
+
+fn container_note(draft: &InstanceDraft) -> Rows {
+    let Part::Instance(group, _) = &draft.node.part else {
+        return Ok(Vec::new());
+    };
+    if !arranged(draft) {
+        return Ok(Vec::new());
+    }
+    let group = group.to_string();
+    Ok(vec![rows::note(move || {
+        telar::t!("editor.look.in_container", group = group.clone())
+    })?])
+}
+
+/// The look rows are built again from the instance as drawn after any Reset.
+pub(crate) fn closing_rows(draft: &InstanceDraft) -> Rows {
+    let (watching, building) = (draft.clone(), draft.clone());
+    let look = ReactiveList::with_style(
+        LayoutStyle::new()
+            .flex_column()
+            .gap(ui::scale::space::sm())
+            .width(SizeDimension::Percent(1.0)),
+        move || vec![watching.generation()],
+        |built: &u64| *built,
+        move |_| {
+            let mut list = vec![
+                rows::heading(|| telar::t!("editor.look.heading"))?,
+                look::fill(&building)?,
+                look::radius(&building)?,
+                look::opacity(&building)?,
+            ];
+            list.extend(look::edges(&building)?);
+            column(list)
+        },
+    )?;
+    let mut list: Vec<Box<dyn LayoutItem>> = vec![Box::new(look)];
+    if actions::offered(draft.node.layer, None) {
+        list.extend(actions::rows(draft.actions(), None)?);
+    }
+    let resetting = draft.clone();
+    list.push(rows::action(
+        || telar::t!("editor.look.reset_all"),
+        move || resetting.reset_all(),
+    )?);
+    list.push(super::remove_button(draft.node.clone())?);
     Ok(list)
 }
 
@@ -236,20 +302,21 @@ fn range_of(number: &Number) -> Range {
 /// The row `build` makes, under it where its value comes from — set on the instance here, a broader level, or its module's configuration as the default — with the Reset that takes the option back off the instance while the instance sets it, and the row built again to show what it inherits then.
 fn resettable(draft: &InstanceDraft, path: Path, build: impl Fn() -> Built + 'static) -> Built {
     let generation = signal(0u64);
+    let rebuilt = draft.clone();
     let row = ReactiveList::with_style(
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || vec![generation.get()],
-        |built: &u64| *built,
+        move || vec![(generation.get(), rebuilt.generation())],
+        |built: &(u64, u64)| *built,
         move |_| build(),
     )?;
     let (standing, showing, resetting) = (draft.clone(), draft.clone(), draft.clone());
     let (watched, shown, reset) = (path.clone(), path.clone(), path);
     super::origin::marked(
         Box::new(row),
-        move || standing.provenance(&watched),
-        move || showing.writes(&shown),
+        move || standing.option_provenance(&watched),
+        move || showing.writes_option(&shown),
         move || {
-            resetting.reset(&reset);
+            resetting.reset_option(&reset);
             generation.update(|built| *built += 1);
         },
     )

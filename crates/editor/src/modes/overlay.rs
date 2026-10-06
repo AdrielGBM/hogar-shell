@@ -196,15 +196,7 @@ pub fn landing(bounds: Rect, width: f32, at: (f32, f32)) -> (Anchor, Offset) {
         at.0.clamp(bounds.x, (bounds.x + bounds.width - width).max(bounds.x));
     let y =
         at.1.clamp(bounds.y, (bounds.y + bounds.height - height).max(bounds.y));
-    let third = |start: f32, length: f32, middle: f32| match (middle - start) / length.max(1.0) {
-        part if part < 1.0 / 3.0 => Side::Start,
-        part if part < 2.0 / 3.0 => Side::Middle,
-        _ => Side::End,
-    };
-    let anchor = pinned::anchor_of(
-        third(bounds.x, bounds.width, x + width / 2.0),
-        third(bounds.y, bounds.height, y + height / 2.0),
-    );
+    let anchor = anchor_at(bounds, (x + width / 2.0, y + height / 2.0));
     let natural = ghost(pinned::column(bounds, anchor, width, Offset::ZERO), anchor);
     let snapped = |by: f32| match by.abs() < SNAP {
         true => 0.0,
@@ -216,6 +208,19 @@ pub fn landing(bounds: Rect, width: f32, at: (f32, f32)) -> (Anchor, Offset) {
             x: snapped(x - natural.x),
             y: snapped(y - natural.y),
         },
+    )
+}
+
+/// The anchor of the ninth of `bounds` that `point` is over, or of the ninth nearest it from outside.
+pub fn anchor_at(bounds: Rect, point: (f32, f32)) -> Anchor {
+    let third = |start: f32, length: f32, at: f32| match (at - start) / length.max(1.0) {
+        part if part < 1.0 / 3.0 => Side::Start,
+        part if part < 2.0 / 3.0 => Side::Middle,
+        _ => Side::End,
+    };
+    pinned::anchor_of(
+        third(bounds.x, bounds.width, point.0),
+        third(bounds.y, bounds.height, point.1),
     )
 }
 
@@ -788,19 +793,33 @@ fn ghost_target(node: Node, frozen: RwSignal<bool>) -> Built {
 
 /// The nine anchors of the selected stack, the one it is pinned to filled: pressing one pins it there exactly.
 fn anchor_picker(node: Node) -> Built {
+    let (reading, placing) = (node.clone(), node.clone());
+    anchor_dots(
+        move || placed_now(&reading).map(|placed| placed.bounds),
+        move || {
+            placed_now(&placing)
+                .filter(|placed| placed.offset == Offset::ZERO)
+                .map(|placed| placed.anchor)
+        },
+        move |anchor| said(pin(&node, anchor)),
+    )
+}
+
+/// The nine anchors of whatever `bounds` answers, each where [`pinned::point`] puts it and the one `pinned_to` answers filled; pressing one hands it to `pick`.
+pub(crate) fn anchor_dots(
+    bounds: impl Fn() -> Option<Rect> + Clone + 'static,
+    pinned_to: impl Fn() -> Option<Anchor> + Clone + 'static,
+    pick: impl Fn(Anchor) + Clone + 'static,
+) -> Built {
     let theme = use_theme::<NordTheme>();
     let dots = Anchor::ALL
         .into_iter()
         .map(|anchor| -> Built {
-            let (reading, placing, pinning) = (node.clone(), node.clone(), node.clone());
-            let pinned_here = move || {
-                placed_now(&reading)
-                    .is_some_and(|placed| placed.anchor == anchor && placed.offset == Offset::ZERO)
-            };
+            let (bounds, pinned_to, pick) = (bounds.clone(), pinned_to.clone(), pick.clone());
             let dot = StyledContainer::new(
                 LayoutStyle::new(),
                 move |_| {
-                    let fill = match pinned_here() {
+                    let fill = match pinned_to() == Some(anchor) {
                         true => theme.accent,
                         false => theme.surface,
                     };
@@ -811,15 +830,12 @@ fn anchor_picker(node: Node) -> Built {
             )?;
             Ok(Box::new(
                 dot.styled_by(move || {
-                    let bounds = placed_now(&placing)
-                        .map(|placed| placed.bounds)
-                        .unwrap_or_default();
-                    let (x, y) = pinned::point(bounds, anchor);
+                    let (x, y) = pinned::point(bounds().unwrap_or_default(), anchor);
                     surfaces::area::at(Rect::new(x - DOT / 2.0, y - DOT / 2.0, DOT, DOT))
                 })
                 .cursor(Cursor::Pointer)
                 .input_opaque()
-                .on_press(move || said(pin(&pinning, anchor))),
+                .on_press(move || pick(anchor)),
             ))
         })
         .collect::<Result<Vec<_>, LayoutError>>()?;

@@ -630,6 +630,35 @@ fn step(
     Ok(())
 }
 
+/// One step of the edit an arrow on a focused handle drives, held as a tool key's [`step`] is: the keyboard's repeats of the arrow add to the edit its first press began until it is let go, and any other arrow or modifier commits that edit and begins another. The handle takes the arrow before the key table hears it, so which arrow it was is read from what the keyboard holds; an arrow no longer held by then is committed at once.
+pub(crate) fn handle_step(
+    label: String,
+    plan: impl FnOnce(&Selection, &Layout) -> Result<Vec<LayoutOp>, EditError>,
+) -> Result<(), EditError> {
+    let modifiers = telar::modifiers();
+    let arrow = Direction::ALL
+        .into_iter()
+        .map(|direction| Key::Named(direction.arrow()))
+        .find(telar::key_held);
+    let continuing = arrow.as_ref().is_some_and(|key| {
+        HELD.with(|held| {
+            held.borrow()
+                .as_ref()
+                .is_some_and(|held| held.chord.matches(key, modifiers))
+        })
+    });
+    if !continuing {
+        settle();
+    }
+    match arrow {
+        Some(key) => step(label, &Chord { key, modifiers }, plan),
+        None => {
+            let ops = plan(&session::selected(), &session::draft().peek())?;
+            context::commit(label, ops)
+        }
+    }
+}
+
 /// Commits the held edit once its key is let go. Looked at on a timer because a key's release is heard by the window, never by the tree.
 fn watch_release(serial: u64) {
     platform_wayland::timeout(RELEASE_POLL, move || {
@@ -679,7 +708,7 @@ fn take_held() -> Option<Held> {
 }
 
 /// Takes the selection away as one entry in the history: an instance the way its menu's Remove does, a group or an area out of the rule that writes it. The lock screen's prompt is refused by the layout itself (TA-8).
-fn remove(selection: &Selection) -> Result<(), EditError> {
+pub(crate) fn remove(selection: &Selection) -> Result<(), EditError> {
     let name = steps::name_of(selection);
     match selection {
         Selection::None => Err(EditError::nothing()),

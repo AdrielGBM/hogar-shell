@@ -1,16 +1,19 @@
-//! Customization popovers (DEC-3, TA-4): a card beside the real item that edits it, and handles on the item itself.
+//! Customization popovers: a card beside the real item that edits it, and handles on the item itself.
 //!
-//! **One transaction.** A popover is one [`Edit`] handed to telar's [`register_transaction`]: every row and handle previews into it live, Esc puts the layout back exactly as it was when the popover opened, and Enter, a click outside, Done or any other way of closing it records what it previewed as one entry in the history (F-7).
+//! **One transaction.** A popover is one [`Edit`] handed to telar's [`register_transaction`]: every row and handle previews into it live, Esc puts the layout back exactly as it was when the popover opened, and Enter, a click outside, Done or any other way of closing it records what it previewed as one entry in the history.
 //!
-//! **Where it is drawn.** A popover is a transient laid over the whole window its item is drawn in (F-2.3, DEC-9), so its card and its handles are nodes of the same window as the item and appear on the next frame, with nothing mapped. In an edit mode that window is under the mode's host, so there the popover is drawn in the host's own window, above it.
+//! **Where it is drawn.** A popover is a transient laid over the whole window its item is drawn in, so its card and its handles are nodes of the same window as the item and appear on the next frame, with nothing mapped. In an edit mode that window is under the mode's host, so there the popover is drawn in the host's own window, above it.
 //!
-//! **What it shows.** An area's popover is its kind's tools and then what every area has; an instance's is generated from its module's options (F-3.2). Either is extended by adding tools ([`add_area_tool`], [`add_instance_tool`]), each giving rows for the card and handles for the item, which share values by name through the draft.
+//! **What it shows.** An area's popover is its kind's tools and then what every area has; a group's is its arrangement, its look and its span ([`group`]); an instance's is generated from its module's options, then its look and its actions. Area and instance popovers are extended by adding tools ([`add_area_tool`], [`add_instance_tool`]), each giving rows for the card and handles for the item, which share values by name through the draft.
 
+pub mod actions;
 pub(crate) mod area;
 pub(crate) mod bindings;
 mod draft;
+mod group;
 pub mod handles;
-mod instance;
+pub(crate) mod instance;
+pub(crate) mod look;
 pub(crate) mod origin;
 pub(crate) mod place;
 pub mod rows;
@@ -41,9 +44,10 @@ use crate::written::Written;
 
 use rows::label;
 
+pub use actions::Actions;
 pub use area::{help, parsed, spelled};
-pub use draft::{AreaDraft, InstanceDraft, Settle};
-pub(crate) use draft::{kind_field, kind_read};
+pub use draft::{AreaDraft, GroupDraft, InstanceDraft, Settle};
+pub(crate) use draft::{group_entry, kind_field, kind_read};
 pub use instance::{option, shown};
 pub use origin::Provenance;
 pub use value::{Path, Step, path_of};
@@ -127,26 +131,30 @@ impl Lease {
 #[derive(Clone)]
 enum Subject {
     Area(AreaDraft),
+    Group(GroupDraft),
     Instance(InstanceDraft),
 }
 
-/// Opens the popover for what `selection` names: an instance's for an instance, its area's for an area or a group.
+/// Opens the popover for what `selection` names: an area's, a group's or an instance's.
 pub fn open_for(selection: &Selection) -> Result<(), EditError> {
     match selection {
         Selection::None => Err(EditError::nothing()),
-        Selection::Area(node) | Selection::Group(node) => {
-            open_area(Node::area(node.output.as_deref(), node.layer, &node.area))
-        }
+        Selection::Area(node) => open_area(node.clone()),
+        Selection::Group(node) => open_group(node.clone()),
         Selection::Instance(node) => open_instance(node.clone()),
     }
 }
 
 /// Opens the popover of the area `node` names, inside an edit mode or outside one, closing (and so committing) whichever popover was open.
 pub fn open_area(node: Node) -> Result<(), EditError> {
-    open(
-        Node::area(node.output.as_deref(), node.layer, &node.area),
-        false,
-    )
+    open(Node::area(node.output.as_deref(), node.layer, &node.area))
+}
+
+pub fn open_group(node: Node) -> Result<(), EditError> {
+    let Part::Group(_) = &node.part else {
+        return Err(EditError::nothing());
+    };
+    open(node)
 }
 
 /// Opens the popover of the instance `node` names — or, for a child of a komponent a group draws, which only the komponent's file writes, its area's, where the use's parameters are set.
@@ -157,7 +165,7 @@ pub fn open_instance(node: Node) -> Result<(), EditError> {
     if id.komponent_child().is_some() {
         return open_area(node);
     }
-    open(node, true)
+    open(node)
 }
 
 /// Closes the popover that is open, keeping what it changed.
@@ -181,7 +189,8 @@ pub(crate) fn showing() -> Option<RwSignal<bool>> {
 pub fn shared<T: 'static>(name: &str) -> Option<RwSignal<T>> {
     OPEN.with(|open| match &open.borrow().as_ref()?.subject {
         Subject::Area(draft) => draft.shared(name),
-        Subject::Instance(_) => None,
+        Subject::Group(draft) => draft.area.shared(name),
+        Subject::Instance(draft) => draft.shared(name),
     })
 }
 
@@ -190,12 +199,13 @@ pub fn edits(name: &str) -> bool {
     OPEN.with(
         |open| match open.borrow().as_ref().map(|open| &open.subject) {
             Some(Subject::Area(draft)) => draft.edits(name),
+            Some(Subject::Group(draft)) => draft.area.edits(name),
             _ => false,
         },
     )
 }
 
-fn open(node: Node, of_instance: bool) -> Result<(), EditError> {
+fn open(node: Node) -> Result<(), EditError> {
     close();
     if session::open().is_some() {
         return Err(EditError::Nested);
@@ -218,9 +228,7 @@ fn open(node: Node, of_instance: bool) -> Result<(), EditError> {
         .cloned()
         .ok_or_else(|| EditError::gone(&node.area))?;
     let layout = session::draft().peek();
-    let workspace = crate::variant::applies_to(&node)
-        .then(crate::variant::editing)
-        .flatten();
+    let workspace = crate::variant::editing_for(&node);
     let written = Written::area(
         &layout,
         node.output.as_deref(),
@@ -236,7 +244,7 @@ fn open(node: Node, of_instance: bool) -> Result<(), EditError> {
     });
     let owner = telar::detached(|| telar::owner_scope().id());
     let built = telar::with_owner(Some(owner), || {
-        subject(&node, of_instance, &area, &desktop, written).map(|(make, name)| {
+        subject(&node, &area, &desktop, written).map(|(make, name)| {
             let edit = Edit::new(telar::t!("editor.popover.customize", name = name.clone()));
             let open = signal(false);
             register_transaction(open, edit.transaction());
@@ -295,6 +303,7 @@ fn open(node: Node, of_instance: bool) -> Result<(), EditError> {
         .dismiss_on_outside()
         .on_close(move || finish(serial)),
     );
+    crate::tools::put_away();
     Ok(())
 }
 
@@ -303,7 +312,6 @@ type Made = Box<dyn FnOnce(&Edit) -> Subject>;
 /// What the popover of `node` edits, made once its edit exists, and what its title calls it.
 fn subject(
     node: &Node,
-    of_instance: bool,
     area: &ResolvedArea,
     desktop: &Desktop,
     written: Written,
@@ -314,15 +322,39 @@ fn subject(
         desktop.config.clone(),
         desktop.size,
     );
-    if !of_instance {
-        let name = area.id.to_string();
-        let made: Made = Box::new(move |edit| {
-            Subject::Area(AreaDraft::new(edit, node, area, config, screen, written))
-        });
-        return Ok((made, name));
-    }
-    let Part::Instance(group, id) = node.part.clone() else {
-        return Err(EditError::nothing());
+    let kind = area.kind.name();
+    let settle = SETTLES.with(|settles| {
+        settles
+            .borrow()
+            .iter()
+            .find(|(of, _)| *of == kind)
+            .map(|(_, settle)| (*settle, desktop.clone()))
+    });
+    let (group, id) = match node.part.clone() {
+        Part::Area => {
+            let name = area.id.to_string();
+            let made: Made = Box::new(move |edit| {
+                Subject::Area(AreaDraft::new(
+                    edit, node, area, config, screen, written, None,
+                ))
+            });
+            return Ok((made, name));
+        }
+        Part::Group(group) => {
+            let resolved = area
+                .groups
+                .iter()
+                .find(|held| held.id == group)
+                .cloned()
+                .ok_or_else(|| EditError::gone(&node.area))?;
+            let name = group.to_string();
+            let made: Made = Box::new(move |edit| {
+                let draft = AreaDraft::new(edit, node, area, config, screen, written, settle);
+                Subject::Group(GroupDraft::new(draft, resolved))
+            });
+            return Ok((made, name));
+        }
+        Part::Instance(group, id) => (group, id),
     };
     let resolved = area
         .groups
@@ -334,14 +366,6 @@ fn subject(
     let name = ui::descriptor::find(&resolved.module)
         .map_or_else(|| resolved.module.clone(), |module| module.name.to_string());
     let shown = instance::shown(&config, &resolved.module, &resolved.options);
-    let kind = area.kind.name();
-    let settle = SETTLES.with(|settles| {
-        settles
-            .borrow()
-            .iter()
-            .find(|(of, _)| *of == kind)
-            .map(|(_, settle)| (*settle, desktop.clone()))
-    });
     let made: Made = Box::new(move |edit| {
         Subject::Instance(InstanceDraft::new(
             edit,
@@ -418,6 +442,7 @@ fn content(
 
     let (inspector, node) = match subject {
         Subject::Area(draft) => (area_inspector(draft)?, draft.node.clone()),
+        Subject::Group(draft) => (group::inspector(draft)?, draft.area.node.clone()),
         Subject::Instance(draft) => (instance_inspector(draft)?, draft.node.clone()),
     };
     let handles = crate::host::passthrough(crate::host::whole(), inspector.handles)?;
@@ -458,6 +483,7 @@ fn instance_inspector(draft: &InstanceDraft) -> Result<Inspector, LayoutError> {
         whole.rows.extend(rows);
         whole.handles.extend(handles);
     }
+    whole.rows.extend(instance::closing_rows(draft)?);
     whole.rows.extend(area::variant_rows(&draft.node)?);
     Ok(whole)
 }
@@ -627,7 +653,16 @@ pub(crate) fn tree() -> Option<Built> {
 pub(crate) fn area_draft() -> Option<AreaDraft> {
     OPEN.with(|held| match &held.borrow().as_ref()?.subject {
         Subject::Area(draft) => Some(draft.clone()),
-        Subject::Instance(_) => None,
+        _ => None,
+    })
+}
+
+/// The open group popover's draft.
+#[cfg(test)]
+pub(crate) fn group_draft() -> Option<GroupDraft> {
+    OPEN.with(|held| match &held.borrow().as_ref()?.subject {
+        Subject::Group(draft) => Some(draft.clone()),
+        _ => None,
     })
 }
 
@@ -636,8 +671,35 @@ pub(crate) fn area_draft() -> Option<AreaDraft> {
 pub(crate) fn instance_draft() -> Option<InstanceDraft> {
     OPEN.with(|held| match &held.borrow().as_ref()?.subject {
         Subject::Instance(draft) => Some(draft.clone()),
-        Subject::Area(_) => None,
+        _ => None,
     })
+}
+
+/// What the open popover previewed is put back first, so the removal is one entry of its own.
+pub(crate) fn remove_button(node: Node) -> ui::descriptor::Built {
+    let name = crate::steps::name_of(&Selection::of(node.clone()));
+    rows::action(
+        move || telar::t!("editor.menu.removed", name = name.clone()),
+        move || remove(&node),
+    )
+}
+
+fn remove(node: &Node) {
+    let Some((edit, open)) = OPEN.with(|held| {
+        held.borrow()
+            .as_ref()
+            .map(|open| (open.edit.clone(), open.open))
+    }) else {
+        return;
+    };
+    if edit.is_open()
+        && let Err(why) = edit.revert()
+    {
+        mode::refuse(why);
+        return;
+    }
+    mode::said(crate::keys::remove(&Selection::of(node.clone())));
+    open.set(false);
 }
 
 /// Why Remove does not take back an expression `writer` wrote: the level the popover writes comes before it, or it is a komponent's own, so taking it back there would change nothing on screen.

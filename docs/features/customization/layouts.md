@@ -66,8 +66,10 @@ once none fits, so an instance's `representation` is not read inside one; a `wei
 outside is reported and held to the nearer bound.
 
 A layout `panel` is the panel its owner opens, arranged by you: an instance with no layout panel opens its module's own
-[panel](../surfaces/panels.md) — a [drawer](../surfaces/drawers.md) or a float, as its `open` says. `panel` areas
-are read and checked but **not drawn yet**: until they are, the owner opens what it opened before.
+[panel](../surfaces/panels.md) — a [drawer](../surfaces/drawers.md) or a float, as its `open` says. A press on the
+owner opens its layout panel where nothing is bound to the press, beside the owner or, with `along`, the whole length of
+its bar; it holds its groups on its own cells, rests on the theme's `surface` — square along a bar, at the theme's
+radius anywhere else — wherever its `style` says nothing, and closes as a drawer does.
 
 A `style` paints the box it is written on — an area, a group or an instance — with its `fill`, `opacity`, `radius`,
 `padding`, a `border` and a `shadow` from `1` to `3`; no corner rounds past half the box's short side. A container, and

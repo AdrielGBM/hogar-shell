@@ -11,6 +11,8 @@ use telar::{LayoutItem, PointerButton, StyledContainer, track_layout};
 use layout::{Action, AreaId, LayerKind, Trigger};
 use ui::host::Audience;
 
+use crate::rects::Node;
+
 /// A wheel handler, as `(dx, dy)` in pixels.
 pub type Wheel = Rc<dyn Fn(f32, f32)>;
 
@@ -22,6 +24,7 @@ pub const NOTCH: f32 = 50.0;
 pub struct Bound {
     actions: Rc<BTreeMap<Trigger, Action>>,
     menu: Option<Rc<dyn Fn()>>,
+    owner: Option<Node>,
 }
 
 impl Bound {
@@ -30,7 +33,7 @@ impl Bound {
         match audience {
             Audience::Owner => Self {
                 actions: Rc::new(actions.clone()),
-                menu: None,
+                ..Self::default()
             },
             Audience::Anyone => Self::default(),
         }
@@ -41,20 +44,51 @@ impl Bound {
         Self { menu, ..self }
     }
 
-    /// Whether nothing is bound and no menu offered, so there is nothing to answer.
-    pub fn is_empty(&self) -> bool {
-        self.actions.is_empty() && self.menu.is_none()
+    /// The same, for the instance at `owner`: a press nothing is bound to opens the panel the layout gives it, where it has one ([`crate::panel::owns_panel`]).
+    pub fn owning(self, owner: Node) -> Self {
+        Self {
+            owner: Some(owner),
+            ..self
+        }
     }
 
-    /// What `trigger` runs, if it is bound.
+    /// Whether nothing is bound and no menu offered, so there is nothing to answer.
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty() && self.menu.is_none() && !self.opens_panel()
+    }
+
+    /// What `trigger` runs, if it is bound to a chain with a command in it.
     pub fn runs(&self, trigger: Trigger) -> Option<Rc<dyn Fn()>> {
-        let action = self.actions.get(&trigger)?.clone();
+        let action = self
+            .actions
+            .get(&trigger)
+            .filter(|action| !action.0.is_empty())?
+            .clone();
         Some(Rc::new(move || run(&action)))
     }
 
-    /// A press runs its bound action instead of `built_in`.
+    /// What a press runs, first that answers: its bound action, the panel the layout gives the instance, then `built_in`.
     pub fn press(&self, built_in: Option<Rc<dyn Fn()>>) -> Option<Rc<dyn Fn()>> {
-        self.runs(Trigger::Press).or(built_in)
+        self.runs(Trigger::Press)
+            .or_else(|| self.owned_panel(built_in))
+    }
+
+    fn opens_panel(&self) -> bool {
+        self.owner.as_ref().is_some_and(crate::panel::owns_panel)
+    }
+
+    /// Read again at the press, so a panel taken out of the layout since the build hands the press back to `built_in`.
+    fn owned_panel(&self, built_in: Option<Rc<dyn Fn()>>) -> Option<Rc<dyn Fn()>> {
+        let Some(owner) = self.owner.clone().filter(|_| self.opens_panel()) else {
+            return built_in;
+        };
+        Some(Rc::new(move || {
+            if !crate::panel::toggle_owned(&owner)
+                && let Some(built_in) = &built_in
+            {
+                built_in();
+            }
+        }))
     }
 
     pub fn long_press(&self) -> Option<Rc<dyn Fn()>> {
@@ -141,6 +175,7 @@ impl Bound {
     /// Whether any press is bound or a menu offered, which is what a chip with nothing else to wrap it needs a wrapper for.
     pub fn has_presses(&self) -> bool {
         self.menu.is_some()
+            || self.opens_panel()
             || [
                 Trigger::Press,
                 Trigger::LongPress,
@@ -255,6 +290,18 @@ mod tests {
     fn secondary(bound: &Bound) {
         let press = bound.alt_press().expect("a secondary press is answered");
         press(PointerButton::Secondary);
+    }
+
+    #[test]
+    fn an_empty_chain_answers_nothing_so_the_press_falls_through() {
+        recording();
+        let bound = BTreeMap::from([(Trigger::Press, Action(Vec::new()))]);
+        let bound = Bound::of(&bound, Audience::Owner);
+        assert!(bound.runs(Trigger::Press).is_none());
+        let built_in: Rc<dyn Fn()> =
+            Rc::new(|| RAN.with(|ran| ran.borrow_mut().push("built-in".to_string())));
+        bound.press(Some(built_in)).expect("the built-in answers")();
+        assert_eq!(ran(), ["built-in"]);
     }
 
     /// TA-4: what the layout binds to a secondary press wins, and the context menu opens only where nothing is bound to it.

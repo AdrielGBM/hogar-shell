@@ -1,12 +1,18 @@
+mod owned;
+
 use std::rc::Rc;
 
 use config::OpenMode;
+use layout::{LayerKind, Resolved};
 use ui::chrome::Chrome;
 use ui::descriptor;
 use ui::module::pressed_chip;
 
+use crate::rects::{self, Node, Part};
 use crate::transient::{self, Motion, Place, Slot, Spec, chips};
 use crate::{drawer, float, popout};
+
+pub use owned::Owner;
 
 /// A drawer hangs off the pressed chip, else its module's chip on the focused screen, else the middle of the screen, so a press, a drag, IPC and a keybind all open the same transient. The instance that chip is — else the module's first on that screen, else its first anywhere — is the one whose options size and fill the panel (TA-2).
 pub fn toggle_panel(module_id: &str) {
@@ -67,7 +73,12 @@ pub fn toggle_panel(module_id: &str) {
     );
 }
 
+/// A chip pulled away from its bar opens what its press would: the panel the layout gives its instance, where it has one.
 pub fn open_panel(module_id: &str) {
+    if let Some(owner) = pressed_owner() {
+        owned::open(&owner);
+        return;
+    }
     if !is_panel_open(module_id) {
         toggle_panel(module_id);
     }
@@ -79,4 +90,55 @@ pub fn close_panel(module_id: &str) {
 
 pub fn is_panel_open(module_id: &str) -> bool {
     transient::is_open(module_id)
+}
+
+/// Whether the instance at `node` owns a panel in the layout the windows show.
+pub fn owns_panel(node: &Node) -> bool {
+    owned::owns_panel(node)
+}
+
+/// Toggles the panel the instance at `node` owns, answering whether it owns one.
+pub fn toggle_owned(node: &Node) -> bool {
+    Owner::of(node).is_some_and(|owner| owned::toggle(&owner))
+}
+
+#[cfg(test)]
+pub(crate) fn open_owned(owner: &Owner) -> bool {
+    owned::open(owner)
+}
+
+#[cfg(test)]
+pub(crate) fn close_owned(owner: &Owner) {
+    owned::close(owner);
+}
+
+#[cfg(test)]
+pub(crate) fn is_owned_open(owner: &Owner) -> bool {
+    owned::is_open(owner)
+}
+
+pub(crate) fn prune_owned(desktops: &[(Option<&str>, &Resolved)]) {
+    owned::prune(desktops);
+}
+
+/// The instance whose chip a press or a drag came from, where it owns a panel.
+fn pressed_owner() -> Option<Owner> {
+    let pressed = pressed_chip()?;
+    let outputs: Vec<Option<String>> = match &pressed.output {
+        Some(output) => vec![Some(output.clone())],
+        None => crate::reconcile::desktops_now()
+            .iter()
+            .map(|desktop| desktop.output.clone())
+            .collect(),
+    };
+    outputs
+        .iter()
+        .flat_map(|output| {
+            LayerKind::SESSION
+                .into_iter()
+                .flat_map(move |layer| rects::on(output.as_deref(), layer))
+        })
+        .find(|(node, rect)| matches!(node.part, Part::Instance(..)) && *rect == pressed.rect)
+        .filter(|(node, _)| owns_panel(node))
+        .and_then(|(node, _)| Owner::of(&node))
 }

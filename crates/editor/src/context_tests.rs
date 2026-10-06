@@ -32,7 +32,7 @@ mod tests {
     use crate::keys::{self, Press};
     use crate::mode::{self};
     use crate::popover;
-    use crate::popover::handles::Corner;
+    use crate::popover::handles::{Corner, NEAREST};
     use crate::rig::{Rig, SCREEN, rig, rig_prepared, rig_with};
     use crate::session::{self, Selection};
 
@@ -400,11 +400,11 @@ mod tests {
             let radius = popover::shared::<f32>("radius.top_left")
                 .expect("the corner")
                 .peek();
-            let start = Corner::TopLeft.point(strip, radius);
-            drag(&mut handles, start, (strip.x + 6.0, strip.y + 6.0));
+            let start = Corner::TopLeft.point(strip, radius.max(NEAREST));
+            drag(&mut handles, start, (strip.x + 9.0, strip.y + 9.0));
             assert_eq!(
                 corners_on_screen(),
-                Some(layout::Corners::all(6.0)),
+                Some(layout::Corners::all(9.0)),
                 "the real bar follows the handle"
             );
             if decided_by_escape {
@@ -417,7 +417,7 @@ mod tests {
             } else {
                 transient::close(popover::ID);
                 assert_eq!(rig.undo_label().as_deref(), Some("Customize bar-top"));
-                assert_eq!(corners_on_screen(), Some(layout::Corners::all(6.0)));
+                assert_eq!(corners_on_screen(), Some(layout::Corners::all(9.0)));
             }
             assert_eq!(popover::current(), None);
         }

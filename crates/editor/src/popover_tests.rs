@@ -24,7 +24,7 @@ mod tests {
 
     use crate::mode::{self};
     use crate::popover::area::{edges, help, parsed, spelled, variants};
-    use crate::popover::handles::{CORNERS, Corner, clamp_name};
+    use crate::popover::handles::{CORNERS, Corner, NEAREST, clamp_name, handle_point};
     use crate::popover::place::{GAP, card_at};
     use crate::popover::value::{Step, get, path_of, set, unset};
     use crate::popover::{self, Provenance};
@@ -164,7 +164,7 @@ mod tests {
         popover::open_area(bar()).expect("the bar's popover opens");
         let mut tree = laid();
 
-        let start = Corner::TopLeft.point(BAR, corner(Corner::TopLeft).peek());
+        let start = Corner::TopLeft.point(BAR, corner(Corner::TopLeft).peek().max(NEAREST));
         route(&mut tree, &press(start));
         route(&mut tree, &to((60.0, 60.0)));
         let half = BAR.height / 2.0;
@@ -201,17 +201,21 @@ mod tests {
         let mut tree = laid();
         let prior: Vec<f32> = CORNERS.iter().map(|at| corner(*at).peek()).collect();
 
-        let start = Corner::TopRight.point(BAR, prior[1]);
+        let start = Corner::TopRight.point(BAR, prior[1].max(NEAREST));
         route(&mut tree, &press(start));
         route(&mut tree, &holding_alt(true));
         route(&mut tree, &to((start.0 - 4.0, start.1 + 4.0)));
         let now: Vec<f32> = CORNERS.iter().map(|at| corner(*at).peek()).collect();
         assert_eq!((now[0], now[2], now[3]), (prior[0], prior[2], prior[3]));
-        assert_eq!(now[1], prior[1] + 4.0, "only the dragged corner moves");
+        assert_eq!(
+            now[1],
+            prior[1].max(NEAREST) + 4.0,
+            "only the dragged corner moves"
+        );
 
         route(&mut tree, &holding_alt(false));
-        route(&mut tree, &to((start.0 - 6.0, start.1 + 6.0)));
-        let uniform = prior[1] + 6.0;
+        route(&mut tree, &to((start.0 - 5.0, start.1 + 5.0)));
+        let uniform = prior[1].max(NEAREST) + 5.0;
         assert!(
             CORNERS.iter().all(|at| corner(*at).peek() == uniform),
             "without Alt all four follow"
@@ -235,17 +239,22 @@ mod tests {
         let before = reconcile::desktops();
         popover::open_area(bar()).expect("the bar's popover opens");
         let mut tree = laid();
-        let start = Corner::BottomLeft.point(BAR, corner(Corner::BottomLeft).peek());
+        let radii = CORNERS.map(|at| corner(at).peek());
+        let start = handle_point(BAR, Corner::BottomLeft, radii, NEAREST);
+        let resting = Corner::BottomLeft.point(BAR, NEAREST);
+        let slid = (start.0 - resting.0, start.1 - resting.1);
+        let aimed = Corner::BottomLeft.point(BAR, 9.0);
+        let end = (aimed.0 + slid.0, aimed.1 + slid.1);
         route(&mut tree, &press(start));
-        route(&mut tree, &to((5.0, BAR.height - 5.0)));
-        route(&mut tree, &release((5.0, BAR.height - 5.0)));
+        route(&mut tree, &to(end));
+        route(&mut tree, &release(end));
         let thickness = popover::shared::<f32>("thickness").expect("the bar's thickness");
         thickness.set(40.0);
 
         transient::close(popover::ID);
         assert_eq!(popover::current(), None);
         assert_eq!(rig.undo_label().as_deref(), Some("Customize bar-top"));
-        assert_eq!(corners_on_screen(), Some(Corners::all(5.0)));
+        assert_eq!(corners_on_screen(), Some(Corners::all(9.0)));
         assert_eq!(session::undo().as_deref(), Ok("Customize bar-top"));
         assert_eq!(
             rig.undo_label(),
@@ -717,20 +726,20 @@ mod tests {
         let _tree = laid();
         let draft = popover::instance_draft().expect("an instance's popover");
         let twelve = path_of("twelve_hour");
-        assert_eq!(draft.provenance(&twelve), Provenance::Here);
+        assert_eq!(draft.option_provenance(&twelve), Provenance::Here);
         assert_eq!(
-            draft.provenance(&path_of("show_date")),
+            draft.option_provenance(&path_of("show_date")),
             Provenance::Inherited(rule(&rig, "*", None))
         );
         assert_eq!(
-            draft.provenance(&path_of("date_format")),
+            draft.option_provenance(&path_of("date_format")),
             Provenance::Default
         );
 
         assert_eq!(draft.shown_at(&twelve), Some(Value::Boolean(true)));
-        draft.reset(&twelve);
+        draft.reset_option(&twelve);
         assert_eq!(
-            draft.provenance(&twelve),
+            draft.option_provenance(&twelve),
             Provenance::Inherited(rule(&rig, "*", None))
         );
         assert_eq!(

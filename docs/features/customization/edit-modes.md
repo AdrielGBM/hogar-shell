@@ -85,9 +85,31 @@ edit. `lock` is refused while the session is locked.
   | Ctrl+Z · Ctrl+Shift+Z or Ctrl+Y | undo · redo |
   | `m` | the mode pie |
   | `w` | edit this workspace alone, or every workspace again (background, desktop and overlay) |
+  | `r` · `i` | the radius tool · the padding tool for the selection, pressed again to put it away |
+  | `u` | move the four corners or sides together, or each on its own |
   | `?` or F1 | list the keys of this mode |
 
   A held key is one undo entry however long the keyboard repeats it, and is previewed until you let go.
+- **Rectangles.** A selected texture, free area, grid or lock prompt, on any layer that has them, has a handle on each corner
+  that resizes it from there, the opposite corner staying put, with its size shown beside the pointer as a share of its
+  box ("40 × 25 %"). Dragging a texture's body moves it, as dragging the prompt does. Whatever you move or resize snaps
+  its dragged edges (or, when moved whole, its edges and centre) to the areas, textures and free areas beside it and to
+  the edges and middle of its box within 6 pixels, with a guide drawn where it snapped. The prompt never gets smaller
+  than the least a prompt may be and never leaves its screen. A selected free area also shows its nine anchors: press
+  one, or drag the area's body, to pin what it holds to that ninth. Every one of these has a popover row, and
+  Shift+arrows and Ctrl+arrows move and resize the rectangle a step at a time. Carrying children of a free container
+  does not snap yet. Hold **Alt** while dragging to place anything freely. The corner handles are hidden while the
+  radius or padding tool is up.
+- **Corners and padding.** The radius tool (`r`) puts a handle over each corner's arc of the selection — any area, group or
+  widget — with its radius beside it; the padding tool (`i`), for an area that holds groups (a grid, a panel, a free area, a
+  dock, a bar) or a container, tints the padding along each edge, outlines the box what it holds is laid out in and puts
+  a handle on each side. While the four are **linked** a drag, or an arrow on a focused handle, moves all four together and
+  writes one number; **unlinked** (`u`, remembered for the session) each moves on its own and all four are written, and
+  **Alt** isolates the one dragged or stepped while they are linked. A corner let go within a few pixels of its corner is
+  squared off; no corner rounds past half the short side, and no padding past that less 4 pixels, which the pointer is
+  told. A bar's corners are its `shape.radius`, everything else's its `style.radius`, and padding is `style.padding` —
+  the same values the popover's rows set, within the same limits. An arrow held on a focused handle is one undo entry,
+  as every held key is. Changing the selection or opening a popover puts the tool away.
 - **Context menus.** Right-click an item for its own actions plus Customize, Remove, Reset, the move to an area that draws
   it the other way (chip to widget and back, keeping its id, options and state), and save as a [komponent](bundles.md#komponents).
   Right-click an area for Customize and what its kind adds. On the layer being edited, both menus end with Undo, Redo,
@@ -126,10 +148,7 @@ so no gap opens. Each region has its own picture, fit and transition; "Follow th
 
 Region edges and cuts **snap** to the cell lines of the desktop grid (the lock's grid on the lock layer), in the middle of
 the gap between two cells: a dragged edge within about 1 % of a line, a cut — dragged from its split button, or made by
-`s` — within 4 %. The lines are drawn while you drag. On the lock layer, the prompt you move also snaps its edges and
-centre to the regions, textures and free areas beside it and to the edges and middle of the screen within 6 pixels, with
-a guide drawn where it snapped. Nothing else snaps yet: resizing a rectangle and carrying children of a free container
-will snap the same way once those drags exist. Hold **Alt** while dragging to place anything freely.
+`s` — within 4 %. The lines are drawn while you drag.
 
 Textures lay an image or a gradient over a region (`t`). An image can be tiled or nine-sliced (`n`), with a handle for
 each cut in the image's own pixels; a gradient has its axis drawn over it, a handle that turns it (`[` and `]` turn 45°; Shift snaps a
@@ -168,8 +187,8 @@ the rest are two stacks. `v` shows volume and brightness in a stack, and Shift+L
 
 The lock layer is edited on a **preview** drawn over your unlocked session. It never takes a real lock, and its prompt is a
 picture with no field and a "Preview" badge. It has no tools of its own: it uses the background tools for regions and
-textures and the desktop tools for the grid, and its palette offers only modules that are readings. The prompt has a move
-handle and a style popover and cannot be removed. `p` opens a popover for what the lock screen may reveal about
+textures and the desktop tools for the grid, and its palette offers only modules that are readings. The prompt is moved by
+dragging it, resized by its corners, has a style popover and cannot be removed. `p` opens a popover for what the lock screen may reveal about
 notifications and media; those two choices are `[lock]` config rather than layout, so they are written to `config.toml`
 when the popover closes and are **outside the layout's undo history** — Esc puts them back.
 

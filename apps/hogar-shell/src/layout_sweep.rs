@@ -1209,6 +1209,93 @@ fn no_container_draws_past_its_box() {
     );
 }
 
+/// **An empty container says so only while its layer is edited**: every arrangement, emptied, on every monitor, draws no text outside the desktop's edit mode and its hint inside it, held inside its box.
+#[test]
+fn an_empty_container_shows_its_hint_inside_its_box_only_in_edit_mode() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let texts = |commands: &[DrawCommand]| -> Vec<Rect> {
+        under_transform(commands)
+            .into_iter()
+            .filter(|(command, _)| matches!(command, DrawCommand::Text { .. }))
+            .filter_map(|(command, at)| inked_rect(command, at))
+            .collect()
+    };
+    let mut faults = Vec::new();
+    for size in MONITORS {
+        for mut container in containers() {
+            container.children.clear();
+            let area = area_of(
+                container.id.to_string(),
+                layout::ResolvedAreaKind::Grid {
+                    rect: layout::Rect::default(),
+                    cell: 80.0,
+                    gap: 16.0,
+                    anchor: layout::Anchor::TopLeft,
+                },
+                vec![container.clone()],
+            );
+            let layout::GroupKind::Cell { col, row, .. } = container.kind else {
+                unreachable!("every case is on cells");
+            };
+            let span = surfaces::area::cells_of(&container).extent(80.0, 16.0);
+            let held = Rect::new(
+                col as f32 * 96.0 - SLACK,
+                row as f32 * 96.0 - SLACK,
+                span.width + 2.0 * SLACK,
+                span.height + 2.0 * SLACK,
+            );
+            for edited in [false, true] {
+                reset_layout_runtime();
+                seed_world(Edge::Top, Shape::Bar, None);
+                surfaces::expressions::set_edited(
+                    edited.then(|| (Some("SWEPT-1".to_string()), layout::LayerKind::Desktop)),
+                );
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let measured = measure_area(&area, size);
+                drop(scope);
+                let at = format!(
+                    "{} on {}x{}{}",
+                    container.id,
+                    size.0,
+                    size.1,
+                    if edited { " in edit mode" } else { "" }
+                );
+                match measured {
+                    Err(error) => faults.push(format!("{at}: {error}")),
+                    Ok(commands) => {
+                        let drawn = texts(&commands);
+                        match (edited, drawn.is_empty()) {
+                            (true, true) => faults.push(format!("{at}: no hint")),
+                            (false, false) => faults.push(format!("{at}: a hint")),
+                            _ => {}
+                        }
+                        for rect in drawn
+                            .into_iter()
+                            .filter(|rect| rect.intersect(held) != Some(*rect))
+                        {
+                            faults.push(format!(
+                                "{at}: the hint at {},{} {}x{} is past its box",
+                                rect.x, rect.y, rect.width, rect.height
+                            ));
+                        }
+                    }
+                }
+                telar::dispose_owner(owner);
+            }
+        }
+    }
+    surfaces::expressions::set_edited(None);
+    assert!(
+        faults.is_empty(),
+        "{} empty container(s) got their hint wrong:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
 /// The check above has to be able to fail: ink past any edge of the screen is reported, and ink on it is not.
 #[test]
 fn ink_past_the_edge_of_the_screen_is_reported() {

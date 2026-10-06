@@ -2,8 +2,9 @@
 //!
 //! Resolved once, when the box is built, into a [`Look`]; what is left for paint time is only what depends on the box's size, its corners being cut to half its short side.
 
+use config::Config;
 use config::theme::NordTheme;
-use layout::Style;
+use layout::{Corners, ResolvedAreaKind, Style};
 use telar::{
     Border, BorderRadius, Clip, ClippedItem, Color, LayoutItem, Paint, Rect, RectStyle, Shadow,
 };
@@ -38,7 +39,31 @@ impl Rest {
     }
 }
 
+/// The corners an area of `kind` rests at when its style writes none: a bar's shape, a panel's theme radius unless it runs `along` its owner's bar, and square for anything else.
+pub fn rest_radius(kind: &ResolvedAreaKind, along: bool, config: &Config) -> Corners {
+    match kind {
+        ResolvedAreaKind::Bar { shape, .. } => {
+            Corners::all(crate::bar::bar_shape(config, *shape).radius)
+        }
+        ResolvedAreaKind::Panel { .. } => Corners::all(match along {
+            true => 0.0,
+            false => config.shape_from(None, None, None, None).radius,
+        }),
+        _ => Corners::all(0.0),
+    }
+}
+
 impl Look {
+    /// What a box paints where nothing writes over its kind's rest.
+    pub fn resting(rest: Rest) -> Self {
+        Self {
+            fill: rest.fill,
+            radius: BorderRadius::all(rest.radius),
+            border: None,
+            shadow: None,
+        }
+    }
+
     /// An area's own box: its `fill` as [`Style::paint`] reads it, square unless it names a radius.
     pub fn area(style: &Style, theme: &NordTheme) -> Self {
         Self::edged(
@@ -296,5 +321,47 @@ mod tests {
             true,
         );
         assert_eq!(shadowed.shadow, elevation::shadow(2));
+    }
+
+    #[test]
+    fn rest_radius_panels_along_a_bar_have_zero_corners() {
+        let config = Config::default();
+        let panel = ResolvedAreaKind::Panel {
+            owner: layout::InstanceId::new("test"),
+            along: true,
+            cols: 1,
+            rows: 1,
+            cell: 100.0,
+            gap: 8.0,
+        };
+        let radius = rest_radius(&panel, true, &config);
+        assert!(radius.is_uniform() && radius.top_left() == 0.0);
+    }
+
+    #[test]
+    fn rest_radius_panels_beside_a_bar_have_config_radius() {
+        let config = Config::default();
+        let panel = ResolvedAreaKind::Panel {
+            owner: layout::InstanceId::new("test"),
+            along: false,
+            cols: 1,
+            rows: 1,
+            cell: 100.0,
+            gap: 8.0,
+        };
+        let radius = rest_radius(&panel, false, &config);
+        let expected = config.shape_from(None, None, None, None).radius;
+        assert_eq!(radius.top_left(), expected);
+    }
+
+    #[test]
+    fn rest_radius_for_non_panel_non_bar_kinds_is_zero() {
+        let config = Config::default();
+        let dock = ResolvedAreaKind::Dock {
+            edge: config::Edge::Top,
+            thickness: 34.0,
+        };
+        let radius = rest_radius(&dock, false, &config);
+        assert!(radius.is_uniform() && radius.top_left() == 0.0);
     }
 }

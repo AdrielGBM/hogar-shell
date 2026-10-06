@@ -13,17 +13,18 @@ use telar_expression::Type;
 
 use config::Edge;
 use layout::{
-    Area, AreaKind, Backdrop, Corners, Expr, Group, GroupId, GroupKind, LayerKind, Origin, Rect,
-    ResolvedArea, ResolvedAreaKind, Sides, Unset, Within,
+    Area, AreaKind, Backdrop, Expr, GroupId, GroupKind, LayerKind, Origin, Rect, ResolvedArea,
+    ResolvedAreaKind, Unset, Within,
 };
 use ui::descriptor::Built;
 
 use crate::expr_field::{self, Field, Wanted};
 
-use super::draft::{AreaDraft, kind_field, kind_read};
+use super::draft::{AreaDraft, group_entry, kind_field, kind_read};
 use super::handles;
 use super::rows::{self, Range, Rows, label};
 use super::{Inspector, add_area_tool};
+use super::{actions, look};
 
 pub(crate) fn install() {
     add_area_tool("dock", dock);
@@ -231,86 +232,39 @@ pub(crate) fn rect_rows(draft: &AreaDraft, seed: Rect) -> Rows {
 /// What every area has, after its own kind's rows: how it is painted, and what it asks of the compositor — each row saying where its value comes from, with a Reset while the popover's level writes it.
 pub(crate) fn common(draft: &AreaDraft) -> Rows {
     let is_bar = draft.kind() == "bar";
+    let flat = matches!(draft.kind(), "wallpaper_region" | "texture");
     let mut list = variant_rows(&draft.node)?;
+    list.extend(lattice_row(draft)?);
     if draft.kind() != "prompt" {
         list.push(visible_row(draft)?);
     }
-    list.extend(repeat_rows(draft)?);
-    list.extend(parameter_rows(draft)?);
-    list.push(rows::heading(|| telar::t!("editor.area.style"))?);
-    let fill = draft.setting(
-        "style.fill",
-        "style.fill",
-        |area| area.style.fill.clone().unwrap_or_default(),
-        |area, token: &String| area.style.fill = (!token.is_empty()).then(|| token.clone()),
-    );
-    list.push(draft.marked(
-        &["style.fill"],
-        rows::colour(
-            label!("editor.area.fill"),
-            help("Style", "fill"),
-            fill,
-            Rc::from(config::theme::PAINT_TOKENS),
-            Rc::new(ui::form::swatch_row::is_colour),
-        )?,
-    )?);
-    let faintest = match draft.kind() {
-        "prompt" => layout::FAINTEST_PROMPT,
-        _ => 0.0,
-    };
-    let opacity = draft.setting(
-        "style.opacity",
-        "style.opacity",
-        |area| area.style.opacity.unwrap_or(1.0),
-        |area, value: &f32| area.style.opacity = Some(*value),
-    );
-    list.push(draft.marked(
-        &["style.opacity"],
-        rows::number(
-            label!("editor.area.opacity"),
-            help("Style", "opacity"),
-            opacity,
-            Range::new(faintest, 1.0, 0.05),
-        )?,
-    )?);
+    list.extend(repeat_rows(draft, None)?);
+    list.extend(parameter_rows(draft, None)?);
+    list.push(rows::heading(|| telar::t!("editor.look.heading"))?);
+    list.push(look::fill(draft)?);
+    if !is_bar {
+        list.push(look::radius(draft)?);
+    }
+    list.push(look::opacity(draft)?);
     if draft.kind() == "prompt" {
         list.push(crate::modes::lock::contrast_row(draft)?);
     }
-    let padding = draft.setting(
-        "style.padding",
-        "style.padding",
-        |area| area.style.padding.map_or(0.0, Sides::largest),
-        |area, value: &f32| area.style.padding = Some(Sides::all(*value)),
-    );
-    list.push(draft.marked(
-        &["style.padding"],
-        rows::number(
-            label!("editor.area.padding"),
-            help("Style", "padding"),
-            padding,
-            Range::whole(0.0, 64.0),
-        )?,
-    )?);
-    if !is_bar {
-        let radius = draft.setting(
-            "style.radius",
-            "style.radius",
-            |area| area.style.radius.map_or(0.0, Corners::largest),
-            |area, value: &f32| area.style.radius = Some(Corners::all(*value)),
-        );
-        list.push(draft.marked(
-            &["style.radius"],
-            rows::number(
-                label!("editor.area.radius"),
-                help("Style", "radius"),
-                radius,
-                Range::whole(0.0, handles::most_radius(draft)),
-            )?,
-        )?);
+    if crate::tools::target::area_has_padding(&draft.resolved.kind) {
+        list.push(look::padding(draft)?);
+    }
+    if !flat {
+        list.extend(look::edges(draft)?);
     }
     list.extend(style_backdrop(draft)?);
+    if actions::offered(draft.node.layer, Some(draft.kind())) {
+        list.extend(actions::rows(
+            draft.actions(),
+            Some(|| telar::t!("editor.actions.between")),
+        )?);
+    }
 
     if draft.node.layer == LayerKind::Lock {
+        list.extend(remove_row(draft)?);
         return Ok(list);
     }
     list.push(rows::heading(|| telar::t!("editor.area.behaviour"))?);
@@ -354,7 +308,34 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         |area| area.within,
         |area, within: Within| area.within = Some(within),
     )?);
+    list.extend(remove_row(draft)?);
     Ok(list)
+}
+
+/// The lock screen's prompt is never taken away: a lock with nothing to type a password into is a lockout.
+fn remove_row(draft: &AreaDraft) -> Rows {
+    if draft.kind() == "prompt" {
+        return Ok(Vec::new());
+    }
+    Ok(vec![super::remove_button(draft.node.clone())?])
+}
+
+/// Read only: what the grid's cell, gap, padding and rectangle come to on this screen.
+fn lattice_row(draft: &AreaDraft) -> Rows {
+    if draft.kind() != "grid" {
+        return Ok(Vec::new());
+    }
+    let node = draft.node.clone();
+    Ok(vec![rows::note(move || {
+        let counted = surfaces::reconcile::desktop(node.output.as_deref()).and_then(|desktop| {
+            let area = desktop.resolved.area(node.layer, &node.area)?;
+            surfaces::area::lattice(area, surfaces::rects::rect(&node)?)
+        });
+        match counted {
+            Some(room) => telar::t!("editor.look.lattice", cols = room.columns, rows = room.rows),
+            None => String::new(),
+        }
+    })?])
 }
 
 /// The backdrop picker, and under it, while the area asks for a blur only the compositor can give and this one gives none, why it draws translucent instead (F-10.49).
@@ -572,12 +553,13 @@ pub(crate) fn visible_row(draft: &AreaDraft) -> Built {
 }
 
 /// What each group the area places repeats its children over: a list expression per group, one copy of the children per item — but on a grid cell, whose footprint is fixed (DEC-23). A group the area only inherits gets a partial entry naming its `repeat` alone, and only once its expression changes.
-pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
+pub(crate) fn repeat_rows(draft: &AreaDraft, only: Option<&GroupId>) -> Rows {
     let written = draft.area().peek();
     let groups: Vec<(GroupId, Held, bool, Option<Origin>)> = draft
         .resolved
         .groups
         .iter()
+        .filter(|group| only.is_none_or(|only| *only == group.id))
         .filter(|group| !matches!(group.kind, GroupKind::Cell { .. }) && group.komponent.is_none())
         .map(|group| {
             let own = written.groups.iter().find(|held| held.id == group.id);
@@ -610,16 +592,7 @@ pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
                 if started.get(id) == Some(held) {
                     continue;
                 }
-                let group = match area.groups.iter().position(|group| group.id == *id) {
-                    Some(at) => &mut area.groups[at],
-                    None => {
-                        area.groups.push(Group {
-                            id: id.clone(),
-                            ..Group::default()
-                        });
-                        area.groups.last_mut().expect("a group was just pushed")
-                    }
-                };
+                let group = group_entry(area, id);
                 group.repeat = held.expr();
                 held.write_unset(&mut group.unset, Unset::Repeat);
             }
@@ -660,11 +633,16 @@ pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
 }
 
 /// What each group drawing a komponent sets its parameters to: an expression per parameter, of the type the komponent declares, read where the group is drawn — empty for the komponent's default. A value only a level under the popover's sets has a Remove that takes it back there, as an inherited `repeat` has.
-pub(crate) fn parameter_rows(draft: &AreaDraft) -> Rows {
+pub(crate) fn parameter_rows(draft: &AreaDraft, only: Option<&GroupId>) -> Rows {
     type Key = (GroupId, String);
     let written = draft.area().peek();
     let mut parameters: Vec<(Key, String, layout::ResolvedParameter, Held, bool)> = Vec::new();
-    for group in &draft.resolved.groups {
+    for group in draft
+        .resolved
+        .groups
+        .iter()
+        .filter(|group| only.is_none_or(|only| *only == group.id))
+    {
         let Some(used) = &group.komponent else {
             continue;
         };
@@ -702,16 +680,7 @@ pub(crate) fn parameter_rows(draft: &AreaDraft) -> Rows {
                 if started.get(&(id.clone(), name.clone())) == Some(held) {
                     continue;
                 }
-                let group = match area.groups.iter().position(|group| group.id == *id) {
-                    Some(at) => &mut area.groups[at],
-                    None => {
-                        area.groups.push(Group {
-                            id: id.clone(),
-                            ..Group::default()
-                        });
-                        area.groups.last_mut().expect("a group was just pushed")
-                    }
-                };
+                let group = group_entry(area, id);
                 match held.expr() {
                     Some(expr) => group.parameters.insert(name.clone(), expr),
                     None => group.parameters.remove(name),

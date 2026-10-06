@@ -682,7 +682,7 @@ pub(crate) fn kind_name(kind: &ResolvedAreaKind) -> String {
 }
 
 /// The gesture an area's bound action is on, drawn where a row's shortcut would be.
-fn trigger_name(trigger: Trigger) -> String {
+pub(crate) fn trigger_name(trigger: Trigger) -> String {
     match trigger {
         Trigger::Press => telar::t!("editor.menu.trigger.press"),
         Trigger::LongPress => telar::t!("editor.menu.trigger.long_press"),
