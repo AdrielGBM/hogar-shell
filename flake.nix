@@ -34,6 +34,21 @@
         default = hogar-shell;
       });
 
+      # `cargo fmt` walks the module tree from each crate root, and `rsx_modules!` declares most of that tree through the generated `.telar/`, so it never reaches those files. This hands rustfmt every tracked file instead; it needs neither telar nor a build.
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          fmt = pkgs.runCommand "hogar-shell-fmt" { nativeBuildInputs = [ pkgs.rustfmt ]; } ''
+            cd ${self}
+            find . -name '*.rs' -print0 | xargs -0 -r rustfmt --edition 2024 --check
+            touch $out
+          '';
+        }
+      );
+
       devShells = forAllSystems (
         system:
         let

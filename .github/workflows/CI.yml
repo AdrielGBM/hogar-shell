@@ -14,12 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Pinned to the toolchain nixpkgs currently ships, so `cargo fmt --check` and `cargo clippy` locally are the same check this runs: rustfmt and clippy each flag more than the release before them.
+      # Pinned to the toolchain nixpkgs currently ships, so the format check and `cargo clippy` locally are the same check this runs: rustfmt and clippy each flag more than the release before them.
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt
-      # rustfmt walks the module tree from the crate root and `rsx_modules!` generates that tree at expansion time, so a bare `cargo fmt --check` formats almost nothing and passes. Handing it the list is what makes the check mean something.
-      - run: cargo fmt --check -- $(find apps crates -name '*.rs' -not -path '*/target/*' -not -path '*/.telar/*')
+      # rustfmt walks the module tree from the crate root and `rsx_modules!` generates that tree at expansion time, so a bare `cargo fmt --check` formats almost nothing and passes. Handing rustfmt every tracked file is what makes the check mean something, and it is the same check as the flake's `fmt`.
+      - run: git ls-files -z '*.rs' | xargs -0 rustfmt --edition 2024 --check
 
   clippy:
     runs-on: ubuntu-latest

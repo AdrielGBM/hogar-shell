@@ -53,7 +53,15 @@ package's gitignored `.telar/`, so:
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+nix flake check
 ```
+
+- **`cargo fmt` reaches almost nothing.** It walks the module tree from each crate root, and `rsx_modules!`
+  declares most of that tree through the generated `.telar/`, so `cargo fmt` leaves those files as they are and
+  `cargo fmt --check` passes over them. Format what you changed with `rustfmt --edition 2024 <files>`.
+  `nix flake check` runs the `fmt` check, which fails when any tracked `.rs` file is not rustfmt-clean; CI runs
+  the same command (`git ls-files -z '*.rs' | xargs -0 rustfmt --edition 2024 --check`). The flake only sees
+  what git tracks, so `git add` a new file before checking it.
 
 - **The test runner keeps a reactive batch open.** A test that builds modules does it under `telar::batch`, and
   measures outside it; see `apps/hogar-shell/src/core/modules.rs` for the shape.
