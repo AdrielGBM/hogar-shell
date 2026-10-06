@@ -800,40 +800,37 @@ fn at(rect: Rect) -> LayoutStyle {
 
 /// A vertical anchor lines up by its top rather than its centre because a transient beside a vertical bar is as tall as its content, and what the eye follows from a chip in a column is the row it is on.
 pub fn beside(anchor: &Anchor, panel: (f32, f32), usable: Rect) -> (f32, f32) {
+    beside_chip(anchor.edge, anchor.gap, anchor.rect, panel, usable)
+}
+
+pub(crate) fn kept_inside(at: f32, start: f32, length: f32, extent: f32, gap: f32) -> f32 {
+    let far = (start + length - extent - gap).max(start + gap);
+    at.clamp(start + gap, far)
+}
+
+pub(crate) fn beside_chip(
+    edge: Edge,
+    gap: f32,
+    chip: Rect,
+    panel: (f32, f32),
+    usable: Rect,
+) -> (f32, f32) {
     let (width, height) = panel;
-    let gap = anchor.gap;
-    let chip = anchor.rect;
-    let clamp = |at: f32, start: f32, length: f32, extent: f32| {
-        let far = (start + length - extent - gap).max(start + gap);
-        at.clamp(start + gap, far)
+    let across = || {
+        kept_inside(
+            chip.x + chip.width / 2.0 - width / 2.0,
+            usable.x,
+            usable.width,
+            width,
+            gap,
+        )
     };
-    match anchor.edge {
-        Edge::Top => (
-            clamp(
-                chip.x + chip.width / 2.0 - width / 2.0,
-                usable.x,
-                usable.width,
-                width,
-            ),
-            chip.y + chip.height + gap,
-        ),
-        Edge::Bottom => (
-            clamp(
-                chip.x + chip.width / 2.0 - width / 2.0,
-                usable.x,
-                usable.width,
-                width,
-            ),
-            chip.y - gap - height,
-        ),
-        Edge::Left => (
-            chip.x + chip.width + gap,
-            clamp(chip.y, usable.y, usable.height, height),
-        ),
-        Edge::Right => (
-            chip.x - gap - width,
-            clamp(chip.y, usable.y, usable.height, height),
-        ),
+    let down = || kept_inside(chip.y, usable.y, usable.height, height, gap);
+    match edge {
+        Edge::Top => (across(), chip.y + chip.height + gap),
+        Edge::Bottom => (across(), chip.y - gap - height),
+        Edge::Left => (chip.x + chip.width + gap, down()),
+        Edge::Right => (chip.x - gap - width, down()),
     }
 }
 
