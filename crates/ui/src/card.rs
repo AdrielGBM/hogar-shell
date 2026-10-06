@@ -10,7 +10,7 @@ use telar::{
 use config::theme::{FontRole, NordTheme};
 use util::reactive::{Live, fixed, fixed_text};
 
-use crate::chrome::{content_radius, panel_fill};
+use crate::chrome::{Plated, content_radius, panel_fill};
 use crate::icon::icon_view;
 use crate::scale::space;
 use crate::widget;
@@ -80,6 +80,7 @@ impl Density {
     /// A widget sits on the wallpaper or the lock's background, so it takes the translucent panel fill a popout does rather than the page's `base`, which is only distinct against a `surface` panel.
     fn fill(self, theme: NordTheme) -> Color {
         match self {
+            Density::Widget if Plated::here() => Color::TRANSPARENT,
             Density::Compact | Density::Widget => panel_fill(),
             Density::Page => theme.base,
         }

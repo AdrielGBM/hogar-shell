@@ -19,8 +19,8 @@ mod tests {
     use ui::host::{Host, WidgetSize};
 
     use crate::mode::{self, Compositor};
-    use crate::modes::grid;
     use crate::modes::widgets::{self, Geometry};
+    use crate::modes::{gesture, grid};
     use crate::rig::{Rig, SCREEN};
     use crate::session::{self, Selection};
     use crate::{host, popover};
@@ -119,8 +119,12 @@ mod tests {
     }
 
     fn enter() -> DismissRegistration {
+        enter_on(LayerKind::Desktop)
+    }
+
+    fn enter_on(layer: LayerKind) -> DismissRegistration {
         mode::enter_as(
-            LayerKind::Desktop,
+            layer,
             Some(SCREEN),
             &Compositor {
                 restack: true,
@@ -181,14 +185,12 @@ mod tests {
     impl Screen {
         fn new() -> Self {
             let current = mode::current().expect("the mode is up");
+            Self::of(vec![host::tools(&current).expect("the tools build")])
+        }
+
+        fn of(tools: Vec<Box<dyn LayoutItem>>) -> Self {
             let page = || LayoutStyle::new().width(SIZE.0).height(SIZE.1);
-            let root = Pointed::new(Box::new(
-                Container::new(
-                    page(),
-                    vec![host::tools(&current).expect("the tools build")],
-                )
-                .expect("a page"),
-            ));
+            let root = Pointed::new(Box::new(Container::new(page(), tools).expect("a page")));
             let node = root.layout_node();
             let tree = ComponentList::new(root);
             compute_layout(
@@ -330,7 +332,7 @@ mod tests {
         use_theme::<NordTheme>().surface.with_alpha(0.5)
     }
 
-    /// T-4.1: the pointer over a widget outlines it thinly; once it is selected nothing more is drawn over it, while what a click elsewhere would select is still outlined; during a drag nothing is.
+    /// The pointer over a widget outlines it thinly; once it is selected nothing more is drawn over it, while what a click elsewhere would select is still outlined; during a drag nothing is.
     #[test]
     fn the_pointer_outlines_what_a_click_would_select_but_not_the_selection_or_during_a_drag() {
         let _rig = rig("pointer-hover");
@@ -380,7 +382,7 @@ mod tests {
         screen.release((clock.x + clock.width / 2.0 + 30.0, clock.y + 300.0));
     }
 
-    /// T-4.14: a double-click on a widget opens its popover; a single click only selects it.
+    /// A double-click on a widget opens its popover; a single click only selects it.
     #[test]
     fn a_double_click_opens_the_popover_of_what_it_selects() {
         let _rig = rig("pointer-double-click");
@@ -403,7 +405,7 @@ mod tests {
         popover::close();
     }
 
-    /// T-4.14: under a selected widget or group its size in cells and in pixels; none under an area, and none during a drag.
+    /// Under a selected widget or group its size in cells and in pixels; none under an area, and none during a drag.
     #[test]
     fn the_size_tag_says_cells_and_pixels_under_the_selection() {
         let _rig = rig("pointer-size-tag");
@@ -462,7 +464,7 @@ mod tests {
         screen.release((middle(rect).0 + 200.0, middle(rect).1 + 300.0));
     }
 
-    /// T-4.14: a widget being dragged has a translucent ghost under the pointer, where it was taken hold of, and a tag beside the pointer saying where it lands — a cell counted from one, into a container, onto a widget to stack — that goes over to the pointer's other side near the right edge and the foot of the screen.
+    /// A widget being dragged has a translucent ghost under the pointer, where it was taken hold of, and a tag beside the pointer saying where it lands — a cell counted from one, into a container, onto a widget to stack — that goes over to the pointer's other side near the right edge and the foot of the screen.
     #[test]
     fn a_drag_tags_where_it_lands_beside_the_pointer_and_carries_a_ghost() {
         let _rig = rig("pointer-drag-tag");
@@ -554,5 +556,130 @@ mod tests {
             Vec::new(),
             "and so does the ghost"
         );
+    }
+
+    /// A widget is held where it was pressed, the travel before the drag threshold included: a first move far past the threshold carries the ghost that far from the widget, and it lands on the cells under the ghost's corner.
+    #[test]
+    fn a_drag_holds_the_widget_where_it_was_pressed() {
+        let _rig = rig("pointer-drag-press");
+        let _owner = Owner::new();
+        let _host = enter();
+        let geometry = placed();
+        let mut screen = Screen::new();
+        let clock = drawn(&clock_node());
+        let start = (clock.x + 6.0, clock.y + 6.0);
+        let travel = (geometry.pitch * 3.0, geometry.pitch * 2.0);
+        let at = (start.0 + travel.0, start.1 + travel.1);
+
+        screen.move_to(start);
+        screen.press(start);
+        screen.move_to(at);
+        let ghosts = screen.filled(ghost_fill());
+        let wanted = Rect::new(
+            clock.x + travel.0,
+            clock.y + travel.1,
+            clock.width,
+            clock.height,
+        );
+        assert!(
+            ghosts.len() == 1 && same(ghosts[0], wanted),
+            "the ghost moved by the whole travel: {ghosts:?} {wanted:?}"
+        );
+        assert!(
+            screen.said("col 4 · row 3").is_some(),
+            "{:?}",
+            screen.texts()
+        );
+        screen.release(at);
+    }
+
+    fn two_columns(test: &str) -> Rig {
+        crate::rig::rig_with(test, |layout| {
+            let background = &mut layout.outputs[0].layers.background;
+            let column = |x: f32, w: f32| {
+                Some(layout::Rect {
+                    x,
+                    y: 0.0,
+                    w,
+                    h: 1.0,
+                })
+            };
+            if let Some(AreaKind::WallpaperRegion { rect, .. }) = &mut background.areas[0].kind {
+                *rect = column(0.0, 0.25);
+            }
+            background.areas.push(Area {
+                id: AreaId::new("right"),
+                kind: Some(AreaKind::WallpaperRegion {
+                    rect: column(0.25, 0.75),
+                    source: None,
+                    fit: None,
+                    transition: None,
+                }),
+                ..Area::default()
+            });
+        })
+    }
+
+    fn stack_width_handle() -> (Screen, (f32, f32)) {
+        let desktop = surfaces::reconcile::desktops()
+            .iter()
+            .find(|desktop| desktop.output.as_deref() == Some(SCREEN))
+            .cloned()
+            .expect("the edited screen");
+        let stack = crate::modes::overlay::stacks_of(&desktop)
+            .into_iter()
+            .next()
+            .expect("the layout has a stack");
+        let node = Node::area(Some(SCREEN), LayerKind::Overlay, &stack.id);
+        popover::open_area(node.clone()).expect("its popover opens");
+        let item = popover::tree()
+            .expect("a popover is open")
+            .expect("its tree builds");
+        let column = rects::rect(&node).unwrap_or_default();
+        let handle = crate::modes::overlay::width_point(column, stack.anchor, stack.width);
+        (Screen::of(vec![item]), handle)
+    }
+
+    fn drag_by(screen: &mut Screen, from: (f32, f32), by: f32) -> (f32, f32) {
+        let to = (from.0 + by, from.1);
+        screen.move_to(from);
+        screen.press(from);
+        screen.move_to((from.0 + 10.0, from.1));
+        screen.move_to(to);
+        assert!(
+            gesture::dragging(),
+            "dragging while the pointer travels from {from:?}"
+        );
+        screen.release(to);
+        assert!(!gesture::dragging(), "not dragging once it is let go");
+        to
+    }
+
+    /// While a region edge is dragged the dragging signal is set, and it is cleared on release.
+    #[test]
+    fn the_dragging_signal_is_set_during_a_region_edge_drag() {
+        let _rig = two_columns("pointer-edge-drag-signal");
+        let _owner = Owner::new();
+        let _host = enter_on(LayerKind::Background);
+        let current = mode::current().expect("the mode is up");
+        let mut screen = Screen::of(vec![
+            crate::modes::background::tool(&current).expect("the region tools build"),
+        ]);
+
+        assert!(!gesture::dragging(), "not dragging before the press");
+        let _ = drag_by(&mut screen, (480.0, 540.0), 60.0);
+    }
+
+    /// The same width handle of an overlay stack, dragged twice in a row without being rebuilt, sets the dragging signal each time.
+    #[test]
+    fn a_stack_width_handle_signals_dragging_on_every_drag() {
+        let _rig = crate::rig::rig_with("pointer-width-drag-signal", |_| {});
+        let _owner = Owner::new();
+        let _host = enter_on(LayerKind::Overlay);
+        let (mut screen, handle) = stack_width_handle();
+
+        assert!(!gesture::dragging(), "not dragging before the press");
+        let moved = drag_by(&mut screen, handle, 40.0);
+        drag_by(&mut screen, moved, 40.0);
     }
 }

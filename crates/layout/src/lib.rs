@@ -16,8 +16,8 @@ pub use crate::model::*;
 pub use crate::ops::{LayoutOp, Listed, OpError, PromptEdit, Site, Spot};
 pub use crate::placed::Placed;
 pub use crate::resolve::{
-    ActiveWorkspace, EXTENDS_DEPTH, KomponentUse, Level, Origin, Paint, Resolved, ResolvedArea,
-    ResolvedAreaKind, ResolvedExpr, ResolvedGroup, ResolvedInstance, ResolvedLayer,
+    ActiveWorkspace, EXTENDS_DEPTH, Holder, KomponentUse, Level, Origin, Paint, Resolved,
+    ResolvedArea, ResolvedAreaKind, ResolvedExpr, ResolvedGroup, ResolvedInstance, ResolvedLayer,
     ResolvedParameter, held_sources, layout_path, lays_over, resolve, sources,
 };
 pub use crate::routing::{RoutedCard, route_card};

@@ -1,4 +1,4 @@
-//! The desktop mode's tools (T-7.2): widgets added from the palette, dropped, stacked, detached and resized on grids without ever taking one off the screen, a chip turned into a widget and back as the same instance, edits for one workspace alone, and areas an extended level places taken away.
+//! The desktop mode's tools: widgets added from the palette, dropped, stacked, detached and resized on grids without ever taking one off the screen, a chip turned into a widget and back as the same instance, edits for one workspace alone, and areas an extended level places taken away.
 
 #[cfg(test)]
 mod tests {
@@ -12,9 +12,9 @@ mod tests {
     use telar::{RectStyle, StyledContainer};
 
     use layout::{
-        ActiveWorkspace, Area, AreaId, AreaKind, Arrange, GroupId, GroupKind, InstanceId, LayerKind, Layout,
-        LayoutId, OutputMatch, OutputRule, Representation, ResolvedArea, ResolvedGroup,
-        WorkspaceMatch,
+        ActiveWorkspace, Area, AreaId, AreaKind, Arrange, GroupId, GroupKind, InstanceId,
+        LayerKind, Layout, LayoutId, OutputMatch, OutputRule, Representation, ResolvedArea,
+        ResolvedGroup, WorkspaceMatch,
     };
     use surfaces::menu::{Asked, Pointed};
     use surfaces::rects::Node;

@@ -29,7 +29,7 @@ use crate::context;
 use crate::host::{passthrough, see_through, whole};
 use crate::keys::{self, Chord, Direction, KeyOp, Run};
 use crate::mode::{Mode, said};
-use crate::popover::area::{picked, variants};
+use crate::popover::area::{chosen, variants};
 use crate::popover::rows::{self, Range, label};
 use crate::popover::{AreaDraft, Inspector, help, kind_field, parsed, spelled};
 use crate::session::{self, Edit, EditError, Selection};
@@ -760,11 +760,10 @@ fn ghost_target(node: Node, frozen: RwSignal<bool>) -> Built {
         })
         .cursor(Cursor::Grab),
         edit.transaction(),
-        move |_| {
-            let point = surfaces::menu::pointer()?;
+        move |pressed| {
             let placed = placed_now(&taking)?;
             frozen.set(true);
-            Some((point, placed))
+            Some((pressed, placed))
         },
         move |(from, placed): &((f32, f32), Placed), _| {
             let (Some(point), Some(before), Some(desktop)) = (
@@ -840,84 +839,115 @@ fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     else {
         return Ok(Inspector::default());
     };
-    let mut list = picked(
+    let mut list = chosen(
         draft,
         "anchor",
         label!("editor.area.anchor"),
         help("AreaKind::Stack", "anchor"),
         variants("Anchor"),
-        anchor,
+        move |area| match area.kind {
+            ResolvedAreaKind::Stack { anchor: now, .. } => now,
+            _ => anchor,
+        },
         |area, anchor: Anchor| kind_field!(area, "stack", Stack { anchor }, anchor),
     )?;
-    let wide = draft.value(
+    let wide = draft.setting(
         "width",
-        || width,
+        "width",
+        move |area| match area.kind {
+            ResolvedAreaKind::Stack { width: now, .. } => now,
+            _ => width,
+        },
         |area, value: &f32| kind_field!(area, "stack", Stack { width }, *value),
     );
-    list.push(rows::number(
-        label!("editor.area.width"),
-        help("AreaKind::Stack", "width"),
-        wide,
-        Range::whole(crate::steps::WIDTHS.0, crate::steps::WIDTHS.1),
+    list.push(draft.marked(
+        "width",
+        rows::number(
+            label!("editor.area.width"),
+            help("AreaKind::Stack", "width"),
+            wide,
+            Range::whole(crate::steps::WIDTHS.0, crate::steps::WIDTHS.1),
+        )?,
     )?);
-    list.extend(picked(
+    list.extend(chosen(
         draft,
         "output_policy",
         label!("editor.area.output_policy"),
         help("AreaKind::Stack", "output_policy"),
         variants("StackOutputPolicy"),
-        output_policy,
+        move |area| match &area.kind {
+            ResolvedAreaKind::Stack {
+                output_policy: now, ..
+            } => now.clone(),
+            _ => output_policy.clone(),
+        },
         |area, policy: StackOutputPolicy| {
             kind_field!(area, "stack", Stack { output_policy }, policy)
         },
     )?);
     let reach = Range::whole(-3840.0, 3840.0);
-    let across = draft.value(
+    let offset_of = move |area: &ResolvedArea| match area.kind {
+        ResolvedAreaKind::Stack { offset: now, .. } => now,
+        _ => offset,
+    };
+    let across = draft.setting(
         "offset.x",
-        || offset.x,
+        "offset",
+        move |area| offset_of(area).x,
         move |area, x: &f32| {
             if let Some(stack) = stack_mut(area) {
                 stack.offset.get_or_insert(offset).x = *x;
             }
         },
     );
-    let down = draft.value(
+    let down = draft.setting(
         "offset.y",
-        || offset.y,
+        "offset",
+        move |area| offset_of(area).y,
         move |area, y: &f32| {
             if let Some(stack) = stack_mut(area) {
                 stack.offset.get_or_insert(offset).y = *y;
             }
         },
     );
-    list.extend([
-        rows::number(
-            label!("editor.overlay.offset_x"),
-            help("AreaKind::Stack", "offset"),
-            across,
-            reach,
-        )?,
-        rows::number(
-            label!("editor.overlay.offset_y"),
-            help("AreaKind::Stack", "offset"),
-            down,
-            reach,
-        )?,
-    ]);
+    list.push(draft.marked(
+        "offset",
+        rows::together(vec![
+            rows::number(
+                label!("editor.overlay.offset_x"),
+                help("AreaKind::Stack", "offset"),
+                across,
+                reach,
+            )?,
+            rows::number(
+                label!("editor.overlay.offset_y"),
+                help("AreaKind::Stack", "offset"),
+                down,
+                reach,
+            )?,
+        ])?,
+    )?);
     list.extend(route_rows(draft, routes)?);
-    let opens = draft.value(
+    let opens = draft.setting(
         "launcher",
-        || launcher,
+        "launcher",
+        move |area| match area.kind {
+            ResolvedAreaKind::Stack { launcher: now, .. } => now,
+            _ => launcher,
+        },
         |area, on: &bool| {
             if let Some(stack) = stack_mut(area) {
                 *stack.launcher = Some(*on);
             }
         },
     );
-    list.push(rows::toggle(
-        label!("editor.overlay.launcher_here"),
-        help("AreaKind::Stack", "launcher"),
-        opens,
+    list.push(draft.marked(
+        "launcher",
+        rows::toggle(
+            label!("editor.overlay.launcher_here"),
+            help("AreaKind::Stack", "launcher"),
+            opens,
+        )?,
     )?);
     let before: Option<AreaId> =
         reconcile::desktop(draft.node.output.as_deref()).and_then(|desktop| {
@@ -946,9 +976,13 @@ fn route_rows(
     draft: &AreaDraft,
     seed: Vec<Route>,
 ) -> Result<Vec<Box<dyn telar::LayoutItem>>, LayoutError> {
-    let routes: RwSignal<Vec<Route>> = draft.value(
+    let routes: RwSignal<Vec<Route>> = draft.setting(
         "routes",
-        || seed,
+        "routes",
+        move |area| match &area.kind {
+            ResolvedAreaKind::Stack { routes, .. } => routes.clone(),
+            _ => seed.clone(),
+        },
         |area, routes: &Vec<Route>| {
             if let Some(stack) = stack_mut(area) {
                 *stack.routes = routes.clone();
@@ -989,6 +1023,8 @@ fn route_rows(
         })?,
     ];
     let shape = signal(0u64);
+    let resets = draft.resets();
+    let mut block: Vec<Box<dyn telar::LayoutItem>> = Vec::new();
     let apps: Rc<[(String, String)]> =
         std::iter::once((String::new(), telar::t!("editor.overlay.any_app")))
             .chain(recent_apps().into_iter().map(|app| (app.clone(), app)))
@@ -996,15 +1032,15 @@ fn route_rows(
     let blocks = ReactiveList::with_style(
         LayoutStyle::new().flex_column().gap(ui::scale::space::sm()),
         move || {
-            let generation = shape.get();
+            let generation = shape.get().wrapping_add(resets.get());
             let count = routes.with(Vec::len);
             (0..count).map(|at| (generation, count, at)).collect()
         },
         |key: &(u64, usize, usize)| *key,
         move |(_, _, at): (u64, usize, usize)| route_block(routes, shape, at, Rc::clone(&apps)),
     )?;
-    list.push(Box::new(blocks));
-    list.push(rows::action(
+    block.push(Box::new(blocks));
+    block.push(rows::action(
         || telar::t!("editor.overlay.add_route"),
         move || {
             routes.update(|held| {
@@ -1030,11 +1066,12 @@ fn route_rows(
             osd.set(now);
         }
     });
-    list.push(rows::toggle(
+    block.push(rows::toggle(
         label!("editor.overlay.osd_here"),
         help("Route", "kind"),
         osd,
     )?);
+    list.push(draft.marked("routes", rows::together(block)?)?);
     Ok(list)
 }
 
@@ -1201,6 +1238,18 @@ fn route_block(
     )?))
 }
 
+/// Where the width handle of a column at `column`, pinned at `anchor`, sits when the column is `width` wide.
+pub(crate) fn width_point(column: Rect, anchor: Anchor, width: f32) -> (f32, f32) {
+    let (side, down) = pinned::sides(anchor);
+    let card = ghost(column, pinned::anchor_of(side, down));
+    let y = card.y + card.height / 2.0;
+    match side {
+        Side::Start => (column.x + width, y),
+        Side::Middle => (column.x + column.width / 2.0 + width / 2.0, y),
+        Side::End => (column.x + column.width - width, y),
+    }
+}
+
 /// On the column's side away from where it is pinned across, dragged across: the column is as wide as it is dragged, and one pinned to the middle grows both ways.
 fn width_handle(draft: &AreaDraft, value: RwSignal<f32>) -> Built {
     let anchor: RwSignal<String> = draft
@@ -1217,24 +1266,19 @@ fn width_handle(draft: &AreaDraft, value: RwSignal<f32>) -> Built {
         pinned::sides(anchor)
     };
     let (reading, placing) = (draft.node.clone(), draft.node.clone());
-    let to_value = Rc::new(move |x: f32, _y: f32| {
+    let hd = crate::modes::gesture::HandleDragging::new();
+    let to_value = Rc::new(hd.wrap_to_value(move |x: f32, _y: f32| {
         let column = surfaces::rects::rect(&reading).unwrap_or_default();
         match across().0 {
             Side::Start => x - column.x,
             Side::Middle => 2.0 * (x - (column.x + column.width / 2.0)).abs(),
             Side::End => column.x + column.width - x,
         }
-    });
+    }));
     let to_point = Rc::new(move |width: f32| {
         let column = surfaces::rects::rect(&placing).unwrap_or_default();
         let (side, down) = across();
-        let card = ghost(column, pinned::anchor_of(side, down));
-        let y = card.y + card.height / 2.0;
-        match side {
-            Side::Start => (column.x + width, y),
-            Side::Middle => (column.x + column.width / 2.0 + width / 2.0, y),
-            Side::End => (column.x + column.width - width, y),
-        }
+        width_point(column, pinned::anchor_of(side, down), width)
     });
     telar::handle(
         telar::HandleProps::props()
@@ -1245,6 +1289,7 @@ fn width_handle(draft: &AreaDraft, value: RwSignal<f32>) -> Built {
             .max(crate::steps::WIDTHS.1)
             .step(1.0)
             .cursor(Cursor::EwResize)
+            .transaction(hd.transaction(value))
             .build(),
         Children::default(),
     )

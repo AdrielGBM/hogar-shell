@@ -14,6 +14,7 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use telar::RwSignal;
 
@@ -31,7 +32,7 @@ use crate::context;
 use crate::host::StripButton;
 use crate::keys::{self, Chord, Direction, KeyOp, Run};
 use crate::mode::said;
-use crate::popover::area::{edges, picked, variants};
+use crate::popover::area::{chosen, chosen_as, edges, variants};
 use crate::popover::handles::{self, SHORTEST};
 use crate::popover::rows::{self, Range, label};
 use crate::popover::{AreaDraft, Inspector, help, kind_field};
@@ -274,12 +275,16 @@ fn place(work: &mut Work, id: &AreaId, at: f32, length: f32) -> Result<(), EditE
 
 /// The run a bar made on `edge` places itself along: the one the shipped bar would have there.
 pub(crate) fn new_run(desktop: &Desktop, edge: Edge) -> (f32, f32) {
-    let gap = match layout::default_bar(AreaId::new(""), edge).kind {
-        Some(AreaKind::Bar { shape, .. }) => desktop
-            .config
-            .gap_of(&surfaces::bar::bar_shape(&desktop.config, shape))
-            as f32,
-        _ => 0.0,
+    let (gap, hides) = match layout::default_bar(AreaId::new(""), edge).kind {
+        Some(AreaKind::Bar {
+            shape, autohide, ..
+        }) => (
+            desktop
+                .config
+                .gap_of(&surfaces::bar::bar_shape(&desktop.config, shape)) as f32,
+            autohide.is_some(),
+        ),
+        _ => (0.0, false),
     };
     surfaces::bar::run_along(
         edge,
@@ -288,6 +293,7 @@ pub(crate) fn new_run(desktop: &Desktop, edge: Edge) -> (f32, f32) {
             .box_of(layout::Within::Output, desktop.size),
         desktop.reserved,
         gap,
+        hides,
     )
 }
 
@@ -1188,6 +1194,7 @@ pub(crate) struct Along {
     pub offset: RwSignal<f32>,
     pub fills: RwSignal<bool>,
     pub gap: RwSignal<f32>,
+    pub hides: RwSignal<bool>,
 }
 
 /// Keeps the bar a popover edits clear of the other bars on its edge, whichever row or handle moves it: its offset and length stay inside the free stretch it is in, a bar asked to run the whole edge runs the whole of that stretch instead, and a turn to another edge fits it into the free stretch there nearest where it was. On an edge it has to itself nothing is held back.
@@ -1198,6 +1205,7 @@ pub(crate) fn keep_clear(draft: &AreaDraft, along: Along) {
         offset,
         fills,
         gap,
+        hides,
     } = along;
     let (node, within) = (draft.node.clone(), draft.resolved.within);
     let room = Cell::new(None::<(Edge, (f32, f32))>);
@@ -1206,7 +1214,13 @@ pub(crate) fn keep_clear(draft: &AreaDraft, along: Along) {
         let Some(on) = crate::popover::parsed::<Edge>(&edge.get()) else {
             return;
         };
-        let (now, from, whole, floats) = (length.get(), offset.get(), fills.get(), gap.get());
+        let (now, from, whole, floats, hiding) = (
+            length.get(),
+            offset.get(),
+            fills.get(),
+            gap.get(),
+            hides.get(),
+        );
         let Some(desktop) = reconcile::planned()
             .iter()
             .find(|desktop| desktop.output == node.output)
@@ -1219,6 +1233,7 @@ pub(crate) fn keep_clear(draft: &AreaDraft, along: Along) {
             desktop.reserved.box_of(within, desktop.size),
             desktop.reserved,
             floats,
+            hiding,
         );
         let stretch = match room.get() {
             Some((held, stretch)) if held == on => stretch,
@@ -1270,7 +1285,38 @@ pub(crate) fn keep_clear(draft: &AreaDraft, along: Along) {
     });
 }
 
-/// A bar's popover rows: its edge, thickness, length and offset along the edge, kept clear of the bars beside it ([`keep_clear`]); its shape, gap, spacing and corners; and how it hides — with handles on the bar for its geometry.
+/// A bar as the screen draws it, read back from the area once Reset has taken a key of it off.
+struct BarNow {
+    edge: Edge,
+    thickness: f32,
+    length: Extent,
+    offset: f32,
+    shape: layout::BarShape,
+    autohide: Option<AutoHide>,
+}
+
+fn bar_now(area: &ResolvedArea) -> Option<BarNow> {
+    match area.kind {
+        ResolvedAreaKind::Bar {
+            edge,
+            thickness,
+            length,
+            offset,
+            shape,
+            autohide,
+        } => Some(BarNow {
+            edge,
+            thickness,
+            length,
+            offset,
+            shape,
+            autohide,
+        }),
+        _ => None,
+    }
+}
+
+/// A bar's popover rows: its edge, thickness, length and offset along the edge, kept clear of the bars beside it ([`keep_clear`]); its shape, gap, spacing and corners; and how it hides — with handles on the bar for its geometry. Each says where its value comes from, and has a Reset while the popover's level writes it.
 fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     let ResolvedAreaKind::Bar {
         edge,
@@ -1284,26 +1330,39 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         return Ok(Inspector::default());
     };
     let kind = draft.kind();
-    let resolved_shape = surfaces::bar::bar_shape(&draft.config, shape);
-    let mut list = picked(
+    let config = Arc::clone(&draft.config);
+    let resolved_shape = surfaces::bar::bar_shape(&config, shape);
+    let shape_now = {
+        let config = Arc::clone(&config);
+        move |area: &ResolvedArea| {
+            bar_now(area).map_or(resolved_shape, |bar| {
+                surfaces::bar::bar_shape(&config, bar.shape)
+            })
+        }
+    };
+    let mut list = chosen(
         draft,
         "edge",
         label!("editor.area.edge"),
         help("AreaKind::Bar", "edge"),
         edges(),
-        edge,
+        move |area| bar_now(area).map_or(edge, |bar| bar.edge),
         move |area, edge: Edge| kind_field!(area, kind, Bar { edge }, edge),
     )?;
-    let thickness = draft.value(
+    let thickness = draft.setting(
         "thickness",
-        || thickness,
+        "thickness",
+        move |area| bar_now(area).map_or(thickness, |bar| bar.thickness),
         move |area, value: &f32| kind_field!(area, kind, Bar { thickness }, *value),
     );
-    list.push(rows::number(
-        label!("editor.area.thickness"),
-        help("AreaKind::Bar", "thickness"),
-        thickness,
-        handles::THICKNESS,
+    list.push(draft.marked(
+        "thickness",
+        rows::number(
+            label!("editor.area.thickness"),
+            help("AreaKind::Bar", "thickness"),
+            thickness,
+            handles::THICKNESS,
+        )?,
     )?);
 
     let along = draft
@@ -1318,14 +1377,22 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         false => draft.screen.0,
     };
     let fills_edge = length == Extent::Fill;
-    let length = draft.value(
+    let length = draft.setting(
         "length",
-        || along,
+        "length",
+        move |area| match bar_now(area).map(|bar| bar.length) {
+            Some(Extent::Px(px)) => px,
+            _ => along,
+        },
         move |area, value: &f32| kind_field!(area, kind, Bar { length }, Extent::Px(*value)),
     );
-    let fills = draft.value(
+    let fills = draft.setting(
         "length_fill",
-        || fills_edge,
+        "length",
+        move |area| match bar_now(area) {
+            Some(bar) => bar.length == Extent::Fill,
+            None => fills_edge,
+        },
         move |area, fill: &bool| {
             let extent = match fill {
                 true => Extent::Fill,
@@ -1335,54 +1402,85 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         },
     );
     let seeded = std::cell::Cell::new(false);
+    let resetting = draft.resetting();
     telar::effect(move || {
         length.with(|_| ());
-        if seeded.replace(true) && fills.peek() {
+        if seeded.replace(true) && !resetting.get() && fills.peek() {
             fills.set(false);
         }
     });
-    list.push(rows::toggle(
-        label!("editor.area.fill_edge"),
-        help("AreaKind::Bar", "length"),
-        fills,
+    list.push(draft.marked(
+        "length",
+        rows::together(vec![
+            rows::toggle(
+                label!("editor.area.fill_edge"),
+                help("AreaKind::Bar", "length"),
+                fills,
+            )?,
+            rows::number(
+                label!("editor.area.length"),
+                help("AreaKind::Bar", "length"),
+                length,
+                Range::whole(handles::SHORTEST, longest),
+            )?,
+        ])?,
     )?);
-    list.push(rows::number(
-        label!("editor.area.length"),
-        help("AreaKind::Bar", "length"),
-        length,
-        Range::whole(handles::SHORTEST, longest),
-    )?);
-    let offset = draft.value(
+    let offset = draft.setting(
         "offset",
-        || offset,
+        "offset",
+        move |area| bar_now(area).map_or(offset, |bar| bar.offset),
         move |area, value: &f32| kind_field!(area, kind, Bar { offset }, *value),
     );
-    list.push(rows::number(
-        label!("editor.area.offset"),
-        help("AreaKind::Bar", "offset"),
-        offset,
-        Range::whole(0.0, longest),
+    list.push(draft.marked(
+        "offset",
+        rows::number(
+            label!("editor.area.offset"),
+            help("AreaKind::Bar", "offset"),
+            offset,
+            Range::whole(0.0, longest),
+        )?,
     )?);
 
-    list.extend(picked(
+    let reading = shape_now.clone();
+    list.extend(chosen_as(
         draft,
-        "mode",
+        ("mode", "shape.mode"),
         label!("editor.area.mode"),
         help("BarShape", "mode"),
         variants("Shape"),
-        resolved_shape.mode,
+        move |area| reading(area).mode,
         move |area, mode| set_shape(area, kind, |shape| shape.mode = Some(mode)),
     )?);
-    let gap = draft.value(
+    let hidden = autohide.unwrap_or_default();
+    let hides = draft.setting(
+        "autohide",
+        "autohide",
+        move |area| match bar_now(area) {
+            Some(bar) => bar.autohide.is_some(),
+            None => autohide.is_some(),
+        },
+        move |area, on: &bool| {
+            let hide = on.then(|| autohide_of(area, kind).unwrap_or_default());
+            if let Some(AreaKind::Bar { autohide, .. }) = AreaDraft::kind_mut(area, kind) {
+                *autohide = hide;
+            }
+        },
+    );
+    let reading = shape_now.clone();
+    let gap = draft.setting(
         "gap",
-        || resolved_shape.gap as f32,
+        "shape.gap",
+        move |area| reading(area).gap as f32,
         move |area, value: &f32| set_shape(area, kind, |shape| shape.gap = Some(*value)),
     );
-    list.push(rows::number(
-        label!("editor.area.gap"),
-        help("BarShape", "gap"),
-        gap,
-        handles::GAP,
+    list.push(draft.marked(
+        "shape.gap",
+        rows::number(
+            label!("editor.area.gap"),
+            help("BarShape", "gap"),
+            gap,
+            handles::GAP,
+        )?,
     )?);
     if let Some(edge) = draft.shared::<String>("edge") {
         keep_clear(
@@ -1393,79 +1491,92 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
                 offset,
                 fills,
                 gap,
+                hides,
             },
         );
     }
-    let spacing = draft.value(
+    let reading = shape_now.clone();
+    let spacing = draft.setting(
         "spacing",
-        || resolved_shape.spacing,
+        "shape.spacing",
+        move |area| reading(area).spacing,
         move |area, value: &f32| set_shape(area, kind, |shape| shape.spacing = Some(*value)),
     );
-    list.push(rows::number(
-        label!("editor.area.spacing"),
-        help("BarShape", "spacing"),
-        spacing,
-        Range::whole(0.0, 64.0),
+    list.push(draft.marked(
+        "shape.spacing",
+        rows::number(
+            label!("editor.area.spacing"),
+            help("BarShape", "spacing"),
+            spacing,
+            Range::whole(0.0, 64.0),
+        )?,
     )?);
 
-    let corners = corners(
-        draft,
-        shape.radius.unwrap_or(Corners::all(resolved_shape.radius)),
-    );
+    let seed = shape.radius.unwrap_or(Corners::all(resolved_shape.radius));
+    let corners = corners(draft, seed, {
+        let reading = shape_now.clone();
+        move |area| match bar_now(area).and_then(|bar| bar.shape.radius) {
+            Some(radius) => radius,
+            None => Corners::all(reading(area).radius),
+        }
+    });
     let most = handles::most_radius(draft);
     let all = handles::uniform_radius(draft, corners);
-    list.push(rows::number(
-        label!("editor.area.radius"),
-        help("BarShape", "radius"),
-        all,
-        Range::whole(0.0, most),
-    )?);
     let corner_labels = [
         label!("editor.area.top_left"),
         label!("editor.area.top_right"),
         label!("editor.area.bottom_right"),
         label!("editor.area.bottom_left"),
     ];
+    let mut radius = vec![rows::number(
+        label!("editor.area.radius"),
+        help("BarShape", "radius"),
+        all,
+        Range::whole(0.0, most),
+    )?];
     for (corner, label) in corners.into_iter().zip(corner_labels) {
-        list.push(rows::number(label, None, corner, Range::whole(0.0, most))?);
+        radius.push(rows::number(label, None, corner, Range::whole(0.0, most))?);
     }
+    list.push(draft.marked("shape.radius", rows::together(radius)?)?);
 
-    let hides = draft.value(
-        "autohide",
-        || autohide.is_some(),
-        move |area, on: &bool| {
-            let hide = on.then(|| autohide_of(area, kind).unwrap_or_default());
-            if let Some(AreaKind::Bar { autohide, .. }) = AreaDraft::kind_mut(area, kind) {
-                *autohide = hide;
-            }
-        },
-    );
-    list.push(rows::toggle(
-        label!("editor.area.autohide"),
-        help("AreaKind::Bar", "autohide"),
-        hides,
-    )?);
-    let hidden = autohide.unwrap_or_default();
-    let peek = draft.value(
+    let peek = draft.setting(
         "peek",
-        || hidden.peek,
+        "autohide",
+        move |area| match bar_now(area).and_then(|bar| bar.autohide) {
+            Some(hide) => hide.peek,
+            None => hidden.peek,
+        },
         move |area, value: &f32| set_autohide(area, kind, |hide| hide.peek = *value),
     );
-    list.push(rows::number(
-        label!("editor.area.peek"),
-        help("AutoHide", "peek"),
-        peek,
-        Range::whole(0.0, 32.0),
-    )?);
-    let on_hover = draft.value(
+    let on_hover = draft.setting(
         "on_hover",
-        || hidden.on_hover,
+        "autohide",
+        move |area| match bar_now(area).and_then(|bar| bar.autohide) {
+            Some(hide) => hide.on_hover,
+            None => hidden.on_hover,
+        },
         move |area, on: &bool| set_autohide(area, kind, |hide| hide.on_hover = *on),
     );
-    list.push(rows::toggle(
-        label!("editor.area.on_hover"),
-        help("AutoHide", "on_hover"),
-        on_hover,
+    list.push(draft.marked(
+        "autohide",
+        rows::together(vec![
+            rows::toggle(
+                label!("editor.area.autohide"),
+                help("AreaKind::Bar", "autohide"),
+                hides,
+            )?,
+            rows::number(
+                label!("editor.area.peek"),
+                help("AutoHide", "peek"),
+                peek,
+                Range::whole(0.0, 32.0),
+            )?,
+            rows::toggle(
+                label!("editor.area.on_hover"),
+                help("AutoHide", "on_hover"),
+                on_hover,
+            )?,
+        ])?,
     )?);
 
     Ok(Inspector {
@@ -1484,8 +1595,12 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     })
 }
 
-/// The four corner radii the bar's rows and handles share, top left first and clockwise, each written back as the bar's own corners.
-fn corners(draft: &AreaDraft, seed: Corners) -> [telar::RwSignal<f32>; 4] {
+/// The four corner radii the bar's rows and handles share, top left first and clockwise, each written back as the bar's own corners and read again from the bar as drawn by `read` once Reset takes them back.
+fn corners(
+    draft: &AreaDraft,
+    seed: Corners,
+    read: impl Fn(&ResolvedArea) -> Corners + Clone + 'static,
+) -> [telar::RwSignal<f32>; 4] {
     let kind = draft.kind();
     let seeds = [
         seed.top_left(),
@@ -1500,9 +1615,19 @@ fn corners(draft: &AreaDraft, seed: Corners) -> [telar::RwSignal<f32>; 4] {
         "radius.bottom_left",
     ];
     std::array::from_fn(|corner| {
-        draft.value(
+        let read = read.clone();
+        draft.setting(
             names[corner],
-            || seeds[corner],
+            "shape.radius",
+            move |area| {
+                let now = read(area);
+                [
+                    now.top_left(),
+                    now.top_right(),
+                    now.bottom_right(),
+                    now.bottom_left(),
+                ][corner]
+            },
             move |area, value: &f32| {
                 set_shape(area, kind, |shape| {
                     let now = shape

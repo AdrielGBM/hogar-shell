@@ -1,4 +1,4 @@
-//! T-8.3: the expression field, driven as a person drives it — a press into the field, keys typed, Enter, Esc, a press on a completion, Ctrl+Z — over a battery reading the test feeds by hand. And the parts that decide what it offers and what it writes, on their own.
+//! The expression field, driven as a person drives it — a press into the field, keys typed, Enter, Esc, a press on a completion, Ctrl+Z — over a battery reading the test feeds by hand. And the parts that decide what it offers and what it writes, on their own.
 
 #[cfg(test)]
 mod tests {
@@ -332,7 +332,7 @@ mod tests {
         screen
     }
 
-    /// T-8.3's acceptance: `$battery.level < 20` says `false` and then `true` as the battery drains, live, and a typo is underlined where it is, with what is wrong — and is never written.
+    /// The acceptance: `$battery.level < 20` says `false` and then `true` as the battery drains, live, and a typo is underlined where it is, with what is wrong — and is never written.
     #[test]
     fn a_condition_shows_its_value_live_and_a_typo_is_flagged_where_it_is() {
         let _rig = rig("expr-live");

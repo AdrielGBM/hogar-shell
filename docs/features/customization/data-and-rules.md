@@ -217,6 +217,8 @@ While it is false the area paints nothing and takes no input, and flipping it re
 first has an answer, and through an evaluation error it keeps its last answer. An area that `reserve`s its edge **keeps it reserved
 while hidden**, so windows stay clear of an empty strip; `layout check` warns. The lock's prompt cannot have one.
 
+While its layer's edit mode is up, an area whose `visible` reads false is still there to edit: it is drawn at 30 % opacity and can be selected like any other, and its selection says why it is dim ("Hidden: visible = <expression> is false"). Outside the mode nothing changes: it paints nothing and takes no input.
+
 ### `repeat`
 
 A group's `repeat` is an expression giving a list; its children are drawn once per item, in order, and each copy reads `$item` and

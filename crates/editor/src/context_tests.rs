@@ -423,7 +423,7 @@ mod tests {
         }
     }
 
-    /// F-10.41 and T-6.4: wherever it is asked for — any corner or edge of the screen — the menu opens where it fits and never past an edge, however many rows it has.
+    /// Wherever it is asked for — any corner or edge of the screen — the menu opens where it fits and never past an edge, however many rows it has.
     #[test]
     fn the_menu_opens_on_the_screen_at_every_corner_and_edge() {
         let _rig = rig("menu-corners");
@@ -876,7 +876,7 @@ mod tests {
             .expect("the centre group is drawn")
     }
 
-    /// T-8.6 through the pointer: a secondary press on a chip offers to save its group as a komponent; the card takes a name and which values become parameters, and Save writes the komponent and makes the group draw it, as one undo entry. The komponent's child's menu then offers its parameters — rows in its area's popover — and Detach, which draws it as plain instances again, as one undo entry too.
+    /// Through the pointer, a secondary press on a chip offers to save its group as a komponent; the card takes a name and which values become parameters, and Save writes the komponent and makes the group draw it, as one undo entry. The komponent's child's menu then offers its parameters — rows in its area's popover — and Detach, which draws it as plain instances again, as one undo entry too.
     #[test]
     fn a_group_is_saved_as_a_komponent_and_detached_again_through_the_pointer() {
         let rig = rig_with("komponent-save", |layout| {

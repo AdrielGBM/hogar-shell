@@ -115,6 +115,13 @@ mod tests {
             self.texts().iter().any(|(text, _)| text.contains(wanted))
         }
 
+        fn count(&self, wanted: &str) -> usize {
+            self.texts()
+                .iter()
+                .filter(|(text, _)| text.contains(wanted))
+                .count()
+        }
+
         /// Turns the wheel over the card until the text `wanted` is in the rows it shows.
         fn reveal(&mut self, wanted: &str) {
             let card = crate::rig::card_of(&self.tree);
@@ -133,21 +140,32 @@ mod tests {
             }
         }
 
-        /// A press on the first `wanted` drawn below the text `caption`.
+        /// A press on the first `wanted` drawn below the text `caption`, turning the wheel until it is in view.
         fn press_below(&mut self, caption: &str, wanted: &str) {
             self.reveal(caption);
-            let texts = self.texts();
-            let above = texts
-                .iter()
-                .find(|(text, _)| text == caption)
-                .map(|(_, rect)| rect.y)
-                .unwrap_or_else(|| panic!("{caption:?} is drawn: {texts:?}"));
-            let rect = texts
-                .iter()
-                .filter(|(text, rect)| text == wanted && rect.y > above)
-                .map(|(_, rect)| *rect)
-                .min_by(|a, b| a.y.total_cmp(&b.y))
-                .unwrap_or_else(|| panic!("{wanted:?} is drawn below {caption:?}: {texts:?}"));
+            let card = crate::rig::card_of(&self.tree);
+            let over = (card.x + card.width / 2.0, card.y + card.height / 2.0);
+            let below = |screen: &Self| {
+                let texts = screen.texts();
+                let above = texts
+                    .iter()
+                    .find(|(text, _)| text == caption)
+                    .map(|(_, rect)| rect.y)
+                    .unwrap_or_else(|| panic!("{caption:?} is drawn: {texts:?}"));
+                texts
+                    .iter()
+                    .filter(|(text, rect)| text == wanted && rect.y > above)
+                    .map(|(_, rect)| *rect)
+                    .min_by(|a, b| a.y.total_cmp(&b.y))
+                    .unwrap_or_else(|| panic!("{wanted:?} is drawn below {caption:?}: {texts:?}"))
+            };
+            for _ in 0..80 {
+                let Some(pixels) = crate::rig::wheel_toward(card, below(self)) else {
+                    break;
+                };
+                self.route(&crate::rig::wheel_at(over, pixels));
+            }
+            let rect = below(self);
             self.click((rect.x + rect.width / 2.0, rect.y + rect.height / 2.0));
         }
 
@@ -160,7 +178,8 @@ mod tests {
     }
 
     const REMOVE: &str = "Remove";
-    const INHERITED: &str = "Set by a broader level: Remove takes it back here";
+    const INHERITED: &str = "From outputs.* in";
+    const BEYOND: &str = "Overridden by outputs.*.workspaces.2 in";
 
     /// `mine` with `change` made to the area `id` of the `*` rule's `layer`, and a rule for the rig's screen that writes the area by its id alone — the narrowest level that writes it, where the popover writes, under which the `*` rule's expressions are inherited.
     fn inheriting(
@@ -239,10 +258,12 @@ mod tests {
         popover::open_area(widgets()).expect("the grid's popover opens");
         let mut screen = Screen::of_popover();
         assert!(screen.shows(INHERITED), "the row says where it comes from");
+        let said = screen.count(INHERITED);
         screen.press_below("Shown while", REMOVE);
-        assert!(
-            !screen.shows(INHERITED),
-            "the row starts empty once taken back"
+        assert_eq!(
+            screen.count(INHERITED),
+            said - 1,
+            "the line goes once the expression is taken back"
         );
         assert_eq!(
             visible(&surfaces::reconcile::desktops()[0].resolved),
@@ -285,11 +306,11 @@ mod tests {
         let _scope = Scope::new();
         popover::open_area(widgets()).expect("the grid's popover opens");
         let mut screen = Screen::of_popover();
-        assert!(screen.shows(INHERITED));
+        assert!(screen.shows(BEYOND));
         screen.press_below("Shown while", REMOVE);
         let why = crate::mode::refusal().peek().expect("the strip says why");
         assert!(why.contains("outputs.*.workspaces.2"), "{why}");
-        assert!(screen.shows(INHERITED), "the expression is still there");
+        assert!(screen.shows(BEYOND), "the expression is still there");
 
         transient::close(popover::ID);
         assert_eq!(rig.undo_label(), None, "nothing was written");

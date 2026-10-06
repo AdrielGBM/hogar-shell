@@ -116,7 +116,7 @@ impl ResolvedParameter {
 }
 
 /// What one output shows, with every field answered.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Resolved {
     pub output: String,
     pub workspace: Option<ActiveWorkspace>,
@@ -124,6 +124,26 @@ pub struct Resolved {
     pub layers: BTreeMap<LayerKind, ResolvedLayer>,
     /// What each edge takes off the screen, in `Edge::ALL` order, settled before any workspace rule ran. Read through [`Resolved::reserved`].
     reserved: [f32; 4],
+    /// Which level wrote each key resolution kept. Read through [`Resolved::origin`].
+    origins: Arc<Origins>,
+}
+
+/// Two arrangements are the same when they draw the same: who wrote a key is not part of what is drawn, so a layout flattened from its `extends` chain resolves to the arrangement the chain does.
+impl PartialEq for Resolved {
+    fn eq(&self, other: &Self) -> bool {
+        self.output == other.output
+            && self.workspace == other.workspace
+            && self.layers == other.layers
+            && self.reserved == other.reserved
+    }
+}
+
+/// What holds a key a level writes: an area, one of its groups, or an instance in one of those.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Holder<'a> {
+    Area(&'a AreaId),
+    Group(&'a AreaId, &'a GroupId),
+    Instance(&'a AreaId, &'a GroupId, &'a InstanceId),
 }
 
 impl Resolved {
@@ -139,7 +159,26 @@ impl Resolved {
             workspace: None,
             layers,
             reserved,
+            origins: Arc::default(),
         }
+    }
+
+    /// The level that wrote `key` of what `holder` names on `layer`, where resolution kept it — the key spelled as the file spells it under its holder: `thickness`, `shape.radius`, `style.fill`, `style.border.width`, `reserve`, `actions.press`, `options.face.scale`, a group's `arrange`, `cols` or `gap`, a child's `weight`, `cell` or `rect`, or an expression's `visible`, `repeat`, `parameters.<name>` or `bindings.<path>`. An option inside a list or a table a level wrote whole is that level's. `None` where no level writes it, so what is drawn there is a default — and for every key of an arrangement assembled directly ([`Resolved::of`]).
+    ///
+    /// A group's `arrange` is written by the last level that writes any key its arrangement is made of (`arrange`, `cols`, `rows`, `gap`), which is the level `unset = ["arrange"]` has to come after to take the arrangement back.
+    pub fn origin(&self, layer: LayerKind, holder: Holder<'_>, key: &str) -> Option<&Level> {
+        let (area, group, instance) = match holder {
+            Holder::Area(area) => (area, None, None),
+            Holder::Group(area, group) => (area, Some(group), None),
+            Holder::Instance(area, group, instance) => (area, Some(group), Some(instance)),
+        };
+        self.origins.nearest(&(
+            layer,
+            area.clone(),
+            group.cloned(),
+            instance.cloned(),
+            key.to_string(),
+        ))
     }
 
     pub fn layer(&self, kind: LayerKind) -> Option<&ResolvedLayer> {
@@ -259,6 +298,17 @@ pub enum Paint {
 }
 
 impl ResolvedAreaKind {
+    pub fn rect(&self) -> Option<Rect> {
+        match self {
+            ResolvedAreaKind::Grid { rect, .. }
+            | ResolvedAreaKind::WallpaperRegion { rect, .. }
+            | ResolvedAreaKind::Texture { rect, .. }
+            | ResolvedAreaKind::Free { rect, .. }
+            | ResolvedAreaKind::Prompt { rect } => Some(*rect),
+            _ => None,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             ResolvedAreaKind::Bar { .. } => "bar",
@@ -313,7 +363,7 @@ impl ResolvedAreaKind {
 pub struct ResolvedGroup {
     pub id: GroupId,
     pub kind: GroupKind,
-    /// How the group lays out its children. Never anything but `pages` in a zone: validation refuses it there, and a file edited past that draws a loose run.
+    /// How the group lays out its children. Never anything but `pages` in a zone: validation refuses it there, and a file edited past that draws a loose run. The level that wrote it is [`Resolved::origin`] of `arrange` on the group.
     pub arrange: Option<Arrange>,
     /// How many columns the inner grid a `grid` group's children are placed on has.
     pub cols: u32,
@@ -395,22 +445,22 @@ pub fn resolve(
                 output: rule.matches.clone(),
                 workspace: None,
             };
+            origins.lay(&layers, rule.layers.each(), &origin);
             merge_layers(&mut layers, &rule.layers);
-            origins.lay(rule.layers.each(), &origin);
+            origins_without_rules.lay(&without_rules, rule.layers.each(), &origin);
             merge_layers(&mut without_rules, &rule.layers);
-            origins_without_rules.lay(rule.layers.each(), &origin);
         }
         for rule in &rules {
             for workspace_rule in &rule.workspaces {
                 match matches_workspace(&workspace_rule.matches, workspace) {
                     WorkspaceVerdict::Matches => {
-                        merge_session_layers(&mut layers, &workspace_rule.layers);
                         let origin = Level {
                             layout: level.id.clone(),
                             output: rule.matches.clone(),
                             workspace: Some(workspace_rule.matches.clone()),
                         };
-                        origins.lay(workspace_rule.layers.each(), &origin);
+                        origins.lay(&layers, workspace_rule.layers.each(), &origin);
+                        merge_session_layers(&mut layers, &workspace_rule.layers);
                         ruled = true;
                     }
                     WorkspaceVerdict::Differs => {}
@@ -448,6 +498,7 @@ pub fn resolve(
             .into_iter()
             .filter(|(_, layer)| !layer.areas.is_empty())
             .collect(),
+        origins: Arc::new(origins),
     };
     (resolved, report)
 }
@@ -484,10 +535,10 @@ struct Answering<'a> {
 
 impl Answering<'_> {
     /// `expr`, which the merge kept at `at`, with the level that wrote it.
-    fn sourced(&self, expr: &Expr, at: At) -> ResolvedExpr {
+    fn sourced(&self, expr: &Expr, (layer, area, group, instance, path): At) -> ResolvedExpr {
         let origin = self
             .origins
-            .of(&at)
+            .of(&(layer, area, group, instance, path.to_string()))
             .expect("the merge records the level of every expression it keeps")
             .clone();
         ResolvedExpr {

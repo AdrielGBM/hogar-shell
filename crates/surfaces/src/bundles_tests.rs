@@ -1,4 +1,4 @@
-//! Importing a bundle into the running shell and answering for what it runs (T-8.6, DEC-30): nothing it brings runs before it is accepted, an answer survives a restart, a broken bundle writes nothing and a name in use is never written over.
+//! Importing a bundle into the running shell and answering for what it runs (DEC-30): nothing it brings runs before it is accepted, an answer survives a restart, a broken bundle writes nothing and a name in use is never written over.
 
 #[cfg(test)]
 mod tests {
@@ -212,7 +212,7 @@ module = "clock"
         RAN.with(|ran| std::mem::take(&mut *ran.borrow_mut()))
     }
 
-    /// T-8.6's acceptance: a bundle with a `poll` running `curl` and `shell run` actions, one of them a komponent child's, runs none of it before it is accepted — no source is declared, so no producer can start, and no chain hands a held line to the command table — and runs it once accepted.
+    /// A bundle with a `poll` running `curl` and `shell run` actions, one of them a komponent child's, runs none of it before it is accepted — no source is declared, so no producer can start, and no chain hands a held line to the command table — and runs it once accepted.
     #[test]
     fn an_imported_bundle_runs_nothing_before_it_is_trusted() {
         let (store, dir) = shell("trusted", &[]);

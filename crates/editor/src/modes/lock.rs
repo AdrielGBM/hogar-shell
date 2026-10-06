@@ -38,9 +38,10 @@ use crate::popover::area::rect_rows;
 use crate::popover::rows::{self, label};
 use crate::popover::{AreaDraft, Inspector, kind_field, parsed, spelled};
 use crate::session::{self, Edit, EditError, Selection};
+use crate::snap;
 use crate::written::{Written, known};
 
-use super::gesture::{self, pressable};
+use super::gesture::{self, Hint, pressable};
 use super::{background, desktop, widgets};
 
 /// The transient the privacy popover is.
@@ -264,36 +265,40 @@ fn prompts(output: &str) -> Vec<Node> {
         .collect()
 }
 
-/// Where a drag of the prompt took hold of it: the pointer, the prompt's rectangle as the layout gives it, and the screen it is a fraction of.
-#[derive(Clone, Copy)]
+/// Where a drag of the prompt took hold of it: the pointer at the press, the prompt's rectangle as the layout gives it, the box that rectangle is a fraction of, in pixels, and what it snaps to there.
+#[derive(Clone)]
 struct Held {
     from: (f32, f32),
     rect: layout::Rect,
-    screen: (f32, f32),
+    bounds: telar::Rect,
+    siblings: Vec<layout::Rect>,
 }
 
 impl Held {
     fn of(output: &str, node: &Node, point: (f32, f32)) -> Option<Self> {
         let desktop = reconcile::desktop_now(Some(output))?;
-        let ResolvedAreaKind::Prompt { rect } =
-            desktop.resolved.area(LayerKind::Lock, &node.area)?.kind
-        else {
+        let layer = desktop.resolved.layer(LayerKind::Lock)?;
+        let area = layer.areas.iter().find(|area| area.id == node.area)?;
+        let ResolvedAreaKind::Prompt { rect } = area.kind else {
             return None;
         };
         Some(Self {
             from: point,
             rect,
-            screen: desktop.size,
+            bounds: desktop.reserved.box_of(area.within, desktop.size),
+            siblings: snap::area_siblings(layer, &node.area),
         })
     }
 
-    /// Where the prompt is with the pointer at `point`, before it is kept on its screen.
-    fn to(self, point: (f32, f32)) -> layout::Rect {
-        layout::Rect {
-            x: self.rect.x + (point.0 - self.from.0) / self.screen.0.max(1.0),
-            y: self.rect.y + (point.1 - self.from.1) / self.screen.1.max(1.0),
+    /// Where the prompt is with the pointer at `point`, snapped to what is around it unless `free`, before it is kept on its screen.
+    fn to(&self, point: (f32, f32), free: bool) -> snap::Snapped {
+        let size = (self.bounds.width.max(1.0), self.bounds.height.max(1.0));
+        let carried = layout::Rect {
+            x: self.rect.x + (point.0 - self.from.0) / size.0,
+            y: self.rect.y + (point.1 - self.from.1) / size.1,
             ..self.rect
-        }
+        };
+        snap::snap(carried, &self.siblings, size, snap::Moving::BODY, free)
     }
 }
 
@@ -316,9 +321,8 @@ fn prompt_handle(output: &str, node: Node) -> Built {
         .styled_by(move || surfaces::area::at(rects::rect(&placed).unwrap_or_default()))
         .cursor(Cursor::Grab),
         edit.transaction(),
-        move |_| {
-            let point = surfaces::menu::pointer()?;
-            let taken = Held::of(&output, &taking, point)?;
+        move |pressed| {
+            let taken = Held::of(&output, &taking, pressed)?;
             session::select(Selection::Area(taking.clone()));
             Some(taken)
         },
@@ -328,8 +332,14 @@ fn prompt_handle(output: &str, node: Node) -> Built {
             else {
                 return;
             };
+            let snapped = taken.to(point, snap::free());
+            gesture::hint().set(Some(Hint {
+                pointer: point,
+                guides: snap::lines(&snapped.guides, taken.bounds),
+                ..Hint::default()
+            }));
             let moved =
-                moved_to(&before, &node, taken.to(point)).and_then(|ops| previewing.preview(ops));
+                moved_to(&before, &node, snapped.rect).and_then(|ops| previewing.preview(ops));
             if let Err(why) = moved {
                 mode::refuse(why);
             }

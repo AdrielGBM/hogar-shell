@@ -95,6 +95,19 @@ pub(crate) fn tool(mode: &Mode) -> Built {
             })
         },
     )?;
+    let why = ReactiveList::with_style(
+        whole(),
+        || hidden_note().into_iter().collect(),
+        |(said, rect): &(String, Rect)| format!("{said} {rect:?}"),
+        move |(said, rect): (String, Rect)| {
+            pointer_tag(said, theme.accent, move |laid| {
+                (
+                    rect.x + (rect.width - laid.width) / 2.0,
+                    (rect.y - laid.height - SIZE_TAG_DROP).max(0.0),
+                )
+            })
+        },
+    )?;
     let screen = mode.output.clone();
     let hint = ReactiveList::with_style(
         whole(),
@@ -109,6 +122,7 @@ pub(crate) fn tool(mode: &Mode) -> Built {
             see_through(hover)?,
             see_through(outline)?,
             see_through(size)?,
+            see_through(why)?,
             see_through(hint)?,
         ],
     )?))
@@ -325,6 +339,17 @@ fn sized() -> Option<(String, Rect)> {
     Some((size_tag(&node, rect), rect))
 }
 
+/// Where the selection is and why it is dim, while the area it is in is hidden by its `visible`: drawn at 30 % for its mode and selectable there.
+fn hidden_note() -> Option<(String, Rect)> {
+    if gesture::dragging() {
+        return None;
+    }
+    let node = session::selection().get().node().cloned()?;
+    let expr = surfaces::expressions::hidden_by(&node)?;
+    let rect = rects::rect(&node)?;
+    Some((telar::t!("editor.select.hidden", expr = expr), rect))
+}
+
 /// What the size tag under `node`, drawn at `rect`, says: the cells it spans where it sits on a grid's cells, then its size in pixels.
 fn size_tag(node: &Node, rect: Rect) -> String {
     let (width, height) = (rect.width.round(), rect.height.round());
@@ -384,6 +409,22 @@ fn drag_tag_at(pointer: (f32, f32), size: (f32, f32), screen: (f32, f32)) -> (f3
 /// What a drag shows at the pointer: the translucent ghost of what it carries, and the tag saying where it would land.
 fn drag_marks(hint: Hint, screen: (f32, f32), theme: NordTheme) -> Built {
     let mut marks = Vec::new();
+    for guide in hint.guides {
+        let line = Rect::new(
+            guide.x,
+            guide.y,
+            guide.width.max(1.0),
+            guide.height.max(1.0),
+        );
+        marks.push(Box::new(
+            StyledContainer::new(
+                surfaces::area::at(line),
+                move |_| RectStyle::filled(theme.accent, 0.0),
+                Vec::new(),
+            )?
+            .input_transparent(),
+        ) as Box<dyn telar::LayoutItem>);
+    }
     if let Some(ghost) = hint.ghost {
         marks.push(Box::new(
             StyledContainer::new(

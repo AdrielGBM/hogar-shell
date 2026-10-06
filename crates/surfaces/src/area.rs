@@ -19,11 +19,13 @@ use telar::{
 };
 
 use crate::actions::{Bound, EmptySpace, NOTCH};
+use crate::container;
 use crate::expressions::{Expressions, Overlay, Repeat};
 use crate::layer_window::{
     AreaContext, Areas, Blur, Building, LayerWindowContext, Reserved, WindowAreas, blur_of,
     build_window_areas,
 };
+use crate::look::{self, Look, Rest};
 use crate::reconcile::Desktop;
 use crate::rects;
 use config::theme::NordTheme;
@@ -136,14 +138,25 @@ pub fn build(area: &ResolvedArea, surround: Surround) -> Option<Built> {
         let at = rects::Node::area(surround.output, surround.layer, &area.id);
         let shown = Expressions::here(surround.audience).visible(&at, visible);
         let built = drawn(area, surround)?;
-        if let Ok(node) = &built {
-            let node = node.layout_node();
+        Some(built.and_then(|item| {
+            let layer = StyledContainer::new(
+                LayoutStyle::new()
+                    .absolute()
+                    .inset_start(0.0)
+                    .inset_top(0.0)
+                    .width(SizeDimension::Percent(1.0))
+                    .height(SizeDimension::Percent(1.0)),
+                |_| RectStyle::default(),
+                vec![item],
+            )?
+            .with_opacity(move || shown.opacity());
+            let node = layer.layout_node();
             telar::effect(move || {
-                telar::set_display(node, shown.get());
+                telar::set_display(node, shown.displayed());
                 let _ = telar::mark_dirty(node);
             });
-        }
-        Some(built)
+            Ok(Box::new(layer) as Box<dyn LayoutItem>)
+        }))
     })
 }
 
@@ -389,13 +402,17 @@ pub fn moves_only(was: &ResolvedArea, now: &ResolvedArea) -> bool {
     }
     let mut placed_as_before = now.clone();
     for (group, before) in placed_as_before.groups.iter_mut().zip(&was.groups) {
+        // A container's span is what its children share out, so a new span builds them again at their new shares.
+        if container::arranges(group) && cells_of(group) != cells_of(before) {
+            return false;
+        }
         group.kind = before.kind;
     }
     placed_as_before == *was
 }
 /// How many cells a grid `area` placed at `region` has room for: every whole cell that fits inside its padding, never less than one each way.
 fn room_in(area: &ResolvedArea, region: telar::Rect, cell: f32, gap: f32) -> Footprint {
-    let pad = padding_of(&area.style);
+    let pad = area.style.padding.unwrap_or_default();
     let fitting = |length: f32, pad: f32| {
         (((length - pad + gap) / (cell + gap).max(1.0)).floor() as u16).max(1)
     };
@@ -428,7 +445,7 @@ pub fn grid_block(area: &ResolvedArea, region: telar::Rect) -> Option<telar::Rec
     else {
         return None;
     };
-    let pad = padding_of(&area.style);
+    let pad = area.style.padding.unwrap_or_default();
     let (width, height) = (
         (region.width - pad.horizontal()).max(0.0),
         (region.height - pad.vertical()).max(0.0),
@@ -564,17 +581,18 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
         &area.style,
         Some(surround.theme.base),
         &surround.theme,
-        region(rect, surround),
+        fill(),
         vec![box_item(stack)],
     )?;
     if let Some(opacity) = area.style.opacity {
         painted = painted.with_opacity(move || opacity);
     }
-    let painted = frosted(painted, area, surround);
-    Ok(rounded(
-        &area.style,
-        empty_space(area, surround, painted, false),
-    ))
+    framed(
+        area,
+        surround,
+        region(rect, surround),
+        frosted(painted, area, surround),
+    )
 }
 
 struct Handover {
@@ -822,20 +840,15 @@ pub fn texture(area: &ResolvedArea, surround: Surround) -> Built {
     };
 
     let opacity = opacity * area.style.opacity.unwrap_or(1.0);
-    let painted = picture(
-        &area.style,
-        None,
-        &surround.theme,
+    let painted = picture(&area.style, None, &surround.theme, fill(), vec![content])?
+        .with_opacity(move || opacity)
+        .with_blend(move || blend_mode);
+    framed(
+        area,
+        surround,
         region(rect, surround),
-        vec![content],
-    )?
-    .with_opacity(move || opacity)
-    .with_blend(move || blend_mode);
-    let painted = frosted(painted, area, surround);
-    Ok(rounded(
-        &area.style,
-        empty_space(area, surround, painted, false),
-    ))
+        frosted(painted, area, surround),
+    )
 }
 
 /// telar's `Paint::Gradient` for a resolved [`layout::Gradient`], sized to the texture's own pixel box.
@@ -884,16 +897,14 @@ pub fn dressed(
     layout: LayoutStyle,
     children: Vec<Box<dyn LayoutItem>>,
 ) -> Result<StyledContainer, LayoutError> {
-    let fill = style.paint(theme);
-    let radius = corners(style);
-    let paint = RectStyle {
-        fill: fill.map(Paint::Solid),
-        radius,
-        ..RectStyle::default()
-    };
+    let look = Look::area(style, theme);
     Ok(painted_chrome(
-        StyledContainer::new(padded(layout, style.padding), move |_| paint, children)?,
-        fill.unwrap_or(Color::TRANSPARENT),
+        StyledContainer::new(
+            padded(layout, style.padding),
+            move |rect| look.paint(rect),
+            children,
+        )?,
+        look.fill,
     ))
 }
 
@@ -910,22 +921,12 @@ fn frosted(painted: StyledContainer, area: &ResolvedArea, surround: Surround) ->
 
 /// `layout` holding its contents off each side by what `padding` says there, and by nothing where it says nothing.
 pub fn padded(layout: LayoutStyle, padding: Option<Sides>) -> LayoutStyle {
-    let sides = padding.unwrap_or(Sides::all(0.0));
+    let sides = padding.unwrap_or_default();
     layout
         .padding_top(sides.top())
         .padding_right(sides.right())
         .padding_bottom(sides.bottom())
         .padding_left(sides.left())
-}
-
-fn padding_of(style: &Style) -> Sides {
-    style.padding.unwrap_or(Sides::all(0.0))
-}
-
-fn corners(style: &Style) -> BorderRadius {
-    style
-        .radius
-        .map_or(BorderRadius::zero(), BorderRadius::from)
 }
 
 /// A picture claims the pointer only where the layout binds a gesture to its empty space ([`empty_space`]): otherwise it is behind the shell, not a part of it to press.
@@ -941,23 +942,53 @@ fn picture(
         .as_deref()
         .map(|fill| layout::color_of(fill, theme))
         .or(under);
-    let paint = RectStyle {
-        fill: fill.map(Paint::Solid),
-        radius: corners(style),
-        ..RectStyle::default()
-    };
-    StyledContainer::new(padded(layout, style.padding), move |_| paint, children)
+    let radius = style
+        .radius
+        .map_or(BorderRadius::zero(), BorderRadius::from);
+    StyledContainer::new(
+        padded(layout, style.padding),
+        move |rect| RectStyle {
+            fill: fill.map(Paint::Solid),
+            radius: look::within(radius, rect),
+            ..RectStyle::default()
+        },
+        children,
+    )
 }
 
-/// Only the paint is cut, so a gesture bound to the region answers over the whole of its box.
-fn rounded(style: &Style, picture: StyledContainer) -> Box<dyn LayoutItem> {
-    match style.radius {
-        Some(radius) => Box::new(ClippedItem::new(
-            Box::new(picture),
-            Clip::both().rounded(radius).paint_only(),
-        )),
+/// `picture` cut to the area's corners inside a box at `layout` that casts the area's shadow under it and draws its border over it, so the cut takes neither. Only the paint is cut, and the gestures the area binds are on the box, so they answer over the whole of it.
+fn framed(
+    area: &ResolvedArea,
+    surround: Surround,
+    layout: LayoutStyle,
+    picture: StyledContainer,
+) -> Built {
+    let look = Look::area(&area.style, &surround.theme);
+    let shade = Look {
+        fill: Color::TRANSPARENT,
+        border: None,
+        ..look
+    };
+    let edge = Look {
+        fill: Color::TRANSPARENT,
+        shadow: None,
+        ..look
+    };
+    let cut: Box<dyn LayoutItem> = match area.style.radius {
+        Some(radius) => Box::new(look::cut(Box::new(picture), radius.into(), true)),
         None => Box::new(picture),
-    }
+    };
+    let border = StyledContainer::new(
+        LayoutStyle::new().absolute_fill(),
+        move |rect| edge.paint(rect),
+        Vec::new(),
+    )?;
+    let frame = StyledContainer::new(
+        layout,
+        move |rect| shade.paint(rect),
+        vec![cut, Box::new(border)],
+    )?;
+    Ok(Box::new(empty_space(area, surround, frame, false)))
 }
 
 /// The box `rect` names, as the fraction of [`Surround::bounds`] that it is, taken out of flow so the areas of one layer stack over each other instead of pushing each other along.
@@ -1052,40 +1083,95 @@ fn arranged(
         area.id.clone(),
         group.id.clone(),
     );
-    let node = match &group.repeat {
+    let slots = match &group.repeat {
         Some(expr) => {
             let repeat = Expressions::here(surround.audience).repeat(&at.group(&group.id), expr);
             let pages = LayoutStyle::new().flex_column();
-            Container::from_slots(
-                style,
-                copies(group, Some(repeat), (key, pages), surround, build),
-            )?
+            copies(group, Some(repeat), (key, pages), surround, build)
+        }
+        // A stack is the one child of the box its placement gives the group, so it is packed where the group would be: a dock's end zone packs it to the end instead of it stretching across the run.
+        None => match group.is_pages() {
+            true => vec![ChildSlot::stat(smart_stack(
+                key,
+                &group.children,
+                LayoutStyle::new().flex_column(),
+                surround,
+                move |instance, surround| build(instance, surround),
+            )?)],
+            false => group
+                .children
+                .iter()
+                .map(|instance| build(instance, surround).map(ChildSlot::stat))
+                .collect::<Result<Vec<_>, LayoutError>>()?,
+        },
+    };
+    // A container shares its padded box out to its children itself ([`container::shares`]).
+    let padding = match container::arranges(group) {
+        true => None,
+        false => group.style.padding,
+    };
+    let follows = follows.map(|follows| {
+        Box::new(move || padded(follows(), padding)) as Box<dyn Fn() -> LayoutStyle>
+    });
+    let node = group_box(
+        padded(style, padding),
+        slots,
+        plate_of(group, surround.theme),
+        follows,
+    )?;
+    rects::track(at.group(&group.id), node.layout_node());
+    Ok(node)
+}
+
+/// What a group paints behind its children: a container its plate always, and any other group one only where its style asks for one.
+fn plate_of(group: &ResolvedGroup, theme: NordTheme) -> Option<Look> {
+    (container::arranges(group) || !group.style.is_empty())
+        .then(|| Look::plate(&group.style, &theme, false))
+}
+
+/// A group's own box around `slots`, painted as `plate` says, kept in step with `follows`.
+pub(crate) fn group_box(
+    style: LayoutStyle,
+    slots: Vec<ChildSlot>,
+    plate: Option<Look>,
+    follows: Option<Box<dyn Fn() -> LayoutStyle>>,
+) -> Built {
+    let fixed = slots
+        .iter()
+        .all(|slot| matches!(slot, ChildSlot::Static(_)));
+    let unslotted = |slots: Vec<ChildSlot>| -> Vec<Box<dyn LayoutItem>> {
+        slots
+            .into_iter()
+            .filter_map(|slot| match slot {
+                ChildSlot::Static(item) => Some(item),
+                ChildSlot::Dynamic(_) => None,
+            })
+            .collect()
+    };
+    Ok(match plate {
+        Some(look) => {
+            let paint = move |rect| look.paint(rect);
+            let painted = match fixed {
+                true => StyledContainer::new(style, paint, unslotted(slots))?,
+                false => StyledContainer::from_slots(style, paint, slots)?,
+            };
+            let painted = painted_chrome(painted, look.fill);
+            Box::new(match follows {
+                Some(follows) => painted.styled_by(follows),
+                None => painted,
+            })
         }
         None => {
-            // A stack is the one child of the box its placement gives the group, so it is packed where the group would be: a dock's end zone packs it to the end instead of it stretching across the run.
-            let items = match group.is_pages() {
-                true => vec![smart_stack(
-                    key,
-                    &group.children,
-                    LayoutStyle::new().flex_column(),
-                    surround,
-                    move |instance, surround| build(instance, surround),
-                )?],
-                false => group
-                    .children
-                    .iter()
-                    .map(|instance| build(instance, surround))
-                    .collect::<Result<Vec<_>, LayoutError>>()?,
+            let bare = match fixed {
+                true => Container::new(style, unslotted(slots))?,
+                false => Container::from_slots(style, slots)?,
             };
-            Container::new(style, items)?
+            Box::new(match follows {
+                Some(follows) => bare.styled_by(follows),
+                None => bare,
+            })
         }
-    };
-    let node = match follows {
-        Some(follows) => node.styled_by(follows),
-        None => node,
-    };
-    rects::track(at.group(&group.id), node.layout_node());
-    Ok(Box::new(node))
+    })
 }
 
 /// Builds one instance of a group, under the surround it is handed — which a Smart Stack hands it again whenever it is cycled.
@@ -1381,7 +1467,10 @@ impl Kept {
 /// Where a group sits on its grid's tracks, and the column its instances are laid down.
 fn on_cells(group: &ResolvedGroup, gap: f32) -> LayoutStyle {
     let span = cells_of(group);
-    let style = LayoutStyle::new().flex_column().gap(gap);
+    let style = match container::arranges(group) {
+        true => LayoutStyle::new(),
+        false => LayoutStyle::new().flex_column().gap(gap),
+    };
     match group.kind {
         GroupKind::Cell { col, row, .. } => style
             .grid_column(line(cell_at(col)), span.columns)
@@ -1408,13 +1497,9 @@ fn cell_group(
             None => on_cells(&fallback, gap),
         })
     };
-    arranged(
-        area,
-        group,
-        on_cells(group, gap),
-        Some(Box::new(follows)),
-        surround,
-        move |instance, node, surround| {
+    let build: BuildPlaced = match container::arranges(group) {
+        true => contained(group, (cell, gap)),
+        false => Box::new(move |instance, node, surround| {
             place(
                 instance,
                 node,
@@ -1423,8 +1508,84 @@ fn cell_group(
                 LayoutStyle::new(),
                 surround,
             )
-        },
+        }),
+    };
+    arranged(
+        area,
+        group,
+        on_cells(group, gap),
+        Some(Box::new(follows)),
+        surround,
+        build,
     )
+}
+
+type BuildPlaced = Box<dyn Fn(&ResolvedInstance, &rects::Node, Surround) -> Built>;
+
+/// Each child of a container in its share of the box the container's cells make, drawn at what fits there and cut to it.
+fn contained(group: &ResolvedGroup, (cell, gap): (f32, f32)) -> BuildPlaced {
+    let size = cells_of(group).extent(cell, gap);
+    let shares: HashMap<PlacedId, telar::Rect> = group
+        .children
+        .iter()
+        .map(|child| child.id.clone())
+        .zip(container::shares(
+            group,
+            size,
+            container::gap_of(group, false),
+        ))
+        .collect();
+    let whole = telar::Rect::new(0.0, 0.0, size.width, size.height);
+    Box::new(move |instance, node, surround| {
+        let share = shares.get(&instance.id).copied().unwrap_or(whole);
+        shared(instance, node, share, (cell, gap), surround)
+    })
+}
+
+fn shared(
+    instance: &ResolvedInstance,
+    node: &rects::Node,
+    share: telar::Rect,
+    (cell, gap): (f32, f32),
+    surround: Surround,
+) -> Built {
+    let room = Size {
+        width: share.width,
+        height: share.height,
+    };
+    let representation = container::fitted(&instance.module, room, (cell, gap), surround.audience);
+    let drawn = ResolvedInstance {
+        representation,
+        ..instance.clone()
+    };
+    let child = match representation {
+        Placed::Chip => place(
+            &drawn,
+            node,
+            container::chip_extent(room, cell),
+            None,
+            LayoutStyle::new(),
+            surround,
+        )?,
+        _ => place(&drawn, node, room, None, fill(), surround)?,
+    };
+    let slot = Container::new(
+        pixels(share)
+            .flex_row()
+            .align_items(AlignItems::CENTER)
+            .justify_content(telar::JustifyContent::CENTER),
+        vec![child],
+    )?;
+    // A styled child cuts its own content to its plate, so the share only has to stop short of the plate's shadow.
+    let shadow = instance
+        .style
+        .shadow
+        .and_then(ui::scale::elevation::shadow)
+        .map_or(0.0, ui::scale::elevation::reach);
+    Ok(Box::new(ClippedItem::new(
+        Box::new(slot),
+        Clip::both().inset(-shadow),
+    )))
 }
 
 /// One group's share of a dock: an equal part of the strip's length, across the whole of its thickness, its instances packed towards its own zone.
@@ -1538,20 +1699,41 @@ fn placed(
     .shown_to(surround.audience);
     let gestures = Bound::of(&instance.actions, surround.audience)
         .with_menu(crate::menu::on(node.clone(), surround.audience));
-    if gestures.is_empty() {
+    let plate = Look::of_instance(
+        &instance.style,
+        bound,
+        &surround.theme,
+        Rest::on_surface(
+            &surround.theme,
+            surround.config.opacity(),
+            surround.config.shape_from(None, None, None, None).radius,
+        ),
+    );
+    if gestures.is_empty() && plate.is_none() {
         return ui::descriptor::place(&instance.module, &host, style);
     }
     // Around the module's own tree rather than in it: whatever the module answers itself, a button inside a widget, stays its own, and the bound gestures and the menu answer everywhere else on it — a placeholder standing in for a module that failed included.
-    let placed = ui::descriptor::place(
-        &instance.module,
-        &host,
-        LayoutStyle::new().flex_column().flex_grow(1.0),
-    )?;
-    Ok(Box::new(gestures.on(StyledContainer::new(
+    let inner = LayoutStyle::new().flex_column().flex_grow(1.0);
+    let placed = match plate {
+        Some(look) => {
+            let placed = telar::Scope::with(|| {
+                ui::chrome::Plated::provide();
+                ui::descriptor::place(&instance.module, &host, inner)
+            })?;
+            Box::new(look::cut(placed, look.radius, false))
+        }
+        None => ui::descriptor::place(&instance.module, &host, inner)?,
+    };
+    let wrapper = StyledContainer::new(
         style.flex_column(),
-        |_| RectStyle::default(),
+        move |rect| plate.map_or_else(RectStyle::default, |look| look.paint(rect)),
         vec![placed],
-    )?)))
+    )?;
+    let wrapper = painted_chrome(wrapper, plate.map_or(Color::TRANSPARENT, |look| look.fill));
+    if gestures.is_empty() {
+        return Ok(Box::new(wrapper));
+    }
+    Ok(Box::new(gestures.on(wrapper)))
 }
 
 /// Whether the module's own build of this representation registers nothing that answers the pointer.
@@ -1585,7 +1767,7 @@ fn footprint(instance: &ResolvedInstance) -> Footprint {
     }
 }
 
-/// The cells a group covers: the span it was placed with, widened to hold its instances down the column they are laid out in — or, in a `pages` group, the largest of them.
+/// The cells a group covers: a container exactly the span it was placed with, any other group that span widened to hold its instances down the column they are laid out in — or, in a `pages` group, the largest of them.
 pub fn cells_of(group: &ResolvedGroup) -> Footprint {
     let asked = match group.kind {
         GroupKind::Cell {
@@ -1599,6 +1781,9 @@ pub fn cells_of(group: &ResolvedGroup) -> Footprint {
             rows: 1,
         },
     };
+    if container::arranges(group) {
+        return asked;
+    }
     // A Smart Stack shows one child at a time, so it covers the largest of them; any other group is a column of all of them.
     let one_at_a_time = group.is_pages();
     let held = group.children.iter().map(footprint).fold(
@@ -2203,6 +2388,113 @@ mod tests {
         );
     }
 
+    /// An area, a container in it and an instance in that each draw the border and the shadow their style names, at their own box; the shadows reach past those boxes and none of that is claimed for the input region.
+    #[test]
+    fn a_style_draws_its_border_and_shadow_at_its_box_and_claims_none_of_the_shadow() {
+        reset_layout_runtime();
+        let config = Arc::new(Config::starter());
+        set_theme(config.resolve_theme());
+        ui::descriptor::install(PROBES);
+        let _scope = telar::owner_scope();
+
+        let styled = |line: &str, shadow: u8| Style {
+            fill: Some("surface".to_string()),
+            border: Some(layout::Border {
+                width: Some(2.0),
+                color: Some(line.to_string()),
+            }),
+            shadow: Some(shadow),
+            ..Style::default()
+        };
+        let child = ResolvedInstance {
+            style: styled("#00ff00", 1),
+            placement: Some(layout::Placement::Weight(1.0)),
+            ..instance("filler", Placed::WidgetS)
+        };
+        let container = ResolvedGroup {
+            arrange: Some(Arrange::Row),
+            style: styled("#0000ff", 2),
+            ..group(
+                GroupKind::Cell {
+                    col: 0,
+                    row: 0,
+                    col_span: 4,
+                    row_span: 2,
+                },
+                vec![child],
+            )
+        };
+        let mut placed = area(
+            ResolvedAreaKind::Grid {
+                rect: Rect {
+                    x: 0.1,
+                    y: 0.1,
+                    w: 0.5,
+                    h: 0.5,
+                },
+                cell: 80.0,
+                gap: 16.0,
+                anchor: Anchor::TopLeft,
+            },
+            vec![container],
+        );
+        placed.style = styled("#ff0000", 3);
+        let tree = drawn(build(&placed, surrounded(&config)).expect("a grid builds"));
+
+        let edged = |line: &str| -> Vec<(telar::Rect, Option<telar::Shadow>)> {
+            let line = Paint::Solid(Color::from_hex(line).expect("a colour"));
+            tree.commands()
+                .iter()
+                .filter_map(|command| match command {
+                    telar::DrawCommand::Rect { rect, style }
+                        if style.border.is_some_and(|border| border.paint == line) =>
+                    {
+                        Some((*rect, style.shadow))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let region = telar::Rect::new(100.0, 80.0, 500.0, 400.0);
+        let pad = ui::scale::plate::padding(false);
+        assert_eq!(
+            edged("#ff0000"),
+            [(region, ui::scale::elevation::shadow(3))],
+            "the area's"
+        );
+        assert_eq!(
+            edged("#0000ff"),
+            [(
+                telar::Rect::new(100.0, 80.0, 368.0, 176.0),
+                ui::scale::elevation::shadow(2)
+            )],
+            "the container's plate, on the cells it covers"
+        );
+        assert_eq!(
+            edged("#00ff00"),
+            [(
+                telar::Rect::new(
+                    100.0 + pad,
+                    80.0 + pad,
+                    368.0 - 2.0 * pad,
+                    176.0 - 2.0 * pad
+                ),
+                ui::scale::elevation::shadow(1)
+            )],
+            "the instance's, on its share of the padded plate"
+        );
+
+        let claimed = telar::interactive_rects();
+        assert!(claimed.contains(&region), "the filled area is claimed");
+        for claim in claimed {
+            assert_eq!(
+                claim.intersect(region),
+                Some(claim),
+                "{claim:?} reaches past every box into a shadow"
+            );
+        }
+    }
+
     fn picture_file(dir: &Path, name: &str, pixel: [u8; 4]) -> PathBuf {
         std::fs::create_dir_all(dir).expect("a scratch directory");
         let path = dir.join(name);
@@ -2296,6 +2588,70 @@ mod tests {
             shown.path, configured,
             "no source of its own is whatever [background] says"
         );
+    }
+
+    fn rounded_cuts(tree: &telar::ComponentList) -> Vec<(telar::Rect, BorderRadius)> {
+        tree.commands()
+            .iter()
+            .filter_map(|command| match command {
+                telar::DrawCommand::PushClip { rect, radius }
+                    if *radius != BorderRadius::zero() =>
+                {
+                    Some((*rect, *radius))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A corner is never rounder than half the short side, and the cut on a picture and on a styled instance's content holds to it as the paint does, so the two stay one outline.
+    #[test]
+    fn a_cut_rounds_no_further_than_the_paint_it_matches() {
+        reset_layout_runtime();
+        let dir = scratch("clamped");
+        let own = picture_file(&dir, "own.png", [255, 0, 0, 255]);
+        let config = Arc::new(Config::starter());
+        set_theme(config.resolve_theme());
+        ui::descriptor::install(PROBES);
+        let _scope = telar::owner_scope();
+        let huge = Some(layout::Corners::each(5000.0, 5000.0, 5000.0, 7.0));
+
+        let mut region = region_area("round", Rect::default(), &own, Transition::None);
+        region.style.radius = huge;
+        let tree = drawn(build(&region, surrounded(&config)).expect("a region builds"));
+        let cuts = rounded_cuts(&tree);
+        assert!(!cuts.is_empty(), "the picture is cut to its corners");
+        for (rect, radius) in cuts {
+            let most = rect.width.min(rect.height) / 2.0;
+            assert_eq!(
+                (radius.top_left, radius.bottom_left),
+                (most, 7.0),
+                "{rect:?}"
+            );
+        }
+
+        let mut styled = instance("probe", Placed::WidgetS);
+        styled.style = Style {
+            fill: Some("surface".to_string()),
+            radius: huge,
+            ..Style::default()
+        };
+        let grid = area(
+            ResolvedAreaKind::Grid {
+                rect: Rect::default(),
+                cell: 80.0,
+                gap: 16.0,
+                anchor: Anchor::TopLeft,
+            },
+            vec![group(cell(0, 0), vec![styled])],
+        );
+        let tree = drawn(build(&grid, surrounded(&config)).expect("a grid builds"));
+        let cuts = rounded_cuts(&tree);
+        assert!(!cuts.is_empty(), "the content is cut to the plate");
+        for (rect, radius) in cuts {
+            let most = rect.width.min(rect.height) / 2.0;
+            assert_eq!(radius.top_left, most, "{rect:?}");
+        }
     }
 
     fn backdrop_blurs(tree: &telar::ComponentList) -> Vec<f32> {

@@ -38,6 +38,20 @@ impl Chrome {
     }
 }
 
+/// Says that whatever placed the widget being built paints its plate, as a layout's instance `style` asks for, so the widget's own card leaves its box bare instead of painting a second plate inside the first.
+#[derive(Clone, Copy)]
+pub struct Plated;
+
+impl Plated {
+    pub fn provide() {
+        util::state::set_context(Plated);
+    }
+
+    pub fn here() -> bool {
+        util::state::context::<Plated>().is_some()
+    }
+}
+
 fn global_config() -> Option<Arc<Config>> {
     Chrome::current()
         .map(|chrome| chrome.config)

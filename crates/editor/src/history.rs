@@ -1,4 +1,4 @@
-//! The undo history as a list to jump through (T-4.12), the same on the strip and in the context menu: "At the start", then every entry an undo would take back, the oldest first, then every entry a redo would put back, dimmed. The one the layout is at now is marked, and each says how many steps away it is; picking one walks there through [`session::travel`], one ordinary undo or redo a step.
+//! The undo history as a list to jump through, the same on the strip and in the context menu: "At the start", then every entry an undo would take back, the oldest first, then every entry a redo would put back, dimmed. The one the layout is at now is marked, and each says how many steps away it is; picking one walks there through [`session::travel`], one ordinary undo or redo a step.
 
 use telar::MenuEntry;
 

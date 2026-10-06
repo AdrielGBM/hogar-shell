@@ -24,7 +24,7 @@ use ui::descriptor::{Input, ModuleDescriptor};
 use crate::context;
 use crate::keys::{self, Chord, Direction, KeyOp, Run};
 use crate::mode::said;
-use crate::popover::area::{picked, rect_rows, variants};
+use crate::popover::area::{chosen, rect_rows, variants};
 use crate::popover::rows::{self, Range, Rows, label};
 use crate::popover::{AreaDraft, Inspector, InstanceDraft, help, kind_field};
 use crate::session::{self, EditError, Selection};
@@ -752,37 +752,54 @@ fn grid_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     else {
         return Ok(Inspector::default());
     };
-    let cell = draft.value(
+    let cell = draft.setting(
         "cell",
-        || cell,
+        "cell",
+        move |area| match area.kind {
+            ResolvedAreaKind::Grid { cell, .. } => cell,
+            _ => cell,
+        },
         |area, value: &f32| kind_field!(area, "grid", Grid { cell }, *value),
     );
-    let gap = draft.value(
+    let gap = draft.setting(
         "gap",
-        || gap,
+        "gap",
+        move |area| match area.kind {
+            ResolvedAreaKind::Grid { gap, .. } => gap,
+            _ => gap,
+        },
         |area, value: &f32| kind_field!(area, "grid", Grid { gap }, *value),
     );
     let mut list = vec![
-        rows::number(
-            label!("editor.area.cell"),
-            help("AreaKind::Grid", "cell"),
-            cell,
-            Range::whole(16.0, 400.0),
+        draft.marked(
+            "cell",
+            rows::number(
+                label!("editor.area.cell"),
+                help("AreaKind::Grid", "cell"),
+                cell,
+                Range::whole(16.0, 400.0),
+            )?,
         )?,
-        rows::number(
-            label!("editor.area.gap"),
-            help("AreaKind::Grid", "gap"),
-            gap,
-            Range::whole(0.0, 64.0),
+        draft.marked(
+            "gap",
+            rows::number(
+                label!("editor.area.gap"),
+                help("AreaKind::Grid", "gap"),
+                gap,
+                Range::whole(0.0, 64.0),
+            )?,
         )?,
     ];
-    list.extend(picked(
+    list.extend(chosen(
         draft,
         "anchor",
         label!("editor.area.anchor"),
         help("AreaKind::Grid", "anchor"),
         variants("Anchor"),
-        anchor,
+        move |area| match area.kind {
+            ResolvedAreaKind::Grid { anchor, .. } => anchor,
+            _ => anchor,
+        },
         |area, anchor: Anchor| kind_field!(area, "grid", Grid { anchor }, anchor),
     )?);
     list.extend(rect_rows(draft, rect)?);

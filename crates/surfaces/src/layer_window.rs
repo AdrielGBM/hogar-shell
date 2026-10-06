@@ -18,7 +18,7 @@ use telar::{
 };
 
 use config::theme::NordTheme;
-use config::{Config, Edge, LiveConfig};
+use config::{Config, Edge, LiveConfig, Shape};
 use layout::{
     AreaId, Backdrop, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedLayer, Within,
 };
@@ -58,6 +58,10 @@ pub struct Reserved {
     pub right: f32,
     pub bottom: f32,
     pub left: f32,
+    /// What only the areas that stay on screen take off each edge, in `Edge::ALL` order: `on` also counts the peek strip a hiding bar leaves, which is nothing a bar that stays has to yield to.
+    held: [f32; 4],
+    /// The fillet the largest steady bar drawn as one strip on each edge asks for, in `Edge::ALL` order: what a horizontal bar crossing that edge rounds its corner with when it has none of its own.
+    fillets: [Option<f32>; 4],
 }
 
 impl Reserved {
@@ -67,13 +71,16 @@ impl Reserved {
     ///
     /// Only an output-level area may reserve, so the bars read here are the ones every workspace on the screen shares.
     pub fn of(resolved: &Resolved, config: &Config) -> Self {
-        let air = |edge: Edge| {
+        let air = |edge: Edge, steady_only: bool| {
             resolved
                 .areas()
                 .filter_map(|(_, area)| match area.kind {
                     ResolvedAreaKind::Bar {
-                        edge: on, shape, ..
-                    } if on == edge && area.reserve => {
+                        edge: on,
+                        shape,
+                        autohide,
+                        ..
+                    } if on == edge && area.reserve && (!steady_only || autohide.is_none()) => {
                         Some(config.gap_of(&crate::bar::bar_shape(config, shape)) as f32)
                     }
                     _ => None,
@@ -83,16 +90,63 @@ impl Reserved {
         let on = |edge: Edge| {
             let depth = resolved.reserved(edge);
             match depth > 0.0 {
-                true => depth + air(edge),
+                true => depth + air(edge, false),
                 false => 0.0,
             }
         };
+        let held = Edge::ALL.map(|edge| {
+            let depth = resolved
+                .areas()
+                .filter(|(_, area)| area.reserve)
+                .filter_map(|(_, area)| match area.kind {
+                    ResolvedAreaKind::Bar {
+                        edge: on,
+                        thickness,
+                        autohide: None,
+                        ..
+                    }
+                    | ResolvedAreaKind::Dock {
+                        edge: on,
+                        thickness,
+                    } if on == edge => Some(thickness),
+                    _ => None,
+                })
+                .fold(0.0, f32::max);
+            match depth > 0.0 {
+                true => depth + air(edge, true),
+                false => 0.0,
+            }
+        });
+        let fillets = Edge::ALL.map(|edge| {
+            resolved
+                .areas()
+                .filter_map(|(_, area)| match area.kind {
+                    ResolvedAreaKind::Bar {
+                        edge: on,
+                        shape,
+                        autohide: None,
+                        ..
+                    } if on == edge && area.reserve => crate::bar::fillet_of(config, shape),
+                    _ => None,
+                })
+                .reduce(f32::max)
+        });
         Self {
             top: on(Edge::Top),
             right: on(Edge::Right),
             bottom: on(Edge::Bottom),
             left: on(Edge::Left),
+            held,
+            fillets,
         }
+    }
+
+    pub fn fillet_on(&self, edge: Edge) -> Option<f32> {
+        self.fillets[Edge::ALL.iter().position(|it| *it == edge).unwrap_or(0)]
+    }
+
+    pub fn held_on(&self, edge: Edge) -> f32 {
+        self.held[Edge::ALL.iter().position(|it| *it == edge).unwrap_or(0)]
     }
 
     pub fn on(&self, edge: Edge) -> f32 {
@@ -333,7 +387,7 @@ impl LayerWindows {
             }
         };
         let presence = Presence::new(while_empty(key.layer), Box::new(surface), mapped);
-        presence.set_draws(window_draws(&layer.get()));
+        presence.set_draws(window_draws(&layer.get(), plan.config));
         done.opened += 1;
         self.live.push((
             key,
@@ -384,7 +438,8 @@ impl Window {
             }
             Content::Changed => self.generation.look_again(),
         }
-        self.presence.set_draws(window_draws(&self.layer.get()));
+        self.presence
+            .set_draws(window_draws(&self.layer.get(), plan.config));
     }
 }
 
@@ -903,23 +958,30 @@ fn window_layer(kind: LayerKind) -> Option<(Layer, &'static str)> {
 
 /// Whether an area puts anything on the screen, which is the question the whole of lazy mapping turns on.
 ///
-/// Paint is always something: a wallpaper region and a texture are their own content. Everything else draws what is placed in it, plus whatever its own style fills — so a bar with no modules and no fill of its own is a strip of nothing, and does not earn its layer a mapped window.
+/// Paint is always something: a wallpaper region and a texture are their own content. Everything else draws what is placed in it, plus whatever its own style fills, edges or lifts — a bar edges and lifts its strip in `bar` mode alone, where `sections` and `chips` draw only their chips and panels — so a bar with no modules and no fill of its own is a strip of nothing, and does not earn its layer a mapped window.
 ///
 /// An area with a `visible` expression counts whatever the expression says now: an expression is read only while its window is on screen, so a window taken off screen because one turned false would never hear it turn true again. While false the area draws nothing and takes no input inside a window that stays up.
-pub fn area_draws(area: &ResolvedArea) -> bool {
+pub fn area_draws(area: &ResolvedArea, config: &Config) -> bool {
+    let edged = match area.kind {
+        ResolvedAreaKind::Bar { shape, .. } => {
+            matches!(crate::bar::bar_shape(config, shape).mode, Shape::Bar)
+        }
+        _ => true,
+    };
     !area.kind.holds_instances()
         || area.style.fill.is_some()
+        || edged && (area.style.draws_edge() || area.style.shadow.is_some_and(|step| step > 0))
         || area.groups.iter().any(|group| !group.children.is_empty())
 }
 
 /// Whether a window has anything to show, which is whether it is on screen at all.
 ///
 /// An area above fullscreen holds the overlay window open for as long as it exists, drawing or not (DEC-17): it is the one kind of overlay content the user asked to keep, and the scanout it costs is what `layout check` warns about.
-pub fn window_draws(window: &WindowAreas) -> bool {
+pub fn window_draws(window: &WindowAreas, config: &Config) -> bool {
     window
         .areas
         .iter()
-        .any(|(_, area)| area.above_fullscreen || area_draws(area))
+        .any(|(_, area)| area.above_fullscreen || area_draws(area, config))
 }
 
 /// The window an area is drawn in: its own layer's, except that an area above fullscreen is drawn in the overlay window, the one layer a fullscreen window leaves on screen (DEC-17, F-6.2). The lock layer has no window, and is above everything already.
@@ -1502,7 +1564,7 @@ mod tests {
         LayerWindows::new(Rc::new(NoAreas))
     }
 
-    /// T-4.1's acceptance, first half. Every session layer is tracked from the moment its output is, so a hold or a layout change reaches it; only the layer that resolves something visible is ever on screen.
+    /// Every session layer is tracked from the moment its output is, so a hold or a layout change reaches it; only the layer that resolves something visible is ever on screen.
     #[test]
     fn with_only_bars_configured_only_the_top_window_is_on_screen() {
         let config = config();
@@ -1566,7 +1628,7 @@ mod tests {
         );
     }
 
-    /// T-4.1's acceptance, second half: the launcher. It is in no layout, so it maps the overlay window by holding it — and the hold is what the exit transition outlives, which is why letting go is the caller's to time.
+    /// The launcher. It is in no layout, so it maps the overlay window by holding it — and the hold is what the exit transition outlives, which is why letting go is the caller's to time.
     #[test]
     fn a_hold_maps_the_overlay_window_and_letting_go_takes_it_off_screen() {
         let config = config();
@@ -1762,7 +1824,7 @@ mod tests {
         );
     }
 
-    /// T-6.1's state-restore criterion at the host: an edit mode raises the window it edits above the user's windows, holds it on screen and takes the keyboard in the overlay window, and letting all three go leaves every window as it was.
+    /// At the host, an edit mode raises the window it edits above the user's windows, holds it on screen and takes the keyboard in the overlay window, and letting all three go leaves every window as it was.
     #[test]
     fn raising_a_window_and_letting_go_puts_its_layer_keyboard_and_mapping_back() {
         let config = config();
@@ -1830,8 +1892,8 @@ mod tests {
 
     #[test]
     fn a_bar_with_no_modules_and_no_fill_of_its_own_draws_nothing() {
-        assert!(!area_draws(&bar("bar-top", &[])));
-        assert!(area_draws(&bar("bar-top", &["clock"])));
+        assert!(!area_draws(&bar("bar-top", &[]), &config()));
+        assert!(area_draws(&bar("bar-top", &["clock"]), &config()));
     }
 
     /// An empty bar the user gave a colour is a stripe they asked for, and a wallpaper region holds no instances at all but is the one thing on its layer.
@@ -1839,8 +1901,8 @@ mod tests {
     fn an_area_that_is_its_own_paint_draws_whether_or_not_anything_is_placed_in_it() {
         let mut stripe = bar("bar-top", &[]);
         stripe.style.fill = Some("surface".into());
-        assert!(area_draws(&stripe));
-        assert!(area_draws(&wallpaper()));
+        assert!(area_draws(&stripe, &config()));
+        assert!(area_draws(&wallpaper(), &config()));
     }
 
     /// An area its expression hides keeps its window on screen: the expression is read only while the window is mapped, so taking the window away for a false one would leave nothing to hear it turn true. What it hides is the area's paint and input, inside the window (`expressions_tests`).
@@ -1856,18 +1918,68 @@ mod tests {
             }),
             within: None,
         });
-        assert!(area_draws(&conditional));
-        assert!(window_draws(&drawn(vec![conditional])));
+        assert!(area_draws(&conditional, &config()));
+        assert!(window_draws(&drawn(vec![conditional]), &config()));
     }
 
     #[test]
     fn a_layer_draws_when_any_one_of_its_areas_does() {
-        assert!(!window_draws(&WindowAreas::default()));
-        assert!(!window_draws(&drawn(vec![bar("a", &[]), bar("b", &[])])));
-        assert!(window_draws(&drawn(vec![
-            bar("a", &[]),
-            bar("b", &["clock"])
-        ])));
+        assert!(!window_draws(&WindowAreas::default(), &config()));
+        assert!(!window_draws(
+            &drawn(vec![bar("a", &[]), bar("b", &[])]),
+            &config()
+        ));
+        assert!(window_draws(
+            &drawn(vec![bar("a", &[]), bar("b", &["clock"])]),
+            &config()
+        ));
+    }
+
+    /// A strip's border and shadow are drawn in `bar` mode alone, so a bar with nothing placed in it and nothing else to draw earns no window in `sections` or `chips`, where those two would be all there is.
+    #[test]
+    fn a_strips_border_and_shadow_draw_only_in_bar_mode() {
+        let edged = |mode: Shape, style: Style| {
+            let mut area = bar("bar-top", &[]);
+            if let ResolvedAreaKind::Bar { shape, .. } = &mut area.kind {
+                shape.mode = Some(mode);
+            }
+            area.style = style;
+            area_draws(&area, &config())
+        };
+        let border = Style {
+            border: Some(layout::Border {
+                width: Some(1.0),
+                color: None,
+            }),
+            ..Style::default()
+        };
+        let shadow = Style {
+            shadow: Some(2),
+            ..Style::default()
+        };
+        for style in [border, shadow] {
+            assert!(edged(Shape::Bar, style.clone()));
+            assert!(!edged(Shape::Sections, style.clone()));
+            assert!(!edged(Shape::Chips, style));
+        }
+        let stripe = Style {
+            fill: Some("surface".into()),
+            ..Style::default()
+        };
+        assert!(edged(Shape::Chips, stripe), "a fill paints in any mode");
+    }
+
+    /// A chip a group places draws in every mode, styled or not, so the bar holding it is on screen whatever its strip draws.
+    #[test]
+    fn a_bar_holding_a_chip_draws_in_every_mode() {
+        for mode in [Shape::Bar, Shape::Sections, Shape::Chips] {
+            let mut area = bar("bar-top", &["clock"]);
+            if let ResolvedAreaKind::Bar { shape, .. } = &mut area.kind {
+                shape.mode = Some(mode);
+            }
+            area.groups[0].children[0].style.shadow = Some(1);
+            assert!(area_draws(&area, &config()), "{mode:?}");
+        }
     }
 
     /// A `wl_surface` has one keyboard interactivity, so what the window negotiates is the maximum of what is mounted in it — and it must come back down when the thing that wanted it goes.
@@ -2252,7 +2364,7 @@ mod tests {
             .collect()
     }
 
-    /// T-7.1's acceptance, through the window's own build: `wallpaper set --region left` is a layout edit that changes the left region alone, so the window builds that region again — fading from the picture it showed to the new one — and keeps the right region's node, its picture and whatever fade it is in; the frame after the edit repaints nothing outside the left region's box (F-5.1, F-5.2).
+    /// `wallpaper set --region left` is a layout edit that changes the left region alone, so the window builds that region again — fading from the picture it showed to the new one — and keeps the right region's node, its picture and whatever fade it is in; the frame after the edit repaints nothing outside the left region's box (F-5.1, F-5.2).
     #[test]
     fn a_new_picture_for_one_region_repaints_that_region_and_nothing_beside_it() {
         const WIDE: u32 = 400;
@@ -2797,7 +2909,7 @@ mod tests {
 
     /// Four layer windows on one shared runtime, each with its own tree: the layer that resolves an area paints, and the three that resolve nothing mount an empty root and paint nothing.
     ///
-    /// This is as far as a headless run reaches. Whether a window is *mapped* is layer-shell state the wayland driver owns, and there is no compositor here, so the mapping half of T-4.1's acceptance is asserted through [`LayerWindows::is_mapped`] above instead.
+    /// This is as far as a headless run reaches. Whether a window is *mapped* is layer-shell state the wayland driver owns, and there is no compositor here, so the mapping is asserted through [`LayerWindows::is_mapped`] above instead.
     #[test]
     fn each_layer_window_renders_its_own_areas_and_an_empty_layer_paints_nothing() {
         let surfaces: Vec<(SurfaceId, AppConfig)> = LayerKind::SESSION

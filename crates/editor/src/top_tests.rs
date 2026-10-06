@@ -1,4 +1,4 @@
-//! The top mode's tools (T-7.3): bars made, moved and resized on every edge, split and joined back, chips carried between zones and bars and off every bar, bars sent to another screen, and reservation renegotiated once, when a gesture is committed.
+//! The top mode's tools: bars made, moved and resized on every edge, split and joined back, chips carried between zones and bars and off every bar, bars sent to another screen, and reservation renegotiated once, when a gesture is committed.
 
 #[cfg(test)]
 mod tests {
@@ -432,7 +432,7 @@ mod tests {
         }
     }
 
-    /// **The acceptance of T-7.3:** the top bar dragged to the left edge lays its chips down the edge while the drag previews it, and the edges reserve what they did until it is let go — then the screen is brought in line once.
+    /// The top bar dragged to the left edge lays its chips down the edge while the drag previews it, and the edges reserve what they did until it is let go — then the screen is brought in line once.
     #[test]
     fn a_bar_dragged_from_top_to_left_relays_its_chips_and_reserves_again_only_on_release() {
         let _owner = Owner::new();

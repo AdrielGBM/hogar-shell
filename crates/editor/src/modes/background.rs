@@ -24,13 +24,14 @@ use crate::context;
 use crate::host::{self, HOTSPOT, passthrough, whole};
 use crate::keys::{self, Chord, KeyOp, Run};
 use crate::mode::{Mode, said};
-use crate::popover::area::{picked, rect_rows, variants};
+use crate::popover::area::{chosen, rect_rows, variants};
 use crate::popover::rows::{self, label};
 use crate::popover::{AreaDraft, Inspector, help, kind_field};
 use crate::session::{self, Edit, EditError, Selection};
+use crate::snap;
 use crate::written::Work;
 
-use super::gesture;
+use super::gesture::{self, Hint};
 use super::regions::{self, Cut, Plan, Tile};
 use super::texture;
 
@@ -316,14 +317,32 @@ fn split_button(region: Node, cut: Cut) -> Result<Box<dyn LayoutItem>, LayoutErr
                 return;
             };
             let point = (origin.0 + x, origin.1 + y);
-            let planned = Plan::for_node(&before, &dragged)
-                .and_then(|plan| plan.split(&dragged.area, cut, fraction(cut, bounds, point)));
+            let planned = Plan::for_node(&before, &dragged).and_then(|plan| {
+                let lines = plan.cut_lines(&dragged.area, cut)?;
+                show_lines(point, cut, &lines, bounds);
+                let at = snap::region_line(
+                    fraction(cut, bounds, point),
+                    &lines,
+                    snap::CUT_TOLERANCE,
+                    snap::free(),
+                );
+                plan.split(&dragged.area, cut, at)
+            });
             if let Ok(ops) = planned {
                 let _ = previewing.preview(ops);
             }
         },
         |_, _| {},
     )))
+}
+
+/// The cell lines a region edge or cut dragged along `cut` snaps to, drawn across `bounds` while the pointer at `point` drags it.
+fn show_lines(point: (f32, f32), cut: Cut, lines: &[f32], bounds: Rect) {
+    gesture::hint().set(Some(Hint {
+        pointer: point,
+        guides: snap::lines(&snap::guides(cut.into(), lines), bounds),
+        ..Hint::default()
+    }));
 }
 
 /// The button on the edge the region `first` names shares with `second`, which joins them.
@@ -388,6 +407,23 @@ fn edge_now(
     ))
 }
 
+/// The cell lines of the main grid an edge of `cut` measured in `bounds` snaps to: those it can reach, in `range`.
+fn edge_lines(
+    output: &str,
+    layer: LayerKind,
+    cut: Cut,
+    bounds: Rect,
+    (low, high): (f32, f32),
+) -> Vec<f32> {
+    let Some((desktop, _)) = drawn(output, layer) else {
+        return Vec::new();
+    };
+    snap::grid_lines(&desktop, layer, cut.into(), bounds)
+        .into_iter()
+        .filter(|at| (low..=high).contains(at))
+        .collect()
+}
+
 /// The grip on an edge that moves it, every region on either side following; a focused grip moves with the arrows, one undo entry a press.
 fn edge_grip(
     output: &str,
@@ -412,8 +448,11 @@ fn edge_grip(
     };
     let settling = plan_to.clone();
     let (committing, reverting) = (edit.clone(), edit.clone());
+    let hd = gesture::HandleDragging::new();
+    let (on_end_commit, on_end_revert) = (hd.on_end_fn(), hd.on_end_fn());
     let transaction = Transaction::new(value)
         .on_commit(move |_, after| {
+            on_end_commit();
             if !committing.is_open() && committing.begin().is_err() {
                 return;
             }
@@ -430,6 +469,7 @@ fn edge_grip(
             }
         })
         .on_revert(move |_| {
+            on_end_revert();
             if reverting.is_open() {
                 let _ = reverting.revert();
             }
@@ -474,11 +514,20 @@ fn edge_grip(
     telar::handle(
         telar::HandleProps::props()
             .transaction(transaction)
-            .to_value(Rc::new(move |x: f32, y: f32| {
+            .to_value(Rc::new(hd.wrap_to_value(move |x: f32, y: f32| {
                 let (output, key) = &reading;
-                edge_now(output, layer, key)
-                    .map_or(0.0, |(_, _, bounds)| fraction(cut, bounds, (x, y)))
-            }))
+                let Some((_, _, bounds)) = edge_now(output, layer, key) else {
+                    return 0.0;
+                };
+                let lines = edge_lines(output, layer, cut, bounds, range);
+                show_lines((x, y), cut, &lines, bounds);
+                snap::region_line(
+                    fraction(cut, bounds, (x, y)),
+                    &lines,
+                    snap::EDGE_TOLERANCE,
+                    snap::free(),
+                )
+            })))
             .to_point(Rc::new(move |to: f32| {
                 let (output, key) = &placing;
                 let Some((_, (from, until), bounds)) = edge_now(output, layer, key) else {
@@ -520,9 +569,16 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     else {
         return Ok(Inspector::default());
     };
-    let picture = draft.value(
+    let picture = draft.setting(
         "source",
-        || source.clone(),
+        "source",
+        {
+            let source = source.clone();
+            move |area| match &area.kind {
+                ResolvedAreaKind::WallpaperRegion { source, .. } => source.clone(),
+                _ => source.clone(),
+            }
+        },
         |area, path: &String| {
             kind_field!(
                 area,
@@ -532,35 +588,46 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
             )
         },
     );
-    let mut list = vec![
-        rows::listed(
-            label!("editor.area.source"),
-            help("AreaKind::WallpaperRegion", "source"),
-            picture,
-            Rc::from(library(&source)),
-        )?,
-        rows::text(
-            label!("editor.area.source"),
-            help("AreaKind::WallpaperRegion", "source"),
-            picture,
-        )?,
-    ];
-    list.extend(picked(
+    let mut list = vec![draft.marked(
+        "source",
+        rows::together(vec![
+            rows::listed(
+                label!("editor.area.source"),
+                help("AreaKind::WallpaperRegion", "source"),
+                picture,
+                Rc::from(library(&source)),
+            )?,
+            rows::text(
+                label!("editor.area.source"),
+                help("AreaKind::WallpaperRegion", "source"),
+                picture,
+            )?,
+        ])?,
+    )?];
+    list.extend(chosen(
         draft,
         "fit",
         label!("editor.area.fit"),
         help("AreaKind::WallpaperRegion", "fit"),
         variants("Fit"),
-        fit,
+        move |area| match area.kind {
+            ResolvedAreaKind::WallpaperRegion { fit: now, .. } => now,
+            _ => fit,
+        },
         |area, fit: Fit| kind_field!(area, "wallpaper_region", WallpaperRegion { fit }, fit),
     )?);
-    list.extend(picked(
+    list.extend(chosen(
         draft,
         "transition",
         label!("editor.area.transition"),
         help("AreaKind::WallpaperRegion", "transition"),
         variants("Transition"),
-        transition,
+        move |area| match area.kind {
+            ResolvedAreaKind::WallpaperRegion {
+                transition: now, ..
+            } => now,
+            _ => transition,
+        },
         |area, transition: Transition| {
             kind_field!(
                 area,

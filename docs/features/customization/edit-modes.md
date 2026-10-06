@@ -124,6 +124,13 @@ Wallpaper regions: split a region side by side (`s`) or top and bottom (Shift+S)
 so no gap opens. Each region has its own picture, fit and transition; "Follow the background" puts it back on whatever
 `[background]` says. Split and join are different hotspots on purpose.
 
+Region edges and cuts **snap** to the cell lines of the desktop grid (the lock's grid on the lock layer), in the middle of
+the gap between two cells: a dragged edge within about 1 % of a line, a cut — dragged from its split button, or made by
+`s` — within 4 %. The lines are drawn while you drag. On the lock layer, the prompt you move also snaps its edges and
+centre to the regions, textures and free areas beside it and to the edges and middle of the screen within 6 pixels, with
+a guide drawn where it snapped. Nothing else snaps yet: resizing a rectangle and carrying children of a free container
+will snap the same way once those drags exist. Hold **Alt** while dragging to place anything freely.
+
 Textures lay an image or a gradient over a region (`t`). An image can be tiled or nine-sliced (`n`), with a handle for
 each cut in the image's own pixels; a gradient has its axis drawn over it, a handle that turns it (`[` and `]` turn 45°; Shift snaps a
 drag to 45°), and a handle per stop, at most eight. See [Wallpaper](../surfaces/wallpaper.md).

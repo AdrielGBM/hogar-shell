@@ -10,23 +10,36 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use telar::{OwnerId, ReadSignal, Rect, RwSignal, effect, signal};
+use telar::{LayoutItem, Memo, OwnerId, ReadSignal, Rect, RwSignal, effect, signal};
 
 use config::Config;
 use layout::{
-    Area, AreaKind, Expr, Instance, Layout, LayoutOp, Origin, ResolvedArea, ResolvedInstance, Site,
-    Unset,
+    Area, AreaKind, Expr, Holder, Instance, Layout, LayoutOp, Origin, ResolvedArea,
+    ResolvedInstance, Unset,
 };
-use surfaces::reconcile::Desktop;
+use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{self, Node, Part};
 
 use crate::session::Edit;
 use crate::written::{Written, WrittenInstance};
 
+use super::origin::{self, Measure, Provenance};
 use super::value::{self, Path};
 
 /// Writes one control's value into an area, if it moved from where it started.
 type Replay = Rc<dyn Fn(&mut Area)>;
+
+/// Reads one control's value again from the area as drawn, once Reset has taken the key it writes back off.
+type Reseed = Rc<dyn Fn(&ResolvedArea)>;
+
+/// One value the controls of an area share.
+struct Shared<T: 'static> {
+    value: RwSignal<T>,
+    /// Where it started, or where Reset last put it: it has moved only once it differs from this.
+    from: Rc<RefCell<T>>,
+    /// Set while Reset puts it where the area now inherits it from, so that is not written back as the area's own.
+    quiet: Rc<Cell<bool>>,
+}
 
 /// An area being customized.
 #[derive(Clone)]
@@ -39,10 +52,21 @@ pub struct AreaDraft {
     /// The size of that screen, in logical pixels.
     pub screen: (f32, f32),
     area: RwSignal<Area>,
+    /// The copy as the layout file writes it, without its groups: what a key is looked up in to tell whether the popover's level writes it.
+    entry: Memo<Option<toml::Table>>,
     written: Rc<RefCell<Written>>,
     edit: Edit,
+    measure: Measure,
     values: Rc<RefCell<HashMap<&'static str, Box<dyn Any>>>>,
     replays: Rc<RefCell<Vec<Replay>>>,
+    /// What each key Reset takes back reads again, by key.
+    reseeds: Rc<RefCell<Vec<(&'static str, Reseed)>>>,
+    /// The keys Reset has taken back so far, which a change of where the popover writes takes back there too.
+    taken_off: Rc<RefCell<Vec<String>>>,
+    /// Set while Reset puts the values tied to a key where the area now draws them, so what keeps one value in step with another does not take that for a change.
+    resetting: Rc<Cell<bool>>,
+    /// Counts the Resets, so what is built from the area's values once can be built again after one.
+    resets: RwSignal<u64>,
     /// What the shared values belong to: the popover, so they outlive a rebuild of its rows.
     owner: Option<OwnerId>,
 }
@@ -67,16 +91,29 @@ impl AreaDraft {
                 false => written.ops(changed),
             }
         });
+        let entry = telar::memo(move || {
+            area.with(|area| {
+                let mut entry = origin::table_of(area)?;
+                entry.remove("groups");
+                Some(entry)
+            })
+        });
         let draft = Self {
+            measure: Measure::new(edit, &node),
             node,
             resolved: Rc::new(resolved),
             config,
             screen,
             area,
+            entry,
             written,
             edit: edit.clone(),
             values: Rc::default(),
             replays: Rc::default(),
+            reseeds: Rc::default(),
+            taken_off: Rc::default(),
+            resetting: Rc::default(),
+            resets: signal(0),
             owner: telar::current_owner(),
         };
         draft.follow_the_variant();
@@ -115,6 +152,11 @@ impl AreaDraft {
     /// Writes the copy back where `written` says from now on: the copy made again from what that rule writes, with every control that has moved written into it once more.
     fn retarget(&self, written: Written) {
         let mut area = written.area.clone();
+        for key in self.taken_off.borrow().iter() {
+            if let Some(without) = origin::without(&area, key) {
+                area = without;
+            }
+        }
         for replay in self.replays.borrow().iter() {
             replay(&mut area);
         }
@@ -141,7 +183,128 @@ impl AreaDraft {
     /// Whether what the popover writes is laid over `writer`, the level that wrote an expression the area shows: only then does taking it back where the popover writes take it off the screen.
     pub fn lays_over(&self, writer: &Origin) -> bool {
         let site = self.written.borrow().site.clone();
-        laid_over(&self.edit, &site, &self.node, writer)
+        self.measure.lays_over(&site, writer)
+    }
+
+    /// Where the area's key `key` comes from on the screen as drawn now. Reactive.
+    pub fn provenance(&self, key: &str) -> Provenance {
+        self.provenance_of(&[key])
+    }
+
+    /// Where the value written at any of `keys` comes from: of keys that exclude one another, such as a texture's `image` and `gradient`, the one some level writes. Reactive.
+    pub fn provenance_of(&self, keys: &[&str]) -> Provenance {
+        let site = self.written.borrow().site.clone();
+        keys.iter()
+            .map(|key| {
+                self.measure
+                    .provenance(&site, Holder::Area(&self.node.area), key)
+            })
+            .find(|found| *found != Provenance::Default)
+            .unwrap_or(Provenance::Default)
+    }
+
+    /// Whether the level the popover writes into writes the area's key `key`, with what the popover has changed so far. Reactive.
+    pub fn writes(&self, key: &str) -> bool {
+        self.writes_any(&[key])
+    }
+
+    /// Whether the level the popover writes into writes any of `keys`. Reactive.
+    pub fn writes_any(&self, keys: &[&str]) -> bool {
+        self.entry
+            .get()
+            .is_some_and(|entry| keys.iter().any(|key| origin::holds(&entry, key)))
+    }
+
+    /// Takes the area's key `key` off where the popover writes, so it shows what it inherits there, and puts every value tied to it ([`AreaDraft::setting`]) where the area now draws it.
+    pub fn reset(&self, key: &str) {
+        self.reset_keys(&[key]);
+    }
+
+    /// [`AreaDraft::reset`] for every one of `keys`.
+    pub fn reset_keys(&self, keys: &[&str]) {
+        for key in keys {
+            update(self.area, |area| {
+                if let Some(without) = origin::without(area, key) {
+                    *area = without;
+                }
+            });
+            let mut taken_off = self.taken_off.borrow_mut();
+            if !taken_off.iter().any(|taken| taken == key) {
+                taken_off.push((*key).to_string());
+            }
+        }
+        self.resetting.set(true);
+        self.reseed(keys);
+        self.resetting.set(false);
+        self.resets.update(|count| *count += 1);
+    }
+
+    fn reseed(&self, keys: &[&str]) {
+        let Some(drawn) = self.drawn() else {
+            return;
+        };
+        let reseeds: Vec<Reseed> = self
+            .reseeds
+            .borrow()
+            .iter()
+            .filter(|(tied, _)| keys.contains(tied))
+            .map(|(_, reseed)| Rc::clone(reseed))
+            .collect();
+        for reseed in reseeds {
+            reseed(&drawn);
+        }
+    }
+
+    /// Whether Reset is putting values where the area now draws them: what keeps one value in step with another must not take that for a change of the other.
+    pub fn resetting(&self) -> Rc<Cell<bool>> {
+        Rc::clone(&self.resetting)
+    }
+
+    /// How many times Reset has been pressed. Read in a build, it makes the build again after each.
+    pub fn resets(&self) -> ReadSignal<u64> {
+        self.resets.read_only()
+    }
+
+    /// `row` with what [`super::origin::marked`] adds for the area's key `key`: where its value comes from, and a Reset while the popover's level writes it.
+    pub fn marked(&self, key: &'static str, row: Box<dyn LayoutItem>) -> ui::descriptor::Built {
+        self.marked_any(&[key], row)
+    }
+
+    /// [`AreaDraft::marked`] for a row whose value is written at any one of `keys`.
+    pub fn marked_any(
+        &self,
+        keys: &[&'static str],
+        row: Box<dyn LayoutItem>,
+    ) -> ui::descriptor::Built {
+        let keys: Rc<[&'static str]> = Rc::from(keys);
+        let (standing, writing, resetting) = (self.clone(), self.clone(), self.clone());
+        let (seen, written, taken) = (Rc::clone(&keys), Rc::clone(&keys), keys);
+        origin::marked(
+            row,
+            move || standing.provenance_of(&seen),
+            move || writing.writes_any(&written),
+            move || resetting.reset_keys(&taken),
+        )
+    }
+
+    /// The area as the screen draws it with the copy as it is now, resolved here rather than read from the preview, which may not have caught up yet.
+    fn drawn(&self) -> Option<ResolvedArea> {
+        let mut after = self.edit.transaction().before()?;
+        let copy = self.area.peek();
+        let ops = {
+            let written = self.written.borrow();
+            match copy == written.area {
+                true => Vec::new(),
+                false => written.ops(&copy),
+            }
+        };
+        layout::ops::apply_all(&mut after, &ops).ok()?;
+        let screen = reconcile::desktop_now(self.node.output.as_deref())?;
+        screen
+            .resolving(&after, &crate::written::known())
+            .resolved
+            .area(self.node.layer, &self.node.area)
+            .cloned()
     }
 
     /// Which kind of area this is, as the layout file spells it.
@@ -168,21 +331,69 @@ impl AreaDraft {
         let write = Rc::new(write);
         let writing = Rc::clone(&write);
         let started = seed();
-        let from = started.clone();
+        let from = Rc::new(RefCell::new(started.clone()));
+        let quiet = Rc::new(Cell::new(false));
+        let hushed = Rc::clone(&quiet);
         let value = telar::with_owner(self.owner, || {
             bound(started, move |value| {
-                update(area, |held| writing(held, value))
+                if !hushed.replace(false) {
+                    update(area, |held| writing(held, value))
+                }
             })
         });
-        self.values.borrow_mut().insert(name, Box::new(value));
+        let moved_from = Rc::clone(&from);
+        self.values
+            .borrow_mut()
+            .insert(name, Box::new(Shared { value, from, quiet }));
         self.replays
             .borrow_mut()
             .push(Rc::new(move |area: &mut Area| {
                 let now = value.peek();
-                if now != from {
+                if now != *moved_from.borrow() {
                     write(area, &now);
                 }
             }));
+        value
+    }
+
+    /// [`AreaDraft::value`] for a value the area writes at the key `key` as the layout file spells it (`style.fill`, `thickness`, `rect`): started at what `read` finds in the area as it was drawn when the popover opened, and read again from the area as drawn once Reset takes the key back off ([`AreaDraft::reset`]).
+    pub fn setting<T: Clone + PartialEq + 'static>(
+        &self,
+        name: &'static str,
+        key: &'static str,
+        read: impl Fn(&ResolvedArea) -> T + 'static,
+        write: impl Fn(&mut Area, &T) + 'static,
+    ) -> RwSignal<T> {
+        if let Some(shared) = self.shared(name) {
+            return shared;
+        }
+        let read = Rc::new(read);
+        let (seeding, resolved) = (Rc::clone(&read), Rc::clone(&self.resolved));
+        let value = self.value(name, move || seeding(&resolved), write);
+        let values = Rc::clone(&self.values);
+        let reseed: Reseed = Rc::new(move |drawn: &ResolvedArea| {
+            let Some((value, from, quiet)) = values
+                .borrow()
+                .get(name)
+                .and_then(|held| held.downcast_ref::<Shared<T>>())
+                .map(|shared| {
+                    (
+                        shared.value,
+                        Rc::clone(&shared.from),
+                        Rc::clone(&shared.quiet),
+                    )
+                })
+            else {
+                return;
+            };
+            let next = read(drawn);
+            *from.borrow_mut() = next.clone();
+            if value.peek_with(|now| *now != next) {
+                quiet.set(true);
+                value.set(next);
+            }
+        });
+        self.reseeds.borrow_mut().push((key, reseed));
         value
     }
 
@@ -191,8 +402,8 @@ impl AreaDraft {
         self.values
             .borrow()
             .get(name)
-            .and_then(|held| held.downcast_ref::<RwSignal<T>>())
-            .copied()
+            .and_then(|held| held.downcast_ref::<Shared<T>>())
+            .map(|shared| shared.value)
     }
 
     /// Whether a control of the popover edits the value called `name`, whatever its type.
@@ -240,6 +451,9 @@ pub struct InstanceDraft {
     instance: RwSignal<Instance>,
     written: Rc<RefCell<WrittenInstance>>,
     edit: Edit,
+    measure: Measure,
+    /// Its options as the screen has them once Reset has taken one back, which is what `shown` says until then.
+    reshown: Rc<RefCell<Option<Rc<toml::Table>>>>,
     /// Every change made so far, one per thing changed and in the order they were last made.
     changes: Rc<RefCell<Vec<(String, Change)>>>,
 }
@@ -273,6 +487,7 @@ impl InstanceDraft {
             ops
         });
         let draft = Self {
+            measure: Measure::new(edit, &node),
             node,
             resolved: Rc::new(resolved),
             area_kind,
@@ -280,6 +495,7 @@ impl InstanceDraft {
             instance,
             written,
             edit: edit.clone(),
+            reshown: Rc::default(),
             changes: Rc::default(),
         };
         draft.follow_the_variant();
@@ -369,9 +585,17 @@ impl InstanceDraft {
     /// What the option at `path` is on screen now.
     pub fn shown_at(&self, path: &[value::Step]) -> Option<toml::Value> {
         let own = self.instance.peek();
-        value::get(&own.options, path)
-            .or_else(|| value::get(&self.shown, path))
-            .cloned()
+        if let Some(set) = value::get(&own.options, path) {
+            return Some(set.clone());
+        }
+        value::get(&self.shown_now(), path).cloned()
+    }
+
+    fn shown_now(&self) -> Rc<toml::Table> {
+        match self.reshown.borrow().as_ref() {
+            Some(reshown) => Rc::clone(reshown),
+            None => Rc::clone(&self.shown),
+        }
     }
 
     /// A value of the option at `path` that controls share: it starts at `seed`, and each change is written into the instance's own options as `to_value` makes it.
@@ -387,18 +611,72 @@ impl InstanceDraft {
 
     /// Writes `whole` at `path` in the instance's own options — a list or a table of names being one value however many elements it has.
     pub fn set_option(&self, path: &[value::Step], whole: toml::Value) {
-        let (shown, at) = (Rc::clone(&self.shown), path.to_vec());
+        let (shown, at) = (self.shown_now(), path.to_vec());
         self.update(option_change(path), move |held| {
             value::set(&mut held.options, &shown, &at, whole.clone())
         });
     }
 
-    /// Takes the option at `path` off the instance, so it shows what it inherits there again.
+    /// Takes the option at `path` off the instance, so it shows what it inherits there again — a level under the popover's, its presentation or its module's section — which is what a row built for it afterwards starts at.
     pub fn unset(&self, path: &[value::Step]) {
         let at = path.to_vec();
         self.update(option_change(path), move |held| {
             value::unset(&mut held.options, &at)
         });
+        if let Some(reshown) = self.drawn_options() {
+            *self.reshown.borrow_mut() = Some(Rc::new(reshown));
+        }
+    }
+
+    /// The instance's options as the screen shows them with the copy as it is now, resolved here rather than read from the preview, which may not have caught up yet.
+    fn drawn_options(&self) -> Option<toml::Table> {
+        let Part::Instance(group, id) = &self.node.part else {
+            return None;
+        };
+        let mut after = self.edit.transaction().before()?;
+        let copy = self.instance.peek();
+        let ops = {
+            let written = self.written.borrow();
+            match copy == written.instance {
+                true => Vec::new(),
+                false => written.ops(&copy),
+            }
+        };
+        layout::ops::apply_all(&mut after, &ops).ok()?;
+        let screen = reconcile::desktop_now(self.node.output.as_deref())?;
+        let resolved = screen.resolving(&after, &crate::written::known()).resolved;
+        let drawn = resolved
+            .area(self.node.layer, &self.node.area)?
+            .groups
+            .iter()
+            .find(|held| held.id == *group)?
+            .children
+            .iter()
+            .find(|child| child.id == id.template())?;
+        Some(super::instance::shown(
+            &screen.config,
+            &self.resolved.module,
+            &drawn.options,
+        ))
+    }
+
+    /// Where the option at `path` comes from on the screen as drawn now: an option inside a list is the list's, which a level writes whole. Reactive.
+    pub fn provenance(&self, path: &[value::Step]) -> Provenance {
+        let Part::Instance(group, id) = &self.node.part else {
+            return Provenance::Default;
+        };
+        let written: Vec<&str> = path
+            .iter()
+            .map_while(|step| match step {
+                value::Step::Key(key) => Some(key.as_str()),
+                value::Step::Index(_) => None,
+            })
+            .collect();
+        let key = format!("options.{}", written.join("."));
+        let site = self.written.borrow().area.site.clone();
+        let id = id.template();
+        self.measure
+            .provenance(&site, Holder::Instance(&self.node.area, group, &id), &key)
     }
 
     /// Whether the instance sets the option at `path` itself.
@@ -454,7 +732,7 @@ impl InstanceDraft {
     /// Whether what the popover writes is laid over `writer`, the level that wrote an expression the instance shows: only then does taking it back where the popover writes take it off the screen.
     pub fn lays_over(&self, writer: &Origin) -> bool {
         let site = self.written.borrow().area.site.clone();
-        laid_over(&self.edit, &site, &self.node, writer)
+        self.measure.lays_over(&site, writer)
     }
 
     /// Whether the binding at `path` comes from a level this instance's own entry only lies over: one its own entry cannot take away.
@@ -584,22 +862,4 @@ fn blank(kind: &str) -> Option<AreaKind> {
         "prompt" => AreaKind::Prompt { rect: None },
         _ => return None,
     })
-}
-
-/// Whether what the level `site` of the layout `edit` changes writes is laid over `writer` on the screen `node` is on ([`layout::lays_over`]).
-fn laid_over(edit: &Edit, site: &Site, node: &Node, writer: &Origin) -> bool {
-    let Some(layout) = edit.transaction().before() else {
-        return false;
-    };
-    let level = layout::Level {
-        layout: layout.id.clone(),
-        output: site.output.clone(),
-        workspace: site.workspace.clone(),
-    };
-    layout::lays_over(
-        &layout,
-        node.output.as_deref().unwrap_or_default(),
-        &level,
-        writer,
-    )
 }

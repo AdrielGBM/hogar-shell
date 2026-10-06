@@ -17,7 +17,7 @@ use layout::{
     Area, AreaKind, Blend, Gradient, GradientStop, Layout, LayoutOp, Paint, ResolvedAreaKind, Tile,
 };
 
-use crate::popover::area::{picked, variants};
+use crate::popover::area::{chosen_as, variants};
 use crate::popover::rows::{self, Range, label};
 use crate::popover::{AreaDraft, Inspector, help, kind_field};
 use crate::session::{EditError, Selection};
@@ -305,8 +305,27 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         return Ok(Inspector::default());
     };
     let size = surfaces::area::picture_size(draft.node.output.as_deref(), &draft.node.area);
-    let painted = draft.value("texture.paint", || paint.clone(), write_paint);
-    let tiled = draft.value("texture.tile", || tile, write_tile);
+    let painted = draft.setting(
+        "texture.paint",
+        "image",
+        {
+            let paint = paint.clone();
+            move |area| match &area.kind {
+                ResolvedAreaKind::Texture { paint, .. } => paint.clone(),
+                _ => paint.clone(),
+            }
+        },
+        write_paint,
+    );
+    let tiled = draft.setting(
+        "texture.tile",
+        "tile",
+        move |area| match area.kind {
+            ResolvedAreaKind::Texture { tile: now, .. } => now,
+            _ => tile,
+        },
+        write_tile,
+    );
 
     let (image_seed, gradient_seed) = match &paint {
         Paint::Image(path) => (path.clone(), first_gradient()),
@@ -330,6 +349,27 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
             painted.set(next);
         }
     });
+    effect(move || {
+        let now = painted.get();
+        telar::batch(|| match now {
+            Paint::Image(path) => {
+                if kind.peek() != "image" {
+                    kind.set("image".to_string());
+                }
+                if image.peek_with(|held| *held != path) {
+                    image.set(path);
+                }
+            }
+            Paint::Gradient(wanted) => {
+                if kind.peek() != "gradient" {
+                    kind.set("gradient".to_string());
+                }
+                if gradient.peek_with(|held| *held != wanted) {
+                    gradient.set(wanted);
+                }
+            }
+        });
+    });
 
     let slice = signal(insets_of(tile).unwrap_or_else(|| first_insets(size)));
     let tile_named = signal(tile_name(tile).to_string());
@@ -346,6 +386,19 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         if tiled.peek() != next {
             tiled.set(next);
         }
+    });
+    effect(move || {
+        let now = tiled.get();
+        telar::batch(|| {
+            if tile_named.peek() != tile_name(now) {
+                tile_named.set(tile_name(now).to_string());
+            }
+            if let Some(insets) = insets_of(now)
+                && slice.peek() != insets
+            {
+                slice.set(insets);
+            }
+        });
     });
     let insets: [RwSignal<f32>; 4] = std::array::from_fn(|side| signal(slice.peek()[side]));
     for (side, inset) in insets.into_iter().enumerate() {
@@ -412,32 +465,46 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         stop_at,
         stop_colour,
     };
-    let mut list = vec![rows::choice(
-        label!("editor.texture.paint"),
-        help("AreaKind::Texture", "image"),
-        kind,
-        Rc::from(PAINTS),
-    )?];
-    list.push(parts.painting_rows()?);
-    list.extend(picked(
+    let paint_row = rows::together(vec![
+        rows::choice(
+            label!("editor.texture.paint"),
+            help("AreaKind::Texture", "image"),
+            kind,
+            Rc::from(PAINTS),
+        )?,
+        parts.painting_rows()?,
+    ])?;
+    let mut list = vec![draft.marked_any(&["image", "gradient"], paint_row)?];
+    list.push(parts.tiling_rows()?);
+    list.extend(chosen_as(
         draft,
-        "texture.blend",
+        ("texture.blend", "blend"),
         label!("editor.area.blend"),
         help("AreaKind::Texture", "blend"),
         variants("Blend"),
-        blend,
+        move |area| match area.kind {
+            ResolvedAreaKind::Texture { blend: now, .. } => now,
+            _ => blend,
+        },
         |area, blend: Blend| kind_field!(area, "texture", Texture { blend }, blend),
     )?);
-    let strength = draft.value(
+    let strength = draft.setting(
         "texture.opacity",
-        || opacity,
+        "opacity",
+        move |area| match area.kind {
+            ResolvedAreaKind::Texture { opacity: now, .. } => now,
+            _ => opacity,
+        },
         |area, value: &f32| kind_field!(area, "texture", Texture { opacity }, *value),
     );
-    list.push(rows::number(
-        label!("editor.texture.opacity"),
-        help("AreaKind::Texture", "opacity"),
-        strength,
-        Range::new(0.0, 1.0, 0.05),
+    list.push(draft.marked(
+        "opacity",
+        rows::number(
+            label!("editor.texture.opacity"),
+            help("AreaKind::Texture", "opacity"),
+            strength,
+            Range::new(0.0, 1.0, 0.05),
+        )?,
     )?);
     list.extend(crate::popover::area::rect_rows(draft, rect)?);
     Ok(Inspector {
@@ -485,21 +552,42 @@ impl Parts {
     }
 
     fn image_rows(&self) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
-        let mut list = vec![
-            rows::text(
-                label!("editor.area.image"),
-                help("AreaKind::Texture", "image"),
-                self.image,
-            )?,
-            rows::choice(
-                label!("editor.area.tile"),
-                help("AreaKind::Texture", "tile"),
-                self.tile_named,
-                Rc::from(TILES),
-            )?,
-        ];
+        Ok(vec![rows::text(
+            label!("editor.area.image"),
+            help("AreaKind::Texture", "image"),
+            self.image,
+        )?])
+    }
+
+    /// How an image is tiled, and for a nine-slice its four cuts, where the paint is an image.
+    fn tiling_rows(&self) -> Result<Box<dyn LayoutItem>, LayoutError> {
+        let parts = self.clone();
+        let kind = self.kind;
+        Ok(Box::new(ReactiveList::with_style(
+            LayoutStyle::new().flex_column().gap(ui::scale::space::sm()),
+            move || match kind.get().as_str() {
+                "image" => vec![()],
+                _ => Vec::new(),
+            },
+            |_: &()| (),
+            move |_: ()| {
+                let tile = rows::together(vec![
+                    rows::choice(
+                        label!("editor.area.tile"),
+                        help("AreaKind::Texture", "tile"),
+                        parts.tile_named,
+                        Rc::from(TILES),
+                    )?,
+                    parts.slice_rows()?,
+                ])?;
+                parts.draft.marked("tile", tile)
+            },
+        )?))
+    }
+
+    fn slice_rows(&self) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let (insets, size, tile_named) = (self.insets, self.size, self.tile_named);
-        list.push(Box::new(ReactiveList::with_style(
+        Ok(Box::new(ReactiveList::with_style(
             LayoutStyle::new().flex_column().gap(ui::scale::space::sm()),
             move || match tile_named.get().as_str() {
                 "nine_slice" => vec![()],
@@ -537,8 +625,7 @@ impl Parts {
                     slice,
                 )?) as Box<dyn LayoutItem>)
             },
-        )?));
-        Ok(list)
+        )?))
     }
 
     fn gradient_rows(&self) -> Result<Vec<Box<dyn LayoutItem>>, LayoutError> {
@@ -635,10 +722,11 @@ impl Parts {
             .into_iter()
             .map(|(side, max, cursor)| {
                 let (reading, placing) = (self.draft.clone(), self.draft.clone());
+                let hd = crate::modes::gesture::HandleDragging::new();
                 telar::handle(
                     telar::HandleProps::props()
                         .value(self.insets[side])
-                        .to_value(Rc::new(move |x: f32, y: f32| {
+                        .to_value(Rc::new(hd.wrap_to_value(move |x: f32, y: f32| {
                             let rect = reading.rect().unwrap_or_default();
                             match side {
                                 0 => y - rect.y,
@@ -646,7 +734,7 @@ impl Parts {
                                 2 => rect.y + rect.height - y,
                                 _ => x - rect.x,
                             }
-                        }))
+                        })))
                         .to_point(Rc::new(move |inset: f32| {
                             let rect = placing.rect().unwrap_or_default();
                             let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
@@ -661,6 +749,7 @@ impl Parts {
                         .max(max)
                         .step(1.0)
                         .cursor(cursor)
+                        .transaction(hd.transaction(self.insets[side]))
                         .build(),
                     Children::default(),
                 )
@@ -746,13 +835,14 @@ impl Parts {
     /// The handle at the end of the axis that turns it, snapping to 45° while Shift is held.
     fn angle_handle(&self) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let (reading, placing) = (self.clone(), self.clone());
+        let hd = crate::modes::gesture::HandleDragging::new();
         telar::handle(
             telar::HandleProps::props()
                 .value(self.angle)
-                .to_value(Rc::new(move |x: f32, y: f32| {
+                .to_value(Rc::new(hd.wrap_to_value(move |x: f32, y: f32| {
                     let centre = reading.axis().centre();
                     angle_at(centre, (x, y), telar::modifiers().is_shift)
-                }))
+                })))
                 .to_point(Rc::new(move |angle: f32| {
                     Axis::of(placing.texture_rect(), angle).end
                 }))
@@ -760,6 +850,7 @@ impl Parts {
                 .max(360.0)
                 .step(1.0)
                 .cursor(Cursor::Grab)
+                .transaction(hd.transaction(self.angle))
                 .build(),
             Children::default(),
         )

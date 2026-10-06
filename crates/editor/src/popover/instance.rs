@@ -233,46 +233,26 @@ fn range_of(number: &Number) -> Range {
     }
 }
 
-/// The row `build` makes, with a button beside it that takes the option back off the instance while the instance sets it, and the row built again to show what it inherits then.
+/// The row `build` makes, under it where its value comes from — set on the instance here, a broader level, or its module's configuration as the default — with the Reset that takes the option back off the instance while the instance sets it, and the row built again to show what it inherits then.
 fn resettable(draft: &InstanceDraft, path: Path, build: impl Fn() -> Built + 'static) -> Built {
     let generation = signal(0u64);
     let row = ReactiveList::with_style(
-        LayoutStyle::new().flex_grow(1.0),
+        LayoutStyle::new().width(SizeDimension::Percent(1.0)),
         move || vec![generation.get()],
         |built: &u64| *built,
         move |_| build(),
     )?;
-    let (showing, watched) = (draft.clone(), path.clone());
-    let resetting = draft.clone();
-    let reset = ReactiveList::with_style(
-        LayoutStyle::new(),
-        move || match showing.sets(&watched) {
-            true => vec![()],
-            false => Vec::new(),
+    let (standing, showing, resetting) = (draft.clone(), draft.clone(), draft.clone());
+    let (watched, shown, reset) = (path.clone(), path.clone(), path);
+    super::origin::marked(
+        Box::new(row),
+        move || standing.provenance(&watched),
+        move || showing.sets(&shown),
+        move || {
+            resetting.unset(&reset);
+            generation.update(|built| *built += 1);
         },
-        |_: &()| (),
-        move |()| {
-            let (draft, path) = (resetting.clone(), path.clone());
-            telar::button(
-                telar::ButtonProps::props()
-                    .label(label!("editor.popover.reset"))
-                    .ghost(true)
-                    .on_press(Rc::new(move || {
-                        draft.unset(&path);
-                        generation.update(|built| *built += 1);
-                    }))
-                    .build(),
-                Children::default(),
-            )
-        },
-    )?;
-    Ok(box_item(Container::new(
-        LayoutStyle::new()
-            .flex_row()
-            .align_items(AlignItems::CENTER)
-            .width(SizeDimension::Percent(1.0)),
-        vec![Box::new(row), Box::new(reset)],
-    )?))
+    )
 }
 
 /// A list: a heading saying how many there are, folded away until opened, and when open a row per element with a way to take it out, and one to add another.

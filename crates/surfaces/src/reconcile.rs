@@ -370,7 +370,7 @@ pub fn previewing() -> Option<Rc<[Desktop]>> {
 
 /// Draws `layout` in the windows in place of what they were reconciled from, resolved for the same screens and workspaces, until [`end_preview`] or the next preview: an edit's live preview, never written and never recorded.
 ///
-/// Only what the windows draw follows it, and only in the windows whose areas it changes. What each edge reserves, which windows are mapped and where a card is routed stay as reconciled until the layout is committed, so a drag never re-tiles the user's windows on the way (T-7.3). Read inside an effect, this follows every reconcile too, so a screen plugged in mid-gesture shows the preview as well.
+/// Only what the windows draw follows it, and only in the windows whose areas it changes. What each edge reserves, which windows are mapped and where a card is routed stay as reconciled until the layout is committed, so a drag never re-tiles the user's windows on the way. Read inside an effect, this follows every reconcile too, so a screen plugged in mid-gesture shows the preview as well.
 pub fn preview(layout: &Layout, known: &Library) {
     let planned = planned();
     let replanned: Rc<[Desktop]> = planned

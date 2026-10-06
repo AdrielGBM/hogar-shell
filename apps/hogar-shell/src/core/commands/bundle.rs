@@ -1,4 +1,4 @@
-//! `hogar-shell layout export|import|trust` — a layout shared as a bundle, and what an imported one may run (T-8.6, DEC-30).
+//! `hogar-shell layout export|import|trust` — a layout shared as a bundle, and what an imported one may run (DEC-30).
 //!
 //! `export` reads the files and answers in the CLI process, like `layout show`: it writes nothing the shell owns, and a bundle is worth making from a layout whether or not a shell is drawing it. `import` and `trust` go to the shell, which owns the store an import writes into and the trust resolution reads. An import is read on the shell's import worker, off the driver thread, and its reply waits for the outcome — what was written and what waits for trust — with the trust dialog open where there is something to answer; only where nobody waits for that reply is the outcome a notice.
 //!

@@ -487,18 +487,59 @@ pub(crate) type At = (
     Unset,
 );
 
-/// Which level wrote each expression of a merge: laid level by level beside the merge itself, with the same three verbs — a removed item takes its expressions with it, an `unset` takes one back, a written key is the level's own.
+/// A key a level writes, by where it is: its layer, the ids down to what holds it, and its path there as the file spells it — `thickness`, `shape.radius`, `style.border.width`, `actions.press`, `options.face.scale`, `weight`, or an expression's `visible`, `repeat`, `parameters.<name>` or `bindings.<path>`, which is also the path a level takes it back by.
+pub(crate) type KeyAt = (
+    LayerKind,
+    AreaId,
+    Option<GroupId>,
+    Option<InstanceId>,
+    String,
+);
+
+/// Where an instance's options are written: the one place a key is merged table by table rather than replaced whole.
+const OPTIONS: &str = "options.";
+
+/// The keys a group's arrangement is made of, which `unset = ["arrange"]` takes back together.
+const ARRANGEMENT: [&str; 4] = ["arrange", "cols", "rows", "gap"];
+
+/// Whether the dotted key `inner` is inside the table `outer` names.
+fn is_inside(inner: &str, outer: &str) -> bool {
+    inner
+        .strip_prefix(outer)
+        .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// Which level wrote each key of a merge: laid level by level beside the merge itself, with the same verbs — a removed item takes its keys with it, an `unset` takes one back, a key written over a value of another kind or a komponent drawn in place of another takes what it replaced with it, and a written key is the level's own.
 #[derive(Debug, Default)]
-pub(crate) struct Origins(BTreeMap<At, Level>);
+pub(crate) struct Origins(BTreeMap<KeyAt, Level>);
 
 impl Origins {
-    pub(crate) fn of(&self, at: &At) -> Option<&Level> {
+    pub(crate) fn of(&self, at: &KeyAt) -> Option<&Level> {
         self.0.get(at)
     }
 
-    /// Records `layers`, laid over the levels before it by [`merge_layers`] or [`merge_session_layers`], as written by `level`.
+    /// [`Origins::of`], or for an option inside a table or a list a level wrote whole, the level that wrote that.
+    pub(crate) fn nearest(&self, at: &KeyAt) -> Option<&Level> {
+        if let Some(level) = self.0.get(at) {
+            return Some(level);
+        }
+        let key = &at.4;
+        key.strip_prefix(OPTIONS)?;
+        let mut held = at.clone();
+        key.match_indices('.')
+            .map(|(end, _)| &key[..end])
+            .filter(|parent| parent.len() >= OPTIONS.len())
+            .rev()
+            .find_map(|parent| {
+                held.4 = parent.to_string();
+                self.0.get(&held)
+            })
+    }
+
+    /// Records the keys `layers` writes, as written by `level`, before [`merge_layers`] or [`merge_session_layers`] lays them over `under`.
     pub(crate) fn lay<'a>(
         &mut self,
+        under: &Layers,
         layers: impl IntoIterator<Item = (LayerKind, &'a Layer)>,
         level: &Level,
     ) {
@@ -508,93 +549,258 @@ impl Origins {
                     .retain(|(on, area, ..), _| !(*on == kind && area == id));
             }
             for area in &layer.areas {
-                let id = &area.id;
-                self.write(
-                    (kind, id.clone(), None, None, Unset::Visible),
-                    &area.unset,
-                    area.visible.is_some(),
-                    level,
-                );
-                for group in &area.remove {
-                    self.0.retain(|(on, held, of, ..), _| {
-                        !(*on == kind && held == id && of.as_ref() == Some(group))
-                    });
+                let held = under
+                    .get(kind)
+                    .areas
+                    .iter()
+                    .find(|held| held.id == area.id)
+                    .filter(|_| !layer.remove.contains(&area.id));
+                let holder = Holding {
+                    layer: kind,
+                    area: area.id.clone(),
+                    group: None,
+                    instance: None,
+                };
+                self.lay_area(&holder, held, area, level);
+            }
+        }
+    }
+
+    fn lay_area(&mut self, holder: &Holding, held: Option<&Area>, area: &Area, level: &Level) {
+        if let (Some(before), Some(after)) = (held.and_then(|held| held.kind.as_ref()), &area.kind)
+            && !before.is_same_kind(after)
+        {
+            for key in kind_keys(before) {
+                self.0.remove(&holder.at(key));
+            }
+        }
+        if let Some(AreaKind::Texture {
+            image, gradient, ..
+        }) = &area.kind
+        {
+            match (image, gradient) {
+                (Some(_), _) => self.0.remove(&holder.at("gradient")),
+                (None, Some(_)) => self.0.remove(&holder.at("image")),
+                (None, None) => None,
+            };
+        }
+        self.take_back(holder, &area.unset);
+        let mut keys = area.kind.as_ref().map(kind_keys).unwrap_or_default();
+        let flags = [
+            ("reserve", area.reserve.is_some()),
+            ("above_fullscreen", area.above_fullscreen.is_some()),
+            ("within", area.within.is_some()),
+            ("visible", area.visible.is_some()),
+        ];
+        keys.extend(
+            flags
+                .into_iter()
+                .filter(|(_, set)| *set)
+                .map(|(key, _)| key.to_string()),
+        );
+        keys.extend(style_keys(&area.style));
+        keys.extend(action_keys(&area.actions));
+        for key in keys {
+            self.write(holder.at(key), level);
+        }
+
+        for id in &area.remove {
+            self.0.retain(|at, _| !holder.of_group(id).contains(at));
+        }
+        for group in &area.groups {
+            let before = held
+                .filter(|_| !area.remove.contains(&group.id))
+                .and_then(|held| held.groups.iter().find(|before| before.id == group.id));
+            self.lay_group(&holder.of_group(&group.id), before, group, level);
+        }
+    }
+
+    fn lay_group(&mut self, holder: &Holding, held: Option<&Group>, group: &Group, level: &Level) {
+        if group.komponent.is_some() && held.is_some_and(|held| held.komponent != group.komponent) {
+            self.0.retain(|at, _| {
+                !holder.contains(at)
+                    || (holder.holds(at) && (at.4 == "place" || at.4.starts_with("style.")))
+            });
+        }
+        self.take_back(holder, &group.unset);
+        let written = [
+            ("place", group.kind.is_some()),
+            ("komponent", group.komponent.is_some()),
+            ("arrange", group.writes_arrangement()),
+            ("cols", group.cols.is_some()),
+            ("rows", group.rows.is_some()),
+            ("gap", group.gap.is_some()),
+            ("repeat", group.repeat.is_some()),
+        ];
+        let mut keys: Vec<String> = written
+            .into_iter()
+            .filter(|(_, set)| *set)
+            .map(|(key, _)| key.to_string())
+            .collect();
+        keys.extend(style_keys(&group.style));
+        keys.extend(
+            group
+                .parameters
+                .keys()
+                .map(|name| Unset::parameter(name).to_string()),
+        );
+        for key in keys {
+            self.write(holder.at(key), level);
+        }
+
+        for id in &group.remove {
+            self.0.retain(|at, _| !holder.of_instance(id).contains(at));
+        }
+        for instance in &group.children {
+            self.lay_instance(&holder.of_instance(&instance.id), instance, level);
+        }
+    }
+
+    fn lay_instance(&mut self, holder: &Holding, instance: &Instance, level: &Level) {
+        self.take_back(holder, &instance.unset);
+        let written = [
+            ("module", instance.module.is_some()),
+            ("representation", instance.representation.is_some()),
+            ("weight", instance.weight.is_some()),
+            ("cell", instance.cell.is_some()),
+            ("rect", instance.rect.is_some()),
+        ];
+        let mut keys: Vec<String> = written
+            .into_iter()
+            .filter(|(_, set)| *set)
+            .map(|(key, _)| key.to_string())
+            .collect();
+        leaves(&instance.options, "options", &|_| true, &mut keys);
+        keys.extend(style_keys(&instance.style));
+        keys.extend(
+            instance
+                .bindings
+                .keys()
+                .map(|path| Unset::binding(path).to_string()),
+        );
+        keys.extend(action_keys(&instance.actions));
+        for key in keys {
+            self.write(holder.at(key), level);
+        }
+    }
+
+    /// What a holder's `unset` takes back, before its level's own keys are laid: `arrange` with every key an arrangement is made of.
+    fn take_back(&mut self, holder: &Holding, unset: &[Unset]) {
+        for taken in unset {
+            match taken {
+                Unset::Unknown(_) => {}
+                Unset::Arrange => {
+                    for key in ARRANGEMENT {
+                        self.0.remove(&holder.at(key));
+                    }
                 }
-                for group in &area.groups {
-                    let held = Some(group.id.clone());
-                    self.write(
-                        (kind, id.clone(), held.clone(), None, Unset::Repeat),
-                        &group.unset,
-                        group.repeat.is_some(),
-                        level,
-                    );
-                    self.write(
-                        (kind, id.clone(), held.clone(), None, Unset::Arrange),
-                        &group.unset,
-                        group.writes_arrangement(),
-                        level,
-                    );
-                    let parameters = group
-                        .unset
-                        .iter()
-                        .filter_map(|unset| match unset {
-                            Unset::Parameter(name) => Some(name),
-                            _ => None,
-                        })
-                        .chain(group.parameters.keys());
-                    for name in parameters {
-                        self.write(
-                            (kind, id.clone(), held.clone(), None, Unset::parameter(name)),
-                            &group.unset,
-                            group.parameters.contains_key(name),
-                            level,
-                        );
-                    }
-                    for instance in &group.remove {
-                        self.0.retain(|(on, area, of, child, _), _| {
-                            !(*on == kind
-                                && area == id
-                                && *of == held
-                                && child.as_ref() == Some(instance))
-                        });
-                    }
-                    for instance in &group.children {
-                        let child = Some(instance.id.clone());
-                        let paths = instance
-                            .unset
-                            .iter()
-                            .filter_map(|unset| match unset {
-                                Unset::Binding(path) => Some(path),
-                                _ => None,
-                            })
-                            .chain(instance.bindings.keys());
-                        for path in paths {
-                            self.write(
-                                (
-                                    kind,
-                                    id.clone(),
-                                    held.clone(),
-                                    child.clone(),
-                                    Unset::binding(path),
-                                ),
-                                &instance.unset,
-                                instance.bindings.contains_key(path),
-                                level,
-                            );
-                        }
-                    }
+                taken => {
+                    self.0.remove(&holder.at(taken.to_string()));
                 }
             }
         }
     }
 
-    /// One expression of one level: taken back where its holder's `unset` names it, then the level's own where it writes it.
-    fn write(&mut self, at: At, unset: &[Unset], written: bool, level: &Level) {
-        if unset.contains(&at.4) {
-            self.0.remove(&at);
+    /// One key of one level, the level's own from now on. An option written over a table or over a value inside it replaces what it was written over, as [`merge_table`] does.
+    fn write(&mut self, at: KeyAt, level: &Level) {
+        if at.4.starts_with(OPTIONS) {
+            let key = at.4.as_str();
+            self.0.retain(|other, _| {
+                let same_holder =
+                    (&other.0, &other.1, &other.2, &other.3) == (&at.0, &at.1, &at.2, &at.3);
+                !same_holder || !(is_inside(&other.4, key) || is_inside(key, &other.4))
+            });
         }
-        if written {
-            self.0.insert(at, level.clone());
+        self.0.insert(at, level.clone());
+    }
+}
+
+/// What holds a key: an area, a group in it or an instance in that.
+#[derive(Clone)]
+struct Holding {
+    layer: LayerKind,
+    area: AreaId,
+    group: Option<GroupId>,
+    instance: Option<InstanceId>,
+}
+
+impl Holding {
+    fn at(&self, key: impl Into<String>) -> KeyAt {
+        (
+            self.layer,
+            self.area.clone(),
+            self.group.clone(),
+            self.instance.clone(),
+            key.into(),
+        )
+    }
+
+    fn of_group(&self, id: &GroupId) -> Holding {
+        Holding {
+            group: Some(id.clone()),
+            instance: None,
+            ..self.clone()
+        }
+    }
+
+    fn of_instance(&self, id: &InstanceId) -> Holding {
+        Holding {
+            instance: Some(id.clone()),
+            ..self.clone()
+        }
+    }
+
+    /// Whether `at` is a key of this holder itself.
+    fn holds(&self, at: &KeyAt) -> bool {
+        at.0 == self.layer && at.1 == self.area && at.2 == self.group && at.3 == self.instance
+    }
+
+    /// Whether `at` is a key of this holder or of anything it holds.
+    fn contains(&self, at: &KeyAt) -> bool {
+        at.0 == self.layer
+            && at.1 == self.area
+            && (self.group.is_none() || at.2 == self.group)
+            && (self.instance.is_none() || at.3 == self.instance)
+    }
+}
+
+/// The keys an area's geometry writes, beside its `kind`: a bar's `shape` key by key, since a level that writes one keeps the others, and every other value whole.
+fn kind_keys(kind: &AreaKind) -> Vec<String> {
+    let mut keys = Vec::new();
+    if let Ok(toml::Value::Table(table)) = toml::Value::try_from(kind) {
+        leaves(&table, "", &|key| key == "shape", &mut keys);
+    }
+    keys
+}
+
+/// The `style.*` keys `style` writes, its `border` key by key.
+fn style_keys(style: &Style) -> Vec<String> {
+    let mut keys = Vec::new();
+    if style.is_empty() {
+        return keys;
+    }
+    if let Ok(toml::Value::Table(table)) = toml::Value::try_from(style) {
+        leaves(&table, "style", &|key| key == "style.border", &mut keys);
+    }
+    keys
+}
+
+fn action_keys(actions: &BTreeMap<Trigger, Action>) -> impl Iterator<Item = String> + '_ {
+    actions
+        .keys()
+        .map(|trigger| format!("actions.{}", trigger.as_str()))
+}
+
+/// The dotted path of every value in `table` under `prefix`, going into a table only where `deep` says a level merges it key by key.
+fn leaves(table: &toml::Table, prefix: &str, deep: &dyn Fn(&str) -> bool, keys: &mut Vec<String>) {
+    for (key, value) in table {
+        let path = match prefix.is_empty() {
+            true => key.clone(),
+            false => format!("{prefix}.{key}"),
+        };
+        match value {
+            toml::Value::Table(inner) if deep(&path) => leaves(inner, &path, deep, keys),
+            _ => keys.push(path),
         }
     }
 }

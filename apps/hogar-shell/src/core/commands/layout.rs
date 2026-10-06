@@ -1646,7 +1646,7 @@ mod tests {
         assert_eq!(run_of(&store.borrow(), "end"), ["notes", "battery"]);
     }
 
-    /// T-1.3: `layout remove` of an instance that owns a panel takes the panel with it, and one `layout undo` brings both back.
+    /// `layout remove` of an instance that owns a panel takes the panel with it, and one `layout undo` brings both back.
     #[test]
     fn removing_a_panel_s_owner_over_ipc_removes_the_panel_and_one_undo_restores_both() {
         let mut mine = layout::built_in();

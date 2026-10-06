@@ -203,6 +203,7 @@ pub(crate) fn enter_as(
     SESSION.with(|held| *held.borrow_mut() = Some(session));
     forget_said();
     ACTIVE.with(|active| active.set(Some(mode.clone())));
+    surfaces::expressions::set_edited(Some((Some(mode.output.clone()), mode.layer)));
     Ok(mode)
 }
 
@@ -223,6 +224,7 @@ pub fn leave() -> Option<Mode> {
         let left = active.peek();
         if left.is_some() {
             active.set(None);
+            surfaces::expressions::set_edited(None);
         }
         left
     });

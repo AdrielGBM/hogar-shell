@@ -1,4 +1,4 @@
-//! The background mode's tools (T-7.1): regions split, joined and resized so the screen stays tiled, each change one entry in the history; textures laid over them, sliced and given gradients within what the renderer draws; and an edit made for one workspace written there and resolving there alone.
+//! The background mode's tools: regions split, joined and resized so the screen stays tiled, each change one entry in the history; textures laid over them, sliced and given gradients within what the renderer draws; and an edit made for one workspace written there and resolving there alone.
 
 #[cfg(test)]
 mod tests {
@@ -347,8 +347,13 @@ mod tests {
 
         assert!(session::select(Selection::Area(region("middle"))));
         assert!(tap(Key::Char('s'), NONE));
-        assert_eq!(shown("middle"), Some(rect(0.25, 0.0, 0.25, 1.0)));
-        assert_eq!(shown("middle-2"), Some(rect(0.5, 0.0, 0.25, 1.0)));
+        let cut = shown("middle-2").expect("the new half").x;
+        assert!(
+            (cut - 0.5).abs() < crate::snap::CUT_TOLERANCE,
+            "at the middle, or the cell line nearest it: {cut}"
+        );
+        assert_eq!(shown("middle"), Some(rect(0.25, 0.0, cut - 0.25, 1.0)));
+        assert_eq!(shown("middle-2"), Some(rect(cut, 0.0, 0.75 - cut, 1.0)));
         let split = stored(&rig);
         let fresh = split.outputs[0]
             .layers
@@ -535,6 +540,69 @@ mod tests {
                 transition: None,
             }),
             "the workspace's entry names what the popover changed and nothing else"
+        );
+        mode::leave();
+    }
+
+    /// A Reset pressed before "this workspace only" is switched on is replayed onto the workspace's rule: the key comes off there, and what the popover did to the rule for every workspace is put back.
+    #[test]
+    fn a_reset_is_replayed_onto_the_workspace_the_popover_is_switched_to() {
+        let rig = rig_on("background-variant-reset", Some("2"), |layout| {
+            columns(layout);
+            let outputs = &mut layout.outputs[0];
+            for area in &mut outputs.layers.background.areas {
+                if area.id.as_str() == "right"
+                    && let Some(AreaKind::WallpaperRegion { source, .. }) = &mut area.kind
+                {
+                    *source = Some("/pictures/everywhere.png".to_string());
+                }
+            }
+            let mut ruled = layout::WorkspaceRule {
+                matches: WorkspaceMatch("2".to_string()),
+                ..layout::WorkspaceRule::default()
+            };
+            ruled.layers.background.areas.push(Area {
+                id: AreaId::new("right"),
+                kind: Some(AreaKind::WallpaperRegion {
+                    rect: None,
+                    source: Some("/pictures/here.png".to_string()),
+                    fit: None,
+                    transition: None,
+                }),
+                ..Area::default()
+            });
+            outputs.workspaces.push(ruled);
+        });
+        let _host = enter();
+        popover::open_area(region("right")).expect("the region's popover opens");
+        let _tree = popover::tree()
+            .expect("a popover is open")
+            .expect("and it builds");
+        popover::area_draft()
+            .expect("an area's popover")
+            .reset("source");
+        variant::set(true).expect("the screen says which workspace is up");
+        popover::close();
+
+        let layout = stored(&rig);
+        let source_of = |areas: &[Area]| {
+            areas
+                .iter()
+                .find(|area| area.id.as_str() == "right")
+                .and_then(|area| match &area.kind {
+                    Some(AreaKind::WallpaperRegion { source, .. }) => Some(source.clone()),
+                    _ => None,
+                })
+        };
+        assert_eq!(
+            source_of(&layout.outputs[0].layers.background.areas),
+            Some(Some("/pictures/everywhere.png".to_string())),
+            "the rule for every workspace is as it was"
+        );
+        assert_eq!(
+            source_of(&layout.outputs[0].workspaces[0].layers.background.areas),
+            Some(None),
+            "the workspace's rule no longer writes the picture"
         );
         mode::leave();
     }

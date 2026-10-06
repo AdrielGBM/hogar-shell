@@ -32,7 +32,7 @@ pub fn placements(
     match arrange {
         Some(Arrange::Row | Arrange::Column) => children
             .iter()
-            .map(|child| Some(Placement::Weight(weight_of(child))))
+            .map(|child| Some(Placement::Weight(child.weight_share())))
             .collect(),
         Some(Arrange::Grid) => {
             let written: Vec<Option<ChildCell>> = children.iter().map(|child| child.cell).collect();
@@ -48,11 +48,6 @@ pub fn placements(
             .collect(),
         Some(Arrange::Pages) | None => vec![None; children.len()],
     }
-}
-
-/// A child's `weight`, or 1 where it names none or one that is not above 0.
-fn weight_of(child: &Instance) -> f32 {
-    child.weight.filter(|weight| *weight > 0.0).unwrap_or(1.0)
 }
 
 /// The cell each child covers on an inner grid of `cols` × `rows`, given the ones `written` names: each written cell pulled back onto the grid, then each child that names none on the first cell in reading order that no other child covers — or the top left one, where every cell is taken.

@@ -2,20 +2,19 @@
 //!
 //! Each kind's rows are a tool registered by kind name ([`super::add_area_tool`]): the mode that edits a kind registers its rows ([`crate::modes`]) — a bar's, a grid's, a stack's, a region's, a texture's, the prompt's — with the handles they share values with by name ([`AreaDraft::value`]). What every area has comes after them ([`common`]), first among it the switch that edits the area for one workspace alone ([`variant_rows`]), the expression that decides whether it is shown ([`visible_row`]) and what each of its groups repeats over ([`repeat_rows`]).
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use telar::{
-    AlignItems, Children, Container, LayoutStyle, Reactive, ReactiveList, SizeDimension, box_item,
-};
+use telar::{LayoutStyle, Reactive, ReactiveList, SizeDimension};
 use telar_expression::Type;
 
 use config::Edge;
 use layout::{
     Area, AreaKind, Backdrop, Corners, Expr, Group, GroupId, GroupKind, LayerKind, Origin, Rect,
-    ResolvedAreaKind, Sides, Unset, Within,
+    ResolvedArea, ResolvedAreaKind, Sides, Unset, Within,
 };
 use ui::descriptor::Built;
 
@@ -23,6 +22,7 @@ use crate::expr_field::{self, Field, Wanted};
 
 use super::draft::{AreaDraft, kind_field};
 use super::handles;
+use super::origin::Provenance;
 use super::rows::{self, Range, Rows, label};
 use super::{Inspector, add_area_tool};
 
@@ -84,26 +84,42 @@ pub(crate) fn edges() -> Rc<[&'static str]> {
         .collect()
 }
 
-/// A picker over a model enum, its value written into the area by `write`.
-pub(crate) fn picked<T: Serialize + DeserializeOwned + 'static>(
+/// A picker over a model enum for the area's key `key`, the value read from the area as drawn by `read` ([`AreaDraft::setting`]), with where it comes from under it and its Reset ([`AreaDraft::marked`]).
+pub(crate) fn chosen<T: Serialize + DeserializeOwned + 'static>(
     draft: &AreaDraft,
-    name: &'static str,
+    key: &'static str,
     label: Reactive<String>,
     help: Option<String>,
     options: Rc<[&'static str]>,
-    seed: T,
+    read: impl Fn(&ResolvedArea) -> T + 'static,
     write: impl Fn(&mut Area, T) + 'static,
 ) -> Rows {
-    let value = draft.value(
+    chosen_as(draft, (key, key), label, help, options, read, write)
+}
+
+/// [`chosen`] for a value the controls of the popover share under a name that is not the key it is written at: `(name, key)`.
+pub(crate) fn chosen_as<T: Serialize + DeserializeOwned + 'static>(
+    draft: &AreaDraft,
+    (name, key): (&'static str, &'static str),
+    label: Reactive<String>,
+    help: Option<String>,
+    options: Rc<[&'static str]>,
+    read: impl Fn(&ResolvedArea) -> T + 'static,
+    write: impl Fn(&mut Area, T) + 'static,
+) -> Rows {
+    let value = draft.setting(
         name,
-        || spelled(&seed),
+        key,
+        move |area| spelled(&read(area)),
         move |area, text: &String| {
             if let Some(value) = parsed::<T>(text) {
                 write(area, value);
             }
         },
     );
-    Ok(vec![rows::choice(label, help, value, options)?])
+    Ok(vec![
+        draft.marked(key, rows::choice(label, help, value, options)?)?,
+    ])
 }
 
 fn dock(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
@@ -111,25 +127,32 @@ fn dock(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         return Ok(Inspector::default());
     };
     let kind = draft.kind();
-    let mut list = picked(
+    let mut list = chosen(
         draft,
         "edge",
         label!("editor.area.edge"),
         help("AreaKind::Dock", "edge"),
         edges(),
-        edge,
+        move |area| area.kind.edge().unwrap_or(edge),
         move |area, edge: Edge| kind_field!(area, kind, Dock { edge }, edge),
     )?;
-    let thickness = draft.value(
+    let thickness = draft.setting(
         "thickness",
-        || thickness,
+        "thickness",
+        move |area| match area.kind {
+            ResolvedAreaKind::Dock { thickness, .. } => thickness,
+            _ => thickness,
+        },
         move |area, value: &f32| kind_field!(area, kind, Dock { thickness }, *value),
     );
-    list.push(rows::number(
-        label!("editor.area.thickness"),
-        help("AreaKind::Dock", "thickness"),
-        thickness,
-        handles::THICKNESS,
+    list.push(draft.marked(
+        "thickness",
+        rows::number(
+            label!("editor.area.thickness"),
+            help("AreaKind::Dock", "thickness"),
+            thickness,
+            handles::THICKNESS,
+        )?,
     )?);
     Ok(Inspector {
         rows: list,
@@ -142,13 +165,16 @@ fn free(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     let ResolvedAreaKind::Free { rect, anchor } = draft.resolved.kind else {
         return Ok(Inspector::default());
     };
-    let mut rows = picked(
+    let mut rows = chosen(
         draft,
         "anchor",
         label!("editor.area.anchor"),
         help("AreaKind::Free", "anchor"),
         variants("Anchor"),
-        anchor,
+        move |area| match area.kind {
+            ResolvedAreaKind::Free { anchor, .. } => anchor,
+            _ => anchor,
+        },
         |area, anchor: layout::Anchor| kind_field!(area, "free", Free { anchor }, anchor),
     )?;
     rows.extend(rect_rows(draft, rect)?);
@@ -158,9 +184,11 @@ fn free(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     })
 }
 
-/// A rectangle's four fractions of the output, for every kind placed by one — the lock's prompt kept wholly on its output and no smaller than it may be (TA-8).
+/// A rectangle's four fractions of the output, for every kind placed by one — the lock's prompt kept wholly on its output and no smaller than it may be (TA-8) — under one line saying where the rectangle comes from, since a level writes it whole.
 pub(crate) fn rect_rows(draft: &AreaDraft, seed: Rect) -> Rows {
     let kind = draft.kind();
+    let drawn = Rc::new(Cell::new(seed));
+    let base = Rc::clone(&drawn);
     let write = move |area: &mut Area, change: &dyn Fn(&mut Rect)| {
         let slot = match AreaDraft::kind_mut(area, kind) {
             Some(
@@ -172,44 +200,42 @@ pub(crate) fn rect_rows(draft: &AreaDraft, seed: Rect) -> Rows {
             ) => rect,
             _ => return,
         };
-        let rect = slot.get_or_insert(seed);
+        let rect = slot.get_or_insert(base.get());
         change(rect);
         if kind == "prompt" {
             *rect = rect.kept_on_output(layout::SMALLEST_PROMPT);
         }
     };
-    let x = draft.value(
-        "rect.x",
-        || seed.x,
-        move |area, value: &f32| write(area, &|rect| rect.x = *value),
-    );
-    let y = draft.value(
-        "rect.y",
-        || seed.y,
-        move |area, value: &f32| write(area, &|rect| rect.y = *value),
-    );
-    let w = draft.value(
-        "rect.w",
-        || seed.w,
-        move |area, value: &f32| write(area, &|rect| rect.w = *value),
-    );
-    let h = draft.value(
-        "rect.h",
-        || seed.h,
-        move |area, value: &f32| write(area, &|rect| rect.h = *value),
-    );
+    let write = Rc::new(write);
+    let side = |name: &'static str, read: fn(&Rect) -> f32, change: fn(&mut Rect, f32)| {
+        let (drawn, write) = (Rc::clone(&drawn), Rc::clone(&write));
+        draft.setting(
+            name,
+            "rect",
+            move |area| {
+                let rect = area.kind.rect().unwrap_or(seed);
+                drawn.set(rect);
+                read(&rect)
+            },
+            move |area, value: &f32| write(area, &|rect| change(rect, *value)),
+        )
+    };
+    let x = side("rect.x", |rect| rect.x, |rect, value| rect.x = value);
+    let y = side("rect.y", |rect| rect.y, |rect, value| rect.y = value);
+    let w = side("rect.w", |rect| rect.w, |rect, value| rect.w = value);
+    let h = side("rect.h", |rect| rect.h, |rect, value| rect.h = value);
     let fraction = Range::new(0.0, 1.0, 0.01);
-    Ok(vec![
+    let sides = vec![
         rows::number(label!("editor.area.x"), help("Rect", "x"), x, fraction)?,
         rows::number(label!("editor.area.y"), help("Rect", "y"), y, fraction)?,
         rows::number(label!("editor.area.w"), help("Rect", "w"), w, fraction)?,
         rows::number(label!("editor.area.h"), help("Rect", "h"), h, fraction)?,
-    ])
+    ];
+    Ok(vec![draft.marked("rect", rows::together(sides)?)?])
 }
 
-/// What every area has, after its own kind's rows: how it is painted, and what it asks of the compositor.
+/// What every area has, after its own kind's rows: how it is painted, and what it asks of the compositor — each row saying where its value comes from, with a Reset while the popover's level writes it.
 pub(crate) fn common(draft: &AreaDraft) -> Rows {
-    let style = draft.resolved.style.clone();
     let is_bar = draft.kind() == "bar";
     let mut list = variant_rows(&draft.node)?;
     if draft.kind() != "prompt" {
@@ -218,116 +244,137 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
     list.extend(repeat_rows(draft)?);
     list.extend(parameter_rows(draft)?);
     list.push(rows::heading(|| telar::t!("editor.area.style"))?);
-    let fill = draft.value(
+    let fill = draft.setting(
         "style.fill",
-        || style.fill.clone().unwrap_or_default(),
+        "style.fill",
+        |area| area.style.fill.clone().unwrap_or_default(),
         |area, token: &String| area.style.fill = (!token.is_empty()).then(|| token.clone()),
     );
-    list.push(rows::colour(
-        label!("editor.area.fill"),
-        help("Style", "fill"),
-        fill,
-        Rc::from(config::theme::PAINT_TOKENS),
-        Rc::new(ui::form::swatch_row::is_colour),
+    list.push(draft.marked(
+        "style.fill",
+        rows::colour(
+            label!("editor.area.fill"),
+            help("Style", "fill"),
+            fill,
+            Rc::from(config::theme::PAINT_TOKENS),
+            Rc::new(ui::form::swatch_row::is_colour),
+        )?,
     )?);
     let faintest = match draft.kind() {
         "prompt" => layout::FAINTEST_PROMPT,
         _ => 0.0,
     };
-    let opacity = draft.value(
+    let opacity = draft.setting(
         "style.opacity",
-        || style.opacity.unwrap_or(1.0),
+        "style.opacity",
+        |area| area.style.opacity.unwrap_or(1.0),
         |area, value: &f32| area.style.opacity = Some(*value),
     );
-    list.push(rows::number(
-        label!("editor.area.opacity"),
-        help("Style", "opacity"),
-        opacity,
-        Range::new(faintest, 1.0, 0.05),
+    list.push(draft.marked(
+        "style.opacity",
+        rows::number(
+            label!("editor.area.opacity"),
+            help("Style", "opacity"),
+            opacity,
+            Range::new(faintest, 1.0, 0.05),
+        )?,
     )?);
     if draft.kind() == "prompt" {
         list.push(crate::modes::lock::contrast_row(draft)?);
     }
-    let padding = draft.value(
+    let padding = draft.setting(
         "style.padding",
-        || style.padding.map_or(0.0, Sides::largest),
+        "style.padding",
+        |area| area.style.padding.map_or(0.0, Sides::largest),
         |area, value: &f32| area.style.padding = Some(Sides::all(*value)),
     );
-    list.push(rows::number(
-        label!("editor.area.padding"),
-        help("Style", "padding"),
-        padding,
-        Range::whole(0.0, 64.0),
+    list.push(draft.marked(
+        "style.padding",
+        rows::number(
+            label!("editor.area.padding"),
+            help("Style", "padding"),
+            padding,
+            Range::whole(0.0, 64.0),
+        )?,
     )?);
     if !is_bar {
-        let radius = draft.value(
+        let radius = draft.setting(
             "style.radius",
-            || style.radius.map_or(0.0, Corners::largest),
+            "style.radius",
+            |area| area.style.radius.map_or(0.0, Corners::largest),
             |area, value: &f32| area.style.radius = Some(Corners::all(*value)),
         );
-        list.push(rows::number(
-            label!("editor.area.radius"),
-            help("Style", "radius"),
-            radius,
-            Range::whole(0.0, handles::most_radius(draft)),
+        list.push(draft.marked(
+            "style.radius",
+            rows::number(
+                label!("editor.area.radius"),
+                help("Style", "radius"),
+                radius,
+                Range::whole(0.0, handles::most_radius(draft)),
+            )?,
         )?);
     }
-    list.extend(style_backdrop(draft, style.backdrop.unwrap_or_default())?);
+    list.extend(style_backdrop(draft)?);
 
     if draft.node.layer == LayerKind::Lock {
         return Ok(list);
     }
     list.push(rows::heading(|| telar::t!("editor.area.behaviour"))?);
     if matches!(draft.kind(), "bar" | "dock") {
-        let reserve = draft.resolved.reserve;
-        let reserves = draft.value(
+        let reserves = draft.setting(
             "reserve",
-            || reserve,
+            "reserve",
+            |area| area.reserve,
             |area, on: &bool| area.reserve = Some(*on),
         );
-        list.push(rows::toggle(
-            label!("editor.area.reserve"),
-            help("Area", "reserve"),
-            reserves,
+        list.push(draft.marked(
+            "reserve",
+            rows::toggle(
+                label!("editor.area.reserve"),
+                help("Area", "reserve"),
+                reserves,
+            )?,
         )?);
     }
-    let above = draft.resolved.above_fullscreen;
-    let lifted = draft.value(
+    let lifted = draft.setting(
         "above_fullscreen",
-        || above,
+        "above_fullscreen",
+        |area| area.above_fullscreen,
         |area, on: &bool| area.above_fullscreen = Some(*on),
     );
-    list.push(rows::toggle(
-        label!("editor.area.above_fullscreen"),
-        help("Area", "above_fullscreen"),
-        lifted,
+    list.push(draft.marked(
+        "above_fullscreen",
+        rows::toggle(
+            label!("editor.area.above_fullscreen"),
+            help("Area", "above_fullscreen"),
+            lifted,
+        )?,
     )?);
     list.push(rows::note(|| telar::t!("editor.area.scanout"))?);
-    let within = draft.resolved.within;
-    list.extend(picked(
+    list.extend(chosen(
         draft,
         "within",
         label!("editor.area.within"),
         help("Area", "within"),
         variants("Within"),
-        within,
+        |area| area.within,
         |area, within: Within| area.within = Some(within),
     )?);
     Ok(list)
 }
 
 /// The backdrop picker, and under it, while the area asks for a blur only the compositor can give and this one gives none, why it draws translucent instead (F-10.49).
-fn style_backdrop(draft: &AreaDraft, seed: Backdrop) -> Rows {
-    let mut list = picked(
+fn style_backdrop(draft: &AreaDraft) -> Rows {
+    let mut list = chosen(
         draft,
         "style.backdrop",
         label!("editor.area.backdrop"),
         help("Style", "backdrop"),
         variants("Backdrop"),
-        seed,
+        |area| area.style.backdrop.unwrap_or_default(),
         |area, backdrop: Backdrop| area.style.backdrop = Some(backdrop),
     )?;
-    let Some(chosen) = draft.shared::<String>("style.backdrop") else {
+    let Some(picked) = draft.shared::<String>("style.backdrop") else {
         return Ok(list);
     };
     let mut blurred = (*draft.resolved).clone();
@@ -336,7 +383,7 @@ fn style_backdrop(draft: &AreaDraft, seed: Backdrop) -> Rows {
         == Some(surfaces::layer_window::Blur::Compositor);
     list.push(rows::note(move || {
         let unblurred = by_compositor
-            && chosen.with(|now| parsed::<Backdrop>(now) == Some(Backdrop::Blur))
+            && picked.with(|now| parsed::<Backdrop>(now) == Some(Backdrop::Blur))
             && !platform_wayland::background_effect_supported();
         match unblurred {
             true => telar::t!("editor.texture.blur_unsupported"),
@@ -369,7 +416,7 @@ pub(crate) fn variant_rows(node: &surfaces::rects::Node) -> Rows {
 }
 
 /// What an expression row of an area writes: the text its field holds, and whether the level the popover writes takes back the expression it inherits there (DEC-26) — which an expression of its own makes moot.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct Held {
     text: String,
     taken_back: bool,
@@ -396,16 +443,18 @@ struct ExprRow {
     layer: LayerKind,
     expected: Rc<dyn Fn() -> Wanted>,
     empty: Rc<dyn Fn() -> String>,
-    /// Whether the level takes the expression back, read reactively.
-    taken: Rc<dyn Fn() -> bool>,
+    /// What the row holds now, read reactively.
+    held: Rc<dyn Fn() -> Held>,
     peek: Rc<dyn Fn() -> Held>,
     write: Rc<dyn Fn(Held)>,
     inherited: bool,
+    /// The level that gives the expression on screen.
+    writer: Option<Origin>,
     /// Whether Remove may take the inherited expression back where the popover writes, or why not.
     takes_back: Rc<dyn Fn() -> Result<(), String>>,
 }
 
-/// The row, made again whenever the level takes the inherited expression back, so its field starts empty from then on. An inherited expression has a Remove that takes it back where the popover writes, previewed and kept or reverted with the rest of the popover.
+/// The row, made again whenever the level takes the inherited expression back, so its field starts empty from then on, under a line saying where the expression comes from like every other row's. An inherited expression has a Remove beside it that takes it back where the popover writes, previewed and kept or reverted with the rest of the popover.
 fn expr_row(row: ExprRow) -> Built {
     let ExprRow {
         label,
@@ -413,18 +462,25 @@ fn expr_row(row: ExprRow) -> Built {
         layer,
         expected,
         empty,
-        taken,
+        held,
         peek,
         write,
         inherited,
+        writer,
         takes_back,
     } = row;
+    let started = peek().text;
+    let editing = Rc::clone(&write);
+    let taken = {
+        let held = Rc::clone(&held);
+        telar::memo(move || held().taken_back)
+    };
     let list = ReactiveList::with_style(
         LayoutStyle::new()
             .flex_column()
             .gap(ui::scale::space::xs())
             .width(SizeDimension::Percent(1.0)),
-        move || vec![taken()],
+        move || vec![taken.get()],
         |taken_back: &bool| *taken_back,
         move |taken_back: bool| {
             let now = peek();
@@ -432,8 +488,9 @@ fn expr_row(row: ExprRow) -> Built {
                 true => String::new(),
                 false => now.text.clone(),
             };
-            let (restored, reading, writing) = (seed.clone(), Rc::clone(&peek), Rc::clone(&write));
-            let field = expr_field::field(Field {
+            let (restored, reading, writing) =
+                (seed.clone(), Rc::clone(&peek), Rc::clone(&editing));
+            expr_field::field(Field {
                 seed,
                 expected: Rc::clone(&expected),
                 env: expr_field::environment(layer),
@@ -445,54 +502,38 @@ fn expr_row(row: ExprRow) -> Built {
                         writing(Held { text: next, ..now });
                     }
                 }),
-            })?;
-            if !inherited || taken_back {
-                return Ok(field);
-            }
-            let (writing, takes_back) = (Rc::clone(&write), Rc::clone(&takes_back));
-            let remove = take_back_line(move || match takes_back() {
-                Ok(()) => writing(Held {
-                    text: String::new(),
-                    taken_back: true,
-                }),
-                Err(why) => crate::mode::refuse(why),
-            })?;
-            Ok(box_item(Container::new(
-                LayoutStyle::new()
-                    .flex_column()
-                    .gap(ui::scale::space::xs())
-                    .width(SizeDimension::Percent(1.0)),
-                vec![field, remove],
-            )?))
+            })
         },
     )?;
-    rows::captioned(label, help, Box::new(list))
-}
-
-/// What an inherited expression's row says under its field, with the Remove that takes it back.
-fn take_back_line(remove: impl Fn() + 'static) -> Built {
-    let note = rows::note(|| telar::t!("editor.expr.inherited"))?;
-    let button = telar::button(
-        telar::ButtonProps::props()
-            .label(label!("editor.popover.remove"))
-            .ghost(true)
-            .on_press(Rc::new(remove))
-            .build(),
-        Children::default(),
-    )?;
-    Ok(box_item(Container::new(
-        LayoutStyle::new()
-            .flex_row()
-            .align_items(AlignItems::CENTER)
-            .width(SizeDimension::Percent(1.0)),
-        vec![
-            box_item(Container::new(
-                LayoutStyle::new().flex_grow(1.0),
-                vec![note],
-            )?),
-            button,
-        ],
-    )?))
+    let field = rows::captioned(label, help, Box::new(list))?;
+    let said = {
+        let (held, takes_back, writer) = (Rc::clone(&held), Rc::clone(&takes_back), writer.clone());
+        move || {
+            let now = held();
+            let inheriting =
+                inherited && !now.taken_back && (now.text.is_empty() || now.text == started);
+            match (inheriting, now.text.is_empty() || now.taken_back) {
+                (true, _) => super::origin::inherited_said(writer.as_ref(), takes_back().is_err()),
+                (false, true) => Provenance::Default.said(),
+                (false, false) => Provenance::Here.said(),
+            }
+        }
+    };
+    let offered = move || inherited && !held().taken_back;
+    let removing = write;
+    super::origin::captioned(
+        field,
+        said,
+        label!("editor.popover.remove"),
+        offered,
+        move || match takes_back() {
+            Ok(()) => removing(Held {
+                text: String::new(),
+                taken_back: true,
+            }),
+            Err(why) => crate::mode::refuse(why),
+        },
+    )
 }
 
 /// When the area is drawn: an expression giving true or false, checked and evaluated as it is typed, on the lock layer over what the lock screen may show. The lock's prompt has none, since it can never be hidden (TA-8).
@@ -508,14 +549,12 @@ pub(crate) fn visible_row(draft: &AreaDraft) -> Built {
         taken_back: written.unset.contains(&Unset::Visible),
     };
     let inherited = draft.resolved.visible.is_some() && written.visible.is_none();
-    let takes_back = taking_back(
-        draft,
-        draft
-            .resolved
-            .visible
-            .as_ref()
-            .map(|visible| &visible.origin),
-    );
+    let writer = draft
+        .resolved
+        .visible
+        .as_ref()
+        .map(|visible| visible.origin.clone());
+    let takes_back = taking_back(draft, writer.as_ref());
     let value = draft.value(
         "visible",
         || seed,
@@ -530,10 +569,11 @@ pub(crate) fn visible_row(draft: &AreaDraft) -> Built {
         layer: draft.node.layer,
         expected: Rc::new(|| Wanted::Exactly(Type::Bool)),
         empty: Rc::new(|| telar::t!("editor.expr.always")),
-        taken: Rc::new(move || value.with(|now| now.taken_back)),
+        held: Rc::new(move || value.get()),
         peek: Rc::new(move || value.peek()),
         write: Rc::new(move |next| value.set(next)),
         inherited,
+        writer,
         takes_back,
     })
 }
@@ -602,8 +642,8 @@ pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
             layer: draft.node.layer,
             expected: Rc::new(|| Wanted::AnyList),
             empty: Rc::new(|| telar::t!("editor.expr.once")),
-            taken: Rc::new(move || {
-                repeats.with(|now| now.get(&watched).is_some_and(|held| held.taken_back))
+            held: Rc::new(move || {
+                repeats.with(|now| now.get(&watched).cloned().unwrap_or_default())
             }),
             peek: Rc::new(move || {
                 repeats.peek_with(|now| {
@@ -620,6 +660,7 @@ pub(crate) fn repeat_rows(draft: &AreaDraft) -> Rows {
             }),
             inherited,
             takes_back: taking_back(draft, writer.as_ref()),
+            writer,
         })?);
     }
     Ok(list)
@@ -713,8 +754,8 @@ pub(crate) fn parameter_rows(draft: &AreaDraft) -> Rows {
             empty: Rc::new(move || {
                 telar::t!("editor.komponent.default", default = default.clone())
             }),
-            taken: Rc::new(move || {
-                values.with(|now| now.get(&watched).is_some_and(|held| held.taken_back))
+            held: Rc::new(move || {
+                values.with(|now| now.get(&watched).cloned().unwrap_or_default())
             }),
             peek: Rc::new(move || {
                 values.peek_with(|now| {
@@ -731,6 +772,7 @@ pub(crate) fn parameter_rows(draft: &AreaDraft) -> Rows {
             }),
             inherited,
             takes_back: taking_back(draft, writer.as_ref()),
+            writer,
         })?);
     }
     Ok(list)

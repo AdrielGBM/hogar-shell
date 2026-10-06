@@ -258,6 +258,17 @@ pub fn captioned(
     explained(label, help, box_item(column))
 }
 
+/// Rows that are one value between them, one under another.
+pub fn together(items: Vec<Box<dyn LayoutItem>>) -> Built {
+    Ok(box_item(telar::Container::new(
+        LayoutStyle::new()
+            .flex_column()
+            .gap(ui::scale::space::sm())
+            .width(telar::SizeDimension::Percent(1.0)),
+        items,
+    )?))
+}
+
 /// A line of quiet text under the rows it is about.
 pub fn note(said: impl Fn() -> String + 'static) -> Built {
     let theme = use_theme::<NordTheme>();

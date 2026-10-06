@@ -1,4 +1,4 @@
-//! The mode strip (T-4.11) and the history it jumps through (T-4.12), pressed through the pointer as the host's window lays them out: what it says of an undo, a redo and the first edit of the built-in layout, where it sits, its grip, its layer list, its `+`, and the history list that walks several entries at once.
+//! The mode strip and the history it jumps through, pressed through the pointer as the host's window lays them out: what it says of an undo, a redo and the first edit of the built-in layout, where it sits, its grip, its layer list, its `+`, and the history list that walks several entries at once.
 
 #[cfg(test)]
 mod tests {
@@ -409,7 +409,7 @@ mod tests {
         assert!(transient::is_open(crate::modes::palette::ID));
     }
 
-    /// T-4.12: three back then two forward is three undos and two redos, landing where the second edit left the layout.
+    /// Three back then two forward is three undos and two redos, landing where the second edit left the layout.
     #[test]
     fn travelling_three_back_then_two_forward_lands_on_the_second_edit() {
         let rig = rig("strip-travel");

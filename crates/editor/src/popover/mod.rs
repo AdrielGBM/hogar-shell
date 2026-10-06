@@ -11,6 +11,7 @@ pub(crate) mod bindings;
 mod draft;
 pub mod handles;
 mod instance;
+pub(crate) mod origin;
 pub(crate) mod place;
 pub mod rows;
 pub(crate) mod value;
@@ -44,6 +45,7 @@ pub use area::{help, parsed, spelled};
 pub(crate) use draft::kind_field;
 pub use draft::{AreaDraft, InstanceDraft, Settle};
 pub use instance::{option, shown};
+pub use origin::Provenance;
 pub use value::{Path, Step, path_of};
 
 /// The transient every popover is, one at a time.
@@ -615,11 +617,18 @@ fn tree_of(serial: u64) -> Built {
     }
 }
 
-/// The open popover's tree, built as its window would build it.
 #[cfg(test)]
 pub(crate) fn tree() -> Option<Built> {
     let serial = OPEN.with(|held| held.borrow().as_ref().map(|open| open.serial))?;
     Some(tree_of(serial))
+}
+
+#[cfg(test)]
+pub(crate) fn area_draft() -> Option<AreaDraft> {
+    OPEN.with(|held| match &held.borrow().as_ref()?.subject {
+        Subject::Area(draft) => Some(draft.clone()),
+        Subject::Instance(_) => None,
+    })
 }
 
 /// The open instance popover's draft.

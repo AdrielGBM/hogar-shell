@@ -892,6 +892,40 @@ fn every_area() -> Vec<layout::ResolvedArea> {
         },
         containers(),
     ));
+    let mut styled_containers = containers();
+    for (at, container) in styled_containers.iter_mut().enumerate() {
+        container.style = styled("accent", 1 + at as u8 % 3);
+        for child in &mut container.children {
+            child.style = styled("red", 3);
+        }
+    }
+    areas.push(area_of(
+        "styled-containers".into(),
+        ResolvedAreaKind::Grid {
+            rect: layout::Rect::default(),
+            cell: 80.0,
+            gap: 16.0,
+            anchor: Anchor::TopLeft,
+        },
+        styled_containers,
+    ));
+    for edge in Edge::ALL {
+        let mut groups = chips();
+        for group in &mut groups {
+            group.style = styled("accent", 2);
+            for child in &mut group.children {
+                child.style = styled("green", 1);
+            }
+        }
+        areas.push(area_of(
+            format!("styled-dock-{edge:?}"),
+            ResolvedAreaKind::Dock {
+                edge,
+                thickness: 60.0,
+            },
+            groups,
+        ));
+    }
     areas.push(area_of(
         "free".into(),
         ResolvedAreaKind::Free {
@@ -1081,6 +1115,100 @@ fn every_area_kind_lays_out_on_screen_on_every_edge_anchor_and_monitor() {
     );
 }
 
+/// Three clocks sharing a row container `col_span` × `row_span` cells big, at its top left corner: as it shrinks they draw at a smaller widget, then as chips.
+fn shrinking_row(col_span: u32, row_span: u32) -> layout::ResolvedGroup {
+    use layout::{Arrange, GroupKind, Placement, Representation as Placed};
+    let children = (0..3)
+        .map(|at| layout::ResolvedInstance {
+            id: layout::InstanceId::new(format!("clock-{at}")),
+            placement: Some(Placement::Weight(1.0)),
+            ..instance("clock", Placed::WidgetM)
+        })
+        .collect();
+    layout::ResolvedGroup {
+        id: layout::GroupId::new(format!("row-{col_span}x{row_span}")),
+        arrange: Some(Arrange::Row),
+        ..group(
+            GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span,
+                row_span,
+            },
+            children,
+        )
+    }
+}
+
+/// **A container's children never draw outside its box**: every arrangement, and a row shrunk from widgets down to chips, each alone on a grid of 80 px cells 16 px apart, on every monitor. The box is the cells it was written with, which is all a grid at its top left corner with no padding puts it on.
+#[test]
+fn no_container_draws_past_its_box() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cases = containers();
+    cases.extend(
+        [(12, 4), (6, 2), (6, 1), (3, 1), (1, 1)].map(|(cols, rows)| shrinking_row(cols, rows)),
+    );
+    let mut faults = Vec::new();
+    for size in MONITORS {
+        for container in &cases {
+            reset_layout_runtime();
+            seed_world(Edge::Top, Shape::Bar, None);
+            let scope = telar::owner_scope();
+            let owner = scope.id();
+            let area = area_of(
+                container.id.to_string(),
+                layout::ResolvedAreaKind::Grid {
+                    rect: layout::Rect::default(),
+                    cell: 80.0,
+                    gap: 16.0,
+                    anchor: layout::Anchor::TopLeft,
+                },
+                vec![container.clone()],
+            );
+            let measured = measure_area(&area, size);
+            drop(scope);
+            let at = format!("{} on {}x{}", container.id, size.0, size.1);
+            let layout::GroupKind::Cell { col, row, .. } = container.kind else {
+                unreachable!("every case is on cells");
+            };
+            let span = surfaces::area::cells_of(container).extent(80.0, 16.0);
+            let held = Rect::new(
+                col as f32 * 96.0 - SLACK,
+                row as f32 * 96.0 - SLACK,
+                span.width + 2.0 * SLACK,
+                span.height + 2.0 * SLACK,
+            );
+            match measured {
+                Err(error) => faults.push(format!("{at}: {error}")),
+                Ok(commands) => {
+                    let ink = visible_ink(&commands);
+                    if ink.is_empty() {
+                        faults.push(format!("{at}: drew nothing"));
+                    }
+                    for rect in ink
+                        .into_iter()
+                        .filter(|rect| rect.intersect(held) != Some(*rect))
+                    {
+                        faults.push(format!(
+                            "{at}: {}x{} at {},{} is past its {}x{} box",
+                            rect.width, rect.height, rect.x, rect.y, span.width, span.height
+                        ));
+                    }
+                }
+            }
+            telar::dispose_owner(owner);
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} container(s) drew past their box:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
 /// The check above has to be able to fail: ink past any edge of the screen is reported, and ink on it is not.
 #[test]
 fn ink_past_the_edge_of_the_screen_is_reported() {
@@ -1094,4 +1222,360 @@ fn ink_past_the_edge_of_the_screen_is_reported() {
     };
     assert!(off_screen(std::slice::from_ref(&on), (1920.0, 1080.0)).is_empty());
     assert_eq!(off_screen(&[on, past], (1920.0, 1080.0)).len(), 1);
+}
+
+fn bar_on(
+    edge: Edge,
+    autohide: Option<layout::AutoHide>,
+    fillet: Option<f32>,
+) -> layout::ResolvedArea {
+    area_of(
+        format!("bar-{edge:?}"),
+        layout::ResolvedAreaKind::Bar {
+            edge,
+            thickness: 34.0,
+            length: layout::Extent::Fill,
+            offset: 0.0,
+            shape: layout::BarShape {
+                fillet,
+                ..layout::BarShape::default()
+            },
+            autohide,
+        },
+        Vec::new(),
+    )
+}
+
+/// A bar that hides itself stops at the reserving bar at its side instead of owning the corner and sliding in under it, on every edge pair, every monitor and in every mode; the bar that stays still owns the corner.
+#[test]
+fn a_hiding_bar_starts_after_a_reserving_bar_at_its_side_on_every_edge_and_monitor() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let hide = Some(layout::AutoHide {
+        peek: 2.0,
+        on_hover: true,
+    });
+    for mode in MODES {
+        seed_world(Edge::Top, mode, None);
+        let config = config::config().expect("the sweep published a config");
+        for size in MONITORS {
+            for edge in [Edge::Top, Edge::Bottom] {
+                for side in [Edge::Left, Edge::Right] {
+                    let across = bar_on(side, None, None);
+                    let resolved = layout::Resolved::of(
+                        "SWEPT-1",
+                        [(
+                            layout::LayerKind::Top,
+                            layout::ResolvedLayer {
+                                areas: vec![across.clone()],
+                            },
+                        )],
+                    );
+                    let reserved = surfaces::layer_window::Reserved::of(&resolved, &config);
+                    let surround = surfaces::area::Surround {
+                        config: &config,
+                        theme: config.resolve_theme(),
+                        output: Some("SWEPT-1"),
+                        layer: layout::LayerKind::Top,
+                        bounds: Rect::new(0.0, 0.0, size.0, size.1),
+                        reserved,
+                        audience: ui::host::Audience::Owner,
+                    };
+                    let hidden = surfaces::bar::strip_of_area(&bar_on(edge, hide, None), surround);
+                    let owner = surfaces::bar::strip_of_area(&bar_on(edge, None, None), surround);
+                    let at = format!(
+                        "{edge:?} beside {side:?} on {}x{} in {mode:?}",
+                        size.0, size.1
+                    );
+                    match side {
+                        Edge::Left => {
+                            assert_eq!(hidden.x, reserved.left, "{at}: starts after the strip");
+                            assert!(owner.x < reserved.left, "{at}: the owner keeps the corner");
+                        }
+                        _ => {
+                            assert_eq!(
+                                hidden.x + hidden.width,
+                                size.0 - reserved.right,
+                                "{at}: ends before the strip"
+                            );
+                            assert!(
+                                owner.x + owner.width > size.0 - reserved.right,
+                                "{at}: the owner keeps the corner"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Fillets build and draw on every edge and monitor, hiding or not; a bar that is shown keeps all of its ink on the screen, a hiding one is off it by design.
+#[test]
+fn a_fillet_draws_on_every_edge_and_monitor_without_leaving_the_screen() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let hide = Some(layout::AutoHide {
+        peek: 2.0,
+        on_hover: true,
+    });
+    for size in MONITORS {
+        for edge in Edge::ALL {
+            for autohide in [None, hide] {
+                reset_layout_runtime();
+                seed_world(Edge::Top, Shape::Bar, None);
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let area = bar_on(edge, autohide, Some(12.0));
+                let measured = measure_area(&area, size);
+                drop(scope);
+                telar::dispose_owner(owner);
+                let at = format!(
+                    "{edge:?} on {}x{}, hiding: {}",
+                    size.0,
+                    size.1,
+                    autohide.is_some()
+                );
+                let commands = measured.unwrap_or_else(|error| panic!("{at}: {error}"));
+                assert!(commands.iter().any(paints), "{at}: drew nothing");
+                assert!(
+                    autohide.is_some() || off_screen(&commands, size).is_empty(),
+                    "{at}: ink off the screen"
+                );
+            }
+        }
+    }
+}
+
+/// A bar that hides itself yields only to a vertical bar that stays on screen: one that hides as well leaves a peek strip, so the horizontal one runs the edge as if nothing were there. Every corner, monitor and mode.
+#[test]
+fn a_hiding_bar_ignores_a_hiding_bar_at_its_side_on_every_corner_and_monitor() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let hide = Some(layout::AutoHide {
+        peek: 2.0,
+        on_hover: true,
+    });
+    for mode in MODES {
+        seed_world(Edge::Top, mode, None);
+        let config = config::config().expect("the sweep published a config");
+        for size in MONITORS {
+            for edge in [Edge::Top, Edge::Bottom] {
+                for side in [Edge::Left, Edge::Right] {
+                    let strip_beside = |across: layout::ResolvedArea, autohide| {
+                        let resolved = layout::Resolved::of(
+                            "SWEPT-1",
+                            [(
+                                layout::LayerKind::Top,
+                                layout::ResolvedLayer {
+                                    areas: vec![across],
+                                },
+                            )],
+                        );
+                        let surround = surfaces::area::Surround {
+                            config: &config,
+                            theme: config.resolve_theme(),
+                            output: Some("SWEPT-1"),
+                            layer: layout::LayerKind::Top,
+                            bounds: Rect::new(0.0, 0.0, size.0, size.1),
+                            reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
+                            audience: ui::host::Audience::Owner,
+                        };
+                        surfaces::bar::strip_of_area(&bar_on(edge, autohide, None), surround)
+                    };
+                    let at = format!(
+                        "{edge:?} beside a hiding {side:?} on {}x{} in {mode:?}",
+                        size.0, size.1
+                    );
+                    let alone = strip_beside(bar_on(side, hide, None), None);
+                    let yielding = strip_beside(bar_on(side, hide, None), hide);
+                    assert_eq!(
+                        yielding, alone,
+                        "{at}: the peek strip is nothing to yield to"
+                    );
+                    let kept = strip_beside(bar_on(side, None, None), hide);
+                    assert_ne!(kept, yielding, "{at}: a bar that stays is still yielded to");
+                }
+            }
+        }
+    }
+}
+
+/// A style that names everything a box can draw: a fill at an opacity, its corners, a line round it and a lift.
+fn styled(line: &str, shadow: u8) -> layout::Style {
+    layout::Style {
+        fill: Some("surface".into()),
+        opacity: Some(0.8),
+        radius: Some(layout::Corners::all(8.0)),
+        border: Some(layout::Border {
+            width: Some(2.0),
+            color: Some(line.into()),
+        }),
+        shadow: Some(shadow),
+        ..layout::Style::default()
+    }
+}
+
+/// A bar in `mode` on `edge` whose start zone is a styled group, a plate around its chips, whose centre chip is styled on its own, and whose end is a styled stack.
+fn styled_bar(edge: Edge, mode: Shape) -> layout::ResolvedArea {
+    use layout::{GroupKind, Representation as Placed, Zone};
+    let mut plated = group(
+        GroupKind::Zone { zone: Zone::Start },
+        vec![
+            instance("workspaces", Placed::Chip),
+            instance("clock", Placed::Chip),
+        ],
+    );
+    plated.id = layout::GroupId::new("plated");
+    plated.style = styled("accent", 2);
+    let mut centre = group(
+        GroupKind::Zone { zone: Zone::Center },
+        vec![layout::ResolvedInstance {
+            style: styled("red", 3),
+            ..instance("clock", Placed::Chip)
+        }],
+    );
+    centre.id = layout::GroupId::new("centre");
+    let mut end = paged(
+        GroupKind::Zone { zone: Zone::End },
+        vec![
+            layout::ResolvedInstance {
+                style: styled("green", 1),
+                ..instance("notes", Placed::Chip)
+            },
+            instance("clock", Placed::Chip),
+        ],
+    );
+    end.id = layout::GroupId::new("end");
+    end.style = layout::Style {
+        border: Some(layout::Border::default()),
+        ..layout::Style::default()
+    };
+    let mut bar = area_of(
+        format!("styled-bar-{edge:?}-{mode:?}"),
+        layout::ResolvedAreaKind::Bar {
+            edge,
+            thickness: 34.0,
+            length: layout::Extent::Fill,
+            offset: 0.0,
+            shape: layout::BarShape {
+                mode: Some(mode),
+                ..layout::BarShape::default()
+            },
+            autohide: None,
+        },
+        vec![plated, centre, end],
+    );
+    bar.style = layout::Style {
+        border: Some(layout::Border::default()),
+        shadow: Some(2),
+        ..layout::Style::default()
+    };
+    bar
+}
+
+/// **A style paints inside what it styles**: a bar whose groups draw plates and whose chips draw their own boxes, with borders and shadows on all of them, lays out on every edge, in every mode and on every monitor, draws, and puts none of that ink outside its strip. A shadow is no ink of a box: it is the one thing meant to fall past it.
+#[test]
+fn a_styled_bar_draws_its_plates_and_chips_inside_its_strip_on_every_edge_and_shape() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut faults = Vec::new();
+    for mode in MODES {
+        for size in MONITORS {
+            for edge in Edge::ALL {
+                reset_layout_runtime();
+                seed_world(Edge::Top, mode, None);
+                let config = config::config().expect("the sweep published a config");
+                let scope = telar::owner_scope();
+                let owner = scope.id();
+                let area = styled_bar(edge, mode);
+                let measured = measure_area(&area, size);
+                drop(scope);
+                let surround = surfaces::area::Surround {
+                    config: &config,
+                    theme: config.resolve_theme(),
+                    output: Some("SWEPT-1"),
+                    layer: layout::LayerKind::Desktop,
+                    bounds: Rect::new(0.0, 0.0, size.0, size.1),
+                    reserved: surfaces::layer_window::Reserved::default(),
+                    audience: ui::host::Audience::Owner,
+                };
+                let strip = surfaces::bar::strip_of_area(&area, surround);
+                let held = Rect::new(
+                    strip.x - SLACK,
+                    strip.y - SLACK,
+                    strip.width + 2.0 * SLACK,
+                    strip.height + 2.0 * SLACK,
+                );
+                let at = format!("{edge:?} on {}x{} in {mode:?}", size.0, size.1);
+                match measured {
+                    Err(error) => faults.push(format!("{at}: {error}")),
+                    Ok(commands) => {
+                        if !commands.iter().any(paints) {
+                            faults.push(format!("{at}: drew nothing"));
+                        }
+                        let edged = commands
+                            .iter()
+                            .filter(|command| {
+                                matches!(command, DrawCommand::Rect { style, .. } if style.border.is_some())
+                            })
+                            .count();
+                        let expected = match mode {
+                            Shape::Bar => 5,
+                            _ => 4,
+                        };
+                        if edged != expected {
+                            faults
+                                .push(format!("{at}: {edged} boxes drew a border, not {expected}"));
+                        }
+                        let cut = commands
+                            .iter()
+                            .position(|command| matches!(command, DrawCommand::PushClip { .. }));
+                        let lifted_outside = commands
+                            .iter()
+                            .enumerate()
+                            .filter(|(at, command)| {
+                                matches!(command, DrawCommand::Rect { style, .. }
+                                    if style.shadow.is_some()
+                                        && (style.fill.is_some() || style.border.is_some()))
+                                    && cut.is_none_or(|cut| *at < cut)
+                            })
+                            .count();
+                        if lifted_outside != 0 {
+                            faults.push(format!(
+                                "{at}: {lifted_outside} lifted boxes cast outside the strip's cut"
+                            ));
+                        }
+                        for rect in visible_ink(&commands)
+                            .into_iter()
+                            .filter(|rect| rect.intersect(held) != Some(*rect))
+                        {
+                            faults.push(format!(
+                                "{at}: {}x{} at {},{} is outside the {}x{} strip at {},{}",
+                                rect.width,
+                                rect.height,
+                                rect.x,
+                                rect.y,
+                                strip.width,
+                                strip.height,
+                                strip.x,
+                                strip.y
+                            ));
+                        }
+                    }
+                }
+                telar::dispose_owner(owner);
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} styled bar(s) drew outside their strip:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
 }

@@ -91,6 +91,25 @@ One thing is outside it: what the lock screen may reveal. Those two choices are 
 popover and written to `config.toml` when it closes, so they are not in the layout's undo history (Esc still puts them
 back). See [Lock screen](../system/lock.md).
 
+## Where a value comes from
+
+A layout is written at several levels — a layout it extends, the `*` rule, a rule for one monitor, a workspace's rule —
+and a popover writes into one of them: the narrowest rule that already writes the item (see
+[Layouts](layouts.md#output-rules-and-workspace-rules)). So a line under each row says where the value it shows comes
+from:
+
+| The line says | Meaning |
+| --- | --- |
+| **Set here** | The level the popover writes into writes it. **Reset** beside it takes the key off that level, so the value is inherited again — the row and the item show the inherited value at once, and it is part of the popover's one undo entry. |
+| **From `<rule>` in `<file>`** | A broader level writes it, such as `outputs.*` in `layouts/custom.toml`. Changing the row writes it here, over that. |
+| **Overridden by `<rule>` in `<file>`** | A level that comes after this one writes it — usually a workspace's rule — so a change written here would not show. Change it there instead. |
+| **From the komponent in `<file>`** | The group draws a komponent and the komponent's own file writes it. It cannot be changed here: change it in that file, or set a parameter the komponent reads. |
+| **Default** | No level writes it: the value is the default for its kind, or for an item's option, its module's configuration. |
+
+An item's options say the same, option by option, and their **Reset** is this one. An expression (**Shown while**,
+**Repeated over a list**, a binding, a komponent parameter) cannot be inherited away by deleting it here, so an inherited one
+has **Remove** instead, which writes an `unset` — see [the expression field](#the-expression-field).
+
 ## Handles and scrub fields
 
 Handles are points laid over the real item, each the pointer's way to a value the popover also has as a row:
@@ -138,9 +157,9 @@ a line of the [expression language](data-and-rules.md#expressions), checked and 
 - **The source browser** under the field lists every reading with what it reads now; press one to put it in at the caret.
 - **Keys.** Enter commits the popover, as it does from any control. Esc in the field puts its text back as the popover opened
   it and hands the keyboard back, so the next Esc reverts the popover.
-- **Inherited expressions.** An expression a broader level of the layout wrote is marked as set by that level, and **Remove**
-  takes it back here by writing an `unset`. Where a level that comes after the one the popover writes into gives the same
-  expression, the popover says so rather than offering a change that would not show.
+- **Where it comes from.** An expression row carries the same line as every other row — set here, from the rule and file
+  that wrote it, overridden by a later rule, or default (see [Where a value comes from](#where-a-value-comes-from)). On an
+  inherited expression **Remove** is its reset: it takes the expression back here by writing an `unset`.
 
 ## Related
 

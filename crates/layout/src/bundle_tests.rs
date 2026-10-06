@@ -170,7 +170,7 @@ long_press = ["shell run powerprofilesctl set performance"]
         );
     }
 
-    /// T-8.6's acceptance, in the model: an imported file's commands, addresses and `shell run` lines — a komponent child's included — are held until accepted, each at its own text.
+    /// An imported file's commands, addresses and `shell run` lines — a komponent child's included — are held until accepted, each at its own text.
     #[test]
     fn an_imported_file_runs_nothing_until_each_item_is_accepted_at_its_text() {
         let mut library = imported(library([parsed("shared", SHARED)]));

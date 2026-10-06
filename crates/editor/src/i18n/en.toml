@@ -36,6 +36,13 @@ remove = "Remove"
 new_name = "New name"
 colour_hint = "token or #hex"
 
+[editor.origin]
+here = "Set here"
+from = "From {rule} in {file}"
+beyond = "Overridden by {rule} in {file}: a change here would not show"
+default = "Default"
+komponent = "From the komponent in {file}"
+
 [editor.expr]
 visible = "Shown while"
 always = "Always shown"
@@ -51,7 +58,6 @@ sources = "Sources ({count})"
 repeats = "Repeated over a list"
 repeat = "{group}: one copy per item"
 once = "Drawn once"
-inherited = "Set by a broader level: Remove takes it back here"
 beyond = "{rule} in {file} gives this and comes after where this popover writes, so taking it back here would change nothing on screen: change it there"
 beyond_komponent = "This is the komponent's own, written in {file}: change it there, or set a parameter the komponent reads"
 
@@ -445,6 +451,9 @@ pixels = "{width} × {height}"
 cell = "col {col} · row {row}"
 into = "Into the container"
 stack = "Stack"
+
+[editor.select]
+hidden = "Hidden: visible = {expr} is false"
 
 [editor.strip]
 grip = "Drag to move the strip"

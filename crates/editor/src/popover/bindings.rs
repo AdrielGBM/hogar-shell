@@ -295,9 +295,31 @@ fn binding_row(
         )?),
         field,
     ];
-    if inherited {
-        column.push(rows::note(|| telar::t!("editor.expr.inherited"))?);
-    }
+    let writer = (*original)
+        .as_ref()
+        .filter(|_| inherited)
+        .and_then(|(path, _)| draft.resolved.bindings.get(path))
+        .map(|bound| bound.origin.clone());
+    let inherits_at = (*original).as_ref().map(|(path, _)| path.clone());
+    let standing = draft.clone();
+    let said = move || {
+        let path = target.get();
+        let own = standing
+            .instance()
+            .with(|held| held.bindings.contains_key(&path));
+        let inheriting = inherits_at.as_ref() == Some(&path) && writer.is_some();
+        match (own, inheriting && standing.bindings().contains_key(&path)) {
+            (true, _) => super::origin::Provenance::Here.said(),
+            (false, true) => super::origin::inherited_said(
+                writer.as_ref(),
+                writer
+                    .as_ref()
+                    .is_some_and(|writer| !standing.lays_over(writer)),
+            ),
+            (false, false) => super::origin::Provenance::Default.said(),
+        }
+    };
+    column.push(rows::note(said)?);
     Ok(box_item(Container::new(
         LayoutStyle::new()
             .flex_column()

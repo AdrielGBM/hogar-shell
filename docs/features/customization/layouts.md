@@ -60,12 +60,24 @@ A group draws its instances as a loose run unless it says how to `arrange` them.
 by the wheel, the arrow keys or its dots (a Smart Stack), and is the only arrangement a zone takes, whatever area holds it.
 A group on a cell can also be a container: `row` and `column` share its box by each instance's `weight`, `grid` puts each
 instance on the `cell` it names in the group's own `cols` × `rows` (one with no cell takes the first free one), and `free`
-on the `rect` it names, in fractions of the box. Until containers are drawn, the shell draws one as a loose run.
+on the `rect` it names, in fractions of the box. A container covers exactly the cells it is placed on, whatever it
+holds, and draws each instance at the largest widget size its module has that fits the instance's share, or as a chip
+once none fits, so an instance's `representation` is not read inside one; a `weight` counts between 0.25 and 8, and one
+outside is reported and held to the nearer bound.
 
 A layout `panel` is the panel its owner opens, arranged by you: an instance with no layout panel opens its module's own
-[panel](../surfaces/panels.md) — a [drawer](../surfaces/drawers.md) or a float, as its `open` says. Like containers, some
-keys are read and checked but **not drawn yet**: `panel` areas (until they are, the owner opens what it opened before),
-`border` and `shadow` in any `style`, the whole `style` of a group or an instance, and a bar's `shape.fillet`.
+[panel](../surfaces/panels.md) — a [drawer](../surfaces/drawers.md) or a float, as its `open` says. `panel` areas
+are read and checked but **not drawn yet**: until they are, the owner opens what it opened before.
+
+A `style` paints the box it is written on — an area, a group or an instance — with its `fill`, `opacity`, `radius`,
+`padding`, a `border` and a `shadow` from `1` to `3`; no corner rounds past half the box's short side. A container, and
+any group whose style names something, is drawn on a plate — the theme's `overlay` at 0.6 — wherever its style says
+nothing, and on a bar that plate holds the group's chips together in their zone. An instance's style replaces the plate
+its widget draws, at `[theme] opacity` and `[theme] radius` where it names no `opacity` or `radius`. A shadow falls past
+its box and never takes a press. On a bar only `bar` mode has a strip to go around or lift: a `border` or `shadow` written
+on a bar in `sections` or `chips` mode is reported by `layout check`, and each section or chip carries its own. A mode a
+bar takes from `[shape]` in the config rather than from its own `shape` is judged only where the bar is drawn, not by
+the check.
 
 Ids are what everything addresses. An area's id is unique on its layer, a group's within its area, and an instance's
 across the whole layout — `clock`, then `clock-2` — which is what IPC, the editor and [rules](data-and-rules.md#rules)

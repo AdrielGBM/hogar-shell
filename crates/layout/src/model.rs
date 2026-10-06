@@ -983,7 +983,7 @@ impl<'de> Deserialize<'de> for Corners {
 /// How far a box holds what it contains off each of its edges, in logical pixels, clockwise from the top.
 ///
 /// Written the way `Corners` is: one number when every side agrees, and `[top, right, bottom, left]` when they do not.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sides([f32; 4]);
 
 impl Sides {
@@ -1103,9 +1103,9 @@ pub struct Style {
     pub opacity: Option<f32>,
     /// How far an area or a group holds its contents off its own edges: one number for all four sides, or `[top, right, bottom, left]`. A bar that names none pads by half its spacing in `bar` mode and not at all in the others. An instance lays out its own content, so one written on an instance is reported.
     pub padding: Option<Sides>,
-    /// A line around the box. A level that writes one of its keys keeps the other from the level under it. Read and checked, but not drawn yet.
+    /// A line around the box. A level that writes one of its keys keeps the other from the level under it. On a bar only `bar` mode has a strip to go around, so one written on a bar in `sections` or `chips` mode is reported and not drawn.
     pub border: Option<Border>,
-    /// How far the box is lifted off what is behind it, in one of four steps: `0` is no shadow, `1` a soft one, `2` a medium one and `3` a strong one. Left out, it is what its kind has. On a bar in `chips` mode each chip carries its own, so one written on the bar is reported. Read and checked, but not drawn yet.
+    /// How far the box is lifted off what is behind it, in one of four steps: `0` is no shadow, `1` a soft one, `2` a medium one and `3` a strong one. Left out, it is what its kind has. On a bar only `bar` mode has a strip to lift, so one written on a bar in `sections` or `chips` mode is reported and not drawn: each section or chip carries its own. It is drawn past the box and never takes a press.
     pub shadow: Option<u8>,
     /// What happens to what is behind an area. Only an area has a backdrop, so one written on a group or an instance is reported.
     pub backdrop: Option<Backdrop>,
@@ -1114,6 +1114,10 @@ pub struct Style {
 impl Style {
     /// The strongest `shadow` step.
     pub const DEEPEST_SHADOW: u8 = 3;
+
+    pub fn draws_edge(&self) -> bool {
+        self.border.as_ref().is_some_and(Border::draws)
+    }
 
     pub fn is_empty(&self) -> bool {
         self.fill.is_none()
@@ -1155,6 +1159,11 @@ impl Border {
 
     pub fn width(&self) -> f32 {
         self.width.unwrap_or(Self::WIDTH)
+    }
+
+    pub fn draws(&self) -> bool {
+        let width = self.width();
+        width > 0.0 && width.is_finite()
     }
 
     pub fn color(&self, theme: &NordTheme) -> Color {
@@ -1248,7 +1257,7 @@ pub struct BarShape {
     pub spacing: Option<f32>,
     /// How far its corners are rounded: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]` so a bar that meets another at a corner can square that corner alone.
     pub radius: Option<Corners>,
-    /// The concave radius, in logical pixels, at the bar's inner corners, so the screen's free space meets the bar in a curve. Only a bar in `bar` mode has a strip to curve out of, and there is none unless set. Read and checked, but not drawn yet.
+    /// The concave radius, in logical pixels, at the bar's inner corners, so the screen's free space meets the bar in a curve. Only a bar in `bar` mode has a strip to curve out of, and there is none unless set. While the bar hides itself the curve sits at each of its inner ends and fades with it; a bar that reserves draws it at the usable rect's corner wherever it runs over a reserving bar crossing its end. That corner piece belongs to the bar that owns the corner, the horizontal one, and takes its colour; its radius is the owner's fillet, or else the fillet of the vertical bar it meets there. The curve never takes input.
     pub fillet: Option<f32>,
 }
 
@@ -1334,7 +1343,7 @@ pub struct Group {
     pub gap: Option<f32>,
     /// An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a `pages` group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed, nor in a `grid` or `free` group, where each child has a place of its own. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn.
     pub repeat: Option<Expr>,
-    /// How the group is painted, as one box around its children. It is the group's own rather than what it holds, so a level that names another komponent keeps it. Read and checked, but not drawn yet.
+    /// How the group is painted, as one box around its children. It is the group's own rather than what it holds, so a level that names another komponent keeps it. A group that arranges its children, or whose style names anything, is drawn on a plate: the theme's `overlay` at 0.6, rounded and padded off the shell's scale, wherever the style says nothing. On a bar that plate holds the group's chips together in their zone.
     #[serde(skip_serializing_if = "Style::is_empty")]
     pub style: Style,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1467,7 +1476,7 @@ pub struct Instance {
     pub id: InstanceId,
     /// The module descriptor this instance shows. Required the first time the instance is named.
     pub module: Option<String>,
-    /// How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`.
+    /// How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`. Inside a container it is not read: the container draws the largest size its module has that fits the share.
     pub representation: Option<Representation>,
     /// Option overrides for this instance alone, over its module's defaults: any key of the module's own section (`[clock]` for a clock), and any of `[modules.<id>]` — `accent`, `variant`, `open` and the sizes of what it opens. A key the module does not have is an error.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]
@@ -1475,10 +1484,10 @@ pub struct Instance {
     /// Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`), or one of `style.fill` and `style.border.color`, colours, and `style.opacity`, a number. Each value is laid over `options` or `style` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, Expr>,
-    /// How the instance's own box is painted, over what its kind of chip or widget draws. Its `fill`, `opacity` and `border.color` can be bound like an option, as `style.fill`, `style.opacity` and `style.border.color`. Read and checked, but not drawn yet.
+    /// How the instance's own box is painted, over what its kind of chip or widget draws. Its `fill`, `opacity` and `border.color` can be bound like an option, as `style.fill`, `style.opacity` and `style.border.color`. Written, it replaces the plate a widget draws itself: a `fill` or `opacity` it leaves out is the theme's `surface` at `[theme] opacity`, and a `radius` `[theme] radius`; a chip keeps what it rests on in its bar's mode until the style names a fill.
     #[serde(skip_serializing_if = "Style::is_empty")]
     pub style: Style,
-    /// How much of a `row` or `column` group's length this child takes against its siblings' weights: one of `2` beside two of `1` takes half. 1 unless set, and above 0.
+    /// How much of a `row` or `column` group's length this child takes against its siblings' weights: one of `2` beside two of `1` takes half. 1 unless set, and counted between 0.25 and 8: one outside is held to the nearer bound and reported.
     pub weight: Option<f32>,
     /// Which cells of a `grid` group's inner grid this child covers. A child that names none takes the first free cell in reading order, and one that runs past the inner grid is pulled back onto it.
     pub cell: Option<ChildCell>,
@@ -1490,6 +1499,18 @@ pub struct Instance {
     /// Bindings a level under this one gave the instance that this level takes back, each as `bindings.<path>`: `unset = ["bindings.accent"]` puts back the accent its options give it where a broader rule drives it by an expression. A path has to be one `bindings` could hold, the way an area takes back `visible`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unset: Vec<Unset>,
+}
+
+impl Instance {
+    /// The least and the most a `weight` counts for.
+    pub const WEIGHTS: (f32, f32) = (0.25, 8.0);
+
+    /// The share of its group's length this child takes: its `weight` held within [`Self::WEIGHTS`], and 1 where it names none or one that is not above 0.
+    pub fn weight_share(&self) -> f32 {
+        self.weight
+            .filter(|weight| *weight > 0.0 && weight.is_finite())
+            .map_or(1.0, |weight| weight.clamp(Self::WEIGHTS.0, Self::WEIGHTS.1))
+    }
 }
 
 /// How big a placed module is drawn, which is the same module seen at a different size rather than a different module.

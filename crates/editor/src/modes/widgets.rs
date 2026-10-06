@@ -306,14 +306,13 @@ fn target(
         .styled_by(styled)
         .cursor(Cursor::Grab),
         edit.transaction(),
-        move |_| {
-            let point = surfaces::menu::pointer()?;
+        move |pressed| {
             let node = taking()?;
             let rect = placed();
             frozen.set(Some(rect));
             dragging.set(Some(widgets(&output, layer)));
             session::select(Selection::Instance(node.clone()));
-            Some(Carried::of(node, rect, point, &output, layer))
+            Some(Carried::of(node, rect, pressed, &output, layer))
         },
         move |carried, _| {
             if let Some(point) = surfaces::menu::pointer() {
@@ -387,6 +386,7 @@ impl Carried {
                 self.size.0,
                 self.size.1,
             )),
+            guides: Vec::new(),
         }));
         let planned = landed.and_then(|(onto, landing, aimed)| {
             let before = edit.transaction().before()?;

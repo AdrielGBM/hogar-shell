@@ -36,6 +36,13 @@ remove = "Quitar"
 new_name = "Nombre nuevo"
 colour_hint = "token o #hex"
 
+[editor.origin]
+here = "Fijado aquí"
+from = "De {rule} en {file}"
+beyond = "Lo sustituye {rule} en {file}: un cambio aquí no se vería"
+default = "Predeterminado"
+komponent = "Del componente en {file}"
+
 [editor.expr]
 visible = "Visible mientras"
 always = "Siempre visible"
@@ -51,7 +58,6 @@ sources = "Fuentes ({count})"
 repeats = "Repetido sobre una lista"
 repeat = "{group}: una copia por elemento"
 once = "Se dibuja una vez"
-inherited = "Lo fija un nivel más amplio: Quitar lo retira aquí"
 beyond = "Esto lo da {rule} en {file}, que va después de donde escribe este panel, así que quitarlo aquí no cambiaría nada en pantalla: cámbialo allí"
 beyond_komponent = "Esto es del propio componente, escrito en {file}: cámbialo allí, o fija un parámetro que lea el componente"
 
@@ -445,6 +451,9 @@ pixels = "{width} × {height}"
 cell = "col {col} · fila {row}"
 into = "Meter en el contenedor"
 stack = "Apilar"
+
+[editor.select]
+hidden = "Oculto: visible = {expr} es falso"
 
 [editor.strip]
 grip = "Arrastrar para mover la tira"

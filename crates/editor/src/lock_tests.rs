@@ -1,4 +1,4 @@
-//! Lock mode (T-7.5): the background and desktop tools working on a preview of the lock screen that is checked the way a real lock is, the prompt moved and restyled but never removed, how much a locked screen may reveal switched live, and no session lock taken or touched by any of it.
+//! Lock mode: the background and desktop tools working on a preview of the lock screen that is checked the way a real lock is, the prompt moved and restyled but never removed, how much a locked screen may reveal switched live, and no session lock taken or touched by any of it.
 
 #[cfg(test)]
 mod tests {
@@ -583,12 +583,12 @@ mod tests {
             desktop::added(&layout, &desktop, LayerKind::Lock, &grid, &adding("mixer")).is_err()
         );
         let offered: Vec<String> = palette::lines(LayerKind::Lock, "")
-                .into_iter()
-                .filter_map(|line| match line {
-                    palette::Line::Entry { name, .. } => Some(name),
-                    palette::Line::Heading(_) => None,
-                })
-                .collect();
+            .into_iter()
+            .filter_map(|line| match line {
+                palette::Line::Entry { name, .. } => Some(name),
+                palette::Line::Heading(_) => None,
+            })
+            .collect();
         assert!(!offered.iter().any(|name| name == "mixer"), "{offered:?}");
         assert!(offered.iter().any(|name| name == "clock"), "{offered:?}");
     }

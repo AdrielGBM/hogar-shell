@@ -124,7 +124,7 @@ pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
         check_bar_corners(&rule.layers, &scope, &at, &file, &mut report);
         check_cell_areas(&rule.layers, &at, &file, &mut report);
         check_styles(&rule.layers, &at, &file, &mut report);
-        check_chip_bars(&rule.layers, &scope, &at, &file, &mut report);
+        check_stripless_bars(&rule.layers, &scope, &at, &file, &mut report);
         check_workspace_rules(layout, rule, &at, &file, catalogue, &mut report);
     }
     check_sources(layout, &file, catalogue, &mut report);
@@ -723,19 +723,26 @@ fn check_style(style: &Style, holder: Styled, at: &str, file: &str, report: &mut
     }
 }
 
-/// A bar in `chips` mode paints no strip, so a border or a shadow on the bar would have no box to go around: each chip carries its own. Judged on the bar as this level and the broader ones of the same file merge it, and reported at the level that writes either half.
-fn check_chip_bars(layers: &Layers, scope: &Layers, at: &str, file: &str, report: &mut Report) {
+/// A bar in `sections` or `chips` mode paints no strip, so a border or a shadow on the bar would have no box to go around: each section or chip carries its own. Judged on the bar as this level and the broader ones of the same file merge it, and reported at the level that writes either half. A mode the bar leaves to `[shape]` in the config is not seen here and is judged where the bar is drawn.
+fn check_stripless_bars(
+    layers: &Layers,
+    scope: &Layers,
+    at: &str,
+    file: &str,
+    report: &mut Report,
+) {
     for (kind, layer) in layers.each() {
         let merged = scope.get(kind);
         for area in &layer.areas {
             let Some(held) = merged.areas.iter().find(|held| held.id == area.id) else {
                 continue;
             };
-            let chips = matches!(
+            let stripless = matches!(
                 &held.kind,
-                Some(AreaKind::Bar { shape, .. }) if shape.mode == Some(config::Shape::Chips)
+                Some(AreaKind::Bar { shape, .. })
+                    if matches!(shape.mode, Some(config::Shape::Sections | config::Shape::Chips))
             );
-            if !chips {
+            if !stripless {
                 continue;
             }
             let writes_mode = matches!(
@@ -759,7 +766,7 @@ fn check_chip_bars(layers: &Layers, scope: &Layers, at: &str, file: &str, report
                     report.warn(Finding::new(
                         file,
                         format!("{path}.{key}"),
-                        util::message!("finding.chips_edge", key = key),
+                        util::message!("finding.stripless_edge", key = key),
                     ));
                 }
             }
@@ -1058,6 +1065,19 @@ fn check_child_place(
             file,
             format!("{at}.weight"),
             util::message!("finding.weight_not_positive", weight = weight),
+        ));
+    } else if let Some(weight) = written.and_then(|written| written.weight)
+        && !(Instance::WEIGHTS.0..=Instance::WEIGHTS.1).contains(&weight)
+    {
+        report.warn(Finding::new(
+            file,
+            format!("{at}.weight"),
+            util::message!(
+                "finding.weight_out_of_range",
+                weight = weight,
+                least = Instance::WEIGHTS.0,
+                most = Instance::WEIGHTS.1
+            ),
         ));
     }
     let flows = matches!(arrange, Some(Arrange::Row | Arrange::Column));

@@ -1191,7 +1191,7 @@ mod tests {
         }
     }
 
-    /// A module's actions are rows of its context menu (T-6.4), so each one has a name there in every language the shell speaks.
+    /// A module's actions are rows of its context menu, so each one has a name there in every language the shell speaks.
     #[test]
     fn every_module_action_is_named_in_the_context_menu() {
         for module in MODULES {
@@ -1228,7 +1228,7 @@ mod tests {
         }
     }
 
-    /// The inspector (T-6.5) draws a control per option an instance can set, read off the same declaration the schema prints: so every option of every module is typed, every enum lists what it may be, and no module declares a key its presentation already has, which one instance option could not tell apart.
+    /// The inspector draws a control per option an instance can set, read off the same declaration the schema prints: so every option of every module is typed, every enum lists what it may be, and no module declares a key its presentation already has, which one instance option could not tell apart.
     #[test]
     fn every_module_option_carries_a_control_the_inspector_can_draw() {
         use config::fields::Control;
@@ -1303,7 +1303,7 @@ mod tests {
         );
     }
 
-    /// T-6.5: an instance's popover builds a row for every option its module lets it set, whatever the option's control — a list or a table of them included.
+    /// An instance's popover builds a row for every option its module lets it set, whatever the option's control — a list or a table of them included.
     #[test]
     fn the_inspector_builds_a_row_for_every_option_of_every_module() {
         use editor::popover::{self, InstanceDraft};

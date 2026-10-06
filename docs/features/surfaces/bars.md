@@ -79,6 +79,18 @@ unset follows the theme. See [`BarShape`](../../reference/layout.md) in the layo
 
 `[shape] frame` draws a ring around the screen out of every bar.
 
+A bar that stays on screen owns the corners it shares with a vertical bar, so it runs the whole edge. A bar that
+`autohide`s yields them instead: it starts after the reserving bar at its side that stays on screen, so it never
+slides in underneath it. A vertical bar that hides itself leaves only its peek strip, which it does not yield to.
+
+`shape.fillet` curves the free space into a bar drawn as one strip (`mode = "bar"`; it is not drawn in `sections` or
+`chips`). On a bar that hides itself the curve sits at each of its inner ends and fades with it. On a bar that
+reserves, it rounds the corners of the usable area where the bar runs over a reserving bar crossing its end —
+including under `[shape] frame`, where it restores the rounded inner corners the ring leaves square. That corner piece
+belongs to the bar that owns the corner, the horizontal one, and takes its colour; its radius is that bar's own
+`shape.fillet`, or else the fillet of the vertical bar it meets there, so a fillet written only on the vertical bar
+still rounds the corner. The curve only paints: it never takes input.
+
 ## Auto-hide
 
 An `autohide` table on a bar area is what makes it hide itself. Its absence is what "always on screen" means —

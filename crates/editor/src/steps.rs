@@ -487,17 +487,6 @@ fn set_rect(kind: &mut AreaKind, to: layout::Rect) {
     }
 }
 
-fn rect_of(kind: &ResolvedAreaKind) -> Option<layout::Rect> {
-    match kind {
-        ResolvedAreaKind::Grid { rect, .. }
-        | ResolvedAreaKind::WallpaperRegion { rect, .. }
-        | ResolvedAreaKind::Texture { rect, .. }
-        | ResolvedAreaKind::Free { rect, .. }
-        | ResolvedAreaKind::Prompt { rect } => Some(*rect),
-        _ => None,
-    }
-}
-
 fn move_area(
     target: &Target,
     draft: &Layout,
@@ -567,7 +556,7 @@ fn move_area(
             }))
         }
         other => {
-            let rect = rect_of(&other).ok_or_else(|| target.cannot())?;
+            let rect = other.rect().ok_or_else(|| target.cannot())?;
             let to = nudged(rect, direction);
             unchanged(to == rect)?;
             Ok(with_kind(&written, kind, |geometry| set_rect(geometry, to)))
@@ -630,7 +619,7 @@ fn resize_area(
             }))
         }
         other => {
-            let rect = rect_of(&other).ok_or_else(|| target.cannot())?;
+            let rect = other.rect().ok_or_else(|| target.cannot())?;
             let smallest = match other {
                 ResolvedAreaKind::Prompt { .. } => layout::SMALLEST_PROMPT,
                 _ => RECT_STEP,

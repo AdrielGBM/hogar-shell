@@ -2,15 +2,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use telar::{
-    AlignItems, BorderRadius, ChildSlot, Clip, ClippedItem, Color, Container, JustifyContent,
-    LayoutError, LayoutItem, LayoutStyle, RectStyle, RwSignal, Slots, StyledContainer,
-    box_transform, motion::Animated, track_layout,
+    AlignItems, BorderRadius, ChildSlot, Clip, ClippedItem, Color, Container, Gradient,
+    JustifyContent, LayoutError, LayoutItem, LayoutStyle, Paint, RectStyle, RwSignal, Slots,
+    StyledContainer, box_transform, motion::Animated, track_layout,
 };
 
 use crate::actions::{Bound, Wheel};
 use crate::area::Surround;
+use crate::container;
 use crate::expressions::{Expressions, Overlay};
 use crate::layer_window::{LayerWindowContext, Reserved};
+use crate::look::{Look, Rest};
 use crate::rects;
 use crate::transient::chips::Site;
 use crate::transient::standoff;
@@ -53,13 +55,14 @@ pub fn build_bar(
         )));
     };
     let config = surround.config;
-    let own_corners = shape.radius;
+    let (own_corners, fillet) = (shape.radius, shape.fillet);
     let shape = bar_shape(config, shape);
     let run = run_of(
         edge,
         surround.bounds,
         surround.reserved,
         config.gap_of(&shape) as f32,
+        autohide.is_some(),
     );
     let zones = zones_of(&area.groups);
     let site = Site {
@@ -80,6 +83,7 @@ pub fn build_bar(
         thickness,
         shape,
         corners: bar_corners(config, own_corners, shape),
+        fillet: fillet_in(shape.mode, fillet),
         dress: Dress::of(config, &area.style, &surround.theme),
         abut: ends_abut(length, offset, run),
         theme: surround.theme,
@@ -115,13 +119,20 @@ pub fn strip_of_area(area: &ResolvedArea, surround: Surround) -> telar::Rect {
         length,
         offset,
         shape,
+        autohide,
         ..
     } = area.kind
     else {
         return surround.bounds;
     };
     let gap = surround.config.gap_of(&bar_shape(surround.config, shape)) as f32;
-    let run = run_of(edge, surround.bounds, surround.reserved, gap);
+    let run = run_of(
+        edge,
+        surround.bounds,
+        surround.reserved,
+        gap,
+        autohide.is_some(),
+    );
     strip_of(edge, thickness, length, offset, run, gap, surround.bounds)
 }
 
@@ -145,8 +156,14 @@ impl Span {
 }
 
 /// The stretch of `edge` a bar floating `gap` off it places itself along, on the output whose box is `bounds` and whose reserving areas take `reserved`: where it starts, and how long it is.
-pub fn run_along(edge: Edge, bounds: telar::Rect, reserved: Reserved, gap: f32) -> (f32, f32) {
-    let run = run_of(edge, bounds, reserved, gap);
+pub fn run_along(
+    edge: Edge,
+    bounds: telar::Rect,
+    reserved: Reserved,
+    gap: f32,
+    hides: bool,
+) -> (f32, f32) {
+    let run = run_of(edge, bounds, reserved, gap, hides);
     (run.start, run.length)
 }
 
@@ -163,13 +180,14 @@ pub fn span_of(
         length,
         offset,
         shape,
+        autohide,
         ..
     } = area.kind
     else {
         return None;
     };
     let gap = config.gap_of(&bar_shape(config, shape)) as f32;
-    let run = run_of(edge, bounds, reserved, gap);
+    let run = run_of(edge, bounds, reserved, gap, autohide.is_some());
     let strip = strip_of(edge, thickness, length, offset, run, gap, bounds);
     let (at, along) = match edge.is_vertical() {
         true => (strip.y, strip.height),
@@ -185,21 +203,28 @@ pub fn span_of(
 
 /// The stretch of its edge a bar has to place itself along: where it starts and how long it is, in the window's own coordinates.
 ///
-/// A horizontal bar owns its corners, so it runs the whole edge less its own gap at each end; a vertical one stops where the bar above or below it has already reserved, and falls back to its own gap where neither has. That is the corner rule the shell has always drawn by ([`config::Config::corner_owner`]), said once here instead of once per caller.
-fn run_of(edge: Edge, bounds: telar::Rect, reserved: Reserved, gap: f32) -> Run {
-    if edge.is_horizontal() {
+/// A horizontal bar that stays on screen owns its corners, so it runs the whole edge less its own gap at each end. Every other bar stops where the bars crossing its edge have already reserved, and falls back to its own gap where none has: a vertical one yields to the bar above or below it, and a horizontal one that hides itself yields to the vertical bars at its sides that stay on screen, since sliding in under a strip that is always there would be drawn behind it. A vertical bar that hides itself leaves only its peek strip, which is nothing to yield to. That is the corner rule, said once here instead of once per caller.
+fn run_of(edge: Edge, bounds: telar::Rect, reserved: Reserved, gap: f32, hides: bool) -> Run {
+    if edge.is_horizontal() && !hides {
         return Run {
             start: bounds.x + gap,
             length: (bounds.width - 2.0 * gap).max(0.0),
             abut: (false, false),
         };
     }
+    let kept = |side: Edge| match (edge.is_horizontal(), hides) {
+        (false, true) => reserved.on(side),
+        _ => reserved.held_on(side),
+    };
+    let (from, whole, head, foot) = match edge.is_horizontal() {
+        true => (bounds.x, bounds.width, kept(Edge::Left), kept(Edge::Right)),
+        false => (bounds.y, bounds.height, kept(Edge::Top), kept(Edge::Bottom)),
+    };
     let clear = |taken: f32| if taken > 0.0 { taken } else { gap };
-    let (head, foot) = (clear(reserved.top), clear(reserved.bottom));
     Run {
-        start: bounds.y + head,
-        length: (bounds.height - head - foot).max(0.0),
-        abut: (reserved.top > 0.0, reserved.bottom > 0.0),
+        start: from + clear(head),
+        length: (whole - clear(head) - clear(foot)).max(0.0),
+        abut: (head > 0.0, foot > 0.0),
     }
 }
 
@@ -270,11 +295,12 @@ pub fn bar_shape(config: &Config, shape: BarShape) -> ResolvedShape {
     )
 }
 
-/// One thing a zone lays out: a chip, a stacked group's chips shown one at a time in one place, or a repeated group's copies.
+/// One thing a zone lays out: a chip, a stacked group's chips shown one at a time in one place, a repeated group's copies, or a styled group's plate around whichever of those it holds.
 enum Slot<'a> {
     Chip(&'a ResolvedGroup, &'a ResolvedInstance),
     Stacked(&'a ResolvedGroup),
     Repeated(&'a ResolvedGroup),
+    Plated(&'a ResolvedGroup),
 }
 
 /// A bar's three zones, each what is placed in it.
@@ -286,14 +312,9 @@ fn zones_of(groups: &[ResolvedGroup]) -> Zones<'_> {
         groups
             .iter()
             .filter(|group| matches!(group.kind, GroupKind::Zone { zone } if zone == wanted))
-            .flat_map(|group| match (group.repeat.is_some(), group.is_pages()) {
-                (true, _) => vec![Slot::Repeated(group)],
-                (false, true) => vec![Slot::Stacked(group)],
-                (false, false) => group
-                    .children
-                    .iter()
-                    .map(|instance| Slot::Chip(group, instance))
-                    .collect(),
+            .flat_map(|group| match group.style.is_empty() {
+                true => held_by(group),
+                false => vec![Slot::Plated(group)],
             })
             .collect()
     };
@@ -302,6 +323,19 @@ fn zones_of(groups: &[ResolvedGroup]) -> Zones<'_> {
         (run(Zone::Center), Zone::Center),
         (run(Zone::End), Zone::End),
     ]
+}
+
+/// What `group` lays out in its zone, plate aside.
+fn held_by(group: &ResolvedGroup) -> Vec<Slot<'_>> {
+    match (group.repeat.is_some(), group.is_pages()) {
+        (true, _) => vec![Slot::Repeated(group)],
+        (false, true) => vec![Slot::Stacked(group)],
+        (false, false) => group
+            .children
+            .iter()
+            .map(|instance| Slot::Chip(group, instance))
+            .collect(),
+    }
 }
 
 fn justify(zone: Zone) -> JustifyContent {
@@ -320,6 +354,8 @@ struct BarFrame<'a> {
     thickness: f32,
     shape: ResolvedShape,
     corners: BorderRadius,
+    /// The concave radius at the strip's inner ends, set only on a bar drawn as one strip; see [`notches`].
+    fillet: Option<f32>,
     dress: Dress,
     /// Whether the leading and trailing ends meet something; see [`ends_abut`].
     abut: (bool, bool),
@@ -362,6 +398,8 @@ struct Dress {
     fill: Option<Color>,
     alpha: f32,
     padding: Option<Sides>,
+    /// The line and the lift of the strip, which only a bar in `bar` mode has.
+    edge: Look,
 }
 
 impl Dress {
@@ -376,6 +414,7 @@ impl Dress {
                 .unwrap_or_else(|| config.opacity())
                 .clamp(0.0, 1.0),
             padding: style.padding,
+            edge: Look::area(style, theme),
         }
     }
 }
@@ -513,6 +552,172 @@ impl Hiding {
 /// How far a pull from a hidden bar's peek has to travel inward before it brings back a bar that hovering does not.
 pub const PULL: f32 = 12.0;
 
+/// The fillet `shape` draws, resolved against `config`'s own mode: only a bar drawn as a single strip has a strip to curve out of.
+pub(crate) fn fillet_of(config: &Config, shape: BarShape) -> Option<f32> {
+    fillet_in(bar_shape(config, shape).mode, shape.fillet)
+}
+
+/// The fillet a bar in `mode` draws: only one drawn as a single strip has a strip to curve out of.
+fn fillet_in(mode: Shape, fillet: Option<f32>) -> Option<f32> {
+    fillet.filter(|_| matches!(mode, Shape::Bar))
+}
+
+/// One concave piece of a fillet: the square it fills, in the window's coordinates, and where in that square the curve of the free space is centred.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Notch {
+    rect: telar::Rect,
+    centre: telar::Point,
+}
+
+impl Notch {
+    fn new(x: f32, y: f32, radius: f32, centre: (f32, f32)) -> Self {
+        Self {
+            rect: telar::Rect::new(x, y, radius, radius),
+            centre: telar::Point::new(centre.0 * radius, centre.1 * radius),
+        }
+    }
+}
+
+/// The two pieces at the inner ends of `strip`, a bar on `edge` that has hidden itself: each hugs the strip along the side facing the screen and sits at an end of it.
+fn end_notches(edge: Edge, strip: telar::Rect, radius: f32) -> Vec<Notch> {
+    let along = match edge.is_vertical() {
+        true => strip.height,
+        false => strip.width,
+    };
+    let r = radius.min(along / 2.0);
+    if r <= 0.0 {
+        return Vec::new();
+    }
+    let (right, bottom) = (strip.x + strip.width, strip.y + strip.height);
+    match edge {
+        Edge::Top => vec![
+            Notch::new(strip.x, bottom, r, (1.0, 1.0)),
+            Notch::new(right - r, bottom, r, (0.0, 1.0)),
+        ],
+        Edge::Bottom => vec![
+            Notch::new(strip.x, strip.y - r, r, (1.0, 0.0)),
+            Notch::new(right - r, strip.y - r, r, (0.0, 0.0)),
+        ],
+        Edge::Left => vec![
+            Notch::new(right, strip.y, r, (1.0, 1.0)),
+            Notch::new(right, bottom - r, r, (1.0, 0.0)),
+        ],
+        Edge::Right => vec![
+            Notch::new(strip.x - r, strip.y, r, (0.0, 1.0)),
+            Notch::new(strip.x - r, bottom - r, r, (0.0, 0.0)),
+        ],
+    }
+}
+
+/// The pieces at the corners of the usable rect that the horizontal bar `strip` owns: one where a reserving bar crosses its end and the strip runs over the corner, so the windows' area is rounded against it. A vertical bar owns no corner and draws none: the corner is the horizontal bar's, which is also whose colour the piece takes. Its radius is `own`, the owner's fillet, or else the fillet of the vertical bar it meets there.
+fn corner_notches(
+    edge: Edge,
+    strip: telar::Rect,
+    bounds: telar::Rect,
+    reserved: Reserved,
+    own: Option<f32>,
+) -> Vec<Notch> {
+    if !edge.is_horizontal() {
+        return Vec::new();
+    }
+    let usable = reserved.box_of(layout::Within::Usable, (bounds.width, bounds.height));
+    let (left, right) = (bounds.x + usable.x, bounds.x + usable.x + usable.width);
+    let (top, bottom) = (bounds.y + usable.y, bounds.y + usable.y + usable.height);
+    let radius = |side: Edge| {
+        own.or(reserved.fillet_on(side))
+            .unwrap_or(0.0)
+            .min(usable.width / 2.0)
+            .min(usable.height / 2.0)
+    };
+    let (r_left, r_right) = (radius(Edge::Left), radius(Edge::Right));
+    let strip_right = strip.x + strip.width;
+    let flush = match edge {
+        Edge::Top => (strip.y + strip.height - top).abs() < 0.5,
+        _ => (strip.y - bottom).abs() < 0.5,
+    };
+    if !flush {
+        return Vec::new();
+    }
+    let mut pieces = Vec::new();
+    if reserved.left > 0.0 && r_left > 0.0 && strip.x <= left + 0.5 && strip_right >= left + r_left
+    {
+        pieces.push(match edge {
+            Edge::Top => Notch::new(left, top, r_left, (1.0, 1.0)),
+            _ => Notch::new(left, bottom - r_left, r_left, (1.0, 0.0)),
+        });
+    }
+    if reserved.right > 0.0
+        && r_right > 0.0
+        && strip_right >= right - 0.5
+        && strip.x <= right - r_right
+    {
+        pieces.push(match edge {
+            Edge::Top => Notch::new(right - r_right, top, r_right, (0.0, 1.0)),
+            _ => Notch::new(right - r_right, bottom - r_right, r_right, (0.0, 0.0)),
+        });
+    }
+    pieces
+}
+
+/// Every piece of the bar's fillet: at its inner ends while it hides itself, at the usable rect's corners it owns while it reserves them. Nothing on a bar that is not one strip.
+fn notches(chrome: &BarFrame) -> Vec<Notch> {
+    if !matches!(chrome.shape.mode, Shape::Bar) {
+        return Vec::new();
+    }
+    let own = chrome.fillet.filter(|radius| *radius > 0.0);
+    match chrome.autohide {
+        Some(_) => own.map_or_else(Vec::new, |radius| {
+            end_notches(chrome.edge, chrome.strip, radius)
+        }),
+        None if chrome.area.reserve => corner_notches(
+            chrome.edge,
+            chrome.strip,
+            chrome.surround.bounds,
+            chrome.surround.reserved,
+            own,
+        ),
+        None => Vec::new(),
+    }
+}
+
+/// `notch` as a node of the bar's own box, which `strip` is where: the strip's colour everywhere in its square but the quarter disc the free space keeps. It paints and nothing else, so it claims no input.
+fn notch_item(
+    notch: Notch,
+    strip: telar::Rect,
+    colour: Color,
+    hiding: Option<Hiding>,
+) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    let radius = notch.rect.width;
+    let edge = ((radius - 1.0) / radius).max(0.0);
+    let paint = Gradient::radial(
+        notch.centre,
+        radius,
+        &[
+            (0.0, Color::TRANSPARENT),
+            (edge, Color::TRANSPARENT),
+            (1.0, colour),
+        ],
+    );
+    let local = telar::Rect::new(
+        notch.rect.x - strip.x,
+        notch.rect.y - strip.y,
+        radius,
+        radius,
+    );
+    let piece = StyledContainer::new(
+        crate::area::at(local),
+        move |_| RectStyle {
+            fill: Some(Paint::Gradient(paint)),
+            ..RectStyle::default()
+        },
+        Vec::new(),
+    )?;
+    Ok(Box::new(match hiding {
+        Some(hiding) => piece.with_opacity(move || hiding.shown.get()),
+        None => piece,
+    }))
+}
+
 /// Cuts the bar off at its own strip, and takes it off its edge while it hides itself ([`Hiding`]).
 ///
 /// A chip is routinely a shade wider than the strip its zone was given — a padded box is narrower than the bar and a square chip is sized from the bar itself — and while a bar had a surface of its own, the surface cut that overhang off for nothing. With one window per layer there is no surface to cut it: the overhang lands on the desktop, drawn but claimed by nothing, so a press on it reaches the application underneath. The clip is at the bar's root rather than at a zone for exactly that reason: what a zone cuts is one run running into another, and what this cuts is the bar running off its own edge.
@@ -526,9 +731,24 @@ fn strip_clipped(chrome: &BarFrame, bar: StyledContainer) -> Built {
     if let Some(hiding) = hiding.filter(|hiding| !hiding.on_hover) {
         children.push(hiding.puller(size)?);
     }
+    let colour = strip_fill(chrome.config, Shape::Bar, chrome.dress, chrome.theme.base);
+    if colour.a > 0.0 {
+        for notch in notches(chrome) {
+            children.push(notch_item(notch, chrome.strip, colour, hiding)?);
+        }
+    }
+    let shadow = match chrome.shape.mode {
+        Shape::Bar => chrome.dress.edge.shadow,
+        Shape::Sections | Shape::Chips => None,
+    };
+    let corners = chrome.corners;
     let placed = StyledContainer::new(
         crate::area::at(chrome.strip),
-        |_| RectStyle::default(),
+        move |_| RectStyle {
+            shadow,
+            radius: corners,
+            ..RectStyle::default()
+        },
         children,
     )?;
     Ok(Box::new(match hiding {
@@ -537,7 +757,7 @@ fn strip_clipped(chrome: &BarFrame, bar: StyledContainer) -> Built {
     }))
 }
 
-/// How far each corner of a bar's own background is rounded: the bar's own corners where it names them, else the one radius its shape resolved to. A ring made of rounded pills is four floating bars rather than a frame, so under `[shape] frame` the strip is square. Its rounded *inner* corners went with the surface that drew them: a concave corner at the junction of two strips lies inside neither, so no area can paint it (F-10.23).
+/// How far each corner of a bar's own background is rounded: the bar's own corners where it names them, else the one radius its shape resolved to. A ring made of rounded pills is four floating bars rather than a frame, so under `[shape] frame` the strip is square. Its rounded *inner* corners lie inside neither strip, so they are the pieces of its `shape.fillet` ([`notches`]), not of this.
 fn bar_corners(config: &Config, own: Option<Corners>, shape: ResolvedShape) -> BorderRadius {
     if config.shape.frame {
         return BorderRadius::zero();
@@ -597,6 +817,7 @@ fn build_whole_bar(
         )?);
     }
     let corners = chrome.corners;
+    let border = chrome.dress.edge.border;
     let style = axis(
         crate::area::padded(fill().align_items(AlignItems::CENTER), Some(padding)),
         edge,
@@ -609,7 +830,10 @@ fn build_whole_bar(
                 chrome.surround,
                 StyledContainer::new(
                     style,
-                    move |_r| RectStyle::filled(base, 0.0).with_radius(corners),
+                    move |_r| RectStyle {
+                        border,
+                        ..RectStyle::filled(base, 0.0).with_radius(corners)
+                    },
                     slots,
                 )?,
                 base.a > 0.0,
@@ -915,33 +1139,15 @@ fn build_items(
     radius: f32,
 ) -> Result<Vec<ChildSlot>, LayoutError> {
     let kit = Rc::new(ChipKit::of(chrome, modules, rest, radius));
-    let mut items: Vec<ChildSlot> = Vec::with_capacity(slots.len());
-    let mut spans: Vec<(&GroupId, Vec<RwSignal<telar::Rect>>)> = Vec::new();
-    for slot in slots {
-        match slot {
-            Slot::Chip(group, instance) => {
-                let (item, rect) = kit.chip(&group.id, instance)?;
-                let at = match spans.iter().position(|(id, _)| **id == group.id) {
-                    Some(at) => at,
-                    None => {
-                        spans.push((&group.id, Vec::new()));
-                        spans.len() - 1
-                    }
-                };
-                spans[at].1.extend(rect);
-                items.push(ChildSlot::stat(item));
-            }
-            Slot::Stacked(group) => {
-                items.push(ChildSlot::stat(kit.stacked(group, chrome.surround)?))
-            }
-            Slot::Repeated(group) => items.extend(kit.repeated(group, chrome.surround)),
-        }
-    }
+    let (items, spans) = kit.slots(slots, chrome.surround)?;
     for (group, rects) in spans {
         rects::track_spanning(kit.at.group(group), rects);
     }
     Ok(items)
 }
+
+/// Every group whose chips stand loose in their zone, and the rects of those chips.
+type Spans<'a> = Vec<(&'a GroupId, Vec<RwSignal<telar::Rect>>)>;
 
 /// A chip, and the rect it is tracked by in [`rects`].
 type Tracked = (Box<dyn LayoutItem>, Option<RwSignal<telar::Rect>>);
@@ -958,6 +1164,8 @@ struct ChipKit {
     modules: Rc<[ModuleDescriptor]>,
     rest: Color,
     radius: f32,
+    /// How opaque everything the bar paints is, which a chip's own fill is drawn at unless its style names an opacity.
+    alpha: f32,
     /// The bar itself in [`rects`], which each chip is registered under.
     at: rects::Node,
     audience: Audience,
@@ -976,9 +1184,60 @@ impl ChipKit {
             modules: modules.into(),
             rest,
             radius,
+            alpha: chrome.dress.alpha,
             at: rects::Node::area(chrome.output, chrome.surround.layer, &chrome.area.id),
             audience: chrome.surround.audience,
         }
+    }
+
+    /// Builds each of `slots`, and gathers the chips that stand loose by the group they are of.
+    fn slots<'a>(
+        self: &Rc<Self>,
+        slots: &[Slot<'a>],
+        surround: Surround,
+    ) -> Result<(Vec<ChildSlot>, Spans<'a>), LayoutError> {
+        let mut items: Vec<ChildSlot> = Vec::with_capacity(slots.len());
+        let mut spans: Spans<'a> = Vec::new();
+        for slot in slots {
+            match slot {
+                Slot::Chip(group, instance) => {
+                    let (item, rect) = self.chip(&group.id, instance)?;
+                    let at = match spans.iter().position(|(id, _)| **id == group.id) {
+                        Some(at) => at,
+                        None => {
+                            spans.push((&group.id, Vec::new()));
+                            spans.len() - 1
+                        }
+                    };
+                    spans[at].1.extend(rect);
+                    items.push(ChildSlot::stat(item));
+                }
+                Slot::Stacked(group) => items.push(ChildSlot::stat(self.stacked(group, surround)?)),
+                Slot::Repeated(group) => items.extend(self.repeated(group, surround)),
+                Slot::Plated(group) => items.push(ChildSlot::stat(self.plated(group, surround)?)),
+            }
+        }
+        Ok((items, spans))
+    }
+
+    /// A styled group as one plate in its zone, its chips run along the bar inside it.
+    fn plated(self: &Rc<Self>, group: &ResolvedGroup, surround: Surround) -> Built {
+        let (held, _) = self.slots(&held_by(group), surround)?;
+        let look = Look::plate(&group.style, &self.theme, true);
+        let style = LayoutStyle::new()
+            .align_items(AlignItems::STRETCH)
+            .flex_shrink(0.0)
+            .gap(container::gap_of(group, true));
+        let style = crate::area::padded(
+            axis(style, self.edge),
+            Some(container::padding_of(group, true)),
+        );
+        let node = crate::area::group_box(style, held, Some(look), None)?;
+        // A stacked or repeated group already registered where it is, as one box or by its copies.
+        if group.repeat.is_none() && !group.is_pages() {
+            rects::track(self.at.group(&group.id), node.layout_node());
+        }
+        Ok(node)
     }
 
     /// The host a chip is built under.
@@ -1048,9 +1307,13 @@ impl ChipKit {
             rects::track(at.clone(), item.layout_node());
             return Ok(item);
         };
-        let look = Look {
+        let plate = self.plate_of(instance, overlay);
+        let look = Dressing {
             variant,
-            rest: self.rest,
+            rest: match plate {
+                Some(_) => Color::TRANSPARENT,
+                None => self.rest,
+            },
             accent,
             radius: self.radius,
             edge: self.edge,
@@ -1064,6 +1327,17 @@ impl ChipKit {
         let item = ui::descriptor::guard(id, &host, style, menu, move || {
             placed_chip(&module, &chip, &built, look)
         })?;
+        let item: Box<dyn LayoutItem> = match plate {
+            Some(plate) => Box::new(painted_chrome(
+                StyledContainer::new(
+                    chip_box(&chip, self.edge),
+                    move |rect| plate.paint(rect),
+                    vec![item],
+                )?,
+                plate.fill,
+            )),
+            None => item,
+        };
         if let Some(rect) = track_layout(item.layout_node()) {
             rects::track_chip(
                 at.clone(),
@@ -1075,6 +1349,20 @@ impl ChipKit {
             );
         }
         Ok(item)
+    }
+
+    /// The box an instance's own `style` paints its chip on, in place of what the chip rests on in this mode: that fill, at the bar's opacity, and the chip's corner where the style names neither. `None` while neither it nor a binding styles anything.
+    fn plate_of(&self, instance: &ResolvedInstance, overlay: Option<&Overlay>) -> Option<Look> {
+        Look::of_instance(
+            &instance.style,
+            overlay,
+            &self.theme,
+            Rest {
+                fill: self.rest,
+                opacity: self.alpha,
+                radius: self.radius,
+            },
+        )
     }
 
     /// A stacked group's chips, one at a time where one chip would be.
@@ -1134,7 +1422,7 @@ impl ChipKit {
 }
 
 /// How a chip is dressed on this bar, resolved before its build so the build can run where a failure is caught.
-struct Look {
+struct Dressing {
     variant: Variant,
     rest: Color,
     accent: Color,
@@ -1161,7 +1449,7 @@ fn placed_chip(
     module: &ModuleDescriptor,
     chip: &ChipDef,
     host: &Host,
-    look: Look,
+    look: Dressing,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let content = module.build(host).unwrap_or_else(|| {
         Err(LayoutError::Engine(format!(
@@ -1344,6 +1632,7 @@ mod tests {
             length,
             offset,
             shape,
+            autohide,
             ..
         } = area.kind
         else {
@@ -1352,7 +1641,7 @@ mod tests {
         let reserved = Reserved::of(&resolved_of(area, neighbours), &config);
         let gap = bar_shape(&config, shape).gap as f32;
         let bounds = telar::Rect::new(0.0, 0.0, page.0, page.1);
-        let run = run_of(edge, bounds, reserved, gap);
+        let run = run_of(edge, bounds, reserved, gap, autohide.is_some());
         strip_of(edge, thickness, length, offset, run, gap, bounds)
     }
 
@@ -1912,6 +2201,137 @@ mod tests {
                     "{mode}: a resting chip is painted at the bar's own opacity too"
                 );
             }
+        }
+    }
+
+    /// The strip carries the bar's border and shadow in `bar` mode alone, a styled group draws one plate around its chips, and a styled chip its own box, in every mode. The strip's shadow is drawn beneath the cut at the strip, and a plate's and a chip's over the strip inside it, so none spills off the bar.
+    #[test]
+    fn a_bars_border_and_shadow_are_its_strips_and_its_groups_and_chips_draw_their_own() {
+        let edged = |tree: &telar::ComponentList, line: Color| -> Vec<telar::Rect> {
+            tree.commands()
+                .iter()
+                .filter_map(|command| match command {
+                    telar::DrawCommand::Rect { rect, style }
+                        if style
+                            .border
+                            .is_some_and(|border| border.paint == telar::Paint::Solid(line)) =>
+                    {
+                        Some(*rect)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let cast = |tree: &telar::ComponentList| -> (usize, usize) {
+            let commands = tree.commands();
+            let first_cut = commands
+                .iter()
+                .position(|command| matches!(command, telar::DrawCommand::PushClip { .. }))
+                .expect("the strip is cut");
+            let strip_fill = commands
+                .iter()
+                .position(|command| {
+                    matches!(command, telar::DrawCommand::Rect { rect, style }
+                        if style.fill.is_some() && rect.width >= 600.0)
+                })
+                .unwrap_or(first_cut);
+            let shadows: Vec<usize> = commands
+                .iter()
+                .enumerate()
+                .filter(|(_, command)| {
+                    matches!(command, telar::DrawCommand::Rect { style, .. }
+                        if style.shadow.is_some() && style.fill.is_none() && style.border.is_none())
+                })
+                .map(|(at, _)| at)
+                .collect();
+            let lifted: Vec<usize> = commands
+                .iter()
+                .enumerate()
+                .filter(|(_, command)| {
+                    matches!(command, telar::DrawCommand::Rect { style, .. }
+                        if style.shadow.is_some() && (style.fill.is_some() || style.border.is_some()))
+                })
+                .map(|(at, _)| at)
+                .collect();
+            assert!(
+                shadows.iter().all(|at| *at < first_cut),
+                "the strip's own shadow is drawn before the strip is cut"
+            );
+            assert!(
+                lifted.iter().all(|at| *at > first_cut && *at > strip_fill),
+                "a plate's and a chip's shadow is drawn over the strip, inside its cut"
+            );
+            (shadows.len(), lifted.len())
+        };
+        let line = |hex: &str| Style {
+            border: Some(layout::Border {
+                width: Some(1.0),
+                color: Some(hex.to_string()),
+            }),
+            shadow: Some(1),
+            ..Style::default()
+        };
+        let (red, green, blue) = (
+            Color::from_hex("#ff0000").unwrap(),
+            Color::from_hex("#00ff00").unwrap(),
+            Color::from_hex("#0000ff").unwrap(),
+        );
+        for mode in ["bar", "sections", "chips"] {
+            reset_layout_runtime();
+            set_theme(NordTheme::new());
+            let cfg = Config::default();
+            let shape = shape_of(&format!("mode=\"{mode}\"\n"));
+            let mut area = bar_in(
+                shape,
+                Edge::Top,
+                32.0,
+                [&["dummy", "wide"], &["dummy"], &[]],
+            );
+            area.style = line("#ff0000");
+            area.groups[0].style = line("#00ff00");
+            area.groups[1].children[0].style = line("#0000ff");
+            let bar = built(&cfg, &area, &registry(), (600.0, 32.0)).expect("the bar builds");
+            let page = Container::new(
+                LayoutStyle::new().flex_row().width(600.0).height(32.0),
+                vec![bar],
+            )
+            .unwrap();
+            let root = page.layout_node();
+            let tree = telar::ComponentList::new(page);
+            compute_layout(
+                root,
+                AvailableSpace::Definite(600.0),
+                AvailableSpace::Definite(32.0),
+            )
+            .unwrap();
+
+            let strip = edged(&tree, red);
+            match mode {
+                "bar" => assert_eq!(strip, [telar::Rect::new(0.0, 0.0, 600.0, 32.0)]),
+                _ => assert!(strip.is_empty(), "{mode}: the strip has no edge of its own"),
+            }
+            let plates = edged(&tree, green);
+            assert_eq!(plates.len(), 1, "{mode}: one plate for the group");
+            assert!(
+                plates[0].width > 0.0 && plates[0].height <= 32.0,
+                "{mode}: {:?} lies on the strip",
+                plates[0]
+            );
+            assert_eq!(
+                edged(&tree, blue).len(),
+                1,
+                "{mode}: the styled chip's own box"
+            );
+            let (shadows, lifted) = cast(&tree);
+            assert_eq!(
+                shadows,
+                usize::from(mode == "bar"),
+                "{mode}: the strip's shadow, in `bar` mode alone"
+            );
+            assert_eq!(
+                lifted, 2,
+                "{mode}: the plate and the chip each lift their own box"
+            );
         }
     }
 
@@ -3152,6 +3572,375 @@ mod tests {
                 Some("unwanted"),
                 "{edge:?}: a notch shows the next chip"
             );
+        }
+    }
+
+    fn hide() -> Option<AutoHide> {
+        Some(AutoHide {
+            peek: 2.0,
+            on_hover: true,
+        })
+    }
+
+    fn reserving(edge: Edge) -> ResolvedArea {
+        bar_area(edge, 34.0, [&[], &[], &[]])
+    }
+
+    fn corners_of(area: &ResolvedArea, neighbours: &[ResolvedArea]) -> Vec<Notch> {
+        let config = Config::default();
+        let placed = strip(&config, area, neighbours, SCREEN);
+        let reserved = Reserved::of(&resolved_of(area, neighbours), &Arc::new(config));
+        let bounds = telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1);
+        let edge = area.kind.edge().expect("a bar has an edge");
+        corner_notches(edge, placed, bounds, reserved, Some(12.0))
+    }
+
+    fn usable_of(area: &ResolvedArea, neighbours: &[ResolvedArea]) -> telar::Rect {
+        let reserved = Reserved::of(&resolved_of(area, neighbours), &Arc::new(Config::default()));
+        reserved.box_of(layout::Within::Usable, SCREEN)
+    }
+
+    /// A bar that hides itself stops at the reserving bar at its side, where one that stays owns the corner.
+    #[test]
+    fn a_hiding_horizontal_bar_starts_after_a_reserving_vertical_one() {
+        for (side, other) in [(Edge::Left, Edge::Right), (Edge::Right, Edge::Left)] {
+            for edge in [Edge::Top, Edge::Bottom] {
+                let neighbours = [reserving(side)];
+                let reserved = Reserved::of(
+                    &resolved_of(&reserving(edge), &neighbours),
+                    &Arc::new(Config::default()),
+                );
+                let hidden =
+                    shaped_bar_area(edge, 34.0, [&[], &[], &[]], BarShape::default(), hide());
+                let placed = strip(&Config::default(), &hidden, &neighbours, SCREEN);
+                let owned = strip(&Config::default(), &reserving(edge), &neighbours, SCREEN);
+                let (from, to) = match side {
+                    Edge::Left => (reserved.left, SCREEN.0 - owned.x),
+                    _ => (owned.x, SCREEN.0 - reserved.right),
+                };
+                assert_eq!(
+                    (placed.x, placed.x + placed.width),
+                    (from, to),
+                    "{edge:?} beside {side:?}, nothing on {other:?}"
+                );
+            }
+        }
+    }
+
+    /// A vertical bar that hides itself leaves only its peek strip, so a hiding horizontal bar runs past it as it would past nothing.
+    #[test]
+    fn a_hiding_horizontal_bar_ignores_a_hiding_vertical_one() {
+        for edge in [Edge::Top, Edge::Bottom] {
+            for side in [Edge::Left, Edge::Right] {
+                let hidden =
+                    shaped_bar_area(edge, 34.0, [&[], &[], &[]], BarShape::default(), hide());
+                let beside_hiding = [shaped_bar_area(
+                    side,
+                    34.0,
+                    [&[], &[], &[]],
+                    BarShape::default(),
+                    hide(),
+                )];
+                let owner = strip(&Config::default(), &reserving(edge), &[], SCREEN);
+                assert_eq!(
+                    strip(&Config::default(), &hidden, &beside_hiding, SCREEN),
+                    owner,
+                    "{edge:?} beside a hiding {side:?}"
+                );
+                let beside_steady = [reserving(side)];
+                assert_ne!(
+                    strip(&Config::default(), &hidden, &beside_steady, SCREEN),
+                    owner,
+                    "{edge:?} beside a steady {side:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn run_along_yields_to_vertical_bars_that_stay_only_for_a_bar_that_hides() {
+        let config = Arc::new(Config::default());
+        let bounds = telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1);
+        let steady = Reserved::of(&resolved_of(&reserving(Edge::Left), &[]), &config);
+        let (start, length) = run_along(Edge::Top, bounds, steady, 8.0, false);
+        assert_eq!((start, length), (8.0, SCREEN.0 - 16.0));
+        let (start, _) = run_along(Edge::Top, bounds, steady, 8.0, true);
+        assert_eq!(start, steady.left);
+        let peeking = Reserved::of(
+            &resolved_of(
+                &shaped_bar_area(
+                    Edge::Left,
+                    34.0,
+                    [&[], &[], &[]],
+                    BarShape::default(),
+                    hide(),
+                ),
+                &[],
+            ),
+            &config,
+        );
+        assert_eq!(
+            run_along(Edge::Top, bounds, peeking, 8.0, true),
+            (8.0, SCREEN.0 - 16.0)
+        );
+    }
+
+    /// What the compositor is told to reserve is the deepest of everything on an edge, a hiding bar's peek included, but a bar's run yields only to what stays: a hiding vertical bar that peeks deeper than a steady one does not push the steady bars' runs out.
+    #[test]
+    fn a_run_yields_to_what_stays_not_to_the_deepest_peek_on_the_edge() {
+        let config = Arc::new(Config::default());
+        let bounds = telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1);
+        let peeking = |edge: Edge, peek: f32| {
+            shaped_bar_area(
+                edge,
+                34.0,
+                [&[], &[], &[]],
+                BarShape::default(),
+                Some(AutoHide {
+                    peek,
+                    on_hover: true,
+                }),
+            )
+        };
+        let steady_left = reserving(Edge::Left);
+        let both = Reserved::of(
+            &resolved_of(
+                &peeking(Edge::Left, 80.0),
+                std::slice::from_ref(&steady_left),
+            ),
+            &config,
+        );
+        let alone = Reserved::of(&resolved_of(&steady_left, &[]), &config);
+        assert!(
+            both.left > alone.left,
+            "the compositor still reserves the deepest peek"
+        );
+        assert_eq!(both.held_on(Edge::Left), alone.left);
+        assert_eq!(
+            run_along(Edge::Top, bounds, both, 8.0, true).0,
+            alone.left,
+            "a hiding bar yields to the steady bar only"
+        );
+
+        let steady_top = reserving(Edge::Top);
+        let crowded = Reserved::of(
+            &resolved_of(&peeking(Edge::Top, 80.0), std::slice::from_ref(&steady_top)),
+            &config,
+        );
+        let top_alone = Reserved::of(&resolved_of(&steady_top, &[]), &config);
+        assert_eq!(
+            run_along(Edge::Left, bounds, crowded, 8.0, false),
+            run_along(Edge::Left, bounds, top_alone, 8.0, false),
+            "a steady vertical bar yields to the steady bar above it only"
+        );
+        assert_ne!(
+            run_along(Edge::Left, bounds, crowded, 8.0, true),
+            run_along(Edge::Left, bounds, top_alone, 8.0, true),
+            "a hiding vertical bar keeps yielding to everything reserved"
+        );
+    }
+
+    fn filleted(fillet: Option<f32>) -> BarShape {
+        BarShape {
+            fillet,
+            ..BarShape::default()
+        }
+    }
+
+    /// The corner belongs to the horizontal bar, whose colour it takes; the radius is the owner's fillet, else the neighbour's.
+    #[test]
+    fn a_corner_takes_the_owners_fillet_else_the_neighbours() {
+        let across = |fillet| bar_in(filleted(fillet), Edge::Left, 34.0, [&[], &[], &[]]);
+        let reserved_by = |neighbour: ResolvedArea| {
+            Reserved::of(
+                &resolved_of(&reserving(Edge::Top), &[neighbour]),
+                &Arc::new(Config::default()),
+            )
+        };
+        let bounds = telar::Rect::new(0.0, 0.0, SCREEN.0, SCREEN.1);
+        let placed = strip(
+            &Config::default(),
+            &reserving(Edge::Top),
+            &[across(None)],
+            SCREEN,
+        );
+        let radius = |own, neighbour| {
+            corner_notches(
+                Edge::Top,
+                placed,
+                bounds,
+                reserved_by(across(neighbour)),
+                own,
+            )
+            .first()
+            .map(|notch| notch.rect.width)
+        };
+        assert_eq!(radius(Some(12.0), None), Some(12.0));
+        assert_eq!(radius(None, Some(10.0)), Some(10.0));
+        assert_eq!(radius(Some(12.0), Some(10.0)), Some(12.0));
+        assert_eq!(radius(None, None), None);
+    }
+
+    #[test]
+    fn a_hiding_horizontal_bar_with_nothing_at_its_sides_keeps_the_whole_edge() {
+        let hidden = shaped_bar_area(
+            Edge::Top,
+            34.0,
+            [&[], &[], &[]],
+            BarShape::default(),
+            hide(),
+        );
+        let alone = strip(&Config::default(), &hidden, &[], SCREEN);
+        let owner = strip(&Config::default(), &reserving(Edge::Top), &[], SCREEN);
+        assert_eq!(alone, owner);
+    }
+
+    /// A reserving horizontal bar rounds the usable rect at each corner a reserving vertical bar meets it.
+    #[test]
+    fn a_horizontal_bar_places_a_piece_at_every_corner_it_shares() {
+        for (edge, side) in [
+            (Edge::Top, Edge::Left),
+            (Edge::Top, Edge::Right),
+            (Edge::Bottom, Edge::Left),
+            (Edge::Bottom, Edge::Right),
+        ] {
+            let neighbours = [reserving(side)];
+            let area = reserving(edge);
+            let usable = usable_of(&area, &neighbours);
+            let (right, bottom) = (usable.x + usable.width, usable.y + usable.height);
+            let expected = match (edge, side) {
+                (Edge::Top, Edge::Left) => Notch::new(usable.x, usable.y, 12.0, (1.0, 1.0)),
+                (Edge::Top, _) => Notch::new(right - 12.0, usable.y, 12.0, (0.0, 1.0)),
+                (_, Edge::Left) => Notch::new(usable.x, bottom - 12.0, 12.0, (1.0, 0.0)),
+                _ => Notch::new(right - 12.0, bottom - 12.0, 12.0, (0.0, 0.0)),
+            };
+            assert_eq!(
+                corners_of(&area, &neighbours),
+                vec![expected],
+                "{edge:?} and {side:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_horizontal_bar_between_two_vertical_ones_places_two_pieces() {
+        let neighbours = [reserving(Edge::Left), reserving(Edge::Right)];
+        assert_eq!(corners_of(&reserving(Edge::Top), &neighbours).len(), 2);
+    }
+
+    #[test]
+    fn a_bar_alone_or_a_vertical_one_places_no_corner_piece() {
+        assert!(corners_of(&reserving(Edge::Top), &[]).is_empty());
+        let neighbours = [reserving(Edge::Top)];
+        assert!(corners_of(&reserving(Edge::Left), &neighbours).is_empty());
+    }
+
+    #[test]
+    fn a_fillet_is_drawn_on_a_bar_in_bar_mode_only() {
+        assert_eq!(fillet_in(Shape::Bar, Some(12.0)), Some(12.0));
+        assert_eq!(fillet_in(Shape::Sections, Some(12.0)), None);
+        assert_eq!(fillet_in(Shape::Chips, Some(12.0)), None);
+        assert_eq!(fillet_in(Shape::Bar, None), None);
+    }
+
+    /// While it hides itself, a bar carries a piece at each inner end, whatever the edge.
+    #[test]
+    fn a_hiding_bar_places_a_piece_at_each_inner_end_on_every_edge() {
+        let strip = telar::Rect::new(100.0, 200.0, 300.0, 40.0);
+        let vertical = telar::Rect::new(100.0, 200.0, 40.0, 300.0);
+        let (r, b) = (12.0, 240.0);
+        let cases = [
+            (
+                Edge::Top,
+                strip,
+                [
+                    Notch::new(100.0, b, r, (1.0, 1.0)),
+                    Notch::new(388.0, b, r, (0.0, 1.0)),
+                ],
+            ),
+            (
+                Edge::Bottom,
+                strip,
+                [
+                    Notch::new(100.0, 188.0, r, (1.0, 0.0)),
+                    Notch::new(388.0, 188.0, r, (0.0, 0.0)),
+                ],
+            ),
+            (
+                Edge::Left,
+                vertical,
+                [
+                    Notch::new(140.0, 200.0, r, (1.0, 1.0)),
+                    Notch::new(140.0, 488.0, r, (1.0, 0.0)),
+                ],
+            ),
+            (
+                Edge::Right,
+                vertical,
+                [
+                    Notch::new(88.0, 200.0, r, (0.0, 1.0)),
+                    Notch::new(88.0, 488.0, r, (0.0, 0.0)),
+                ],
+            ),
+        ];
+        for (edge, placed, expected) in cases {
+            assert_eq!(end_notches(edge, placed, r), expected, "{edge:?}");
+        }
+    }
+
+    #[test]
+    fn a_fillet_longer_than_half_the_strip_is_cut_to_fit() {
+        let short = telar::Rect::new(0.0, 0.0, 20.0, 34.0);
+        let pieces = end_notches(Edge::Top, short, 50.0);
+        assert!(pieces.iter().all(|piece| piece.rect.width == 10.0));
+    }
+
+    fn claimed_by(area: &ResolvedArea, neighbours: &[ResolvedArea]) -> Vec<telar::Rect> {
+        const SCREEN: (f32, f32) = (600.0, 600.0);
+        telar::reset_layout_runtime();
+        set_theme(NordTheme::new());
+        let _scope = telar::owner_scope();
+        let bar = built_amid(&Config::default(), area, neighbours, &registry(), SCREEN)
+            .expect("the bar builds");
+        let page = Container::new(
+            LayoutStyle::new().width(SCREEN.0).height(SCREEN.1),
+            vec![bar],
+        )
+        .expect("a screen to stand the bar on");
+        let root = page.layout_node();
+        let _tree = telar::ComponentList::new(page);
+        compute_layout(
+            root,
+            AvailableSpace::Definite(SCREEN.0),
+            AvailableSpace::Definite(SCREEN.1),
+        )
+        .expect("the bar lays out");
+        telar::interactive_rects()
+    }
+
+    /// A fillet only paints, so what the window hands the compositor is the same with and without one.
+    #[test]
+    fn a_fillet_claims_no_input() {
+        let plain = BarShape::default();
+        let rounded = BarShape {
+            fillet: Some(12.0),
+            ..BarShape::default()
+        };
+        for edge in Edge::ALL {
+            let neighbours = [reserving(match edge.is_horizontal() {
+                true => Edge::Left,
+                false => Edge::Top,
+            })];
+            for autohide in [None, hide()] {
+                let area =
+                    |shape| shaped_bar_area(edge, 34.0, [&[], &["dummy"], &[]], shape, autohide);
+                assert_eq!(
+                    claimed_by(&area(rounded), &neighbours),
+                    claimed_by(&area(plain), &neighbours),
+                    "{edge:?}, hiding: {}",
+                    autohide.is_some()
+                );
+            }
         }
     }
 }

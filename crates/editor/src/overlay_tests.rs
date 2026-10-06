@@ -1,4 +1,4 @@
-//! The overlay mode's tools (T-7.4): stacks made, pinned, moved off their anchors and widened, each one undo entry; cards routed to the stack their routes name; and volume and brightness and the launcher placed at a stack.
+//! The overlay mode's tools: stacks made, pinned, moved off their anchors and widened, each one undo entry; cards routed to the stack their routes name; and volume and brightness and the launcher placed at a stack.
 
 #[cfg(test)]
 mod tests {
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(stack("stack-2"), None, "undone, the stack is gone");
     }
 
-    /// T-7.4's accept: with a stack in the middle routed critical notifications, a critical notification goes there while toasts and every other notification stay in the corner — whatever order the two stacks are in.
+    /// With a stack in the middle routed critical notifications, a critical notification goes there while toasts and every other notification stay in the corner — whatever order the two stacks are in.
     #[test]
     fn a_critical_notification_goes_to_a_centred_stack_while_toasts_stay_in_the_corner() {
         let rig = rig_with("overlay-routes", |_| {});

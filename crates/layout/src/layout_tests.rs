@@ -2294,7 +2294,7 @@ mod tests {
         );
     }
 
-    /// T-4.12: the history lists every entry an undo and a redo walk through, and three back then two forward lands where the second edit left the layout.
+    /// The history lists every entry an undo and a redo walk through, and three back then two forward lands where the second edit left the layout.
     #[test]
     fn the_history_lists_both_ways_and_a_jump_lands_on_the_right_layout() {
         let dir = scratch("history-list");
@@ -3714,7 +3714,7 @@ mod tests {
         assert!(validate_resolved(&resolved, "layouts/test.toml", &theme()).is_clean());
     }
 
-    /// T-1.5: the prompt is the last thing the lock layer stacks, whatever a monitor rule appended after it.
+    /// The prompt is the last thing the lock layer stacks, whatever a monitor rule appended after it.
     #[test]
     fn a_monitor_rule_adding_a_lock_area_resolves_under_the_prompt() {
         let parsed = layout(
@@ -3748,7 +3748,7 @@ mod tests {
         );
     }
 
-    /// T-1.4: a bar or a dock reserves unless it says otherwise; an area of any other kind does not.
+    /// A bar or a dock reserves unless it says otherwise; an area of any other kind does not.
     #[test]
     fn a_bar_and_a_dock_reserve_by_default_and_nothing_else_does() {
         let parsed = layout(
@@ -3790,7 +3790,7 @@ mod tests {
         assert_eq!(reserves(LayerKind::Top, "bar-bottom"), Some(false));
     }
 
-    /// T-1.4: a hidden bar with no `reserve` still holds back only the strip it leaves behind.
+    /// A hidden bar with no `reserve` still holds back only the strip it leaves behind.
     #[test]
     fn an_autohidden_bar_with_no_reserve_reserves_only_its_peek() {
         let parsed = layout(
@@ -3825,7 +3825,7 @@ mod tests {
         ))
     }
 
-    /// T-1.4: a fillet is a bar's, and is reported where the bar is not one strip or where it is negative.
+    /// A fillet is a bar's, and is reported where the bar is not one strip or where it is negative.
     #[test]
     fn a_bar_fillet_resolves_and_is_checked() {
         let drawn = bar_with_shape(r#"{ mode = "bar", fillet = 12 }"#);
@@ -3861,7 +3861,7 @@ mod tests {
         );
     }
 
-    /// T-1.4: a monitor rule that writes a fillet over a bar another rule set to `chips` is where the mismatch is reported.
+    /// A monitor rule that writes a fillet over a bar another rule set to `chips` is where the mismatch is reported.
     #[test]
     fn a_fillet_a_monitor_rule_writes_over_a_chips_bar_is_reported() {
         let parsed = layout(
@@ -3896,7 +3896,7 @@ mod tests {
         ));
     }
 
-    /// T-1.3 checks: a panel's tracks are judged as a group's inner grid is — no columns or rows, a negative gap, a non-positive cell.
+    /// A panel's tracks are judged as a group's inner grid is — no columns or rows, a negative gap, a non-positive cell.
     #[test]
     fn a_panel_with_no_tracks_or_a_negative_gap_or_non_positive_cell_is_refused() {
         for (keys, key, message) in [
@@ -3924,7 +3924,7 @@ mod tests {
         assert!(validate(&sound, &Modules).is_clean());
     }
 
-    /// T-1.4 checks: a grid area's cell must be positive and its gap must not be negative.
+    /// A grid area's cell must be positive and its gap must not be negative.
     #[test]
     fn a_grid_with_non_positive_cell_or_negative_gap_is_refused() {
         for (keys, key, message) in [
@@ -5089,7 +5089,7 @@ mod tests {
             .collect()
     }
 
-    /// T-8.6: a use's parameter reads what the use sets it to, with the level that set it; one the use leaves alone reads the komponent's default; and what the komponent holds is drawn under the use's own ids, its expressions written in the komponent's file and reading the use's parameters.
+    /// A use's parameter reads what the use sets it to, with the level that set it; one the use leaves alone reads the komponent's default; and what the komponent holds is drawn under the use's own ids, its expressions written in the komponent's file and reading the use's parameters.
     #[test]
     fn a_parameter_reads_what_its_use_sets_it_to_else_its_default() {
         let parsed = layout(TWO_PILLS);
@@ -5994,9 +5994,9 @@ mod tests {
         assert!(report.is_clean(), "{}", report.render());
     }
 
-    /// A bar in `chips` mode paints no strip, so a border or a shadow written on it is a warning, wherever the mode comes from.
+    /// A bar in `sections` or `chips` mode paints no strip, so a border or a shadow written on it is a warning, wherever the layout writes the mode from.
     #[test]
-    fn a_border_on_a_bar_in_chips_mode_is_a_warning() {
+    fn a_border_on_a_bar_in_sections_or_chips_mode_is_a_warning() {
         let bar = |keys: &str, more: &str| {
             layout(&format!(
                 r#"
@@ -6028,12 +6028,30 @@ mod tests {
         assert!(finding_at(
             &report,
             "bar-top.style.border",
-            "finding.chips_edge"
+            "finding.stripless_edge"
         ));
         assert!(finding_at(
             &report,
             "bar-top.style.shadow",
-            "finding.chips_edge"
+            "finding.stripless_edge"
+        ));
+
+        let sections = validate(
+            &bar(
+                "shape = { mode = \"sections\" }\nstyle = { border = { width = 1 }, shadow = 2 }",
+                "",
+            ),
+            &Modules,
+        );
+        assert!(finding_at(
+            &sections,
+            "bar-top.style.border",
+            "finding.stripless_edge"
+        ));
+        assert!(finding_at(
+            &sections,
+            "bar-top.style.shadow",
+            "finding.stripless_edge"
         ));
 
         let later = bar(
@@ -6188,7 +6206,7 @@ mod tests {
         group.children.iter().map(|child| child.placement).collect()
     }
 
-    /// T-1.2: a group's `arrange`, inner grid and gap merge by id like any key, and so does where a child sits, so a monitor rule can turn a row into a column and give one child a larger share.
+    /// A group's `arrange`, inner grid and gap merge by id like any key, and so does where a child sits, so a monitor rule can turn a row into a column and give one child a larger share.
     #[test]
     fn a_monitor_rule_rearranges_a_container_by_id() {
         let parsed = layout(
@@ -6660,6 +6678,36 @@ stacked = true
         }
     }
 
+    /// A weight counts between the bounds `Instance::WEIGHTS` names: one outside them is a warning and is drawn at the nearer bound, one inside is neither.
+    #[test]
+    fn a_weight_counts_within_its_bounds() {
+        for (weight, drawn) in [
+            ("0.1", 0.25),
+            ("20", 8.0),
+            ("0.25", 0.25),
+            ("8", 8.0),
+            ("3", 3.0),
+        ] {
+            let parsed = container(
+                "arrange = \"row\"",
+                &child("clock-1", &format!("weight = {weight}")),
+            );
+            let report = validate(&parsed, &Modules);
+            let told = finding_at(
+                &report,
+                "children.clock-1.weight",
+                "finding.weight_out_of_range",
+            );
+            assert_eq!(told, drawn != weight.parse::<f32>().unwrap(), "{weight}");
+            assert!(report.errors.is_empty(), "{weight}: {}", report.render());
+            assert_eq!(
+                placements_of(group_of(&alone(&parsed, "DP-1"), LayerKind::Desktop, "box")),
+                [Some(Placement::Weight(drawn))],
+                "{weight}"
+            );
+        }
+    }
+
     /// An inner grid has at least one column and one row, and a gap is not negative.
     #[test]
     fn an_inner_grid_has_tracks_and_a_gap_is_not_negative() {
@@ -6974,7 +7022,7 @@ stacked = true
         }
     }
 
-    /// The prototype's `normalize`: a child with no cell takes the first cell no other child covers, in reading order; one past the inner grid is pulled back onto it and said so; and a `free` child with no `rect` is half the box, a step down from the one before.
+    /// A child with no cell takes the first cell no other child covers, in reading order; one past the inner grid is pulled back onto it and said so; and a `free` child with no `rect` is half the box, a step down from the one before.
     #[test]
     fn missing_and_stray_child_places_are_answered() {
         use crate::container::cells;
@@ -7190,7 +7238,7 @@ stacked = true
             .map(|area| area.kind.clone())
     }
 
-    /// T-1.3: a panel needs nothing but its owner: it is 4 × 3 of a grid's cells beside it, and holds cell groups like a grid. What it writes is what it is.
+    /// A panel needs nothing but its owner: it is 4 × 3 of a grid's cells beside it, and holds cell groups like a grid. What it writes is what it is.
     #[test]
     fn a_panel_resolves_from_its_owner_with_a_grid_s_cells() {
         let parsed = with_owners(&panel("panel-clock", "owner = \"clock-1\""));
@@ -7291,7 +7339,7 @@ stacked = true
         }
     }
 
-    /// Nothing inside a panel opens another one (prototype `togglePanel`), so a panel of an instance in a panel is reported and only the outer one is drawn.
+    /// Nothing inside a panel opens another one, so a panel of an instance in a panel is reported and only the outer one is drawn.
     #[test]
     fn nothing_inside_a_panel_opens_another() {
         let parsed = with_owners(&format!(
@@ -7648,7 +7696,7 @@ stacked = true
         );
     }
 
-    /// T-1.3: removing a panel's owner — the way `hogar-shell layout remove <id>` does it — removes the panel in the same transaction, and one undo brings both back; a redo takes both away again.
+    /// Removing a panel's owner — the way `hogar-shell layout remove <id>` does it — removes the panel in the same transaction, and one undo brings both back; a redo takes both away again.
     #[test]
     fn removing_an_owner_removes_its_panel_and_one_undo_brings_both_back() {
         let dir = scratch("panel-owner");
@@ -7751,5 +7799,248 @@ stacked = true
             has_panel(&replaced),
             "an owner put back in the same transaction keeps its panel"
         );
+    }
+
+    const KEYS_BASE: &str = r##"
+        id = "keys"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.top.areas]]
+        id = "bar"
+        kind = "bar"
+        edge = "top"
+        thickness = 32
+        shape = { radius = 8, gap = 4 }
+        reserve = false
+        style = { fill = "base", border = { width = 1.0 } }
+        actions = { press = ["panel toggle clock"] }
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        place = "zone"
+        zone = "start"
+        arrange = "pages"
+        gap = 6
+        [[outputs.layers.top.areas.groups.children]]
+        id = "clock"
+        module = "clock"
+        weight = 2.0
+        options = { face = { scale = 1.5 }, hidden = ["a", "b"] }
+        [[outputs.layers.top.areas.groups.children]]
+        id = "battery"
+        module = "battery"
+        [[outputs.layers.desktop.areas]]
+        id = "grid"
+        kind = "grid"
+        cell = 80
+        [[outputs.layers.background.areas]]
+        id = "paint"
+        kind = "texture"
+        gradient = { angle = 90, stops = [{ at = 0.0, color = "base" }, { at = 1.0, color = "surface" }] }
+
+        [[outputs]]
+        match = "DP-1"
+        [[outputs.layers.top.areas]]
+        id = "bar"
+        kind = "bar"
+        thickness = 40
+        style = { border = { color = "red" } }
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        [[outputs.layers.top.areas.groups.children]]
+        id = "clock"
+        options = { face = { hands = true } }
+        [[outputs.layers.desktop.areas]]
+        id = "grid"
+        kind = "free"
+        rect = { x = 0.1, y = 0.1, w = 0.5, h = 0.5 }
+        [[outputs.layers.background.areas]]
+        id = "paint"
+        kind = "texture"
+        image = "paint.png"
+        [[outputs.workspaces]]
+        match = "2"
+        [[outputs.workspaces.layers.top.areas]]
+        id = "bar"
+        style = { fill = "surface" }
+
+        [[outputs]]
+        match = "HDMI-*"
+        [[outputs.layers.top.areas]]
+        id = "bar"
+        [[outputs.layers.top.areas.groups]]
+        id = "start"
+        unset = ["arrange"]
+        remove = ["clock"]
+        [[outputs.layers.top.areas.groups.children]]
+        id = "battery"
+        options = { face = 3 }
+    "##;
+
+    fn level(output: &str, workspace: Option<&str>) -> Level {
+        Level {
+            layout: LayoutId::new("keys"),
+            output: OutputMatch(output.to_string()),
+            workspace: workspace.map(|workspace| WorkspaceMatch(workspace.to_string())),
+        }
+    }
+
+    fn keyed(output: &str, workspace: Option<&str>) -> Resolved {
+        let active = workspace.map(|name| ActiveWorkspace {
+            name: name.to_string(),
+            ..ActiveWorkspace::default()
+        });
+        resolve(
+            &layout(KEYS_BASE),
+            &Library::default(),
+            output,
+            active.as_ref(),
+        )
+        .0
+    }
+
+    /// Resolution keeps, beside every key it kept and not only the expressions, the level that wrote it: geometry, a bar's shape and a border key by key, flags, actions, a group's arrangement, a child's placement and its options down to the key a level merged.
+    #[test]
+    fn every_key_a_level_writes_names_that_level() {
+        let resolved = keyed("DP-1", None);
+        let (bar, start, clock) = (
+            AreaId::new("bar"),
+            GroupId::new("start"),
+            InstanceId::new("clock"),
+        );
+        let area = |key: &str| {
+            resolved
+                .origin(LayerKind::Top, Holder::Area(&bar), key)
+                .cloned()
+        };
+        let (every, screen) = (Some(level("*", None)), Some(level("DP-1", None)));
+        assert_eq!(area("kind"), screen);
+        assert_eq!(area("thickness"), screen);
+        assert_eq!(area("edge"), every, "a key the narrower level leaves out");
+        assert_eq!(area("shape.radius"), every);
+        assert_eq!(area("shape.gap"), every);
+        assert_eq!(area("reserve"), every);
+        assert_eq!(area("style.fill"), every);
+        assert_eq!(area("style.border.width"), every);
+        assert_eq!(area("style.border.color"), screen);
+        assert_eq!(area("actions.press"), every);
+        assert_eq!(
+            area("above_fullscreen"),
+            None,
+            "nobody writes it: a default"
+        );
+        assert_eq!(area("style.opacity"), None);
+
+        let group = |key: &str| {
+            resolved
+                .origin(LayerKind::Top, Holder::Group(&bar, &start), key)
+                .cloned()
+        };
+        assert_eq!(group("arrange"), every);
+        assert_eq!(group("gap"), every);
+        assert_eq!(group("cols"), None);
+
+        let child = |key: &str| {
+            resolved
+                .origin(LayerKind::Top, Holder::Instance(&bar, &start, &clock), key)
+                .cloned()
+        };
+        assert_eq!(child("module"), every);
+        assert_eq!(child("weight"), every);
+        assert_eq!(child("options.face.scale"), every);
+        assert_eq!(
+            child("options.face.hands"),
+            screen,
+            "options merge key by key"
+        );
+        assert_eq!(
+            child("options.hidden"),
+            every,
+            "a list is one value a level writes whole"
+        );
+        assert_eq!(child("options.hidden.0"), every, "and so is what is in it");
+        assert_eq!(child("cell"), None);
+
+        let on_two = keyed("DP-1", Some("2"));
+        assert_eq!(
+            on_two
+                .origin(LayerKind::Top, Holder::Area(&bar), "style.fill")
+                .cloned(),
+            Some(level("DP-1", Some("2"))),
+            "the workspace rule up on the screen comes last"
+        );
+    }
+
+    /// A level that replaces what it writes over takes the keys of what it replaced with it: geometry of another kind, a texture's picture in place of its gradient, an `unset` of the arrangement, an option written over a table, and a child taken away.
+    #[test]
+    fn what_a_level_replaces_keeps_no_origin() {
+        let resolved = keyed("DP-1", None);
+        let grid = AreaId::new("grid");
+        let at =
+            |id: &AreaId, layer, key: &str| resolved.origin(layer, Holder::Area(id), key).cloned();
+        assert_eq!(
+            at(&grid, LayerKind::Desktop, "cell"),
+            None,
+            "a grid's cell went with the grid"
+        );
+        assert_eq!(
+            at(&grid, LayerKind::Desktop, "rect"),
+            Some(level("DP-1", None))
+        );
+        let paint = AreaId::new("paint");
+        assert_eq!(at(&paint, LayerKind::Background, "gradient"), None);
+        assert_eq!(
+            at(&paint, LayerKind::Background, "image"),
+            Some(level("DP-1", None))
+        );
+
+        let resolved = keyed("HDMI-A-1", None);
+        let (bar, start) = (AreaId::new("bar"), GroupId::new("start"));
+        let group = |key: &str| {
+            resolved
+                .origin(LayerKind::Top, Holder::Group(&bar, &start), key)
+                .cloned()
+        };
+        assert_eq!(group("arrange"), None, "taken back");
+        assert_eq!(group("gap"), None, "with the arrangement");
+        let clock = InstanceId::new("clock");
+        assert_eq!(
+            resolved
+                .origin(
+                    LayerKind::Top,
+                    Holder::Instance(&bar, &start, &clock),
+                    "module"
+                )
+                .cloned(),
+            None,
+            "a child taken away takes its keys"
+        );
+        let battery = InstanceId::new("battery");
+        let child = |key: &str| {
+            resolved
+                .origin(
+                    LayerKind::Top,
+                    Holder::Instance(&bar, &start, &battery),
+                    key,
+                )
+                .cloned()
+        };
+        assert_eq!(child("options.face"), Some(level("HDMI-*", None)));
+        assert_eq!(child("module"), Some(level("*", None)));
+    }
+
+    /// Who wrote a key is not part of what is drawn: an arrangement assembled directly has none, and two arrangements that draw the same are equal whoever wrote them.
+    #[test]
+    fn origins_do_not_make_two_arrangements_differ() {
+        let resolved = keyed("DP-1", None);
+        let assembled = Resolved::of("DP-1", resolved.layers.clone());
+        assert_eq!(
+            assembled.origin(
+                LayerKind::Top,
+                Holder::Area(&AreaId::new("bar")),
+                "thickness"
+            ),
+            None
+        );
+        assert_eq!(assembled.layers, resolved.layers);
     }
 }

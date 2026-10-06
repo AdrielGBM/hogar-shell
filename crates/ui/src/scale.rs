@@ -97,8 +97,84 @@ pub mod space {
     }
 }
 
+/// How far a box is lifted off what is behind it: the steps a layout's `shadow` names, `0` being none and anything past the deepest standing for the deepest. Absolute rather than derived from the surface, unlike the two scales above: a shadow is light falling on the screen, and neither a bar's radius nor its spacing says anything about how far that light travels.
+pub mod elevation {
+    use telar::{Color, Shadow};
+
+    /// `(drop, blur, alpha)` of each step from the first, a soft lift to a strong one.
+    const STEPS: [(f32, f32, f32); 3] = [
+        (2.0, 8.0, 0x44 as f32 / 255.0),
+        (6.0, 24.0, 0x55 as f32 / 255.0),
+        (16.0, 48.0, 0x99 as f32 / 255.0),
+    ];
+
+    pub fn shadow(step: u8) -> Option<Shadow> {
+        let at = usize::from(step).min(STEPS.len()).checked_sub(1)?;
+        let (drop, blur, alpha) = STEPS[at];
+        Some(Shadow::new(
+            0.0,
+            drop,
+            blur,
+            Color::rgba(0.0, 0.0, 0.0, alpha),
+        ))
+    }
+
+    /// How far past its box `shadow` can paint, so a cut around the box can leave room for it.
+    pub fn reach(shadow: Shadow) -> f32 {
+        // The renderers blur at a sigma of half the radius and pad three sigmas and a pixel past the shape.
+        let blurred = (shadow.blur_radius * 1.5).ceil() + 1.0;
+        blurred + shadow.spread + shadow.offset_x.abs().max(shadow.offset_y.abs())
+    }
+}
+
+/// What a group that arranges its children paints behind them where its own `style` says nothing, on a bar and off one. A plate inside a bar nests inside the bar's own corner by the padding it holds its chips off with, which is why it steps down the [`corner`] scale there rather than taking the surface's corner as a plate on the desktop does.
+pub mod plate {
+    use super::{corner, space};
+
+    /// The theme token a plate is filled with.
+    pub const FILL: &str = "overlay";
+
+    pub const OPACITY: f32 = 0.6;
+
+    pub fn radius(in_bar: bool) -> f32 {
+        match in_bar {
+            true => corner::md(),
+            false => corner::xl(),
+        }
+    }
+
+    pub fn padding(in_bar: bool) -> f32 {
+        match in_bar {
+            true => space::xs(),
+            false => space::md(),
+        }
+    }
+
+    pub fn gap(in_bar: bool) -> f32 {
+        match in_bar {
+            true => space::sm(),
+            false => space::md(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_elevation_step_drops_further_and_darker_than_the_one_before() {
+        use super::elevation::{reach, shadow};
+        assert_eq!(shadow(0), None);
+        let steps: Vec<telar::Shadow> = (1..=3).filter_map(shadow).collect();
+        assert_eq!(steps.len(), 3);
+        for pair in steps.windows(2) {
+            assert!(pair[1].offset_y > pair[0].offset_y);
+            assert!(pair[1].blur_radius > pair[0].blur_radius);
+            assert!(pair[1].color.a > pair[0].color.a);
+            assert!(reach(pair[1]) > reach(pair[0]));
+        }
+        assert_eq!(shadow(9), shadow(3), "past the deepest is the deepest");
+    }
+
     /// The check that keeps this a scale rather than a one-off tidy-up.
     ///
     /// Nothing about writing `.gap(6.0)` looks wrong — it is how every one of the two hundred literals this replaced got written, one at a time, each perfectly reasonable on its own. Only the histogram showed it, and a histogram is not something anybody runs. So the rule is checked instead: a distance is a step on the scale, or it is zero, and there is no third option to drift into.

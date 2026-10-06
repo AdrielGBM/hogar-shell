@@ -4,7 +4,7 @@
 //!
 //! **Where it is written.** A change is laid over the layout the way every edit is ([`crate::written::Written`]): each region changed where the rule that decides it writes it, a new region beside the one it came from, and all of it for the workspace that is up alone while the mode says so ([`crate::variant`]).
 //!
-//! Nothing here reads the pointer or draws: the edit mode's controls and keys ([`super::background`]) call these, and so can any layer whose preview has regions (T-7.5).
+//! Nothing here reads the pointer or draws: the edit mode's controls and keys ([`super::background`]) call these, and so can any layer whose preview has regions.
 
 use layout::{Area, AreaId, AreaKind, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind, Within};
 use surfaces::reconcile::{self, Desktop};
@@ -13,6 +13,7 @@ use surfaces::rects::Node;
 use crate::keys::Direction;
 use crate::popover::kind_field;
 use crate::session::EditError;
+use crate::snap;
 use crate::written::{Work, known};
 
 /// What every position a region tool chooses is rounded to, as a fraction of the screen: a power of two, so sums of such fractions are exact in `f32`.
@@ -342,10 +343,31 @@ impl<'a> Plan<'a> {
         Ok(work.done())
     }
 
-    /// `id` split in two at its middle by a line of `cut`.
+    /// `id` split in two at its middle by a line of `cut`, or on the cell line of the main grid within [`snap::CUT_TOLERANCE`] of it.
     pub fn split_in_half(&self, id: &AreaId, cut: Cut) -> Result<Vec<LayoutOp>, EditError> {
         let rect = tile(&self.tiles(id)?, id)?.rect;
-        self.split(id, cut, middle(rect, cut))
+        let lines = self.cut_lines(id, cut)?;
+        let at = snap::region_line(middle(rect, cut), &lines, snap::CUT_TOLERANCE, false);
+        self.split(id, cut, at)
+    }
+
+    /// The box the region `id` is measured in, in pixels.
+    pub fn bounds(&self, id: &AreaId) -> Result<telar::Rect, EditError> {
+        let within = tile(&self.tiles(id)?, id)?.within;
+        Ok(self.desktop.reserved.box_of(within, self.desktop.size))
+    }
+
+    /// The cell lines of the layer's main grid a line of `cut` across `id` can snap to: those that leave it at least [`SMALLEST`] on either side.
+    pub fn cut_lines(&self, id: &AreaId, cut: Cut) -> Result<Vec<f32>, EditError> {
+        let (start, extent) = cut.along(tile(&self.tiles(id)?, id)?.rect);
+        let stop = end(start, extent);
+        let bounds = self.bounds(id)?;
+        Ok(
+            snap::grid_lines(&self.desktop, self.layer, cut.into(), bounds)
+                .into_iter()
+                .filter(|at| *at - start >= SMALLEST && stop - *at >= SMALLEST)
+                .collect(),
+        )
     }
 
     /// `a` and `b` made one region, which is the one of them first in the layer's z-order, showing its picture; the other is taken out.

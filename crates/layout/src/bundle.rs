@@ -1,4 +1,4 @@
-//! Bundles (T-8.6): a layout with everything it needs to draw on another installation, as one plain directory.
+//! Bundles: a layout with everything it needs to draw on another installation, as one plain directory.
 //!
 //! ```text
 //! <bundle>/manifest.toml          name, and optionally description and author; no version (DEC-29)

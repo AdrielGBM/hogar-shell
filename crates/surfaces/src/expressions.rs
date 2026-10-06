@@ -1,8 +1,8 @@
 //! Where a layout's expressions meet the screen: an area's `visible` and an instance's `bindings`, bound to live readings for as long as what they drive is built.
 //!
-//! **When they read.** An expression subscribes to what it reads only while its window is on screen — a hidden window keeps its tree (F-2.16), so the tree going away cannot be what stops it — while its area's own `visible` holds, and, for anything but the lock screen, while the session is unlocked ([`automation::Gate`]).
+//! **When they read.** An expression subscribes to what it reads only while its window is on screen — a hidden window keeps its tree (F-2.16), so the tree going away cannot be what stops it — while its area is drawn (its own `visible` holds, or its layer's edit mode shows it dimmed), and, for anything but the lock screen, while the session is unlocked ([`automation::Gate`]).
 //!
-//! **What moves.** A `visible` that flips takes its area out of layout and back, which neither rebuilds it nor touches the window or the areas beside it (F-10.42). A binding whose value changes builds its instance again, alone ([`Expressions::bound_instance`]): the area, the window and every other instance keep their nodes, and what the instance keeps in an `InstanceStore` survives because the store is keyed by its id (F-3.4).
+//! **What moves.** A `visible` that flips takes its area out of layout and back, which neither rebuilds it nor touches the window or the areas beside it (F-10.42), except in its own layer's edit mode, where it is laid out again at [`HIDDEN_OPACITY`] so it can be selected. A binding whose value changes builds its instance again, alone ([`Expressions::bound_instance`]): the area, the window and every other instance keep their nodes, and what the instance keeps in an `InstanceStore` survives because the store is keyed by its id (F-3.4).
 //!
 //! **Copies.** A group with `repeat` draws its children once per item of a list ([`Repeat`]): copy `<id>#<index>` reads its item as `$item` and its place as `$index`, keyed by index, so a list that grows or shrinks adds or drops copies at its end and leaves the others and the group's siblings as they were. An item that changes in place moves only what reads it. What a drawn copy reads is there for the editor too ([`drawn_item`]).
 //!
@@ -22,8 +22,8 @@ use automation::env::{awaits_reading, describe};
 use automation::failures::{self, Drawn, Site};
 use automation::{Environment, Gate, Local};
 use config::fields::OptionField;
-use layout::{KomponentUse, Origin, ResolvedExpr, ResolvedInstance, ResolvedParameter};
-use telar::{Color, LayoutStyle, Memo, OwnerId, ReactiveList, ReadSignal, RwSignal};
+use layout::{KomponentUse, LayerKind, Origin, ResolvedExpr, ResolvedInstance, ResolvedParameter};
+use telar::{Color, LayoutStyle, Memo, OwnerId, ReactiveList, ReadSignal, RwSignal, signal};
 use telar_expression::{Compiled, Errors, Held, Type, Value};
 use ui::descriptor::Built;
 use ui::host::Audience;
@@ -32,9 +32,77 @@ use util::report::Message;
 use crate::layer_window::LayerWindowContext;
 use crate::rects::{Node, Part};
 
-/// Whether the area being built is shown by its own `visible`, for what is built inside it.
+/// Whether the area being built is drawn — shown by its own `visible`, or dimmed for its edit mode — for what is built inside it.
 #[derive(Clone, Copy)]
 struct AreaShown(Memo<bool>);
+
+/// How opaque an area drawn only for its edit mode is, while its `visible` reads false.
+pub const HIDDEN_OPACITY: f32 = 0.3;
+
+/// The layer being edited, and on which screen, as the editor says.
+pub type Edited = (Option<String>, LayerKind);
+
+struct Hidden {
+    registration: u64,
+    node: Node,
+    shown: Memo<bool>,
+    expr: String,
+}
+
+thread_local! {
+    static EDITED: RwSignal<Option<Edited>> = telar::detached(|| signal(None));
+    static HIDDEN: RwSignal<Vec<Hidden>> = telar::detached(|| signal(Vec::new()));
+    static REGISTRATIONS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Says which layer's edit mode is up, so the areas written on it that a `visible` hides are drawn for it.
+pub fn set_edited(edited: Option<Edited>) {
+    EDITED.with(|slot| {
+        if slot.peek() != edited {
+            slot.set(edited);
+        }
+    });
+}
+/// The `visible` expression that reads false for the area `node` is in, if it has one that does; the newest registration answers, since a build that replaces another registers before the old one is dropped.
+/// The newest registration of an area answers, since a build that replaces another registers before the old one is dropped.
+pub fn hidden_by(node: &Node) -> Option<String> {
+    HIDDEN.with(|hidden| {
+        hidden.with(|hidden| {
+            hidden
+                .iter()
+                .rev()
+                .find(|held| {
+                    node.is_in(
+                        held.node.output.as_deref(),
+                        held.node.layer,
+                        &held.node.area,
+                    )
+                })
+                .filter(|held| !held.shown.get())
+                .map(|held| held.expr.clone())
+        })
+    })
+}
+
+/// How an area with a `visible` is presented: whether it is laid out at all, and how opaque it is.
+#[derive(Clone, Copy)]
+pub struct Presence {
+    shown: Memo<bool>,
+    editing: Memo<bool>,
+}
+
+impl Presence {
+    pub fn displayed(&self) -> bool {
+        self.shown.get() || self.editing.get()
+    }
+
+    pub fn opacity(&self) -> f32 {
+        match self.shown.get() {
+            true => 1.0,
+            false => HIDDEN_OPACITY,
+        }
+    }
+}
 
 /// The copy of a repeated group's children being built, for what is built inside it.
 #[derive(Clone)]
@@ -52,7 +120,7 @@ pub struct Expressions {
 }
 
 impl Expressions {
-    /// What an expression built here reads: the running shell's names, shown to `audience`, gated on the window it is drawn in being on screen and on the area around it being shown.
+    /// What an expression built here reads: the running shell's names, shown to `audience`, gated on the window it is drawn in being on screen and on the area around it being drawn.
     pub fn here(audience: Audience) -> Self {
         let window: Option<ReadSignal<bool>> =
             LayerWindowContext::current().map(|window| window.mapped);
@@ -111,8 +179,8 @@ impl Expressions {
         }
     }
 
-    /// Whether the area `node` names is shown by its `visible`, as it changes. Made available to what is built under the current owner afterwards, so the instances inside stop reading while their area is hidden.
-    pub fn visible(&self, node: &Node, expr: &ResolvedExpr) -> Memo<bool> {
+    /// Whether the area `node` names is shown by its `visible`, as it changes, and whether its layer's edit mode is up to draw it anyway. What is built under the current owner afterwards is told whether it is drawn at all, so the instances inside stop reading while their area is hidden and read live while its edit mode draws it dim.
+    pub fn visible(&self, node: &Node, expr: &ResolvedExpr) -> Presence {
         let site = site(node, Slot::Visible, &expr.origin);
         let (this, source) = (self.clone(), expr.expr.0.clone());
         let held = remade(move || {
@@ -133,8 +201,26 @@ impl Expressions {
             held.get()
                 .is_none_or(|held| !matches!(held.get().value, Some(Value::Bool(false))))
         });
-        telar::set_context(AreaShown(shown));
-        shown
+        let (output, layer) = (node.output.clone(), node.layer);
+        let editing = telar::memo(move || {
+            EDITED.with(|edited| edited.get()) == Some((output.clone(), layer))
+        });
+        let presence = Presence { shown, editing };
+        telar::set_context(AreaShown(telar::memo(move || presence.displayed())));
+        let registration = REGISTRATIONS.with(|next| next.replace(next.get() + 1));
+        let entry = Hidden {
+            registration,
+            node: node.clone(),
+            shown,
+            expr: expr.expr.0.clone(),
+        };
+        HIDDEN.with(|hidden| hidden.update(|hidden| hidden.push(entry)));
+        telar::on_cleanup(move || {
+            HIDDEN.with(|hidden| {
+                hidden.update(|hidden| hidden.retain(|held| held.registration != registration))
+            });
+        });
+        presence
     }
 
     /// The list the group `node` names repeats its children over, as it changes; no items while it cannot be read here. Through an evaluation error it keeps its last list. The copies drawn from it are what [`drawn_item`] reads for as long as the current owner lives.

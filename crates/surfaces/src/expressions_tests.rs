@@ -25,7 +25,9 @@ mod tests {
     use ui::host::{Audience, Host, InstanceStore};
 
     use crate::area::Surround;
+    use crate::expressions::{HIDDEN_OPACITY, hidden_by, set_edited};
     use crate::layer_window::{Demands, LayerWindowContext, Reserved};
+    use crate::rects::Node;
 
     const SCREEN: &str = "DP-1";
     const SIDE: f32 = 200.0;
@@ -318,6 +320,18 @@ mod tests {
             })
         }
 
+        fn layer_opacities(&mut self) -> Vec<f32> {
+            self.lay_out();
+            self.tree
+                .commands()
+                .iter()
+                .filter_map(|command| match command {
+                    DrawCommand::PushLayer { opacity, .. } => Some(*opacity),
+                    _ => None,
+                })
+                .collect()
+        }
+
         /// Presses and releases at a point through the pointer, and answers whether anything took the tap.
         fn tap(&mut self, x: f64, y: f64) -> bool {
             self.lay_out();
@@ -354,6 +368,89 @@ mod tests {
 
     fn subscriptions() -> (usize, usize) {
         (SUBSCRIBED.with(Cell::get), UNSUBSCRIBED.with(Cell::get))
+    }
+
+    /// While its layer's edit mode is up, an area its expression hides is drawn at 30 % so it can be selected, and takes the paint back at full strength once the expression holds; outside the mode it paints nothing.
+    #[test]
+    fn an_area_hidden_by_its_expression_is_drawn_dim_while_its_layer_is_edited() {
+        let mut rig = Rig::new(free(Some("$probe.on"), vec![placed("a", &[])]));
+        publish(false, 0.0);
+        assert!(!rig.inked(), "hidden, it paints nothing outside the mode");
+
+        let other = (Some("HDMI-1".to_string()), LayerKind::Top);
+        set_edited(Some(other));
+        assert!(!rig.inked(), "another screen's mode does not draw it");
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Desktop)));
+        assert!(!rig.inked(), "another layer's mode does not draw it");
+
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Top)));
+        assert!(rig.inked(), "its own layer's mode draws it");
+        assert_eq!(rig.layer_opacities(), vec![HIDDEN_OPACITY]);
+
+        publish(true, 0.0);
+        assert!(rig.inked());
+        assert!(
+            rig.layer_opacities().is_empty(),
+            "shown, it is at full strength"
+        );
+
+        publish(false, 0.0);
+        set_edited(None);
+        assert!(!rig.inked(), "leaving the mode takes it away again");
+        assert_eq!(builds("a").len(), 1, "none of it rebuilt anything");
+    }
+
+    /// While its edit mode draws it dim, a hidden area's instances read live, so what is being edited says what it would say shown; outside the mode they stop reading again.
+    #[test]
+    fn the_instances_of_a_hidden_area_read_live_while_its_edit_mode_draws_it() {
+        let format = [("date_format", "if($probe.level > 0, '%A', '%d')")];
+        let _rig = Rig::new(free(Some("$probe.on"), vec![placed("a", &format)]));
+        let last = || builds("a").last().map(|seen| seen.date_format.clone());
+        publish(false, 0.0);
+        let hidden = builds("a").len();
+        publish(false, 1.0);
+        assert_eq!(builds("a").len(), hidden, "hidden, it hears nothing");
+
+        set_edited(Some((Some(SCREEN.to_string()), LayerKind::Top)));
+        publish(false, 1.0);
+        assert_eq!(last().as_deref(), Some("%A"), "drawn dim, it reads live");
+        publish(false, 0.0);
+        assert_eq!(last().as_deref(), Some("%d"), "and follows what it reads");
+
+        set_edited(None);
+        publish(false, 1.0);
+        assert_eq!(
+            last().as_deref(),
+            Some("%d"),
+            "out of the mode it stops reading again"
+        );
+    }
+
+    /// What the selection says about why an area is dim.
+    #[test]
+    fn a_hidden_area_says_which_expression_hides_it() {
+        let rig = Rig::new(free(Some("$probe.on"), vec![placed("a", &[])]));
+        let area = Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("readings"));
+        publish(true, 0.0);
+        assert_eq!(hidden_by(&area), None);
+        publish(false, 0.0);
+        assert_eq!(hidden_by(&area).as_deref(), Some("$probe.on"));
+        drop(rig);
+        assert_eq!(hidden_by(&area), None, "gone with the area");
+    }
+
+    /// An area built again registers before the build it replaces is dropped, and the old build leaving takes only its own entry.
+    #[test]
+    fn a_hidden_area_built_again_still_says_which_expression_hides_it() {
+        let area = Node::area(Some(SCREEN), LayerKind::Top, &AreaId::new("readings"));
+        let first = Rig::new(free(Some("$probe.on"), vec![placed("a", &[])]));
+        let second = Rig::new(free(Some("$probe.on"), vec![placed("a", &[])]));
+        publish(false, 0.0);
+        assert_eq!(hidden_by(&area).as_deref(), Some("$probe.on"));
+        drop(first);
+        assert_eq!(hidden_by(&area).as_deref(), Some("$probe.on"));
+        drop(second);
+        assert_eq!(hidden_by(&area), None, "gone with the last build");
     }
 
     /// F-10.52's rule for a tool holds for an area its expression hides: tested by a press through the pointer, not by asking the area. Hidden, it draws nothing and nothing in it takes a press or claims the input region; shown again, it is the same nodes, never rebuilt.
@@ -415,7 +512,7 @@ mod tests {
         assert_eq!(format(), Some(written));
     }
 
-    /// T-8.2's acceptance: a binding re-evaluates only when what it reads changes, and its instance alone is built again, with what it keeps in its store intact (F-3.4).
+    /// A binding re-evaluates only when what it reads changes, and its instance alone is built again, with what it keeps in its store intact (F-3.4).
     #[test]
     fn a_bound_value_that_changes_rebuilds_its_own_instance_and_nothing_else() {
         let theme = Config::default().resolve_theme();
@@ -478,7 +575,7 @@ mod tests {
         );
     }
 
-    /// T-8.6 on screen: what a komponent holds reads each use's own parameters — one the use sets, one left to a default that is itself a live reading — and two uses of one komponent are two instances, each with what it keeps under its own id.
+    /// What a komponent holds reads each use's own parameters — one the use sets, one left to a default that is itself a live reading — and two uses of one komponent are two instances, each with what it keeps under its own id.
     #[test]
     fn each_use_of_a_komponent_reads_its_own_parameters_and_keeps_its_own_state() {
         let red = Color::from_hex("#ff0000").expect("a colour");

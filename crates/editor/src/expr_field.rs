@@ -1,4 +1,4 @@
-//! The expression field (TA-6, T-8.3): one line of the shell's expression language, checked and evaluated as it is typed, inside a popover that previews what it drives.
+//! The expression field: one line of the shell's expression language, checked and evaluated as it is typed, inside a popover that previews what it drives.
 //!
 //! **What it shows.** Under the line, the value the expression has right now and its type, read through the same environment the layer window binds it in — the lock screen's view on the lock layer (TA-8) — for as long as the popover is open and its window on screen. A mistake is underlined where it is, with its message under the line; an evaluation error is underlined too, while the last value it had stays shown.
 //!

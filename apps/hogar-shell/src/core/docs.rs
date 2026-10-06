@@ -566,7 +566,7 @@ fn line_names_word(line: &str, word: &str) -> bool {
         .any(|token| token == word)
 }
 
-/// T-9.3's acceptance: no hand-written page under `docs/` names a key [`check::RETIRED`] reports as an error, or
+/// No hand-written page under `docs/` names a key [`check::RETIRED`] reports as an error, or
 /// a namespace DEC-14 deleted. Generated pages are skipped — they are walked out of the same build, so a stale
 /// one is [`the_committed_reference_matches_what_this_build_generates`]'s failure, not this one's.
 ///
@@ -834,7 +834,7 @@ fn command_mentions(text: &str) -> Vec<Result<Vec<String>, String>> {
     mentions
 }
 
-/// T-9.5's acceptance, the commands half: every `hogar-shell <target> <command>` in a code span or an `sh` block, and every span that starts with a target's name and a lower-case word after it, resolves through the command table — so a page cannot keep naming a verb that was deleted.
+/// Every `hogar-shell <target> <command>` in a code span or an `sh` block, and every span that starts with a target's name and a lower-case word after it, resolves through the command table — so a page cannot keep naming a verb that was deleted.
 #[test]
 fn every_command_a_hand_written_page_shows_resolves_through_the_command_table() {
     let mut failures = Vec::new();
@@ -850,7 +850,7 @@ fn every_command_a_hand_written_page_shows_resolves_through_the_command_table() 
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// T-9.5's acceptance, the IPC half: every command of the customization targets, and `shell run`, is named in a hand-written page.
+/// Every command of the customization targets, and `shell run`, is named in a hand-written page.
 #[test]
 fn every_customization_command_is_named_by_a_hand_written_page() {
     let named: BTreeSet<String> = hand_written()
@@ -989,7 +989,7 @@ fn dotted_path(span: &str) -> Option<&str> {
     .then_some(span)
 }
 
-/// T-9.5's acceptance, the keys half: a hand-written page's code span that is a table header (`[automation]`, `[[rules]]`, `[sources.<name>]`), a header with its key (`[automation] min_interval_seconds`) or a dotted path that starts at a section of the config or a root of a layout file (`automation.timeout_seconds`) is in the schema of `config.toml` or of a layout, so a page cannot keep naming a key or table that was deleted. A dotted path that starts anywhere else is prose (`state.json`, `style.radius`) and is not judged.
+/// A hand-written page's code span that is a table header (`[automation]`, `[[rules]]`, `[sources.<name>]`), a header with its key (`[automation] min_interval_seconds`) or a dotted path that starts at a section of the config or a root of a layout file (`automation.timeout_seconds`) is in the schema of `config.toml` or of a layout, so a page cannot keep naming a key or table that was deleted. A dotted path that starts anywhere else is prose (`state.json`, `style.radius`) and is not judged.
 #[test]
 fn every_header_span_and_every_dotted_path_under_a_known_section_a_hand_written_page_writes_is_in_the_schema()
  {
