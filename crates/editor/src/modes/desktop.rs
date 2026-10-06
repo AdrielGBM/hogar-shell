@@ -13,8 +13,9 @@
 use telar::{LayoutError, Rect};
 
 use layout::{
-    Anchor, Area, AreaId, AreaKind, Group, GroupId, GroupKind, Instance, InstanceId, LayerKind,
-    Layout, LayoutOp, Representation, ResolvedArea, ResolvedAreaKind, ResolvedInstance, Within,
+    Anchor, Area, AreaId, AreaKind, Arrange, Group, GroupId, GroupKind, Instance, InstanceId,
+    LayerKind, Layout, LayoutOp, Representation, ResolvedArea, ResolvedAreaKind, ResolvedInstance,
+    Unset, Within,
 };
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{Node, Part};
@@ -41,7 +42,7 @@ pub const SIZES: [Representation; 3] = [
 ];
 
 /// The toolbar buttons of every mode that has the grid tools: a new grid, and the palette.
-const GRID_BUTTONS: [crate::host::ToolbarButton; 2] = [
+const GRID_BUTTONS: [crate::host::StripButton; 2] = [
     (
         || telar::t!("editor.desktop.new_grid"),
         || said(create_grid()),
@@ -76,6 +77,7 @@ pub(crate) fn add_grid_tools(layer: LayerKind) {
     for button in GRID_BUTTONS {
         crate::host::add_toolbar_button(layer, button);
     }
+    crate::host::set_add(layer, palette::open);
     keys::add_mode_key_op(
         layer,
         KeyOp {
@@ -277,8 +279,10 @@ pub(crate) fn placed_as(resolved: &ResolvedInstance) -> Instance {
             .iter()
             .map(|(path, bound)| (path.clone(), bound.expr.clone()))
             .collect(),
+        style: resolved.style.clone(),
         actions: resolved.actions.clone(),
         unset: Vec::new(),
+        ..Instance::default()
     }
 }
 
@@ -323,11 +327,17 @@ pub(crate) fn dropped(
             return Err(EditError::nothing());
         }
         Landing::Onto(target) => {
+            let arranged = grid_of(&work, onto)?
+                .groups
+                .iter()
+                .any(|held| held.id == *target && held.arrange.is_some());
             let moved = take_out(&mut work, instance)?;
             work.rewrite(work.layer, onto, |written| {
                 let into = group_mut(written, target);
                 into.children.push(moved);
-                into.stacked = Some(true);
+                if !arranged {
+                    into.arrange = Some(Arrange::Pages);
+                }
             })?;
             settle_group(&mut work, onto, target)?;
         }
@@ -541,13 +551,13 @@ pub(crate) fn tidied(
         if still(&work, &|_| true) {
             work.rewrite(layer, area, |written| written.remove.push(group.clone()))?;
         }
-    } else if held.children.len() == 1 && held.stacked {
+    } else if held.children.len() == 1 && held.is_pages() {
         work.rewrite(layer, area, |written| {
-            group_mut(written, group).stacked = None
+            group_mut(written, group).clear_arrangement()
         })?;
-        if still(&work, &|held| held.stacked) {
+        if still(&work, &|held| held.is_pages()) {
             work.rewrite(layer, area, |written| {
-                group_mut(written, group).stacked = Some(false)
+                group_mut(written, group).unset.push(Unset::Arrange)
             })?;
         }
     }

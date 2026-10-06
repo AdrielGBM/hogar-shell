@@ -20,15 +20,15 @@ use telar::RwSignal;
 use config::Edge;
 use layout::{
     Action, Area, AreaId, AreaKind, AutoHide, Corners, Extent, Group, GroupId, GroupKind,
-    InstanceId, LayerKind, Layout, LayoutOp, Library, OutputMatch, OutputRule,
-    ResolvedArea, ResolvedAreaKind, ResolvedGroup, Site, Spot, Trigger, Zone,
+    InstanceId, LayerKind, Layout, LayoutOp, Library, OutputMatch, OutputRule, ResolvedArea,
+    ResolvedAreaKind, ResolvedGroup, Site, Spot, Trigger, Zone,
 };
 use surfaces::bar::Span;
 use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::{self, Node, Part};
 
 use crate::context;
-use crate::host::ToolbarButton;
+use crate::host::StripButton;
 use crate::keys::{self, Chord, Direction, KeyOp, Run};
 use crate::mode::said;
 use crate::popover::area::{edges, picked, variants};
@@ -44,7 +44,7 @@ use super::desktop::placed_as;
 const TOUCH: f32 = 0.5;
 
 /// The toolbar's buttons: a new bar on each edge.
-const NEW_BARS: [ToolbarButton; 4] = [
+const NEW_BARS: [StripButton; 4] = [
     (
         || telar::t!("editor.top.new_bar", edge = edge_name(Edge::Top)),
         || said(create_on(Edge::Top)),
@@ -272,17 +272,6 @@ fn place(work: &mut Work, id: &AreaId, at: f32, length: f32) -> Result<(), EditE
     })
 }
 
-/// A group as a layout writes it in full from what a screen shows of it, without its instances.
-fn written_group(group: &ResolvedGroup) -> Group {
-    Group {
-        id: group.id.clone(),
-        kind: Some(group.kind),
-        stacked: group.stacked.then_some(true),
-        repeat: group.repeat.as_ref().map(|repeat| repeat.expr.clone()),
-        ..Group::default()
-    }
-}
-
 /// The run a bar made on `edge` places itself along: the one the shipped bar would have there.
 pub(crate) fn new_run(desktop: &Desktop, edge: Edge) -> (f32, f32) {
     let gap = match layout::default_bar(AreaId::new(""), edge).kind {
@@ -471,7 +460,7 @@ pub(crate) fn split(
         .groups
         .iter()
         .filter_map(|group| {
-            let children: Vec<InstanceId> = match group.stacked {
+            let children: Vec<InstanceId> = match group.is_pages() {
                 true if drawn.past(&Part::Group(group.id.clone()), at) => group
                     .children
                     .iter()
@@ -511,10 +500,7 @@ pub(crate) fn split(
         within: Some(area.within),
         style: area.style.clone(),
         actions: area.actions.clone(),
-        groups: moving
-            .iter()
-            .map(|(group, _)| written_group(group))
-            .collect(),
+        groups: moving.iter().map(|(group, _)| group.written()).collect(),
         ..Area::default()
     };
     work.insert_after(layer, id, rest)?;
@@ -587,11 +573,13 @@ pub(crate) fn joined(
     let mut landing: Vec<(ResolvedGroup, Option<GroupId>)> = Vec::new();
     for group in crate::steps::along(&trail) {
         crate::steps::writes_as_shown(&trail_written, group)?;
-        let into = (!group.stacked)
+        let into = group
+            .arrange
+            .is_none()
             .then(|| {
                 lead.groups
                     .iter()
-                    .find(|held| held.kind == group.kind && !held.stacked)
+                    .find(|held| held.kind == group.kind && held.arrange.is_none())
             })
             .flatten();
         if let Some(held) = into {
@@ -622,7 +610,7 @@ pub(crate) fn joined(
                 );
                 let made = Group {
                     id: id.clone(),
-                    ..written_group(&group)
+                    ..group.written()
                 };
                 work.rewrite(layer, &lead.id, |written| written.groups.push(made))?;
                 id
@@ -720,7 +708,9 @@ pub(crate) fn chip_moved(
     let zone_groups: Vec<&ResolvedGroup> = target
         .groups
         .iter()
-        .filter(|group| group.kind == GroupKind::Zone { zone: landing.zone } && !group.stacked)
+        .filter(|group| {
+            group.kind == GroupKind::Zone { zone: landing.zone } && group.arrange.is_none()
+        })
         .collect();
     let others = |group: &ResolvedGroup| {
         group
@@ -800,7 +790,6 @@ fn zone_name(zone: Zone) -> &'static str {
         Zone::End => "end",
     }
 }
-
 
 /// Whether `layout` places the area `id` on `layer` of `desktop`'s screen.
 fn places(
@@ -954,7 +943,7 @@ fn written_as(area: &ResolvedArea) -> Area {
             .iter()
             .map(|group| Group {
                 children: group.children.iter().map(placed_as).collect(),
-                ..written_group(group)
+                ..group.written()
             })
             .collect(),
         actions: area.actions.clone(),
@@ -1052,7 +1041,6 @@ fn join_toward(
         .ok_or_else(none_that_way)?;
     joined(layout, &desktop, node.layer, &node.area, &other)
 }
-
 
 /// `o`: the selected bar sent to the screen after its own, round to the first after the last.
 fn output_step(selection: &Selection, layout: &Layout) -> Result<Vec<LayoutOp>, EditError> {
@@ -1281,7 +1269,6 @@ pub(crate) fn keep_clear(draft: &AreaDraft, along: Along) {
         });
     });
 }
-
 
 /// A bar's popover rows: its edge, thickness, length and offset along the edge, kept clear of the bars beside it ([`keep_clear`]); its shape, gap, spacing and corners; and how it hides — with handles on the bar for its geometry.
 fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {

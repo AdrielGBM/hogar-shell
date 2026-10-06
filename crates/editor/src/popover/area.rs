@@ -15,7 +15,7 @@ use telar_expression::Type;
 use config::Edge;
 use layout::{
     Area, AreaKind, Backdrop, Corners, Expr, Group, GroupId, GroupKind, LayerKind, Origin, Rect,
-    ResolvedAreaKind, Unset, Within,
+    ResolvedAreaKind, Sides, Unset, Within,
 };
 use ui::descriptor::Built;
 
@@ -25,12 +25,6 @@ use super::draft::{AreaDraft, kind_field};
 use super::handles;
 use super::rows::{self, Range, Rows, label};
 use super::{Inspector, add_area_tool};
-
-/// The theme colours an area's fill is picked from: the surfaces and inks, then the accents.
-const FILLS: &[&str] = &[
-    "base", "surface", "overlay", "muted", "text", "blue", "cyan", "teal", "red", "orange",
-    "yellow", "green", "purple",
-];
 
 pub(crate) fn install() {
     add_area_tool("dock", dock);
@@ -231,9 +225,10 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
     );
     list.push(rows::colour(
         label!("editor.area.fill"),
-        help("AreaStyle", "fill"),
+        help("Style", "fill"),
         fill,
-        Rc::from(FILLS),
+        Rc::from(config::theme::PAINT_TOKENS),
+        Rc::new(ui::form::swatch_row::is_colour),
     )?);
     let faintest = match draft.kind() {
         "prompt" => layout::FAINTEST_PROMPT,
@@ -246,7 +241,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
     );
     list.push(rows::number(
         label!("editor.area.opacity"),
-        help("AreaStyle", "opacity"),
+        help("Style", "opacity"),
         opacity,
         Range::new(faintest, 1.0, 0.05),
     )?);
@@ -255,12 +250,12 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
     }
     let padding = draft.value(
         "style.padding",
-        || style.padding.unwrap_or(0.0),
-        |area, value: &f32| area.style.padding = Some(*value),
+        || style.padding.map_or(0.0, Sides::largest),
+        |area, value: &f32| area.style.padding = Some(Sides::all(*value)),
     );
     list.push(rows::number(
         label!("editor.area.padding"),
-        help("AreaStyle", "padding"),
+        help("Style", "padding"),
         padding,
         Range::whole(0.0, 64.0),
     )?);
@@ -272,7 +267,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         );
         list.push(rows::number(
             label!("editor.area.radius"),
-            help("AreaStyle", "radius"),
+            help("Style", "radius"),
             radius,
             Range::whole(0.0, handles::most_radius(draft)),
         )?);
@@ -327,7 +322,7 @@ fn style_backdrop(draft: &AreaDraft, seed: Backdrop) -> Rows {
         draft,
         "style.backdrop",
         label!("editor.area.backdrop"),
-        help("AreaStyle", "backdrop"),
+        help("Style", "backdrop"),
         variants("Backdrop"),
         seed,
         |area, backdrop: Backdrop| area.style.backdrop = Some(backdrop),

@@ -5,6 +5,7 @@
 //! **Lock mode is a preview** (TA-8). It is refused while the session is locked, it never takes or touches a session lock, and on a machine that cannot lock it still opens, saying why in the strip instead of offering tools.
 
 use std::cell::{Cell, RefCell};
+use std::time::Duration;
 
 use telar::{ReadSignal, RwSignal, detached, effect, signal};
 
@@ -46,18 +47,66 @@ thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
     static WATCHING: Cell<bool> = const { Cell::new(false) };
     static REFUSAL: RwSignal<Option<String>> = detached(|| signal(None));
+    static CONFIRMATION: RwSignal<Option<String>> = detached(|| signal(None));
+    static SAID: Cell<u64> = const { Cell::new(0) };
 }
 
-/// Why the last thing asked of the mode was not done — a key, a press, a drop — as the strip says it: until the mode changes or something else is asked.
+/// How long the strip keeps saying something before it lets it go.
+pub const SAID_FOR: Duration = Duration::from_secs(6);
+
+/// Why the last thing asked of the mode was not done — a key, a press, a drop — as the strip says it: for [`SAID_FOR`], until something else is said, or until the mode changes or something else is asked.
 pub fn refusal() -> ReadSignal<Option<String>> {
     REFUSAL.with(|refusal| refusal.read_only())
+}
+
+/// What the last thing asked of the mode did where that is not on screen to see — "Undone: …", a fork of the built-in layout — as the strip says it: for [`SAID_FOR`], or until something else is said or the mode changes.
+pub fn confirmation() -> ReadSignal<Option<String>> {
+    CONFIRMATION.with(|confirmation| confirmation.read_only())
 }
 
 /// Says in the strip why what was just asked was not done, so a refusal is never only a line in the log.
 pub fn refuse(why: impl std::fmt::Display) {
     let why = why.to_string();
     tracing::info!("{why}");
-    REFUSAL.with(|refusal| refusal.set(Some(why)));
+    say(Some(why), None);
+}
+
+/// Says in the strip what was just done, in place of whatever it said before.
+pub fn confirm(what: impl std::fmt::Display) {
+    let what = what.to_string();
+    tracing::info!("{what}");
+    say(None, Some(what));
+}
+
+fn say(refusal: Option<String>, confirmation: Option<String>) {
+    let serial = SAID.with(util::serial::next_serial);
+    REFUSAL.with(|slot| put(*slot, refusal));
+    CONFIRMATION.with(|slot| put(*slot, confirmation));
+    platform_wayland::timeout(SAID_FOR, move || unsay(serial));
+}
+
+/// Takes what the strip says away once it has been said for [`SAID_FOR`], unless something else has been said since `serial` said it.
+pub(crate) fn unsay(serial: u64) {
+    if SAID.with(Cell::get) == serial {
+        forget_said();
+    }
+}
+
+/// The serial of the last thing said, which [`unsay`] is handed when its time is up.
+#[cfg(test)]
+pub(crate) fn said_serial() -> u64 {
+    SAID.with(Cell::get)
+}
+
+fn forget_said() {
+    REFUSAL.with(|slot| put(*slot, None));
+    CONFIRMATION.with(|slot| put(*slot, None));
+}
+
+fn put(slot: RwSignal<Option<String>>, value: Option<String>) {
+    if slot.peek() != value {
+        slot.set(value);
+    }
 }
 
 /// What came of something asked of the mode — a button, a menu row, a drop — which has nowhere else to say it once it has run: a refusal goes to the strip.
@@ -69,11 +118,7 @@ pub(crate) fn said(done: Result<(), crate::session::EditError>) {
 
 /// Takes the last refusal out of the strip, as something new is asked.
 pub(crate) fn clear_refusal() {
-    REFUSAL.with(|refusal| {
-        if refusal.peek().is_some() {
-            refusal.set(None);
-        }
-    });
+    REFUSAL.with(|slot| put(*slot, None));
 }
 
 /// The mode being edited, as a signal: read inside an effect or a build, it runs again when a mode is entered, switched or left. This is how a tool learns which mode it is in.
@@ -156,7 +201,7 @@ pub(crate) fn enter_as(
     leave();
     let session = host::open(&mode, compositor.restack);
     SESSION.with(|held| *held.borrow_mut() = Some(session));
-    clear_refusal();
+    forget_said();
     ACTIVE.with(|active| active.set(Some(mode.clone())));
     Ok(mode)
 }
@@ -182,7 +227,7 @@ pub fn leave() -> Option<Mode> {
         left
     });
     drop(session);
-    clear_refusal();
+    forget_said();
     left
 }
 
@@ -234,4 +279,13 @@ pub fn icon_of(layer: LayerKind) -> &'static str {
         LayerKind::Overlay => "layers",
         LayerKind::Lock => "lock",
     }
+}
+
+/// What stands in for a mark on a line that has none, so the lines of a list line up.
+const NO_MARK: &str = "   ";
+
+/// `text` with `mark` in front of it where `on`, and blank where not.
+pub(crate) fn marked(on: bool, mark: &str, text: &str) -> String {
+    let lead = if on { mark } else { NO_MARK };
+    format!("{lead}{text}")
 }

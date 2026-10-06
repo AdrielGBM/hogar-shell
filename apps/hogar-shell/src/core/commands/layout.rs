@@ -1159,7 +1159,7 @@ fn fits(kind: Option<&AreaKind>, module: &str) -> Option<Representation> {
         Some(AreaKind::Bar { .. }) | Some(AreaKind::Dock { .. }) => {
             &[Representation::Chip, Representation::WidgetS]
         }
-        Some(AreaKind::Grid { .. }) => &[
+        Some(AreaKind::Grid { .. }) | Some(AreaKind::Panel { .. }) => &[
             Representation::WidgetM,
             Representation::WidgetS,
             Representation::WidgetL,
@@ -1646,6 +1646,45 @@ mod tests {
         assert_eq!(run_of(&store.borrow(), "end"), ["notes", "battery"]);
     }
 
+    /// T-1.3: `layout remove` of an instance that owns a panel takes the panel with it, and one `layout undo` brings both back.
+    #[test]
+    fn removing_a_panel_s_owner_over_ipc_removes_the_panel_and_one_undo_restores_both() {
+        let mut mine = layout::built_in();
+        mine.id = LayoutId::new("mine");
+        mine.outputs[0].layers.top.areas.push(Area {
+            id: AreaId::new("panel-clock"),
+            kind: Some(AreaKind::Panel {
+                owner: Some(InstanceId::new("clock")),
+                along: None,
+                cols: None,
+                rows: None,
+                cell: None,
+                gap: None,
+            }),
+            ..Area::default()
+        });
+        let store = shell_holding("panel-owner", "mine", &mine, &[]);
+        let panels = |store: &LayoutStore| {
+            store.active().outputs[0]
+                .layers
+                .top
+                .areas
+                .iter()
+                .filter(|area| area.id.as_str() == "panel-clock")
+                .count()
+        };
+        assert_eq!(panels(&store.borrow()), 1);
+
+        remove("clock").expect("it removes");
+        assert_eq!(run_of(&store.borrow(), "center"), Vec::<String>::new());
+        assert_eq!(panels(&store.borrow()), 0, "the panel went with its owner");
+
+        undo().expect("one undo");
+        assert_eq!(run_of(&store.borrow(), "center"), ["clock"]);
+        assert_eq!(panels(&store.borrow()), 1, "and brought both back");
+        assert!(undo().is_err(), "the removal was one edit");
+    }
+
     fn written_area(store: &LayoutStore, id: &str) -> Area {
         store
             .active()
@@ -1739,8 +1778,11 @@ mod tests {
             .into_iter()
             .find(|group| matches!(group.kind, Some(layout::GroupKind::Cell { .. })))
             .expect("the grid has cells");
-        let refused = set(&Args::of(&format!("lock-readings.{} repeat {{1, 2}}", cell.id)))
-            .expect_err("a cell's footprint is fixed");
+        let refused = set(&Args::of(&format!(
+            "lock-readings.{} repeat {{1, 2}}",
+            cell.id
+        )))
+        .expect_err("a cell's footprint is fixed");
         assert!(refused.contains("grid cell"), "{refused}");
         assert!(set(&Args::of("nowhere visible true")).is_err());
         assert!(set(&Args::of("bar-top.nowhere repeat {1}")).is_err());

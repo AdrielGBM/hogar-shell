@@ -104,6 +104,30 @@ pub const ACCENTS: &[&str] = &[
     "blue", "cyan", "teal", "red", "orange", "yellow", "green", "purple",
 ];
 
+/// The theme colours a fill or a gradient stop is picked from: the surfaces and inks, then the accents.
+pub const PAINT_TOKENS: &[&str] = &[
+    "base", "surface", "overlay", "muted", "text", "accent", "blue", "cyan", "teal", "red",
+    "orange", "yellow", "green", "purple",
+];
+
+/// How opaque `[theme] opacity` may make the shell.
+pub const OPACITY_RANGE: std::ops::RangeInclusive<f32> = 0.2..=1.0;
+
+/// What `[theme.scale] font` and the theme popover may scale text by.
+pub const FONT_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=1.4;
+
+/// A colour written `#rrggbb`, or `#rrggbbaa` where a translucent one means something; the one spelling every colour the user types is read in.
+pub fn parse_hex(text: &str) -> Option<Color> {
+    let digits = text.strip_prefix('#')?;
+    let well_formed =
+        matches!(digits.len(), 6 | 8) && digits.bytes().all(|b| b.is_ascii_hexdigit());
+    if well_formed {
+        Color::from_hex(text)
+    } else {
+        None
+    }
+}
+
 /// A colour as `#rrggbb`, which is the only spelling `[theme.colors]` and every export file use.
 pub fn hex(color: Color) -> String {
     let [r, g, b, _] = color.to_rgba8();
@@ -783,15 +807,20 @@ impl NordTheme {
 
     /// The accent `name` picks, or the palette's own for a name that picks none — `""`, what a config that never set one carries, and anything [`has_accent`](Self::has_accent) turns down.
     pub fn accent_by_name(&self, name: &str) -> Color {
-        self.named_accent(name).unwrap_or(self.accent)
+        self.accent_of(name).unwrap_or(self.accent)
     }
 
-    /// Whether `name` is an accent `[theme] accent` understands: one of the eight hues, or empty for the palette's own.
+    /// Whether `name` is an accent `[theme] accent` understands: one of the eight hues, a `#rrggbb`, or empty for the palette's own.
     pub fn has_accent(name: &str) -> bool {
-        name.is_empty() || Self::new().named_accent(name).is_some()
+        name.is_empty() || Self::new().accent_of(name).is_some()
     }
 
-    fn named_accent(&self, name: &str) -> Option<Color> {
+    /// The colour a layout or a swatch names: a hex colour, else a theme token.
+    pub fn paint_of(&self, token_or_hex: &str) -> Color {
+        parse_hex(token_or_hex).unwrap_or_else(|| self.token(token_or_hex))
+    }
+
+    fn accent_of(&self, name: &str) -> Option<Color> {
         Some(match name {
             "blue" => self.blue,
             "cyan" => self.cyan,
@@ -801,7 +830,7 @@ impl NordTheme {
             "yellow" => self.yellow,
             "green" => self.green,
             "purple" => self.purple,
-            _ => return None,
+            _ => return parse_hex(name).filter(|color| color.to_rgba8()[3] == u8::MAX),
         })
     }
 }
@@ -912,6 +941,40 @@ mod tests {
             "", "blue", "cyan", "teal", "red", "orange", "yellow", "green", "purple",
         ] {
             assert!(NordTheme::has_accent(accent), "'{accent}' is an accent");
+        }
+    }
+
+    /// The colour field an accent is picked with writes a `#rrggbb` as readily as a hue, so `[theme] accent` takes one: it is that colour, whatever the palette.
+    #[test]
+    fn a_colour_is_a_hash_and_six_or_eight_digits() {
+        for good in ["#ff8800", "#FF8800", "#ff880080"] {
+            assert!(parse_hex(good).is_some(), "{good:?}");
+        }
+        for bad in [
+            "bad", "add", "decade", "ff8800", "#fff", "#12345", "#ff88zz", "",
+        ] {
+            assert!(parse_hex(bad).is_none(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_accent_is_opaque_but_a_paint_may_be_translucent() {
+        for refused in ["bad", "add", "decade", "#12345", "#ff880080", "surface"] {
+            assert!(!NordTheme::has_accent(refused), "{refused:?}");
+        }
+        assert!(NordTheme::has_accent("#ff8800"));
+        let theme = NordTheme::new();
+        assert_eq!(theme.paint_of("#ff880080").to_rgba8()[3], 0x80);
+        assert_eq!(theme.paint_of("surface"), theme.surface);
+    }
+
+    #[test]
+    fn a_hex_accent_is_that_colour() {
+        assert!(NordTheme::has_accent("#ff8800"));
+        assert!(!NordTheme::has_accent("#ff88zz"));
+        let orange = Color::from_hex("#ff8800").expect("a colour");
+        for name in BUILT_IN_THEMES {
+            assert_eq!(NordTheme::named(name).with_accent("#ff8800").accent, orange);
         }
     }
 

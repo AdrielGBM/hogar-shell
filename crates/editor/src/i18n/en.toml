@@ -34,6 +34,7 @@ reset = "Reset"
 add = "Add"
 remove = "Remove"
 new_name = "New name"
+colour_hint = "token or #hex"
 
 [editor.expr]
 visible = "Shown while"
@@ -135,6 +136,7 @@ wallpaper_region = "wallpaper region"
 texture = "texture"
 dock = "dock"
 free = "area"
+panel = "panel"
 prompt = "prompt"
 
 [editor.menu.trigger]
@@ -436,3 +438,42 @@ add = "Add komponent"
 start = "At the start"
 center = "In the middle"
 end = "At the end"
+
+[editor.pointer]
+cells = "{cols} × {rows} cells · {width} × {height}"
+pixels = "{width} × {height}"
+cell = "col {col} · row {row}"
+into = "Into the container"
+stack = "Stack"
+
+[editor.strip]
+grip = "Drag to move the strip"
+layers = "Change layer"
+add = "Add"
+forked = "The built-in layout is read-only: forked into '{name}'"
+
+[editor.history]
+title = "History"
+undo = "Undo"
+redo = "Redo"
+undone = "Undone: {label}"
+redone = "Redone: {label}"
+start = "At the start"
+now = "now"
+back = "{steps} back"
+forward = "{steps} forward"
+
+[editor.theme]
+open = "Theme…"
+title = "Theme"
+palette = "Palette"
+accent = "Accent"
+shape = "Shape"
+radius = "Base radius"
+opacity = "Plate opacity"
+text = "Text"
+size = "Size"
+note = "Kept in config.toml when this closes, outside the layout's undo; Esc or Cancel puts it back as it was when it opened"
+lock_falls_back = "With this theme the lock screen would fall back to the minimal one — {why}"
+cancel = "Cancel (Esc)"
+not_saved = "The theme was not saved: {why}"

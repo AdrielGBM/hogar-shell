@@ -73,9 +73,9 @@ fn widgets() -> Area {
             gap: None,
             anchor: Some(Anchor::Center),
         }),
-        style: AreaStyle {
-            padding: Some(48.0),
-            ..AreaStyle::default()
+        style: Style {
+            padding: Some(Sides::all(48.0)),
+            ..Style::default()
         },
         ..Area::default()
     }
@@ -136,7 +136,6 @@ pub fn bar(id: AreaId, edge: Edge) -> Area {
             },
             autohide: None,
         }),
-        reserve: Some(true),
         ..Area::default()
     }
 }

@@ -1,6 +1,6 @@
 //! Komponents (TA-6): a group saved to `components/<name>.toml` to be used again, and the two ways a group turns into a use of one and back.
 //!
-//! **Saving** takes a group as its files write it — every level merged, with nothing trust holds back left out, so a line a bundle has not been trusted for goes into the komponent and the store refuses the save rather than the save dropping it — and writes its children, `stacked` and `repeat` to a komponent, turning the values the user picks into parameters: an option becomes a parameter whose default is its value, read back through a binding of the same key, and a binding becomes a parameter whose default is its expression. The group is then written as a use of the komponent, which a level does by naming it, since naming a komponent replaces whatever the group held under it.
+//! **Saving** takes a group as its files write it — every level merged, with nothing trust holds back left out, so a line a bundle has not been trusted for goes into the komponent and the store refuses the save rather than the save dropping it — and writes its children, how it arranges them and its `repeat` to a komponent, turning the values the user picks into parameters: an option becomes a parameter whose default is its value, read back through a binding of the same key, and a binding becomes a parameter whose default is its expression. The group is then written as a use of the komponent, which a level does by naming it, since naming a komponent replaces whatever the group held under it.
 //!
 //! **Detaching** is the other way round: the use's group gets the komponent's children back as instances of its own, under ids the layout does not use yet, with what each parameter reads at that use written into the expressions that read it. The result draws what the use drew.
 
@@ -9,9 +9,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use telar_expression::Type;
 use util::report::{Message, Report};
 
+use crate::container::Placement;
 use crate::library::Library;
 use crate::model::*;
-use crate::ops::{LayoutOp, Site, apply_all, areas_at, free_id, sites, taken_instance_ids};
+use crate::ops::{
+    LayoutOp, Site, apply_all, areas_at, free_id, reowned, sites, taken_instance_ids,
+};
 use crate::resolve::{ActiveWorkspace, KomponentUse, ResolvedGroup, resolve};
 use crate::validate::{Catalogue, Mistake, lock_problems, parameter_errors};
 
@@ -32,7 +35,7 @@ pub struct Candidate {
     /// What the parameter would be called: the key, or the child's id and the key where two children have it.
     pub name: String,
     pub child: InstanceId,
-    /// The option's key, or the binding's path.
+    /// The option's key, or the path a binding drives it by (`style.fill` for a style key).
     pub key: String,
     pub ty: Type,
     /// The value as an expression of `ty`: the option's value spelt as one, or the binding's own.
@@ -41,7 +44,7 @@ pub struct Candidate {
     pub bound: bool,
 }
 
-/// What of `group` a save can turn into parameters: each binding, and each option whose value an expression can spell as the type a binding of that key would give — what `binding_type` answers for a module and a key.
+/// What of `group` a save can turn into parameters: each binding, and each option or bindable style key (`style.fill`, `style.opacity`, `style.border.color`) whose value an expression can spell as the type a binding of that key would give — what `binding_type` answers for a module and a key. A style colour named by a theme token is spelled as the reading of that token, `$theme.<token>`.
 pub fn candidates(
     group: &ResolvedGroup,
     binding_type: &dyn Fn(&str, &str) -> Option<Type>,
@@ -57,6 +60,21 @@ pub fn candidates(
             }
             if let Some(default) = spelled(value, &ty) {
                 found.push((child.id.clone(), key.clone(), ty, Expr(default), false));
+            }
+        }
+        for key in StyleBinding::ALL {
+            let path = key.path();
+            let Some(value) = key.written(&child.style) else {
+                continue;
+            };
+            let Some(ty) = binding_type(&child.module, path) else {
+                continue;
+            };
+            if child.bindings.contains_key(path) {
+                continue;
+            }
+            if let Some(default) = spelled(&value, &ty).or_else(|| theme_token(&value, &ty)) {
+                found.push((child.id.clone(), path.to_string(), ty, Expr(default), false));
             }
         }
         for (path, bound) in &child.bindings {
@@ -124,7 +142,7 @@ fn spelled(value: &toml::Value, ty: &Type) -> Option<String> {
         (Type::Number, toml::Value::Integer(n)) => n.to_string(),
         (Type::Number, toml::Value::Float(n)) if n.is_finite() => n.to_string(),
         (Type::Bool, toml::Value::Boolean(b)) => b.to_string(),
-        (Type::Color, toml::Value::String(hex)) if telar::Color::from_hex(hex).is_some() => {
+        (Type::Color, toml::Value::String(hex)) if config::theme::parse_hex(hex).is_some() => {
             hex.clone()
         }
         (Type::List(item), toml::Value::Array(items)) => {
@@ -133,6 +151,15 @@ fn spelled(value: &toml::Value, ty: &Type) -> Option<String> {
         }
         _ => return None,
     })
+}
+
+/// A style colour written as a theme token, as the expression that reads the same colour from the palette being painted.
+fn theme_token(value: &toml::Value, ty: &Type) -> Option<String> {
+    let toml::Value::String(token) = value else {
+        return None;
+    };
+    (*ty == Type::Color && config::theme::THEME_TOKENS.contains(&token.as_str()))
+        .then(|| format!("$theme.{token}"))
 }
 
 /// `text` as a text literal of the language.
@@ -171,11 +198,18 @@ pub fn saved(group: &ResolvedGroup, chosen: &[Candidate]) -> Komponent {
                     .iter()
                     .map(|(path, bound)| (path.clone(), bound.expr.clone()))
                     .collect(),
+                style: child.style.clone(),
                 actions: child.actions.clone(),
                 unset: Vec::new(),
+                ..placed_by(child.placement)
             };
             for candidate in chosen.iter().filter(|it| it.child == child.id) {
-                instance.options.remove(&candidate.key);
+                match StyleBinding::from_path(&candidate.key) {
+                    Some(key) => key.forget(&mut instance.style),
+                    None => {
+                        instance.options.remove(&candidate.key);
+                    }
+                }
                 instance
                     .bindings
                     .insert(candidate.key.clone(), Expr(format!("${}", candidate.name)));
@@ -183,20 +217,44 @@ pub fn saved(group: &ResolvedGroup, chosen: &[Candidate]) -> Komponent {
             instance
         })
         .collect();
+    let written = group.written();
     Komponent {
         parameters,
-        stacked: group.stacked.then_some(true),
-        repeat: group.repeat.as_ref().map(|repeat| repeat.expr.clone()),
+        arrange: written.arrange,
+        cols: written.cols,
+        rows: written.rows,
+        gap: written.gap,
+        repeat: written.repeat,
         children,
     }
 }
 
-/// `written`, a group's entry at one level, made a use of the komponent `id`: naming it replaces whatever the levels under it give the group, so the entry keeps its id and placement and drops everything it held.
+/// The keys that put a child where `placement` says, a weight of 1 left out as what a child already has.
+fn placed_by(placement: Option<Placement>) -> Instance {
+    match placement {
+        Some(Placement::Weight(weight)) => Instance {
+            weight: (weight != 1.0).then_some(weight),
+            ..Instance::default()
+        },
+        Some(Placement::Cell(cell)) => Instance {
+            cell: Some(cell),
+            ..Instance::default()
+        },
+        Some(Placement::Rect(rect)) => Instance {
+            rect: Some(rect),
+            ..Instance::default()
+        },
+        None => Instance::default(),
+    }
+}
+
+/// `written`, a group's entry at one level, made a use of the komponent `id`: naming it replaces whatever the levels under it give the group, so the entry keeps its id, placement and style and drops everything it held.
 pub fn used(written: &Group, id: &KomponentId) -> Group {
     Group {
         id: written.id.clone(),
         kind: written.kind,
         komponent: Some(id.clone()),
+        style: written.style.clone(),
         ..Group::default()
     }
 }
@@ -220,6 +278,8 @@ pub enum UseError {
     },
     /// The komponent repeats its children, which a grid cell's fixed footprint cannot hold.
     CellRepeats,
+    /// The komponent arranges its children in a way other than `pages`, which a zone does not take.
+    ZoneArrange(Arrange),
     /// The lock layer refuses what the komponent holds.
     Lock(KomponentId, Report),
     /// The area is not on the screen.
@@ -262,6 +322,9 @@ impl UseError {
             ),
             UseError::NoArea(id) => util::message!("finding.no_area", id = id),
             UseError::CellRepeats => util::message!("finding.cell_repeats"),
+            UseError::ZoneArrange(arrange) => {
+                util::message!("finding.zone_arrange", arrange = arrange.as_str())
+            }
             UseError::Lock(komponent, report) => report.findings().next().map_or_else(
                 || util::message!("finding.use_lock", komponent = komponent),
                 |finding| finding.message.clone(),
@@ -312,7 +375,7 @@ impl UseError {
     }
 }
 
-/// The komponent `id` as a group that draws it with `parameters` set may use it on `layer`, `in_cell` where the group is a grid cell: what the library holds under that name, with every parameter declared and given an expression of its type, no `repeat` in a cell, and on the lock layer nothing that answers the pointer or does an action. It is what [`validate_komponents`] reports for the same use once written.
+/// The komponent `id` as a group that draws it with `parameters` set may use it on `layer`, `in_cell` where the group is a grid cell: what the library holds under that name, with every parameter declared and given an expression of its type, no `repeat` in a cell, nothing but `pages` in a zone, and on the lock layer nothing that answers the pointer or does an action. It is what [`validate_komponents`] reports for the same use once written.
 pub fn check_use<'a>(
     library: &'a Library,
     catalogue: &dyn Catalogue,
@@ -346,6 +409,12 @@ pub fn check_use<'a>(
     }
     if in_cell && komponent.repeat.is_some() {
         return Err(UseError::CellRepeats);
+    }
+    if let Some(arrange) = komponent.arrange
+        && !in_cell
+        && arrange != Arrange::Pages
+    {
+        return Err(UseError::ZoneArrange(arrange));
     }
     if on_lock {
         let refused = lock_problems(id, komponent, catalogue);
@@ -389,7 +458,7 @@ impl DetachError {
     }
 }
 
-/// The operations that detach the komponent the group `group` of `area` uses, where the level `site` of `layout` names it: the group holds the komponent's children again, each under an id the layout does not use yet, its `stacked` and `repeat` the komponent's, and each parameter written into what reads it as it reads on the screen `screen` — so the group draws what the use drew. Whatever a level under `site` places in the group, which the use had replaced, is named in the group's `remove`, so it stays away.
+/// The operations that detach the komponent the group `group` of `area` uses, where the level `site` of `layout` names it: the group holds the komponent's children again, each under an id the layout does not use yet, how it arranges them and its `repeat` the komponent's, and each parameter written into what reads it as it reads on the screen `screen` — so the group draws what the use drew. Whatever a level under `site` places in the group, which the use had replaced, is named in the group's `remove`, so it stays away, and a panel a child of the use opens follows that child to its new id.
 pub fn detach(
     layout: &Layout,
     library: &Library,
@@ -440,20 +509,29 @@ pub fn detach(
             }
         })
         .collect();
+    let arranges = komponent.writes_arrangement();
     let mut detached = Group {
         id: written.id.clone(),
         kind: written.kind,
-        stacked: komponent.stacked,
+        arrange: komponent.arrange,
+        cols: komponent.cols,
+        rows: komponent.rows,
+        gap: komponent.gap,
         repeat: komponent
             .repeat
             .as_ref()
             .map(|repeat| inlined(repeat, &values)),
         children,
+        style: written.style.clone(),
         remove: written.remove.clone(),
         unset: written
             .unset
             .iter()
-            .filter(|unset| !matches!(unset, Unset::Parameter(_)))
+            .filter(|unset| match unset {
+                Unset::Parameter(_) => false,
+                Unset::Arrange => !arranges,
+                _ => true,
+            })
             .cloned()
             .collect(),
         ..Group::default()
@@ -488,7 +566,18 @@ pub fn detach(
             }
         }
     }
-    Ok(replaced(&detached))
+    let followed = komponent
+        .children
+        .iter()
+        .zip(&detached.children)
+        .flat_map(|(child, fresh)| {
+            reowned(
+                layout,
+                &InstanceId::in_komponent(area, group, &child.id),
+                &fresh.id,
+            )
+        });
+    Ok(replaced(&detached).into_iter().chain(followed).collect())
 }
 
 /// What each parameter of `komponent` reads at a use: the use's own value where `reads` says it sets one, else the default.

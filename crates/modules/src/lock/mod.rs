@@ -19,8 +19,8 @@ use telar::{
 use config::Config;
 use config::theme::{FontRole, NordTheme};
 use layout::{
-    AreaId, AreaStyle, Catalogue, LayerKind, Layout, Library, NOMINAL_OUTPUT, Rect, Resolved,
-    ResolvedArea, ResolvedAreaKind, prompt_card,
+    AreaId, Catalogue, LayerKind, Layout, Library, NOMINAL_OUTPUT, Rect, Resolved, ResolvedArea,
+    ResolvedAreaKind, Style, prompt_card,
 };
 use services::lock::{self, LockState, Method, Screen};
 use surfaces::area::Surround;
@@ -364,7 +364,7 @@ fn reading_area(
 fn prompt_area(
     id: &AreaId,
     rect: Rect,
-    style: &AreaStyle,
+    style: &Style,
     surround: Surround,
     prompting: Prompting,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -392,7 +392,7 @@ fn prompt_area(
 /// Built from code rather than from a layout, and depending on nothing but [`LockState`], the theme and i18n. It is what a lock taken back after a crash mounts, and what every failure below falls back to (TA-8).
 pub(crate) fn minimal_screen(prompting: Prompting) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let theme = use_theme::<NordTheme>();
-    let card = card(prompt(theme, prompting)?, theme, &AreaStyle::default())?;
+    let card = card(prompt(theme, prompting)?, theme, &Style::default())?;
     Ok(Box::new(Container::new(
         whole_surface()
             .flex_row()
@@ -441,7 +441,7 @@ fn biometric_hint(
 fn card(
     column: Vec<Box<dyn LayoutItem>>,
     theme: NordTheme,
-    style: &AreaStyle,
+    style: &Style,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let fill = prompt_card(style, &theme);
     let radius: BorderRadius = style.radius.map_or_else(|| rounding().into(), Into::into);

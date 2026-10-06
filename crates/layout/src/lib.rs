@@ -10,6 +10,7 @@ pub use crate::built_in::{bar as default_bar, layout as built_in};
 pub use crate::components::{
     Candidate, DetachError, UseError, check_use, komponents_of, used_with,
 };
+pub use crate::container::Placement;
 pub use crate::library::{Library, is_komponent_name, komponent_path};
 pub use crate::model::*;
 pub use crate::ops::{LayoutOp, Listed, OpError, PromptEdit, Site, Spot};
@@ -21,7 +22,7 @@ pub use crate::resolve::{
 };
 pub use crate::routing::{RoutedCard, route_card};
 pub use crate::store::{
-    BUILT_IN, LayoutStore, SETTLE, StoreError, Transaction, Written, components_beside,
+    BUILT_IN, History, LayoutStore, SETTLE, StoreError, Transaction, Written, components_beside,
     read_komponent, running, set_running,
 };
 pub use crate::take_back::{Held, TakeBack, Taken, taking_back};

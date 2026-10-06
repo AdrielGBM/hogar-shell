@@ -41,8 +41,8 @@ the middle of the screen in a free area of its own.
 ## Arranging them
 
 `hogar-shell layout edit desktop` edits the desktop layer on the screen it is run on. Drag a widget to other
-cells, or onto the middle of another to stack the two into one Smart Stack; drag it out of a stack to make it a
-widget again. A widget dropped where another one is never removes it: the one in the way moves to the free
+cells, or onto the middle of another to stack the two into one Smart Stack (a group with `arrange = "pages"`); drag it
+out of a stack to make it a widget again. A widget dropped where another one is never removes it: the one in the way moves to the free
 cells nearest where it was, and nothing else moves. The corner handle on the selected widget steps it through
 its sizes (S 2×2, M 4×2, L 4×4 cells, which are 80 px and 16 px apart unless the grid says otherwise).
 
@@ -50,6 +50,12 @@ its sizes (S 2×2, M 4×2, L 4×4 cells, which are 80 px and 16 px apart unless 
 nothing to do with the desktop: a chip never becomes a widget, nor a widget a chip. Every drag has a key: Shift+arrows move a widget one cell, Ctrl+arrows step
 its size, Ctrl+Shift+arrows stack it onto the widget that way, Shift+N makes a grid, and `w` edits the
 workspace that is up alone. `?` lists them all.
+
+### A desktop per workspace
+
+Each workspace can have its own desktop, the way a launcher has pages: press `w` and further edits go into the rule
+of the workspace that is up instead of every workspace, and `w` again switches back. See
+[A desktop per workspace](../customization/layouts.md#a-desktop-per-workspace) for the TOML.
 
 ## Clock
 

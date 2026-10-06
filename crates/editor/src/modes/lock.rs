@@ -11,14 +11,14 @@ use std::sync::Arc;
 
 use telar::{
     Children, Cursor, LayoutError, LayoutStyle, ReactiveList, RectStyle, RwSignal, StyledContainer,
-    Text, Transaction, box_item, detached, effect, register_transaction, signal, use_theme,
+    Text, box_item, detached, effect, signal, use_theme,
 };
 
 use config::theme::{FontRole, NordTheme};
 use config::{Config, MediaDetail, NotificationDetail};
 use layout::{
-    AreaStyle, LayerKind, Layout, LayoutId, LayoutOp, Library, OutputMatch, ResolvedAreaKind,
-    SMALLEST_PROMPT,
+    LayerKind, Layout, LayoutId, LayoutOp, Library, OutputMatch, ResolvedAreaKind, SMALLEST_PROMPT,
+    Style,
 };
 use modules::lock::LockLayout;
 use platform_wayland::KeyboardMode;
@@ -30,6 +30,7 @@ use ui::chrome::Chrome;
 use ui::descriptor::Built;
 use util::report::Report;
 
+use crate::config_popover;
 use crate::host::{self, passthrough, whole};
 use crate::keys::{self, Chord, KeyOp, Run};
 use crate::mode::{self, Mode, said};
@@ -72,15 +73,16 @@ pub(crate) fn install() {
     detached(|| effect(follow_the_config));
 }
 
-/// The config the lock is drawn with: the running one, which is what a lock taken now would read.
+/// The config the lock is drawn with: the running one, which is what a lock taken now would read, with a theme being previewed on it.
 fn lock_config() -> Arc<Config> {
-    config::config()
+    let running = config::config()
         .or_else(|| {
             reconcile::desktops_now()
                 .first()
                 .map(|desktop| Arc::clone(&desktop.config))
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    reconcile::shown_config(&running).1
 }
 
 /// What the lock's own check is asked with, read as a lock taken now would read it: every layout the store holds, every screen there is, the module table installed and the lock's theme.
@@ -146,7 +148,7 @@ fn reason(report: &Report) -> String {
         .unwrap_or_default()
 }
 
-/// Refuses `after` where it would make a locked screen fall back to the minimal lock and `before` did not — an area stacked over the prompt, a prompt too faint, too small or unreadable, a control — saying why in the lock's own words. Only an edit that changes the lock layer is judged, and a lock layer already refused is never made harder to fix.
+/// Refuses `after` where it would make a locked screen fall back to the minimal lock and `before` did not — a prompt too faint, too small, off its screen or unreadable, a control — saying why in the lock's own words. Only an edit that changes the lock layer is judged, and a lock layer already refused is never made harder to fix.
 pub(crate) fn kept(before: &Layout, after: &Layout) -> Result<(), String> {
     if lock_of(before) == lock_of(after) {
         return Ok(());
@@ -165,6 +167,20 @@ pub(crate) fn kept(before: &Layout, after: &Layout) -> Result<(), String> {
         )),
         None => Ok(()),
     }
+}
+
+/// The first reason the lock would fall back to the minimal one with `after`'s theme that `before`'s theme did not give, in the lock's own words.
+pub(crate) fn falls_back_with(before: &Config, after: &Config) -> Option<String> {
+    let layout = session::draft().peek();
+    let mut judged = Judged::now(before);
+    let was = judged.problems(&layout).errors;
+    judged.theme = after.resolve_theme();
+    judged
+        .problems(&layout)
+        .errors
+        .into_iter()
+        .find(|found| !was.contains(found))
+        .map(|found| found.message.render())
 }
 
 /// What of `layout` its lock layer is resolved from.
@@ -365,7 +381,7 @@ pub(crate) fn contrast_row(draft: &AreaDraft) -> Built {
     let area = draft.area();
     let style = move || {
         let written = area.with(|area| area.style.clone());
-        AreaStyle {
+        Style {
             fill: written.fill.or_else(|| inherited.fill.clone()),
             opacity: written.opacity.or(inherited.opacity),
             ..inherited.clone()
@@ -386,13 +402,13 @@ pub(crate) fn contrast_row(draft: &AreaDraft) -> Built {
 }
 
 /// Whether validation would let the prompt be drawn with `style`: only a fill the layout chose is judged, as the lock judges it.
-fn readable(style: &AreaStyle, theme: &NordTheme) -> bool {
+fn readable(style: &Style, theme: &NordTheme) -> bool {
     style.fill.is_none()
         || config::scheme::is_readable(theme.text, layout::prompt_backdrop(style, theme))
 }
 
 /// How readable the prompt's text is with `style`, as the contrast row says it.
-pub fn contrast_of(style: &AreaStyle, theme: &NordTheme) -> String {
+pub fn contrast_of(style: &Style, theme: &NordTheme) -> String {
     let ratio = format!(
         "{:.1}",
         theme
@@ -483,15 +499,8 @@ pub(crate) fn open_privacy() -> Result<(), EditError> {
     Ok(())
 }
 
-/// Closes the privacy popover keeping its choice: what closing it any way but Esc does.
 fn close_privacy() {
-    if let Some(open) = PRIVACY_OPEN.with(|open| open.borrow_mut().take())
-        && open.is_alive()
-        && open.peek()
-    {
-        open.set(false);
-    }
-    transient::close(PRIVACY);
+    config_popover::close(PRIVACY, PRIVACY_OPEN.with(|open| open.borrow_mut().take()));
 }
 
 /// The privacy popover's card: a choice for each key, previewed on the readings as it is made — one transaction over the choice, kept when the card closes and put back on Esc.
@@ -500,19 +509,8 @@ pub(crate) fn privacy_card(output: &str) -> Built {
     let start = chosen()
         .peek()
         .unwrap_or_else(|| Privacy::of(&lock_config()));
-    let open = signal(false);
-    let transaction = Transaction::new(chosen()).on_commit(|_, after| saved(*after));
-    register_transaction(open, transaction);
-    // Opened here, as the card builds: the transient's own entry is on the dismiss stack by now, so the transaction's goes above it and Esc reaches it first.
-    open.set(true);
+    let (open, transaction) = config_popover::hold(PRIVACY, chosen(), |after| saved(*after));
     PRIVACY_OPEN.with(|held| *held.borrow_mut() = Some(open));
-    let was_open = Cell::new(false);
-    effect(move || {
-        let now = open.get();
-        if was_open.replace(now) && !now {
-            transient::close(PRIVACY);
-        }
-    });
 
     let notifications = signal(spelled(&start.notifications));
     let media = signal(spelled(&start.media));
@@ -526,13 +524,6 @@ pub(crate) fn privacy_card(output: &str) -> Built {
             let _ = transaction.preview(|now| *now = Some(picked));
         }
     });
-    let documented = |key: &str| {
-        config::fields::section("lock")?
-            .into_iter()
-            .find(|field| field.key == key)?
-            .doc
-            .map(str::to_string)
-    };
     let title = Text::new(
         || telar::t!("editor.lock.privacy_title"),
         LayoutStyle::new(),
@@ -546,7 +537,7 @@ pub(crate) fn privacy_card(output: &str) -> Built {
         box_item(title),
         rows::listed(
             label!("editor.lock.notifications"),
-            documented("notification_detail"),
+            config_popover::documented("lock", "notification_detail"),
             notifications,
             Rc::from(vec![
                 (
@@ -561,7 +552,7 @@ pub(crate) fn privacy_card(output: &str) -> Built {
         )?,
         rows::listed(
             label!("editor.lock.media"),
-            documented("media_detail"),
+            config_popover::documented("lock", "media_detail"),
             media,
             Rc::from(vec![
                 (spelled(&MediaDetail::Title), telar::t!("editor.lock.title")),
@@ -577,26 +568,7 @@ pub(crate) fn privacy_card(output: &str) -> Built {
             Children::default(),
         )?,
     ];
-    let placed = output.to_string();
-    let card = StyledContainer::new(
-        LayoutStyle::new(),
-        move |_| RectStyle::filled(theme.surface, ui::scale::corner::xl()),
-        rows,
-    )?
-    .styled_by(move || {
-        let usable = host::usable(Some(&placed));
-        let margin = ui::scale::space::lg();
-        LayoutStyle::new()
-            .absolute()
-            .inset_start(usable.x + usable.width - WIDTH - margin)
-            .inset_top(usable.y + 4.0 * margin)
-            .width(WIDTH)
-            .flex_column()
-            .gap(ui::scale::space::md())
-            .padding_all(ui::scale::space::lg())
-    })
-    .input_opaque();
-    Ok(Box::new(passthrough(whole(), vec![Box::new(card)])?))
+    config_popover::card(output, WIDTH, rows)
 }
 
 /// What closing the privacy popover keeps: nothing when the config says it already, else the choice written into `config.toml`; a write that fails says so in the strip and the preview goes back to what the config says.
@@ -614,12 +586,12 @@ fn saved(kept: Option<Privacy>) {
     }
 }
 
-/// Writes `privacy` into the `[lock]` of the config at `path`, around whatever else the file says there, through the format-preserving save the settings window uses.
+/// Writes `privacy` into the `[lock]` of the config at `path`, around whatever else the file says there.
 pub(crate) fn write(path: &Path, privacy: Privacy) -> Result<(), String> {
-    let mut lock = Config::load_or_default(path).lock;
-    lock.notification_detail = privacy.notifications;
-    lock.media_detail = privacy.media;
-    Config::save_section(path, "lock", &lock)
-        .map(|_| ())
-        .map_err(|why| why.to_string())
+    config_popover::save(path, "lock", |config| {
+        let mut lock = config.lock;
+        lock.notification_detail = privacy.notifications;
+        lock.media_detail = privacy.media;
+        lock
+    })
 }

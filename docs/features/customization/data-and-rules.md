@@ -238,8 +238,8 @@ accent = "if($index == 0, $theme.accent, #888)"
 ```
 
 A copy has the id `<id>#<index>` where it is drawn, with its own rect and its own state; IPC and the editor address the child as written. In a
-`stacked` group the copies are its pages. Until the list first answers, and while it is empty, the group draws nothing. A grid cell cannot
-repeat, because a cell's footprint is fixed. A list that grows or shrinks adds or drops copies at its end and builds nothing else.
+`pages` group the copies are its pages. Until the list first answers, and while it is empty, the group draws nothing. A grid cell cannot
+repeat, because a cell's footprint is fixed, and neither can a `grid` or `free` group, where each child has a place of its own. A list that grows or shrinks adds or drops copies at its end and builds nothing else.
 
 **A group draws at most 256 copies.** A longer list draws its first 256 items and the `repeat` carries a finding that says how long the list is and how many are drawn, for as long as it is that long, so a source answering with a hundred thousand lines cannot stall the shell.
 

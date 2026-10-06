@@ -123,10 +123,10 @@ Its geometry is written *in this table*, beside the keys below: `kind` says whic
 | --- | --- |
 | `id` | What a rule, a command or another level of the same layout addresses this area by. Unique within its layer. |
 | `kind` | What kind of region this is. Required the first time the area is named; absent when a later level only adjusts one that already exists. |
-| `reserve` | Whether the compositor keeps windows out of this area's edge. Only an output-level area may reserve: a workspace rule that changes this is rejected, so switching workspaces never re-tiles windows. |
+| `reserve` | Whether the compositor keeps windows out of this area's edge. A bar or a dock reserves unless this says otherwise, and any other area does not. Only an output-level area may reserve: a workspace rule that changes this is rejected, so switching workspaces never re-tiles windows. |
 | `above_fullscreen` | Whether this area stays visible over a fullscreen window, which costs direct scanout on that output for as long as it is mapped. |
 | `within` | Which box this area's geometry is measured in: the whole output, or what is left of it once the reserving areas have taken their edges. |
-| `style` | Per-area appearance. Every field is optional because the theme answers whatever an area does not. |
+| `style` | How an area, a group or a placed instance is painted. Every field is optional: the theme, and the kind of what holds it, answer whatever it leaves out. A key that means nothing on what holds it — `backdrop` off an area, `padding` on an instance — is reported. |
 | `visible` | An expression giving true or false that decides whether the area draws: while it is false the area paints nothing and takes no input, and nothing else on its layer is rebuilt when it flips. Shown until it first answers, and through an evaluation error after that it keeps its last answer. Not allowed on the lock prompt. |
 | `groups` | A run of instances inside an area, and how the area places it. |
 | `remove` | Ids of groups an earlier level placed that this one takes away. |
@@ -152,7 +152,7 @@ A grid of cells that widgets are placed into by explicit coordinates.
 
 | Key | What it is |
 | --- | --- |
-| `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
+| `rect` | A rectangle in fractions of the box it is measured in, so one layout describes every monitor: an area's of its output, a child's of its `free` group. `0,0` is the top left corner and `1,1` the bottom right. |
 | `cell` | How big one cell is, in logical pixels. A widget covers whole cells, so this is what decides how big every widget on this grid is. |
 | `gap` | The space between two cells. |
 | `anchor` | Where the grid's cells sit inside `rect`. A grid has every cell that fits in `rect`, whatever is placed on them, so a widget stays where it was put; what `rect` has left over once whole cells are taken is under a cell's width, and this says which side it is left on. |
@@ -176,7 +176,7 @@ A region of the output that draws a wallpaper of its own.
 
 | Key | What it is |
 | --- | --- |
-| `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
+| `rect` | A rectangle in fractions of the box it is measured in, so one layout describes every monitor: an area's of its output, a child's of its `free` group. `0,0` is the top left corner and `1,1` the bottom right. |
 | `source` | A path to the picture this region shows, which `hogar-shell wallpaper set <path> --region <id>` writes. Left out or empty, it shows whatever `[background]` and a plain `wallpaper set` say — so changing the desktop's picture stays a config action, and only a region that names its own keeps it through one. An empty one is how a rule says so over a region another level gave a picture. |
 | `fit` | How the picture is fitted to the region. |
 | `transition` | How a wallpaper changes to the next one. |
@@ -187,7 +187,7 @@ An image or gradient painted over what is behind it.
 
 | Key | What it is |
 | --- | --- |
-| `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
+| `rect` | A rectangle in fractions of the box it is measured in, so one layout describes every monitor: an area's of its output, a child's of its `free` group. `0,0` is the top left corner and `1,1` the bottom right. |
 | `image` | A path to the image to paint. Exactly one of this and `gradient` is drawn; an area that names both is reported. |
 | `gradient` | A gradient with its stops in order along `angle`. |
 | `tile` | How an image repeats inside its rectangle. |
@@ -209,8 +209,21 @@ A rectangle placed by hand.
 
 | Key | What it is |
 | --- | --- |
-| `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
+| `rect` | A rectangle in fractions of the box it is measured in, so one layout describes every monitor: an area's of its output, a child's of its `free` group. `0,0` is the top left corner and `1,1` the bottom right. |
 | `anchor` | Where what it holds sits inside `rect`: a corner, the middle of an edge, or the centre. |
+
+## `AreaKind::Panel`
+
+A box one instance, its `owner`, opens and closes: the panel that instance opens, arranged by the user, beside the owner or, for an owner in a bar, along the bar's whole length. It holds cell groups like a grid and is sized in cells, so a widget fits it exactly. It reserves nothing, so a workspace rule may add one, and the lock layer has none, since it opens nothing. Read and checked, but not drawn yet: until it is, a press on the owner does what it does without one.
+
+| Key | What it is |
+| --- | --- |
+| `owner` | The id of the instance that opens it: one on the same layer of the same output, not itself inside a panel, and opening no other panel. Required. |
+| `along` | Whether it runs along the whole length of its owner's bar, `rows` deep on a horizontal bar and `cols` deep on a vertical one, rather than sitting beside the owner. Only an owner in a bar has a bar to run along. False unless set. |
+| `cols` | How many cells wide it is. 4 unless set. |
+| `rows` | How many cells tall it is. 3 unless set. |
+| `cell` | How big one cell is, in logical pixels. 80 unless set, as on a grid. |
+| `gap` | The space between two cells. 16 unless set, as on a grid. |
 
 ## `AreaKind::Prompt`
 
@@ -218,19 +231,42 @@ The lock layer's password field, status line and biometric hint. Exactly one exi
 
 | Key | What it is |
 | --- | --- |
-| `rect` | A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right. |
+| `rect` | A rectangle in fractions of the box it is measured in, so one layout describes every monitor: an area's of its output, a child's of its `free` group. `0,0` is the top left corner and `1,1` the bottom right. |
 
-## `AreaStyle`
+## `Style`
 
-Per-area appearance. Every field is optional because the theme answers whatever an area does not.
+How an area, a group or a placed instance is painted. Every field is optional: the theme, and the kind of what holds it, answer whatever it leaves out. A key that means nothing on what holds it — `backdrop` off an area, `padding` on an instance — is reported.
 
 | Key | What it is |
 | --- | --- |
-| `fill` | A theme token name or a hex colour, painted across the area's whole box under what it holds. A bar paints it as its strip in place of the theme's base, and a wallpaper region shows it wherever its picture does not reach. Behind the lock's prompt it is the card the password field sits on, and one the field's text cannot be read on — below WCAG AA, 4.5:1 — is refused, because an unreadable prompt is a lockout too. |
+| `fill` | A theme token name or a hex colour, painted across the whole box under what it holds. A bar paints it as its strip in place of the theme's base, and a wallpaper region shows it wherever its picture does not reach. Behind the lock's prompt it is the card the password field sits on, and one the field's text cannot be read on — below WCAG AA, 4.5:1 — is refused, because an unreadable prompt is a lockout too; the same holds for a group or an instance inside the prompt. |
 | `radius` | How far the corners are rounded, in logical pixels: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]`. A wallpaper region or a texture is cut to it. A bar is rounded by its own `shape.radius`, so one written here on a bar is reported and not drawn. |
-| `opacity` | How opaque the area's own paint is, from 0 to 1, whatever alpha its `fill` names: the fill, everything a bar paints — its strip, sections and resting chips — in place of `[theme] opacity`, a wallpaper region's picture, or a texture on top of its own `opacity`. What the area holds is drawn as it is. The lock's prompt is kept at 0.9 or above: a prompt faded into its background is a lockout. |
-| `padding` | How far the area holds its contents off its own edges. A bar that names none pads by half its spacing in `bar` mode and not at all in the others. |
-| `backdrop` | What happens to what is behind an area. |
+| `opacity` | How opaque its own paint is, from 0 to 1, whatever alpha its `fill` names: the fill, everything a bar paints — its strip, sections and resting chips — in place of `[theme] opacity`, a wallpaper region's picture, or a texture on top of its own `opacity`. What it holds is drawn as it is. The lock's prompt, and anything inside it, is kept at 0.9 or above: a prompt faded into its background is a lockout. |
+| `padding` | How far an area or a group holds its contents off its own edges: one number for all four sides, or `[top, right, bottom, left]`. A bar that names none pads by half its spacing in `bar` mode and not at all in the others. An instance lays out its own content, so one written on an instance is reported. |
+| `border` | A line around the box. A level that writes one of its keys keeps the other from the level under it. Read and checked, but not drawn yet. |
+| `shadow` | How far the box is lifted off what is behind it, in one of four steps: `0` is no shadow, `1` a soft one, `2` a medium one and `3` a strong one. Left out, it is what its kind has. On a bar in `chips` mode each chip carries its own, so one written on the bar is reported. Read and checked, but not drawn yet. |
+| `backdrop` | What happens to what is behind an area. Only an area has a backdrop, so one written on a group or an instance is reported. |
+
+## `Border`
+
+A line around a box. Either key may be left out.
+
+| Key | What it is |
+| --- | --- |
+| `width` | How thick the line is, in logical pixels. Left out, it is 1; `0` is no line. |
+| `color` | A theme token name or a hex colour. Left out, it is the theme's `highlight_low`. |
+
+## `Corners`
+
+How far each corner of a box is rounded, in logical pixels, clockwise from the top left.
+
+Written as one number when every corner agrees and as `[top_left, top_right, bottom_right, bottom_left]` when they do not, so the common case stays the one number a person types and a layout written back keeps that shape.
+
+## `Sides`
+
+How far a box holds what it contains off each of its edges, in logical pixels, clockwise from the top.
+
+Written the way `Corners` is: one number when every side agrees, and `[top, right, bottom, left]` when they do not.
 
 ## `BarShape`
 
@@ -242,6 +278,7 @@ A bar's shape: whether it is one surface, sections or chips, how far it floats a
 | `gap` | How far the bar floats from its edge and from the screen's sides. |
 | `spacing` | The space between two modules on it. |
 | `radius` | How far its corners are rounded: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]` so a bar that meets another at a corner can square that corner alone. |
+| `fillet` | The concave radius, in logical pixels, at the bar's inner corners, so the screen's free space meets the bar in a curve. Only a bar in `bar` mode has a strip to curve out of, and there is none unless set. Read and checked, but not drawn yet. |
 
 ## `AutoHide`
 
@@ -254,7 +291,7 @@ A bar that hides itself off its edge and comes back when the pointer reaches the
 
 ## `Rect`
 
-A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+A rectangle in fractions of the box it is measured in, so one layout describes every monitor: an area's of its output, a child's of its `free` group. `0,0` is the top left corner and `1,1` the bottom right.
 
 | Key | What it is |
 | --- | --- |
@@ -319,13 +356,17 @@ A run of instances inside an area, and how the area places it.
 | --- | --- |
 | `id` | What another level of the same layout addresses this group by. Unique within its area, so two bars can each have an `end`. |
 | `place` | Where in its area the group sits: `zone` in one of a bar's runs, or `cell` on a grid, with the keys that way needs beside it. |
-| `stacked` | Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set. |
-| `repeat` | An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a stacked group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn. |
+| `arrange` | How the group lays its children out in its own box: `column` and `row` share its length by each child's `weight`, `grid` puts each child on the `cell` it names in an inner grid of `cols` × `rows`, `free` puts each on the `rect` it names, and `pages` shows them one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Left out, the children are a loose run at their own sizes. A group in a zone — of a bar, a dock, a stack or a free area — may only be `pages`, since the area already lays the zone's run out itself. |
+| `cols` | How many columns the inner grid of a `grid` group has. 2 unless set. |
+| `rows` | How many rows the inner grid of a `grid` group has. 2 unless set. |
+| `gap` | The space between two children of a group that arranges them, in logical pixels. |
+| `repeat` | An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a `pages` group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed, nor in a `grid` or `free` group, where each child has a place of its own. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn. |
+| `style` | How the group is painted, as one box around its children. It is the group's own rather than what it holds, so a level that names another komponent keeps it. Read and checked, but not drawn yet. |
 | `children` | One placed module. |
 | `remove` | Ids of instances an earlier level placed that this one takes away. |
-| `komponent` | The komponent this group draws, by the name of its file: `komponent = "battery-pill"` draws what `components/battery-pill.toml` holds — its children, and whether they repeat or stack — so the group holds nothing else, and a level that names another komponent, or names one where the group held its own children, replaces what the group held. Each child is drawn as `<area>.<group>/<child>`, so two groups using one komponent never share an id or what an instance keeps. A komponent that is missing or cannot be read is drawn as one placeholder that says which. |
+| `komponent` | The komponent this group draws, by the name of its file: `komponent = "battery-pill"` draws what `components/battery-pill.toml` holds — its children, how they are arranged and whether they repeat — so the group holds nothing else, and a level that names another komponent, or names one where the group held its own children, replaces what the group held. Each child is drawn as `<area>.<group>/<child>`, so two groups using one komponent never share an id or what an instance keeps. A komponent that is missing or cannot be read is drawn as one placeholder that says which. |
 | `parameters` | What the komponent's parameters read here, by name: an expression of the type the parameter declares (`threshold = "15"`, `label = "'Home'"`, `level = "$battery.level"`), read where the group is drawn. A parameter left out reads its default. A name the komponent does not declare is an error. |
-| `unset` | Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them, and `unset = ["parameters.label"]` puts back a komponent parameter's default. A group takes back `repeat` and `parameters.<name>`, the way an area takes back `visible`. |
+| `unset` | What a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them, `unset = ["parameters.label"]` puts back a komponent parameter's default, and `unset = ["arrange"]` makes the group a loose run again, dropping its `cols`, `rows` and `gap` with it. A group takes back `repeat`, `parameters.<name>` and `arrange`, the way an area takes back `visible`. |
 
 ## `GroupKind::Zone`
 
@@ -356,9 +397,24 @@ One placed module.
 | `module` | The module descriptor this instance shows. Required the first time the instance is named. |
 | `representation` | How big it is drawn: `chip`, `widget_s`, `widget_m`, `widget_l` or `card`. Defaults to `chip`. |
 | `options` | Option overrides for this instance alone, over its module's defaults: any key of the module's own section (`[clock]` for a clock), and any of `[modules.<id>]` — `accent`, `variant`, `open` and the sizes of what it opens. A key the module does not have is an error. |
-| `bindings` | Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), or `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`). Each value is laid over `options` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value. |
+| `bindings` | Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`), or one of `style.fill` and `style.border.color`, colours, and `style.opacity`, a number. Each value is laid over `options` or `style` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value. |
+| `style` | How the instance's own box is painted, over what its kind of chip or widget draws. Its `fill`, `opacity` and `border.color` can be bound like an option, as `style.fill`, `style.opacity` and `style.border.color`. Read and checked, but not drawn yet. |
+| `weight` | How much of a `row` or `column` group's length this child takes against its siblings' weights: one of `2` beside two of `1` takes half. 1 unless set, and above 0. |
+| `cell` | Which cells of a `grid` group's inner grid this child covers. A child that names none takes the first free cell in reading order, and one that runs past the inner grid is pulled back onto it. |
+| `rect` | Where in a `free` group's box this child sits, in fractions of the box inside the group's padding. A later child is drawn over an earlier one. A child that names none is half the box each way, each one a step further from the top left corner than the one before. |
 | `actions` | What each gesture on this instance runs. |
 | `unset` | Bindings a level under this one gave the instance that this level takes back, each as `bindings.<path>`: `unset = ["bindings.accent"]` puts back the accent its options give it where a broader rule drives it by an expression. A path has to be one `bindings` could hold, the way an area takes back `visible`. |
+
+## `ChildCell`
+
+The cells of its group's inner grid a child of a `grid` group covers.
+
+| Key | What it is |
+| --- | --- |
+| `col` | Which column of the inner grid the child starts at, counting from 0. |
+| `row` | Which row it starts at. |
+| `col_span` | How many columns it covers. 1 unless set. |
+| `row_span` | How many rows it covers. 1 unless set. |
 
 ## `Komponent`
 
@@ -369,8 +425,11 @@ Its children are written as a group's are, with ids of their own that only have 
 | Key | What it is |
 | --- | --- |
 | `parameters` | The values a use can set, by the name its expressions read each as (`$label`): letters, digits and `_`, and neither `item` nor `index`, which a copy of a repeated group reads. |
-| `stacked` | Shows the children one at a time, as a group's `stacked` does. |
-| `repeat` | An expression giving a list the children are drawn once per item of, as a group's `repeat` is; it may read the parameters. Not allowed where the komponent is used in a grid cell, whose footprint is fixed. |
+| `arrange` | How the children are laid out, as a group's `arrange` says. A use in a zone, of whatever area, takes only `pages`. |
+| `cols` | How many columns the inner grid of a `grid` komponent has, as a group's `cols` says. |
+| `rows` | How many rows the inner grid of a `grid` komponent has, as a group's `rows` says. |
+| `gap` | The space between two children it arranges, as a group's `gap` says. |
+| `repeat` | An expression giving a list the children are drawn once per item of, as a group's `repeat` is; it may read the parameters. Not allowed where the komponent is used in a grid cell, whose footprint is fixed, nor in a `grid` or `free` komponent. |
 | `children` | The instances it holds, written as a group's are. What each one may do is what the layer it is used on allows: on the lock layer only readings, and no actions. |
 
 ## `Parameter`

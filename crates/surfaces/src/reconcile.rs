@@ -6,11 +6,11 @@
 //!
 //! **Reservation is an output-level fact, never a workspace one.** A strip's thickness is the deepest reserving area on its edge across every layer of the output's own rules, so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use platform_wayland::{Anchor, Layer, LayerConfig, OutputDescriptor, SurfaceHandle};
 use telar::{RwSignal, signal};
@@ -297,20 +297,47 @@ thread_local! {
     static PUBLISHED: RefCell<Rc<[Desktop]>> = RefCell::new(Rc::from([]));
     static RECONCILED: RwSignal<u64> = telar::detached(|| signal(0));
     static PREVIEW: RwSignal<Option<Rc<[Desktop]>>> = telar::detached(|| signal(None));
+    static RECONFIGURED: RwSignal<Option<Reconfigured>> = telar::detached(|| signal(None));
+    static RECONFIGURED_SERIAL: Cell<u64> = const { Cell::new(0) };
+    static SHOWN_CONFIGS: RefCell<Vec<(Weak<Config>, Arc<Config>)>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Every output's arrangement as the windows show it: what the last reconcile left, or the preview drawn in its place while an edit is undecided. An output that went away is no longer in it.
+#[derive(Clone)]
+struct Reconfigured {
+    serial: u64,
+    edit: Rc<dyn Fn(&Config) -> Config>,
+}
+
+/// Every output's arrangement as the windows show it: what the last reconcile left, or the preview drawn in its place while an edit is undecided — with the config a [`preview_config`] shows. An output that went away is no longer in it.
 ///
 /// Reactive: read inside an effect or a build, it runs again once the next reconcile has brought the windows in line, and whenever a preview starts, moves or ends, so what it reads is always what the windows already show.
 pub fn desktops() -> Rc<[Desktop]> {
-    previewing().unwrap_or_else(planned)
+    let reconfigured = RECONFIGURED.with(|reconfigured| reconfigured.get());
+    reconfiguring(previewing().unwrap_or_else(planned), reconfigured)
 }
 
 /// [`desktops`] as the windows show it at this moment, without following it: for a caller that must not run again whenever it changes — an edit planned inside the effect that previews it, whose preview changes it.
 pub fn desktops_now() -> Rc<[Desktop]> {
-    PREVIEW
+    let desktops = PREVIEW
         .with(|preview| preview.peek())
-        .unwrap_or_else(|| PUBLISHED.with(|published| Rc::clone(&published.borrow())))
+        .unwrap_or_else(|| PUBLISHED.with(|published| Rc::clone(&published.borrow())));
+    reconfiguring(
+        desktops,
+        RECONFIGURED.with(|reconfigured| reconfigured.peek()),
+    )
+}
+
+fn reconfiguring(desktops: Rc<[Desktop]>, reconfigured: Option<Reconfigured>) -> Rc<[Desktop]> {
+    let Some(reconfigured) = reconfigured else {
+        return desktops;
+    };
+    desktops
+        .iter()
+        .map(|desktop| Desktop {
+            config: shown_under(&reconfigured, &desktop.config),
+            ..desktop.clone()
+        })
+        .collect()
 }
 
 /// The arrangement of the screen `output` as the windows show it, from [`desktops`]. Reactive.
@@ -367,6 +394,56 @@ pub fn end_preview() {
             preview.set(None);
         }
     });
+}
+
+/// Draws every window with `edit` made to the config it was reconciled with, until [`end_config_preview`] or the next one: every area is built again, as a reload builds them, but nothing is planned again, so what each edge reserves stays as reconciled.
+pub fn preview_config(edit: impl Fn(&Config) -> Config + 'static) {
+    let serial = RECONFIGURED_SERIAL.with(util::serial::next_serial);
+    SHOWN_CONFIGS.with(|shown| shown.borrow_mut().clear());
+    RECONFIGURED.with(|reconfigured| {
+        reconfigured.set(Some(Reconfigured {
+            serial,
+            edit: Rc::new(edit),
+        }))
+    });
+}
+
+/// Puts what was reconciled back on screen, rebuilding every window a config preview had changed.
+pub fn end_config_preview() {
+    RECONFIGURED.with(|reconfigured| {
+        if reconfigured.peek_with(Option::is_some) {
+            SHOWN_CONFIGS.with(|shown| shown.borrow_mut().clear());
+            reconfigured.set(None);
+        }
+    });
+}
+
+/// `config` as the windows draw with it, and which config preview made it so, `None` while none is showing. Reactive.
+pub fn shown_config(config: &Arc<Config>) -> (Option<u64>, Arc<Config>) {
+    match RECONFIGURED.with(|reconfigured| reconfigured.get()) {
+        Some(reconfigured) => (
+            Some(reconfigured.serial),
+            shown_under(&reconfigured, config),
+        ),
+        None => (None, Arc::clone(config)),
+    }
+}
+
+/// Made once per config and preview, so every reader of one screen's config is handed the same one; an entry goes once the config it was made from has been replaced by a reload.
+fn shown_under(reconfigured: &Reconfigured, config: &Arc<Config>) -> Arc<Config> {
+    SHOWN_CONFIGS.with(|shown| {
+        let mut shown = shown.borrow_mut();
+        shown.retain(|(from, _)| from.strong_count() > 0);
+        if let Some((_, edited)) = shown
+            .iter()
+            .find(|(from, _)| std::ptr::eq(from.as_ptr(), Arc::as_ptr(config)))
+        {
+            return Arc::clone(edited);
+        }
+        let edited = Arc::new((reconfigured.edit)(config));
+        shown.push((Arc::downgrade(config), Arc::clone(&edited)));
+        edited
+    })
 }
 
 /// The instance of `module` that what its id opens — a panel, the notification centre — speaks for when no chip of it was pressed: the first on `output`, then the first on any output, else none of the layout's, which leaves the module's defaults (TA-2).

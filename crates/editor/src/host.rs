@@ -12,11 +12,12 @@ use std::sync::Arc;
 
 use telar::{
     AlignItems, Border, Children, Color, JustifyContent, LayoutItem, LayoutStyle, ReactiveList,
-    RectStyle, SizeDimension, StyledContainer, use_theme,
+    RectStyle, RwSignal, SizeDimension, StyledContainer, detached, signal, use_theme,
 };
 
+use config::Edge;
 use config::theme::NordTheme;
-use layout::{LayerKind, Within};
+use layout::{LayerKind, ResolvedAreaKind, Within};
 use platform_wayland::{KeyboardMode, Layer};
 use surfaces::layer_window::{Concealment, Demand, Hold};
 use surfaces::reconcile::{self, Desktop};
@@ -39,20 +40,103 @@ const BORDER: f32 = 2.0;
 /// What builds one layer's tools inside the host, given the mode they are built for.
 pub type Tool = fn(&Mode) -> Built;
 
-/// A button of a mode's toolbar: what it says, and what a press does.
-pub(crate) type ToolbarButton = (fn() -> String, fn());
+/// A button of a mode's toolbar or strip, or a row among the edit-mode rows of its context menus: what it says, and what a press does. "Theme…" is one.
+pub type StripButton = (fn() -> String, fn());
 
-/// How far above the foot of what the reserving areas leave the toolbar sits.
-const TOOLBAR_RISE: f32 = 64.0;
+/// What a mode's `+` opens: the way of adding to its layer that the mode leads with.
+pub(crate) type Add = fn() -> Result<(), crate::session::EditError>;
+
+/// How far above the foot of what the reserving areas leave the strip sits.
+const STRIP_RISE: f32 = 16.0;
+
+/// How much higher the top mode's strip sits while the bottom edge has no bar, so the strip along that edge that a new bar is pulled out of stays clear of it.
+pub(crate) const BOTTOM_EDGE_CLEARANCE: f32 = 64.0;
 
 /// How big a split or join button is across.
 pub(crate) const HOTSPOT: f32 = 28.0;
 
 thread_local! {
     static TOOLS: RefCell<Vec<(LayerKind, Tool)>> = const { RefCell::new(Vec::new()) };
-    static TOOLBAR: RefCell<Vec<(LayerKind, ToolbarButton)>> = const { RefCell::new(Vec::new()) };
+    static TOOLBAR: RefCell<Vec<(LayerKind, StripButton)>> = const { RefCell::new(Vec::new()) };
+    static ADDS: RefCell<Vec<(LayerKind, Add)>> = const { RefCell::new(Vec::new()) };
+    static STRIP_ACTIONS: RefCell<Vec<StripButton>> = const { RefCell::new(Vec::new()) };
+    static STRIP_MOVED: RwSignal<(f32, f32)> = detached(|| signal((0.0, 0.0)));
+    static STRIP_GRAB: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
     static SERIAL: Cell<u64> = const { Cell::new(0) };
     static STAND_IN_SAID: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Makes `add` what the `+` on the strip of every `layer` mode opens, in place of whatever was there.
+pub(crate) fn set_add(layer: LayerKind, add: Add) {
+    ADDS.with(|adds| {
+        let mut adds = adds.borrow_mut();
+        adds.retain(|(of, _)| *of != layer);
+        adds.push((layer, add));
+    });
+}
+
+/// What the `+` on the `layer` mode's strip opens; a mode with none shows no `+`.
+pub(crate) fn add_of(layer: LayerKind) -> Option<Add> {
+    ADDS.with(|adds| {
+        adds.borrow()
+            .iter()
+            .find(|(of, _)| *of == layer)
+            .map(|(_, add)| *add)
+    })
+}
+
+/// Adds `action` to the strip of every mode, after the history and before the keys, and to the edit-mode rows of every context menu.
+pub fn add_strip_action(action: StripButton) {
+    STRIP_ACTIONS.with(|actions| actions.borrow_mut().push(action));
+}
+
+pub(crate) fn strip_actions() -> Vec<StripButton> {
+    STRIP_ACTIONS.with(|actions| actions.borrow().clone())
+}
+
+/// How far the strip has been dragged from where it sits by default. Kept for as long as the shell runs, across modes, so it stays wherever it was put out of the way.
+pub(crate) fn strip_moved() -> RwSignal<(f32, f32)> {
+    STRIP_MOVED.with(|moved| *moved)
+}
+
+/// The strip's grip dragged: the strip follows the pointer, held by the point it was taken at.
+pub(crate) fn strip_dragged() {
+    let Some((x, y)) = surfaces::menu::pointer() else {
+        return;
+    };
+    let moved = strip_moved();
+    let (grab_x, grab_y) = STRIP_GRAB.with(|grab| {
+        grab.get().unwrap_or_else(|| {
+            let (dx, dy) = moved.peek();
+            let taken = (x - dx, y - dy);
+            grab.set(Some(taken));
+            taken
+        })
+    });
+    moved.set((x - grab_x, y - grab_y));
+}
+
+/// The strip's grip let go.
+pub(crate) fn strip_let_go() {
+    STRIP_GRAB.with(|grab| grab.set(None));
+}
+
+/// Whether the strip of `layer`'s mode on `output` keeps clear of the bottom edge: in the top mode, while no bar is on that edge.
+pub(crate) fn clears_bottom_edge(layer: LayerKind, output: &str) -> bool {
+    layer == LayerKind::Top
+        && !reconcile::desktop(Some(output))
+            .and_then(|desktop| desktop.resolved.layer(LayerKind::Top).cloned())
+            .is_some_and(|top| {
+                top.areas.iter().any(|area| {
+                    matches!(
+                        area.kind,
+                        ResolvedAreaKind::Bar {
+                            edge: Edge::Bottom,
+                            ..
+                        }
+                    )
+                })
+            })
 }
 
 /// Mounts `tool` in the host of every `layer` mode, above the edited layer and the reference outlines and below the strip. Tools mount in the order they were added, each over the ones before it, in a box the size of the output that takes no pointer itself.
@@ -61,12 +145,12 @@ pub fn add_tool(layer: LayerKind, tool: Tool) {
 }
 
 /// Adds `button` to the toolbar of every `layer` mode, after the buttons added before it. A mode with no buttons has no toolbar.
-pub(crate) fn add_toolbar_button(layer: LayerKind, button: ToolbarButton) {
+pub(crate) fn add_toolbar_button(layer: LayerKind, button: StripButton) {
     TOOLBAR.with(|buttons| buttons.borrow_mut().push((layer, button)));
 }
 
 /// The buttons of the `layer` mode's toolbar, in order.
-pub(crate) fn toolbar_of(layer: LayerKind) -> Vec<ToolbarButton> {
+pub(crate) fn toolbar_of(layer: LayerKind) -> Vec<StripButton> {
     TOOLBAR.with(|buttons| {
         buttons
             .borrow()
@@ -110,10 +194,7 @@ pub(crate) enum Under {
 
 /// Opens the host for `mode`: raises or stands in for the edited window, keeps it on screen, and puts the chrome up. `restack` is whether the compositor can move a layer window to another layer.
 pub(crate) fn open(mode: &Mode, restack: bool) -> Session {
-    let serial = SERIAL.with(|next| {
-        next.set(next.get() + 1);
-        next.get()
-    });
+    let serial = SERIAL.with(util::serial::next_serial);
     let output = Some(mode.output.as_str());
     let raised = matches!(mode.layer, LayerKind::Background | LayerKind::Desktop);
     let under = match mode.layer {
@@ -157,13 +238,14 @@ pub(crate) fn open(mode: &Mode, restack: bool) -> Session {
     }
 }
 
-/// Closes whichever of the transients an edit mode opens over its host is open — a popover, a menu, the palette and what it picked, the privacy card — keeping what each changed, so the one opening next is the only one.
+/// Closes whichever of the transients an edit mode opens over its host is open — a popover, a menu, the palette and what it picked, the privacy and theme cards — keeping what each changed, so the one opening next is the only one.
 pub(crate) fn close_transients() {
     crate::popover::close();
     transient::close(crate::context::ID);
     transient::close(crate::modes::palette::ID);
     crate::modes::palette::unpick();
     transient::close(crate::modes::lock::PRIVACY);
+    transient::close(crate::theme::ID);
 }
 
 /// The transient the host of a mode on `output` is.
@@ -202,7 +284,6 @@ pub(crate) fn tree(mode: &Mode, under: Under) -> Built {
     }
     if mode.refused.is_none() {
         layers.push(tools(mode)?);
-        layers.push(toolbar(mode)?);
     }
     layers.push(border(theme)?);
     layers.push(strip(mode)?);
@@ -297,9 +378,12 @@ pub(crate) fn tools(mode: &Mode) -> Built {
     Ok(Box::new(passthrough(whole(), built)?))
 }
 
-/// The mode's toolbar, at the foot of what the reserving areas leave: the buttons added for its layer ([`add_toolbar_button`]).
+/// The mode's toolbar: the buttons added for its layer ([`add_toolbar_button`]), or nothing where the mode has none or offers no tools.
 fn toolbar(mode: &Mode) -> Built {
-    let added = toolbar_of(mode.layer);
+    let added = match mode.refused {
+        None => toolbar_of(mode.layer),
+        Some(_) => Vec::new(),
+    };
     if added.is_empty() {
         return Ok(Box::new(passthrough(LayoutStyle::new(), Vec::new())?));
     }
@@ -316,28 +400,16 @@ fn toolbar(mode: &Mode) -> Built {
         })
         .collect::<Result<Vec<_>, _>>()?;
     let theme = use_theme::<NordTheme>();
-    let bar = StyledContainer::new(
-        LayoutStyle::new()
-            .flex_row()
-            .gap(ui::scale::space::sm())
-            .padding_all(ui::scale::space::sm()),
-        move |_| RectStyle::filled(theme.surface, ui::scale::corner::md()),
-        buttons,
-    )?
-    .input_opaque();
-    let output = mode.output.clone();
     Ok(Box::new(
-        passthrough(LayoutStyle::new(), vec![Box::new(bar)])?.styled_by(move || {
-            let usable = usable(Some(&output));
+        StyledContainer::new(
             LayoutStyle::new()
-                .absolute()
-                .inset_start(usable.x)
-                .inset_top(usable.y + usable.height - TOOLBAR_RISE)
-                .width(usable.width)
                 .flex_row()
-                .justify_content(JustifyContent::CENTER)
-                .align_items(AlignItems::START)
-        }),
+                .gap(ui::scale::space::sm())
+                .padding_all(ui::scale::space::sm()),
+            move |_| RectStyle::filled(theme.surface, ui::scale::corner::md()),
+            buttons,
+        )?
+        .input_opaque(),
     ))
 }
 
@@ -356,7 +428,7 @@ fn border(theme: NordTheme) -> Built {
     ))
 }
 
-/// The strip, centred at the top of what the screen's reserving areas leave, so it never sits over a bar being edited.
+/// The strip with the mode's toolbar over it, centred at the foot of what the screen's reserving areas leave, so neither sits over a bar that reserves. In the top mode it rises clear of the bottom edge while that edge has no bar ([`clears_bottom_edge`]), and wherever its grip has dragged it, it stays ([`strip_moved`]).
 fn strip(mode: &Mode) -> Built {
     let shown = indicator(
         IndicatorProps::props()
@@ -366,18 +438,25 @@ fn strip(mode: &Mode) -> Built {
             .build(),
         Children::default(),
     )?;
-    let output = mode.output.clone();
+    let (output, layer) = (mode.output.clone(), mode.layer);
+    let moved = strip_moved();
     Ok(Box::new(
-        passthrough(LayoutStyle::new(), vec![shown])?.styled_by(move || {
+        passthrough(LayoutStyle::new(), vec![toolbar(mode)?, shown])?.styled_by(move || {
             let usable = usable(Some(&output));
+            let height = reconcile::desktop(Some(&output)).map_or(0.0, |desktop| desktop.size.1);
+            let clearance = match clears_bottom_edge(layer, &output) {
+                true => BOTTOM_EDGE_CLEARANCE,
+                false => 0.0,
+            };
+            let (dx, dy) = moved.get();
             LayoutStyle::new()
                 .absolute()
-                .inset_start(usable.x)
-                .inset_top(usable.y + ui::scale::space::lg())
+                .inset_start(usable.x + dx)
+                .inset_bottom(height - usable.y - usable.height + STRIP_RISE + clearance - dy)
                 .width(usable.width)
-                .flex_row()
-                .justify_content(JustifyContent::CENTER)
-                .align_items(AlignItems::START)
+                .flex_column()
+                .gap(ui::scale::space::sm())
+                .align_items(AlignItems::CENTER)
         }),
     ))
 }

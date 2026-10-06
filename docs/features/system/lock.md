@@ -32,9 +32,10 @@ other layer, and it is edited the same way — by hand in `~/.config/hogar-shell
 many notifications are waiting.
 
 The **prompt** is the one area that is not the layout's to remove. Exactly one exists per output, it can be
-moved and styled but never hidden, and a layout that has no prompt — or one an expression could hide, or one
-another area is stacked over — is refused whole: the built-in **minimal lock** goes up instead, and a toast says
-so once you are back in. A half-corrected lock screen is worse than a plain one.
+moved and styled but never hidden, and it is always drawn over everything else on the lock layer, wherever the
+file lists it. A layout that has no prompt — or one an expression could hide — is refused whole: the built-in
+**minimal lock** goes up instead, and a toast says so once you are back in. A half-corrected lock screen is worse
+than a plain one.
 
 **Every area on the lock screen is a reading, never a control.** A control reaches into another application,
 which is the one thing a lock exists to prevent. Three things enforce it, and each one is the last line for the

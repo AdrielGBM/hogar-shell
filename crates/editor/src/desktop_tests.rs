@@ -12,7 +12,7 @@ mod tests {
     use telar::{RectStyle, StyledContainer};
 
     use layout::{
-        ActiveWorkspace, Area, AreaId, AreaKind, GroupId, GroupKind, InstanceId, LayerKind, Layout,
+        ActiveWorkspace, Area, AreaId, AreaKind, Arrange, GroupId, GroupKind, InstanceId, LayerKind, Layout,
         LayoutId, OutputMatch, OutputRule, Representation, ResolvedArea, ResolvedGroup,
         WorkspaceMatch,
     };
@@ -363,7 +363,11 @@ mod tests {
         let empty = geometry();
         assert!(grid_now().groups.is_empty(), "nothing on it yet");
         assert_eq!(empty.room, Room { cols: 19, rows: 10 });
-        assert_eq!(empty.origin, (56.0, 68.0), "centred in what the cells leave");
+        assert_eq!(
+            empty.origin,
+            (56.0, 68.0),
+            "centred in what the cells leave"
+        );
 
         desktop::put(
             &Pick::Module("weather".to_string()),
@@ -542,7 +546,7 @@ mod tests {
         drop("clock-2", Landing::Onto(target.clone()));
         let stack = holding("clock-2").expect("the clock is still placed");
         assert_eq!(stack.id, target, "in the weather's group");
-        assert!(stack.stacked, "one at a time");
+        assert!(stack.is_pages(), "one at a time");
         assert_eq!(stack.children.len(), 2);
         assert_eq!(
             grid::cells_of(&stack).map(|cells| (cells.col, cells.row)),
@@ -567,17 +571,17 @@ mod tests {
         drop("clock-2", Landing::Cell { col: 10, row: 0 });
         let alone = holding("clock-2").expect("detached, still placed");
         assert_ne!(alone.id, target);
-        assert!(!alone.stacked);
+        assert!(!alone.is_pages());
         assert_eq!(
             grid::cells_of(&alone).map(|cells| (cells.col, cells.row)),
             Some((10, 0))
         );
-        assert!(holding("weather").is_some_and(|group| group.stacked));
+        assert!(holding("weather").is_some_and(|group| group.is_pages()));
 
         drop(third.as_str(), Landing::Cell { col: 0, row: 4 });
         let left = holding("weather").expect("the weather stays");
         assert_eq!(left.children.len(), 1);
-        assert!(!left.stacked, "a stack of one is a widget again");
+        assert!(!left.is_pages(), "a stack of one is a widget again");
 
         for _ in 0..6 {
             session::undo().expect("one entry each");
@@ -650,6 +654,64 @@ mod tests {
             .flat_map(|area| area.groups.iter())
             .find(|group| group.children.iter().any(|child| child.id.as_str() == id))
             .cloned()
+    }
+
+    fn stacked_clock(layout: &mut Layout) {
+        let areas = &mut layout.outputs[0].layers.desktop.areas;
+        let group = areas[0].groups.last_mut().expect("the clock's group");
+        group.arrange = Some(Arrange::Pages);
+        group.gap = Some(4.0);
+    }
+
+    fn tidy_the_clock() -> Vec<layout::LayoutOp> {
+        let group = holding("clock-2").expect("the clock is placed").id;
+        desktop::tidied(
+            &session::draft().peek(),
+            &surfaces::reconcile::desktops()[0],
+            LayerKind::Desktop,
+            &widgets_area(),
+            &group,
+        )
+        .expect("tidied")
+    }
+
+    /// A stack of one whose `pages` the edited level wrote itself is a widget again by deleting those keys, with nothing taken back.
+    #[test]
+    fn a_stack_of_one_written_by_the_edited_level_loses_its_keys() {
+        let rig = rig_with("desktop-own-stack", stacked_clock);
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        assert!(holding("clock-2").is_some_and(|group| group.is_pages()));
+        commit(tidy_the_clock());
+        let layout = stored(&rig);
+        let group = layout.outputs[0].layers.desktop.areas[0]
+            .groups
+            .last()
+            .expect("the clock's group");
+        assert_eq!((group.arrange, group.gap), (None, None));
+        assert!(group.unset.is_empty());
+        assert!(holding("clock-2").is_some_and(|group| !group.is_pages()));
+    }
+
+    /// A stack of one whose `pages` a broader level writes is taken back from the workspace's rule by `unset = ["arrange"]`, so that workspace draws a widget while the others keep the stack.
+    #[test]
+    fn a_stack_of_one_a_broader_level_writes_is_taken_back_by_unset() {
+        let rig = rig_on("desktop-inherited-stack", Some("2"), stacked_clock);
+        let _owner = Owner::new();
+        let _host = enter(LayerKind::Desktop);
+        variant::set(true).expect("the screen says which workspace is up");
+        commit(tidy_the_clock());
+        let layout = stored(&rig);
+        let rule = &layout.outputs[0].workspaces[0];
+        let group = &rule.layers.desktop.areas[0].groups[0];
+        assert_eq!(group.unset, [layout::Unset::Arrange]);
+        assert_eq!(group.arrange, None);
+        let pages = |workspace: Option<&str>| {
+            group_on(&resolved_on(&layout, workspace), "clock-2").map(|group| group.is_pages())
+        };
+        assert_eq!(pages(Some("2")), Some(false));
+        assert_eq!(pages(Some("3")), Some(true));
+        assert_eq!(pages(None), Some(true));
     }
 
     /// With "this workspace only" switched on under an open instance popover, what it changed moves into that workspace's rule, and a widget dropped on other cells lands there alone too.
@@ -1129,8 +1191,7 @@ mod tests {
             "the mixer answers the pointer: {on_lock:?}"
         );
 
-        let narrowed: Vec<Line> =
-            palette::lines(LayerKind::Desktop, "WEATHER-P");
+        let narrowed: Vec<Line> = palette::lines(LayerKind::Desktop, "WEATHER-P");
         assert_eq!(narrowed.len(), 2, "its heading and the one entry");
     }
 

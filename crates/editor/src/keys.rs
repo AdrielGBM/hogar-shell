@@ -320,6 +320,16 @@ thread_local! {
     static HELP_FOLD: Fold = const { RefCell::new(None) };
 }
 
+/// The chords that undo, the first being the one the menus spell.
+pub(crate) fn undo_chords() -> Vec<Chord> {
+    vec![Chord::char('z').ctrl()]
+}
+
+/// The chords that redo, the first being the one the menus spell.
+pub(crate) fn redo_chords() -> Vec<Chord> {
+    vec![Chord::char('z').ctrl().shift(), Chord::char('y').ctrl()]
+}
+
 /// Adds `op` to every mode, for whatever is selected in or as an area of the kind `kind` (`bar`, `grid`, … as the layout file spells it). Registered inside [`crate::install`]; a key it shares with a generic row is its own for that kind.
 pub fn add_key_op(kind: &'static str, op: KeyOp) {
     KIND_OPS.with(|ops| ops.borrow_mut().push((kind, op)));
@@ -542,11 +552,9 @@ fn run(mode: &Mode, row: &Row, chord: &Chord) -> Result<bool, EditError> {
         Does::History => {
             let way =
                 session::history_key(&chord.key, chord.modifiers).ok_or_else(EditError::nothing)?;
-            let walked = match way {
-                session::History::Undo => session::undo(),
-                session::History::Redo => session::redo(),
-            };
-            walked.map_err(EditError::Refused)?;
+            if let Some(travelled) = session::travel(way.steps()).map_err(EditError::Refused)? {
+                mode::confirm(travelled.said());
+            }
         }
         Does::Dismiss => return Ok(false),
         Does::Switch => pie::shown().update(|open| *open = !*open),
@@ -609,10 +617,7 @@ fn step(
         let _ = edit.revert();
         return Err(why);
     }
-    let serial = SERIAL.with(|next| {
-        next.set(next.get() + 1);
-        next.get()
-    });
+    let serial = SERIAL.with(util::serial::next_serial);
     HELD.with(|held| {
         *held.borrow_mut() = Some(Held {
             edit,
@@ -837,13 +842,13 @@ pub fn table(layer: LayerKind) -> Vec<Row> {
         ),
         (
             "undo",
-            vec![Chord::char('z').ctrl()],
+            undo_chords(),
             || telar::t!("editor.keys.op.undo"),
             Does::History,
         ),
         (
             "redo",
-            vec![Chord::char('z').ctrl().shift(), Chord::char('y').ctrl()],
+            redo_chords(),
             || telar::t!("editor.keys.op.redo"),
             Does::History,
         ),

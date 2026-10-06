@@ -121,6 +121,9 @@ fn layout_page() -> String {
         if let Some(doc) = item.doc {
             let _ = writeln!(out, "{doc}\n");
         }
+        if item.keys.is_empty() {
+            continue;
+        }
         let _ = writeln!(out, "| Key | What it is |\n| --- | --- |");
         for key in item.keys {
             let _ = writeln!(

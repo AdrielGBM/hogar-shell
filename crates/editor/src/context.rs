@@ -1,6 +1,6 @@
 //! Context menus on every item and area (TA-4): a secondary press on a chip, a widget, a card or an area's empty space opens one, and so does the menu key (or Shift+F10) on what has the focus, in an edit mode and outside one.
 //!
-//! **What is in it.** An instance's module's own actions, "Customize…", a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), saving its group as a komponent, "Remove" and "Edit <layer>…" — or, for a child of a komponent a group draws, its module's actions, the use's parameters, "Detach" and "Edit <layer>…" ([`crate::komponent`]); an area's own bound actions, "Customize…", what the tools for its kind add ([`add_area_rows`]) and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config (TA-7). Nothing is offered on the lock layer (TA-8).
+//! **What is in it.** An instance's module's own actions, "Customize…", a move to an area that draws it the other way (chip ↔ widget, keeping its id, options and state), saving its group as a komponent, "Remove" and "Edit <layer>…" — or, for a child of a komponent a group draws, its module's actions, the use's parameters, "Detach" and "Edit <layer>…" ([`crate::komponent`]); an area's own bound actions, "Customize…", what the tools for its kind add ([`add_area_rows`]) and "Edit <layer>…". A placeholder — a module this build does not have, or cannot draw the way the layout asks — gets the "Fix…" rows instead, remove and reset, which act on the layout rather than on config (TA-7). On the layer an edit mode is editing, every menu ends with undo, redo, the history to jump through ([`crate::history`]) and the strip's actions. Nothing is offered on the lock layer (TA-8).
 //!
 //! **Where.** A menu is a transient laid over the whole window it was asked in (F-2.3, DEC-9): the item's own, or the overlay window where that layer is hidden or an edit mode's host is over it. It opens at the pointer, or on the item when the keyboard asked, and never past an edge of the screen.
 //!
@@ -9,7 +9,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use telar::{Children, ContextMenuProps, MenuEntry, MenuStyle, Rect, context_menu, use_theme};
+use telar::{
+    AlignItems, Children, Container, ContextMenuProps, JustifyContent, LayoutStyle, MenuEntry,
+    MenuStyle, Rect, SizeDimension, Text, context_menu, use_theme,
+};
 
 use config::Edge;
 use config::theme::{FontRole, NordTheme};
@@ -25,9 +28,10 @@ use surfaces::transient::{self, Anchor, Place, Spec};
 use ui::chrome::Chrome;
 use ui::descriptor::{Built, ModuleDescriptor};
 
+use crate::keys::Chord;
 use crate::mode::{self, said};
 use crate::popover;
-use crate::session::{self, EditError};
+use crate::session::{self, EditError, Way};
 use crate::written::{Written, known};
 
 /// The transient every context menu is, one at a time.
@@ -81,7 +85,7 @@ pub fn open(asked: Asked) -> Result<(), EditError> {
         .area(node.layer, &node.area)
         .cloned()
         .ok_or_else(|| EditError::gone(&node.area))?;
-    let entries = match &node.part {
+    let mut entries = match &node.part {
         Part::Instance(group, id) => {
             instance_entries(&desktop, &area, &node, group, &id.template())?
         }
@@ -90,6 +94,7 @@ pub fn open(asked: Asked) -> Result<(), EditError> {
             &Node::area(node.output.as_deref(), node.layer, &node.area),
         ),
     };
+    entries.extend(mode_rows(&node));
     popover::close();
     transient::close(ID);
     let window = match mode::current()
@@ -292,6 +297,73 @@ fn area_entries(area: &ResolvedArea, node: &Node) -> Vec<MenuEntry> {
     }
     rows.extend(edit_row(node));
     rows
+}
+
+/// What the mode adds to the menu of anything on the layer it edits: undo and redo, the history to jump through, and every action of the strip ([`crate::host::add_strip_action`]).
+fn mode_rows(node: &Node) -> Vec<MenuEntry> {
+    if !mode::editing(node) {
+        return Vec::new();
+    }
+    let history = crate::history::current();
+    let walk = |label: String, chords: Vec<Chord>, way: Way, possible: bool| {
+        let hint = chords.first().map(Chord::spelled).unwrap_or_default();
+        let row = MenuEntry::row(label, hint, move || session::travel_saying(way.steps()));
+        match possible {
+            true => row,
+            false => row.disabled(),
+        }
+    };
+    let mut rows = vec![
+        MenuEntry::Separator,
+        walk(
+            telar::t!("editor.history.undo"),
+            crate::keys::undo_chords(),
+            Way::Undo,
+            !history.undo.is_empty(),
+        ),
+        walk(
+            telar::t!("editor.history.redo"),
+            crate::keys::redo_chords(),
+            Way::Redo,
+            !history.redo.is_empty(),
+        ),
+    ];
+    rows.extend(crate::history::menu(&history));
+    rows.extend(
+        crate::host::strip_actions()
+            .into_iter()
+            .map(|(label, act)| MenuEntry::row(label(), "", act)),
+    );
+    rows
+}
+
+/// A row drawn in the faint ink of a hint that still picks like any other: an entry there to reach that is not where things stand, as a redo in the history is.
+pub(crate) fn dimmed_row(label: String, hint: String, act: impl Fn() + 'static) -> MenuEntry {
+    MenuEntry::Custom {
+        widget: Rc::new(move || dimmed_face(label.clone(), hint.clone())),
+        act: Some(Rc::new(act)),
+    }
+}
+
+fn dimmed_face(label: String, hint: String) -> Built {
+    let theme = use_theme::<NordTheme>();
+    let text = move |said: String| {
+        Text::new(
+            move || said.clone(),
+            LayoutStyle::new(),
+            move || theme.text_style(FontRole::Body, theme.muted),
+        )
+    };
+    Ok(Box::new(Container::new(
+        LayoutStyle::new()
+            .flex_row()
+            .width(SizeDimension::Percent(1.0))
+            .height(ROW)
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::SPACE_BETWEEN)
+            .padding_horizontal(PADDING * 1.5),
+        vec![Box::new(text(label)?), Box::new(text(hint)?)],
+    )?))
 }
 
 /// "Edit <layer>…", unless that layer is the one being edited on this screen already.
@@ -545,18 +617,22 @@ fn destinations(
                 }
                 _ => continue,
             };
-            let group = area.groups.iter().find(|group| !group.stacked).map_or_else(
-                || {
-                    layout::ops::free_group_id(
-                        &layout,
-                        &known,
-                        layer,
-                        &area.id,
-                        resolved.id.as_str(),
-                    )
-                },
-                |group| group.id.clone(),
-            );
+            let group = area
+                .groups
+                .iter()
+                .find(|group| group.arrange.is_none())
+                .map_or_else(
+                    || {
+                        layout::ops::free_group_id(
+                            &layout,
+                            &known,
+                            layer,
+                            &area.id,
+                            resolved.id.as_str(),
+                        )
+                    },
+                    |group| group.id.clone(),
+                );
             found.push(Destination {
                 layer,
                 area: area.id.clone(),
@@ -600,6 +676,7 @@ pub(crate) fn kind_name(kind: &ResolvedAreaKind) -> String {
         ResolvedAreaKind::Texture { .. } => telar::t!("editor.menu.kind.texture"),
         ResolvedAreaKind::Dock { .. } => telar::t!("editor.menu.kind.dock"),
         ResolvedAreaKind::Free { .. } => telar::t!("editor.menu.kind.free"),
+        ResolvedAreaKind::Panel { .. } => telar::t!("editor.menu.kind.panel"),
         ResolvedAreaKind::Prompt { .. } => telar::t!("editor.menu.kind.prompt"),
     }
 }

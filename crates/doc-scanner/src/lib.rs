@@ -127,6 +127,10 @@ pub fn scan(sources: &[PathBuf]) -> Tables {
             inside_enum = None;
             item = name;
             tables.push_doc(&item, "", &pending);
+        } else if let Some(name) = tuple_struct_name(trimmed) {
+            inside_enum = None;
+            item.clear();
+            tables.push_doc(&name, "", &pending);
         } else if let Some(name) = enum_name(trimmed) {
             inside_enum = Some(name.clone());
             variant_case = rename_all.take();
@@ -406,9 +410,17 @@ fn serde_says(line: &str, word: &str) -> bool {
         .is_some_and(|inner| inner.split(',').any(|part| part.trim() == word))
 }
 
-/// `pub struct Name {` → `Name`. Tuple and unit structs carry no fields worth documenting, so they are skipped.
+/// `pub struct Name {` → `Name`. A tuple struct has no fields and is [`tuple_struct_name`]'s.
 fn struct_name(line: &str) -> Option<String> {
     named_item(line, "pub struct ")
+}
+
+/// `pub struct Name([f32; 4]);` → `Name`: a value a file writes in place of a table, which has no keys but is still something a reference explains.
+fn tuple_struct_name(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("pub struct ")?;
+    let (name, _) = rest.split_once('(')?;
+    let named = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric());
+    (named && line.ends_with(");")).then(|| name.to_string())
 }
 
 /// `pub enum Name {` → `Name`.
@@ -485,6 +497,24 @@ mod tests {
             .iter()
             .find(|(i, f, _)| i == item && f == field)
             .map(|(_, _, doc)| doc.clone())
+    }
+
+    #[test]
+    fn a_tuple_struct_keeps_its_comment_and_lends_no_fields_to_the_item_before_it() {
+        let tables = scanned(
+            "tuple",
+            "/// Four sides.\n\
+             #[derive(Clone, Copy)]\n\
+             pub struct Sides([f32; 4]);\n\
+             \n\
+             impl Sides {\n\
+             \x20   pub fn top(self) -> f32 {\n\
+             \x20       self.0[0]\n\
+             \x20   }\n\
+             }\n",
+        );
+        assert_eq!(doc_of(&tables, "Sides", "").as_deref(), Some("Four sides."));
+        assert!(tables.fields.is_empty(), "{:?}", tables.fields);
     }
 
     #[test]
@@ -640,7 +670,7 @@ mod tests {
              \x20   pub kind: Option<GroupKind>,\n\
              \x20   #[serde(flatten)]\n\
              \x20   pub look: Look,\n\
-             \x20   pub stacked: Option<bool>,\n\
+             \x20   pub arrange: Option<Arrange>,\n\
              \x20   /// Read from somewhere else.\n\
              \x20   #[serde(skip)]\n\
              \x20   pub tokens: Tokens,\n\
@@ -663,7 +693,7 @@ mod tests {
             .filter(|(item, _)| item == "Group")
             .map(|(_, field)| field.as_str())
             .collect();
-        assert_eq!(of_group, ["id", "place", "radius", "fill", "stacked"]);
+        assert_eq!(of_group, ["id", "place", "radius", "fill", "arrange"]);
         assert_eq!(
             doc_of(&tables, "Group", "place").as_deref(),
             Some("Where the group sits.")

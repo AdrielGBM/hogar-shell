@@ -89,6 +89,9 @@ mod tests {
             path: &str,
         ) -> Result<telar_expression::Type, util::report::Message> {
             use telar_expression::Type;
+            if let Some(key) = StyleBinding::from_path(path) {
+                return Ok(key.ty());
+            }
             match (module, path) {
                 (_, "accent") => Ok(Type::Color),
                 ("clock", "show_date") => Ok(Type::Bool),
@@ -674,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_that_could_be_hidden_or_covered_is_refused() {
+    fn a_prompt_that_could_be_hidden_or_faded_is_refused() {
         let faded = layout(
             r#"
             id = "test"
@@ -692,7 +695,8 @@ mod tests {
             rect = { x = 0.0, y = 0.0, w = 1.0, h = 1.0 }
             "#,
         );
-        let report = validate_resolved(&alone(&faded, "DP-1"), "layouts/test.toml", &theme());
+        let resolved = alone(&faded, "DP-1");
+        let report = validate_resolved(&resolved, "layouts/test.toml", &theme());
         let keys: Vec<&str> = report.findings().map(|f| f.key.as_str()).collect();
         assert!(
             keys.iter().any(|k| k.ends_with("prompt.visible")),
@@ -703,8 +707,13 @@ mod tests {
             "and so is fading it away: {keys:?}"
         );
         assert!(
-            keys.iter().any(|k| k.ends_with("over-it")),
-            "and so is covering it: {keys:?}"
+            !keys.iter().any(|k| k.ends_with("over-it")),
+            "an area the file lists after it is resolved under it, so it covers nothing: {keys:?}"
+        );
+        assert_eq!(
+            area_ids(&resolved, LayerKind::Lock),
+            ["over-it", "prompt"],
+            "the prompt is drawn last"
         );
     }
 
@@ -1337,11 +1346,14 @@ mod tests {
                     autohide: None,
                 })),
             },
-            LayoutOp::SetGroupStacked {
+            LayoutOp::SetGroupArrange {
                 site: Site::everywhere(LayerKind::Top),
                 area: AreaId::new("bar-top"),
                 id: GroupId::new("start"),
-                stacked: Some(true),
+                arrange: Some(Arrange::Pages),
+                cols: None,
+                rows: None,
+                gap: Some(4.0),
             },
             LayoutOp::InsertArea {
                 site: Site::everywhere(LayerKind::Desktop),
@@ -1460,6 +1472,7 @@ mod tests {
                     mode: Some(config::Shape::Chips),
                     gap: Some(0.0),
                     spacing: Some(8.0),
+                    fillet: Some(12.0),
                     radius: Some(Corners::each(8.0, 0.0, 8.0, 0.0)),
                 },
                 autohide: Some(AutoHide::default()),
@@ -1500,6 +1513,14 @@ mod tests {
                 rect: Some(Rect::default()),
                 anchor: None,
             },
+            AreaKind::Panel {
+                owner: Some(InstanceId::new("clock")),
+                along: Some(true),
+                cols: Some(4),
+                rows: Some(3),
+                cell: Some(80.0),
+                gap: Some(16.0),
+            },
             AreaKind::Prompt {
                 rect: Some(Rect::default()),
             },
@@ -1513,11 +1534,16 @@ mod tests {
                 reserve: Some(false),
                 above_fullscreen: Some(false),
                 within: Some(Within::Usable),
-                style: AreaStyle {
+                style: Style {
                     fill: Some("surface".into()),
                     radius: Some(Corners::each(12.0, 12.0, 0.0, 0.0)),
                     opacity: Some(0.9),
-                    padding: Some(4.0),
+                    padding: Some(Sides::each(4.0, 8.0, 4.0, 8.0)),
+                    border: Some(Border {
+                        width: Some(1.0),
+                        color: Some("highlight_low".into()),
+                    }),
+                    shadow: Some(2),
                     backdrop: Some(Backdrop::Blur),
                 },
                 visible: Some(Expr("true".into())),
@@ -1582,11 +1608,30 @@ mod tests {
                 groups: vec![Group {
                     id: GroupId::new("g"),
                     kind: Some(kind),
-                    stacked: Some(true),
+                    arrange: Some(Arrange::Grid),
+                    cols: Some(3),
+                    rows: Some(2),
+                    gap: Some(8.0),
                     repeat: Some(Expr("$battery.cells".into())),
+                    style: Style {
+                        fill: Some("overlay".into()),
+                        padding: Some(Sides::each(8.0, 12.0, 8.0, 12.0)),
+                        border: Some(Border {
+                            width: Some(1.0),
+                            color: None,
+                        }),
+                        shadow: Some(1),
+                        ..Style::default()
+                    },
                     children: vec![Instance {
                         id: InstanceId::new("clock-1"),
                         module: Some("clock".into()),
+                        style: Style {
+                            fill: Some("#1f1d2e".into()),
+                            radius: Some(Corners::each(16.0, 16.0, 4.0, 4.0)),
+                            shadow: Some(2),
+                            ..Style::default()
+                        },
                         bindings: BTreeMap::from([(
                             "show_date".to_string(),
                             Expr("$battery.percent > 50".into()),
@@ -1596,6 +1641,14 @@ mod tests {
                             Action(vec!["panel toggle clock".into()]),
                         )]),
                         unset: vec![Unset::binding("accent")],
+                        weight: Some(2.0),
+                        cell: Some(ChildCell {
+                            col: 1,
+                            row: 0,
+                            col_span: 2,
+                            row_span: 1,
+                        }),
+                        rect: Some(Rect::default()),
                         ..Instance::default()
                     }],
                     unset: vec![Unset::Repeat],
@@ -1828,7 +1881,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stacked_group_keeps_the_place_it_was_given() {
+    fn a_pages_group_keeps_the_place_it_was_given() {
         let parsed = layout(
             r#"
             id = "t"
@@ -1842,7 +1895,7 @@ mod tests {
             place = "cell"
             col = 2
             row = 1
-            stacked = true
+            arrange = "pages"
             [[outputs.layers.desktop.areas]]
             id = "dock"
             kind = "dock"
@@ -1852,7 +1905,7 @@ mod tests {
             id = "end"
             place = "zone"
             zone = "end"
-            stacked = true
+            arrange = "pages"
             [[outputs.layers.desktop.areas.groups]]
             id = "start"
             place = "zone"
@@ -1866,7 +1919,7 @@ mod tests {
             .areas
             .iter()
             .flat_map(|area| &area.groups)
-            .map(|group| (group.id.to_string(), group.kind, group.stacked))
+            .map(|group| (group.id.to_string(), group.kind, group.is_pages()))
             .collect();
         assert_eq!(
             groups,
@@ -2238,6 +2291,80 @@ mod tests {
         assert!(
             matches!(store.redo(), Err(StoreError::NothingToRedo)),
             "redoing across a different edit would replay operations against a layout they no longer describe"
+        );
+    }
+
+    /// T-4.12: the history lists every entry an undo and a redo walk through, and three back then two forward lands where the second edit left the layout.
+    #[test]
+    fn the_history_lists_both_ways_and_a_jump_lands_on_the_right_layout() {
+        let dir = scratch("history-list");
+        let mut store = store_with(&dir, &layout(ONE_BAR));
+        let mine = LayoutId::new("mine");
+        let at = |store: &LayoutStore| toml::to_string(store.get(&mine).unwrap()).unwrap();
+        let edits = [
+            (
+                "Add a battery",
+                LayoutOp::InsertInstance {
+                    spot: top_zone(),
+                    index: 1,
+                    instance: Box::new(instance("battery-1", "battery")),
+                },
+            ),
+            (
+                "Add a mixer",
+                LayoutOp::InsertInstance {
+                    spot: top_zone(),
+                    index: 1,
+                    instance: Box::new(instance("mixer-1", "mixer")),
+                },
+            ),
+            (
+                "Remove the clock",
+                LayoutOp::DeleteInstance {
+                    spot: top_zone(),
+                    id: InstanceId::new("clock-1"),
+                },
+            ),
+        ];
+        let start = at(&store);
+        let mut after = Vec::new();
+        for (label, op) in edits {
+            store
+                .commit(Transaction::new(label, mine.clone(), vec![op]))
+                .expect("the edit commits");
+            after.push(at(&store));
+        }
+        assert_eq!(
+            store.history(),
+            History {
+                undo: vec![
+                    "Add a battery".into(),
+                    "Add a mixer".into(),
+                    "Remove the clock".into()
+                ],
+                redo: vec![],
+            }
+        );
+
+        for _ in 0..3 {
+            store.undo().expect("undo");
+        }
+        assert_eq!(at(&store), start);
+        assert_eq!(
+            store.history().redo,
+            ["Add a battery", "Add a mixer", "Remove the clock"],
+            "the next redo first"
+        );
+        for _ in 0..2 {
+            store.redo().expect("redo");
+        }
+        assert_eq!(at(&store), after[1], "where the second edit left it");
+        assert_eq!(
+            store.history(),
+            History {
+                undo: vec!["Add a battery".into(), "Add a mixer".into()],
+                redo: vec!["Remove the clock".into()],
+            }
         );
     }
 
@@ -3109,9 +3236,9 @@ mod tests {
             LayoutOp::SetAreaStyle {
                 site: bar.clone(),
                 id: AreaId::new("bar-top"),
-                style: Box::new(AreaStyle {
+                style: Box::new(Style {
                     radius: Some(Corners::each(0.0, 0.0, 12.0, 12.0)),
-                    ..AreaStyle::default()
+                    ..Style::default()
                 }),
             },
             LayoutOp::InsertOutputRule {
@@ -3195,9 +3322,9 @@ mod tests {
             &LayoutOp::SetAreaStyle {
                 site: games(LayerKind::Top),
                 id: AreaId::new("bar-top"),
-                style: Box::new(AreaStyle {
+                style: Box::new(Style {
                     opacity: Some(0.5),
-                    ..AreaStyle::default()
+                    ..Style::default()
                 }),
             },
         );
@@ -3505,10 +3632,10 @@ mod tests {
             &LayoutOp::SetAreaStyle {
                 site: lock(),
                 id: prompt.clone(),
-                style: Box::new(AreaStyle {
+                style: Box::new(Style {
                     fill: Some("base".into()),
                     radius: Some(Corners::each(24.0, 24.0, 0.0, 0.0)),
-                    ..AreaStyle::default()
+                    ..Style::default()
                 }),
             },
         );
@@ -3570,11 +3697,11 @@ mod tests {
             .iter_mut()
             .find(|area| area.id.as_str() == "prompt")
             .expect("the built-in lock has a prompt");
-        prompt.style = AreaStyle {
+        prompt.style = Style {
             fill: Some("overlay".into()),
             radius: Some(Corners::each(20.0, 20.0, 4.0, 4.0)),
             opacity: Some(0.95),
-            ..AreaStyle::default()
+            ..Style::default()
         };
         let again = layout(&toml::to_string_pretty(&styled).unwrap());
         assert_eq!(again, styled);
@@ -3585,6 +3712,251 @@ mod tests {
             .expect("it resolves");
         assert_eq!(drawn.style.fill.as_deref(), Some("overlay"));
         assert!(validate_resolved(&resolved, "layouts/test.toml", &theme()).is_clean());
+    }
+
+    /// T-1.5: the prompt is the last thing the lock layer stacks, whatever a monitor rule appended after it.
+    #[test]
+    fn a_monitor_rule_adding_a_lock_area_resolves_under_the_prompt() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.lock.areas]]
+            id = "prompt"
+            kind = "prompt"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.lock.areas]]
+            id = "lock-banner"
+            kind = "free"
+            rect = { x = 0.0, y = 0.0, w = 1.0, h = 0.1 }
+            "#,
+        );
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        assert_eq!(
+            area_ids(&resolved, LayerKind::Lock)
+                .last()
+                .map(String::as_str),
+            Some("prompt")
+        );
+        assert!(area_ids(&resolved, LayerKind::Lock).contains(&"lock-banner".to_string()));
+        assert!(
+            validate_resolved(&resolved, "layouts/test.toml", &theme()).is_clean(),
+            "nothing is stacked over the prompt"
+        );
+    }
+
+    /// T-1.4: a bar or a dock reserves unless it says otherwise; an area of any other kind does not.
+    #[test]
+    fn a_bar_and_a_dock_reserve_by_default_and_nothing_else_does() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            [[outputs.layers.top.areas]]
+            id = "dock-left"
+            kind = "dock"
+            edge = "left"
+            thickness = 48
+            [[outputs.layers.top.areas]]
+            id = "bar-bottom"
+            kind = "bar"
+            edge = "bottom"
+            thickness = 30
+            reserve = false
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            "#,
+        );
+        let resolved = alone(&parsed, "DP-1");
+        assert_eq!(resolved.reserved(config::Edge::Top), 32.0);
+        assert_eq!(resolved.reserved(config::Edge::Left), 48.0);
+        assert_eq!(resolved.reserved(config::Edge::Bottom), 0.0);
+        let reserves = |layer, id: &str| {
+            resolved
+                .area(layer, &AreaId::new(id))
+                .map(|area| area.reserve)
+        };
+        assert_eq!(reserves(LayerKind::Desktop, "widgets"), Some(false));
+        assert_eq!(reserves(LayerKind::Top, "bar-bottom"), Some(false));
+    }
+
+    /// T-1.4: a hidden bar with no `reserve` still holds back only the strip it leaves behind.
+    #[test]
+    fn an_autohidden_bar_with_no_reserve_reserves_only_its_peek() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            autohide = { peek = 2 }
+            "#,
+        );
+        assert_eq!(alone(&parsed, "DP-1").reserved(config::Edge::Top), 2.0);
+    }
+
+    fn bar_with_shape(shape: &str) -> Layout {
+        layout(&format!(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            shape = {shape}
+            "#
+        ))
+    }
+
+    /// T-1.4: a fillet is a bar's, and is reported where the bar is not one strip or where it is negative.
+    #[test]
+    fn a_bar_fillet_resolves_and_is_checked() {
+        let drawn = bar_with_shape(r#"{ mode = "bar", fillet = 12 }"#);
+        assert!(validate(&drawn, &Modules).is_clean());
+        let fillet = |resolved: &Resolved| match resolved
+            .area(LayerKind::Top, &AreaId::new("bar-top"))
+            .map(|area| area.kind.clone())
+        {
+            Some(ResolvedAreaKind::Bar { shape, .. }) => shape.fillet,
+            other => panic!("a bar: {other:?}"),
+        };
+        assert_eq!(fillet(&alone(&drawn, "DP-1")), Some(12.0));
+
+        for mode in ["sections", "chips"] {
+            let report = validate(
+                &bar_with_shape(&format!(r#"{{ mode = "{mode}", fillet = 12 }}"#)),
+                &Modules,
+            );
+            assert!(
+                finding_at(&report, "areas.bar-top.fillet", "finding.fillet_mode"),
+                "{mode}: {}",
+                report.render()
+            );
+        }
+        let report = validate(
+            &bar_with_shape(r#"{ mode = "bar", fillet = -4 }"#),
+            &Modules,
+        );
+        assert!(
+            finding_at(&report, "areas.bar-top.fillet", "finding.fillet_negative"),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// T-1.4: a monitor rule that writes a fillet over a bar another rule set to `chips` is where the mismatch is reported.
+    #[test]
+    fn a_fillet_a_monitor_rule_writes_over_a_chips_bar_is_reported() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            edge = "top"
+            thickness = 32
+            shape = { mode = "chips" }
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            kind = "bar"
+            shape = { fillet = 10 }
+            "#,
+        );
+        let report = validate(&parsed, &Modules);
+        assert!(
+            finding_at(&report, "areas.bar-top.fillet", "finding.fillet_mode"),
+            "{}",
+            report.render()
+        );
+        let resolved = alone(&parsed, "DP-1");
+        assert!(matches!(
+            resolved.area(LayerKind::Top, &AreaId::new("bar-top")).map(|a| a.kind.clone()),
+            Some(ResolvedAreaKind::Bar { shape, .. }) if shape.fillet == Some(10.0)
+        ));
+    }
+
+    /// T-1.3 checks: a panel's tracks are judged as a group's inner grid is — no columns or rows, a negative gap, a non-positive cell.
+    #[test]
+    fn a_panel_with_no_tracks_or_a_negative_gap_or_non_positive_cell_is_refused() {
+        for (keys, key, message) in [
+            ("cols = 0", "panel-clock.cols", "finding.no_tracks"),
+            ("rows = 0", "panel-clock.rows", "finding.no_tracks"),
+            ("gap = -2", "panel-clock.gap", "finding.gap_negative"),
+            ("cell = -4", "panel-clock.cell", "finding.cell_not_positive"),
+        ] {
+            let parsed = with_owners(&panel(
+                "panel-clock",
+                &format!("owner = \"clock-1\"\n{keys}"),
+            ));
+            let report = validate(&parsed, &Modules);
+            assert!(
+                finding_at(&report, key, message),
+                "{keys}: {}",
+                report.render()
+            );
+            assert_eq!(report.errors.len(), 1, "{keys}: {}", report.render());
+        }
+        let sound = with_owners(&panel(
+            "panel-clock",
+            "owner = \"clock-1\"\ncols = 2\nrows = 1\ngap = 0\ncell = 80",
+        ));
+        assert!(validate(&sound, &Modules).is_clean());
+    }
+
+    /// T-1.4 checks: a grid area's cell must be positive and its gap must not be negative.
+    #[test]
+    fn a_grid_with_non_positive_cell_or_negative_gap_is_refused() {
+        for (keys, key, message) in [
+            ("cell = 0", "grid.cell", "finding.cell_not_positive"),
+            ("gap = -1", "grid.gap", "finding.gap_negative"),
+        ] {
+            let parsed = layout(&format!(
+                r#"{ONE_BAR}
+                [[outputs.layers.desktop.areas]]
+                id = "grid"
+                kind = "grid"
+                {keys}
+                "#
+            ));
+            let report = validate(&parsed, &Modules);
+            assert!(
+                finding_at(&report, key, message),
+                "{keys}: {}",
+                report.render()
+            );
+            assert_eq!(report.errors.len(), 1, "{keys}: {}", report.render());
+        }
+        let ok = layout(&format!(
+            r#"{ONE_BAR}
+            [[outputs.layers.desktop.areas]]
+            id = "grid"
+            kind = "grid"
+            cell = 80
+            gap = 16
+            "#
+        ));
+        assert!(validate(&ok, &Modules).is_clean());
     }
 
     fn thickness_of(layout: &Layout, known: &Library) -> Option<f32> {
@@ -3802,7 +4174,7 @@ mod tests {
             }
         );
         assert_eq!(widgets.within, Within::Output);
-        assert_eq!(widgets.style.padding, Some(48.0));
+        assert_eq!(widgets.style.padding, Some(Sides::all(48.0)));
         assert!(widgets.groups.is_empty(), "nothing on the grid yet");
         assert_eq!(
             centre.kind,
@@ -5183,7 +5555,9 @@ mod tests {
         toml::from_str::<Layout>(&written).expect("it parses back");
 
         let mut filled = pill();
-        filled.stacked = Some(true);
+        filled.arrange = Some(Arrange::Pages);
+        filled.gap = Some(4.0);
+        filled.children[0].weight = Some(2.0);
         filled.repeat = Some(Expr("$battery.cells".into()));
         filled.children[0].representation = Some(Representation::Chip);
         filled.children[0].options =
@@ -5257,6 +5631,2125 @@ mod tests {
             store.komponent(&KomponentId::new("pill")),
             None,
             "its file is gone"
+        );
+    }
+
+    const STYLED: &str = r##"
+        id = "test"
+        [[outputs]]
+        match = "*"
+        [[outputs.layers.desktop.areas]]
+        id = "widgets"
+        kind = "grid"
+        style = { fill = "base", padding = 24 }
+        [[outputs.layers.desktop.areas.groups]]
+        id = "container"
+        place = "cell"
+        col = 0
+        row = 0
+        col_span = 6
+        row_span = 4
+        style = { fill = "overlay", opacity = 0.6, radius = 16, padding = [8, 12, 8, 12], border = { width = 1, color = "highlight_low" }, shadow = 1 }
+        [[outputs.layers.desktop.areas.groups.children]]
+        id = "clock-1"
+        module = "clock"
+        representation = "widget_m"
+        style = { fill = "#1f1d2e", radius = [16, 16, 4, 4], shadow = 2 }
+    "##;
+
+    fn style_of_group<'a>(resolved: &'a Resolved, group: &str) -> &'a Style {
+        &group_of(resolved, LayerKind::Desktop, group).style
+    }
+
+    fn style_of_instance<'a>(resolved: &'a Resolved, id: &str) -> &'a Style {
+        &resolved
+            .instances()
+            .find(|instance| instance.id.as_str() == id)
+            .unwrap_or_else(|| panic!("`{id}` resolves"))
+            .style
+    }
+
+    /// One style is written on an area, a group and an instance alike, and each comes back from its file as it was written: padding as one number or four sides, a border with its two keys, a shadow step.
+    #[test]
+    fn a_style_on_an_area_a_group_and_an_instance_round_trips() {
+        let parsed = layout(STYLED);
+        let group = &parsed.outputs[0].layers.desktop.areas[0].groups[0];
+        assert_eq!(group.style.padding, Some(Sides::each(8.0, 12.0, 8.0, 12.0)));
+        assert_eq!(
+            group.style.border,
+            Some(Border {
+                width: Some(1.0),
+                color: Some("highlight_low".into())
+            })
+        );
+        assert_eq!(group.style.shadow, Some(1));
+        assert_eq!(
+            group.children[0].style.radius,
+            Some(Corners::each(16.0, 16.0, 4.0, 4.0))
+        );
+        assert_eq!(
+            parsed.outputs[0].layers.desktop.areas[0].style.padding,
+            Some(Sides::all(24.0))
+        );
+
+        let text = toml::to_string_pretty(&parsed).expect("it serializes");
+        assert_eq!(layout(&text), parsed);
+        assert!(
+            text.contains("padding = 24"),
+            "padding the same on every side is written as one number:\n{text}"
+        );
+        assert!(validate::check_unknown_keys(&text, &LayoutId::new("test")).is_clean());
+
+        let resolved = alone(&parsed, "DP-1");
+        assert_eq!(style_of_group(&resolved, "container"), &group.style);
+        assert_eq!(style_of_instance(&resolved, "clock-1").shadow, Some(2));
+        assert!(
+            validate(&parsed, &Modules).is_clean(),
+            "{}",
+            validate(&parsed, &Modules).render()
+        );
+    }
+
+    #[test]
+    fn sides_are_one_number_or_four() {
+        #[derive(Debug, serde::Deserialize, serde::Serialize)]
+        struct Held {
+            padding: Sides,
+        }
+        let read = |text: &str| toml::from_str::<Held>(text).map(|held| held.padding);
+        assert_eq!(read("padding = 6").unwrap(), Sides::all(6.0));
+        assert_eq!(read("padding = 1.5").unwrap(), Sides::all(1.5));
+        let each = read("padding = [1, 2, 3, 4]").unwrap();
+        assert_eq!(
+            (each.top(), each.right(), each.bottom(), each.left()),
+            (1.0, 2.0, 3.0, 4.0)
+        );
+        assert_eq!((each.horizontal(), each.vertical()), (6.0, 4.0));
+        assert!(read("padding = [1, 2, 3]").is_err(), "three sides");
+        assert!(read("padding = [1, 2, 3, 4, 5]").is_err(), "five sides");
+        let written = toml::to_string(&Held { padding: each }).unwrap();
+        assert_eq!(written.trim(), "padding = [1.0, 2.0, 3.0, 4.0]");
+    }
+
+    /// A monitor rule restyles an inherited group and instance key by key: the border's colour without its width, the shadow without the fill.
+    #[test]
+    fn a_monitor_rule_merges_a_style_key_by_key() {
+        let parsed = layout(&format!(
+            r#"{STYLED}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "container"
+            style = {{ border = {{ color = "red" }}, padding = 4 }}
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            style = {{ shadow = 0, opacity = 0.8 }}
+            "#
+        ));
+        let refined = alone(&parsed, "DP-1");
+        let group = style_of_group(&refined, "container");
+        assert_eq!(
+            group.border,
+            Some(Border {
+                width: Some(1.0),
+                color: Some("red".into())
+            }),
+            "the width is inherited, the colour is the rule's"
+        );
+        assert_eq!(group.padding, Some(Sides::all(4.0)));
+        assert_eq!(group.fill.as_deref(), Some("overlay"));
+        assert_eq!(group.shadow, Some(1));
+        let clock = style_of_instance(&refined, "clock-1");
+        assert_eq!(
+            (clock.shadow, clock.opacity, clock.fill.as_deref()),
+            (Some(0), Some(0.8), Some("#1f1d2e"))
+        );
+
+        let other = alone(&parsed, "eDP-1");
+        assert_eq!(style_of_instance(&other, "clock-1").shadow, Some(2));
+        assert_eq!(
+            style_of_group(&other, "container").border,
+            Some(Border {
+                width: Some(1.0),
+                color: Some("highlight_low".into())
+            })
+        );
+    }
+
+    /// The style is the group's own, not what it holds: a level that names another komponent replaces the children and keeps the paint around them.
+    #[test]
+    fn a_group_keeps_its_style_when_a_level_names_a_komponent() {
+        let parsed = layout(&format!(
+            r#"{STYLED}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "container"
+            komponent = "pill"
+            "#
+        ));
+        let library = Library::default().with_komponent("pill", Komponent::default());
+        let (refined, _) = resolve(&parsed, &library, "DP-1", None);
+        assert_eq!(style_of_group(&refined, "container").shadow, Some(1));
+    }
+
+    /// Changing one key of an inherited instance on one monitor writes that key and its id, nothing the instance inherits.
+    #[test]
+    fn a_monitor_rule_changing_only_an_inherited_shadow_writes_one_key() {
+        let mut parsed = layout(STYLED);
+        parsed.outputs.push(OutputRule {
+            matches: OutputMatch("DP-1".into()),
+            layers: Layers {
+                desktop: Layer {
+                    areas: vec![Area {
+                        id: AreaId::new("widgets"),
+                        groups: vec![Group {
+                            id: GroupId::new("container"),
+                            children: vec![Instance {
+                                id: InstanceId::new("clock-1"),
+                                style: Style {
+                                    shadow: Some(3),
+                                    ..Style::default()
+                                },
+                                ..Instance::default()
+                            }],
+                            ..Group::default()
+                        }],
+                        ..Area::default()
+                    }],
+                    ..Layer::default()
+                },
+                ..Layers::default()
+            },
+            ..OutputRule::default()
+        });
+        let text = toml::to_string(&parsed).expect("it serializes");
+        let written: toml::Table = toml::from_str(&text).unwrap();
+        let rule = &written["outputs"].as_array().unwrap()[1];
+        let child = rule["layers"]["desktop"]["areas"][0]["groups"][0]["children"][0]
+            .as_table()
+            .unwrap();
+        assert_eq!(
+            child.keys().collect::<Vec<_>>(),
+            ["id", "style"],
+            "only the id it is addressed by and what changed: {child:?}"
+        );
+        assert_eq!(
+            child["style"]
+                .as_table()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["shadow"]
+        );
+
+        let refined = alone(&layout(&text), "DP-1");
+        let clock = style_of_instance(&refined, "clock-1");
+        assert_eq!(clock.shadow, Some(3));
+        assert_eq!(
+            clock.fill.as_deref(),
+            Some("#1f1d2e"),
+            "the rest is inherited"
+        );
+        assert_eq!(
+            refined
+                .instances()
+                .find(|it| it.id.as_str() == "clock-1")
+                .unwrap()
+                .representation,
+            Representation::WidgetM
+        );
+    }
+
+    #[test]
+    fn setting_a_group_s_style_is_undone_exactly() {
+        let start = layout(STYLED);
+        undoes_exactly(
+            &start,
+            &LayoutOp::SetGroupStyle {
+                site: Site::everywhere(LayerKind::Desktop),
+                area: AreaId::new("widgets"),
+                id: GroupId::new("container"),
+                style: Box::new(Style {
+                    shadow: Some(3),
+                    padding: Some(Sides::each(0.0, 4.0, 0.0, 4.0)),
+                    ..Style::default()
+                }),
+            },
+        );
+    }
+
+    fn finding_at(report: &util::report::Report, key: &str, message: &str) -> bool {
+        report
+            .findings()
+            .any(|f| f.key.ends_with(key) && f.message.key() == Some(message))
+    }
+
+    /// A style key its holder cannot draw is reported where it is written, and so is a value outside what the key takes.
+    #[test]
+    fn a_style_key_its_holder_cannot_draw_is_refused() {
+        let parsed = layout(
+            r##"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            style = { backdrop = "blur", padding = [0, -2, 0, 0] }
+            [[outputs.layers.desktop.areas.groups]]
+            id = "container"
+            place = "cell"
+            col = 0
+            row = 0
+            style = { backdrop = "blur", shadow = 4 }
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            style = { padding = 4, border = { width = -1 } }
+            "##,
+        );
+        let report = validate(&parsed, &Modules);
+        let group = "areas.widgets.groups.container";
+        let child = "groups.container.children.clock-1";
+        assert!(finding_at(
+            &report,
+            &format!("{group}.style.backdrop"),
+            "finding.style_backdrop"
+        ));
+        assert!(finding_at(
+            &report,
+            &format!("{group}.style.shadow"),
+            "finding.style_shadow"
+        ));
+        assert!(finding_at(
+            &report,
+            &format!("{child}.style.padding"),
+            "finding.style_padding"
+        ));
+        assert!(finding_at(
+            &report,
+            &format!("{child}.style.border.width"),
+            "finding.style_negative"
+        ));
+        assert!(finding_at(
+            &report,
+            "areas.widgets.style.padding",
+            "finding.style_negative"
+        ));
+        assert!(
+            !report
+                .findings()
+                .any(|f| f.key.ends_with("areas.widgets.style.backdrop")),
+            "an area has a backdrop: {}",
+            report.render()
+        );
+        assert_eq!(report.findings().count(), 5, "{}", report.render());
+    }
+
+    /// A written opacity runs from 0 to 1 on an area, a group and an instance alike; one outside it, or no number at all, is refused where it is written.
+    #[test]
+    fn a_written_opacity_runs_from_zero_to_one() {
+        let styled = |area: &str, group: &str, instance: &str| {
+            layout(&format!(
+                r#"
+                id = "test"
+                [[outputs]]
+                match = "*"
+                [[outputs.layers.desktop.areas]]
+                id = "widgets"
+                kind = "grid"
+                style = {{ opacity = {area} }}
+                [[outputs.layers.desktop.areas.groups]]
+                id = "box"
+                place = "cell"
+                col = 0
+                row = 0
+                style = {{ opacity = {group} }}
+                [[outputs.layers.desktop.areas.groups.children]]
+                id = "clock-1"
+                module = "clock"
+                style = {{ opacity = {instance} }}
+                "#
+            ))
+        };
+        let report = validate(&styled("1.5", "-0.1", "nan"), &Modules);
+        for key in [
+            "areas.widgets.style.opacity",
+            "groups.box.style.opacity",
+            "children.clock-1.style.opacity",
+        ] {
+            assert!(
+                finding_at(&report, key, "finding.style_opacity"),
+                "{key}: {}",
+                report.render()
+            );
+        }
+        assert_eq!(report.errors.len(), 3, "{}", report.render());
+        let report = validate(&styled("0", "0.5", "1"), &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+    }
+
+    /// A bar in `chips` mode paints no strip, so a border or a shadow written on it is a warning, wherever the mode comes from.
+    #[test]
+    fn a_border_on_a_bar_in_chips_mode_is_a_warning() {
+        let bar = |keys: &str, more: &str| {
+            layout(&format!(
+                r#"
+                id = "test"
+                [[outputs]]
+                match = "*"
+                [[outputs.layers.top.areas]]
+                id = "bar-top"
+                kind = "bar"
+                edge = "top"
+                thickness = 32
+                {keys}
+                {more}
+                "#
+            ))
+        };
+        let report = validate(
+            &bar(
+                "shape = { mode = \"chips\" }\nstyle = { border = { width = 1 }, shadow = 2 }",
+                "",
+            ),
+            &Modules,
+        );
+        assert!(
+            report.errors.is_empty(),
+            "a warning, not an error: {}",
+            report.render()
+        );
+        assert!(finding_at(
+            &report,
+            "bar-top.style.border",
+            "finding.chips_edge"
+        ));
+        assert!(finding_at(
+            &report,
+            "bar-top.style.shadow",
+            "finding.chips_edge"
+        ));
+
+        let later = bar(
+            "style = { shadow = 2 }",
+            "[[outputs]]\nmatch = \"DP-1\"\n[[outputs.layers.top.areas]]\nid = \"bar-top\"\nkind = \"bar\"\nshape = { mode = \"chips\" }",
+        );
+        let report = validate(&later, &Modules);
+        assert!(
+            report
+                .findings()
+                .any(|f| f.key.contains("outputs.DP-1") && f.key.ends_with("bar-top.style.shadow")),
+            "the rule that makes it chips is told: {}",
+            report.render()
+        );
+
+        let painted = bar("style = { border = { width = 1 }, shadow = 2 }", "");
+        assert!(validate(&painted, &Modules).is_clean());
+    }
+
+    /// Whatever is drawn inside the lock's prompt is held to the prompt's own rules: never fainter than it may be, never a card its text cannot be read on, and never painted by an expression that could answer either (TA-8).
+    #[test]
+    fn what_the_prompt_holds_cannot_fade_or_hide_it() {
+        let held = |style: &str, bindings: &str| {
+            alone(
+                &layout(&format!(
+                    r#"
+                    id = "test"
+                    [[outputs]]
+                    match = "*"
+                    [[outputs.layers.lock.areas]]
+                    id = "prompt"
+                    kind = "prompt"
+                    [[outputs.layers.lock.areas.groups]]
+                    id = "card"
+                    place = "cell"
+                    col = 0
+                    row = 0
+                    style = {{ {style} }}
+                    [[outputs.layers.lock.areas.groups.children]]
+                    id = "clock-1"
+                    module = "clock"
+                    style = {{ {style} }}
+                    bindings = {{ {bindings} }}
+                    "#
+                )),
+                "DP-1",
+            )
+        };
+        let report =
+            |resolved: &Resolved| validate_resolved(resolved, "layouts/test.toml", &theme());
+
+        let faint = report(&held("opacity = 0.5", ""));
+        assert!(finding_at(
+            &faint,
+            "groups.card.style.opacity",
+            "finding.prompt_faint"
+        ));
+        assert!(finding_at(
+            &faint,
+            "children.clock-1.style.opacity",
+            "finding.prompt_faint"
+        ));
+
+        let unreadable = report(&held("fill = \"text\"", ""));
+        assert!(finding_at(
+            &unreadable,
+            "groups.card.style.fill",
+            "finding.prompt_contrast"
+        ));
+
+        let bound = report(&held("shadow = 1", "\"style.opacity\" = \"0.1\""));
+        assert!(finding_at(
+            &bound,
+            "children.clock-1.bindings.style.opacity",
+            "finding.prompt_style_bound"
+        ));
+
+        assert!(report(&held("shadow = 1, border = { width = 2 }", "")).is_clean());
+    }
+
+    /// A style colour a save makes a parameter is read back through a binding of the instance's style, so the komponent draws what the group drew: a hex as itself, a theme token as the reading of that token.
+    #[test]
+    fn a_saved_komponent_offers_an_instance_s_style_as_parameters() {
+        let parsed = layout(STYLED);
+        let (drawn, _) = resolve(&parsed, &Library::default(), "DP-1", None);
+        let mut group = group_of(&drawn, LayerKind::Desktop, "container").clone();
+        group.children[0].style.border = Some(Border {
+            width: None,
+            color: Some("teal".into()),
+        });
+        let offered = crate::components::candidates(&group, &|module, key| {
+            Modules.binding_type(module, key).ok()
+        });
+        let defaults: BTreeMap<&str, &str> = offered
+            .iter()
+            .map(|it| (it.key.as_str(), it.default.0.as_str()))
+            .collect();
+        assert_eq!(defaults.get("style.fill"), Some(&"#1f1d2e"));
+        assert_eq!(defaults.get("style.border.color"), Some(&"$theme.teal"));
+
+        let fill: Vec<_> = offered
+            .iter()
+            .filter(|it| it.key == "style.fill")
+            .cloned()
+            .collect();
+        let saved = crate::components::saved(&group, &fill);
+        let child = &saved.children[0];
+        assert_eq!(child.style.fill, None, "the parameter paints it now");
+        assert_eq!(child.style.shadow, Some(2), "what was not chosen stays");
+        assert_eq!(
+            child.bindings["style.fill"],
+            Expr(format!("${}", fill[0].name))
+        );
+        assert!(validate_komponent(&KomponentId::new("pill"), &saved, &Modules).is_clean());
+    }
+
+    /// A desktop grid holding one cell group `box`, which `group` adds keys to, and its children `children`, written as TOML tables.
+    fn container(group: &str, children: &str) -> Layout {
+        layout(&format!(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            col_span = 4
+            row_span = 4
+            {group}
+            {children}
+            "#
+        ))
+    }
+
+    fn child(id: &str, keys: &str) -> String {
+        format!(
+            r#"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "{id}"
+            module = "clock"
+            {keys}
+            "#
+        )
+    }
+
+    fn placements_of(group: &ResolvedGroup) -> Vec<Option<Placement>> {
+        group.children.iter().map(|child| child.placement).collect()
+    }
+
+    /// T-1.2: a group's `arrange`, inner grid and gap merge by id like any key, and so does where a child sits, so a monitor rule can turn a row into a column and give one child a larger share.
+    #[test]
+    fn a_monitor_rule_rearranges_a_container_by_id() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            arrange = "row"
+            gap = 8
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            weight = 2
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-2"
+            module = "clock"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            arrange = "column"
+            gap = 4
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-2"
+            weight = 3
+            "#,
+        );
+        assert!(validate(&parsed, &Modules).is_clean());
+
+        let everywhere = alone(&parsed, "HDMI-A-1");
+        let row = group_of(&everywhere, LayerKind::Desktop, "box");
+        assert_eq!(
+            (row.arrange, row.cols, row.rows, row.gap),
+            (Some(Arrange::Row), 2, 2, Some(8.0))
+        );
+        assert_eq!(
+            placements_of(row),
+            [Some(Placement::Weight(2.0)), Some(Placement::Weight(1.0))]
+        );
+
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        let column = group_of(&resolved, LayerKind::Desktop, "box");
+        assert_eq!(
+            (column.arrange, column.gap),
+            (Some(Arrange::Column), Some(4.0))
+        );
+        assert_eq!(
+            placements_of(column),
+            [Some(Placement::Weight(2.0)), Some(Placement::Weight(3.0))],
+            "what the monitor rule leaves alone it inherits"
+        );
+    }
+
+    /// A grid of one cell group `box` arranged as a row with two children, written for every output, and `rules` after it.
+    fn arranged_row(rules: &str) -> String {
+        format!(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            arrange = "row"
+            gap = 8
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-2"
+            module = "clock"
+            {rules}
+            "#
+        )
+    }
+
+    fn loose(unset_rule: &str) -> String {
+        format!(
+            r#"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            {unset_rule}
+            "#
+        )
+    }
+
+    /// A narrower level takes back the arrangement a broader one wrote with `unset = ["arrange"]`: the group is a loose run again there, its `cols`, `rows` and `gap` gone with it, and every other output keeps the row.
+    #[test]
+    fn an_output_rule_takes_back_a_container_arrangement_with_its_tracks() {
+        let parsed = layout(&arranged_row(&loose(r#"unset = ["arrange"]"#)));
+        assert_eq!(
+            parsed.outputs[1].layers.desktop.areas[0].groups[0].unset,
+            [Unset::Arrange]
+        );
+        let text = toml::to_string_pretty(&parsed).expect("serializes");
+        assert!(text.contains(r#"unset = ["arrange"]"#), "{text}");
+        assert_eq!(toml::from_str::<Layout>(&text).expect("re-parses"), parsed);
+        assert_eq!(Unset::from("arrange"), Unset::Arrange);
+
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        let group = group_of(&resolved, LayerKind::Desktop, "box");
+        assert_eq!(
+            (group.arrange, group.cols, group.rows, group.gap),
+            (None, 2, 2, None)
+        );
+        let elsewhere = alone(&parsed, "HDMI-A-1");
+        assert_eq!(
+            group_of(&elsewhere, LayerKind::Desktop, "box").arrange,
+            Some(Arrange::Row)
+        );
+        assert!(validate_unsets(&parsed, &Library::default()).is_clean());
+        assert!(
+            validate(&parsed, &Modules).is_clean(),
+            "{}",
+            validate(&parsed, &Modules).render()
+        );
+    }
+
+    /// The same take-back across `extends`, and a level above the one that takes it back can arrange the group again, since a level's own keys are laid over after what it takes back.
+    #[test]
+    fn a_layout_takes_back_the_arrangement_of_the_layout_it_extends() {
+        let base = layout(&arranged_row(""));
+        let known = Library::of_layouts([base.clone()]);
+        let mine = layout(&format!(
+            "id = \"mine\"\nextends = \"test\"\n{}",
+            loose(r#"unset = ["arrange"]"#).replace("DP-1", "*")
+        ));
+        let (resolved, report) = resolve(&mine, &known, "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        assert_eq!(group_of(&resolved, LayerKind::Desktop, "box").arrange, None);
+        assert!(validate_unsets(&mine, &known).is_clean());
+
+        let again = layout(&format!(
+            "id = \"mine\"\nextends = \"test\"\n{}{}",
+            loose(r#"unset = ["arrange"]"#).replace("DP-1", "*"),
+            loose(r#"arrange = "column""#),
+        ));
+        let (resolved, _) = resolve(&again, &known, "DP-1", None);
+        let group = group_of(&resolved, LayerKind::Desktop, "box");
+        assert_eq!((group.arrange, group.gap), (Some(Arrange::Column), None));
+        assert!(validate_unsets(&again, &known).is_clean());
+    }
+
+    /// A level that takes the arrangement back and writes any key of it is an error at the `unset` entry, and so is a child place its group no longer takes; taking back what nothing under the level arranges is only a warning.
+    #[test]
+    fn taking_back_an_arrangement_is_judged_after_the_take_back() {
+        for written in [r#"arrange = "column""#, "gap = 2.0", "cols = 3", "rows = 3"] {
+            let parsed = layout(&arranged_row(&loose(&format!(
+                "{written}\nunset = [\"arrange\"]"
+            ))));
+            let report = validate(&parsed, &Modules);
+            assert!(
+                finding_at(&report, "groups.box.unset[0]", "finding.unset_and_written"),
+                "{written}: {}",
+                report.render()
+            );
+        }
+
+        let weighted = arranged_row("").replace("id = \"clock-1\"", "id = \"clock-1\"\nweight = 2");
+        let taking = layout(&format!("{weighted}{}", loose(r#"unset = ["arrange"]"#)));
+        let report = validate(&taking, &Modules);
+        assert!(
+            finding_at(
+                &report,
+                "outputs.DP-1.layers.desktop.areas.widgets.groups.box.children.clock-1.weight",
+                "finding.child_weight"
+            ),
+            "{}",
+            report.render()
+        );
+        let kept = layout(&weighted);
+        assert!(validate(&kept, &Modules).is_clean());
+
+        let nothing = layout(&format!(
+            "id = \"test\"\n{}",
+            loose(r#"unset = ["arrange"]"#).replace("DP-1", "*")
+        ));
+        let report = validate_unsets(&nothing, &Library::default());
+        assert!(report.errors.is_empty(), "{}", report.render());
+        assert_eq!(report.warnings.len(), 1, "{}", report.render());
+        assert_eq!(
+            report.warnings[0].message.key(),
+            Some("finding.unset_nothing")
+        );
+    }
+
+    /// An area or an instance cannot take `arrange` back, whatever a group can.
+    #[test]
+    fn only_a_group_takes_an_arrangement_back() {
+        let parsed = layout(&format!(
+            "{}{}",
+            arranged_row(""),
+            r#"
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            unset = ["arrange"]
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            unset = ["arrange"]
+            "#
+        ));
+        let report = validate(&parsed, &Modules);
+        assert!(
+            finding_at(&report, "widgets.unset[0]", "finding.unset_on_area"),
+            "{}",
+            report.render()
+        );
+        assert!(
+            finding_at(
+                &report,
+                "children.clock-1.unset[0]",
+                "finding.unset_on_instance"
+            ),
+            "{}",
+            report.render()
+        );
+    }
+
+    /// The rename is clean: `stacked = true` is a located error on the key itself that names what to write instead, in a layout and in a komponent's file alike.
+    #[test]
+    fn a_written_stacked_points_at_arrange_pages() {
+        let text = r#"id = "t"
+[[outputs]]
+match = "*"
+[[outputs.layers.desktop.areas]]
+id = "widgets"
+kind = "grid"
+[[outputs.layers.desktop.areas.groups]]
+id = "weather"
+place = "cell"
+col = 0
+row = 0
+stacked = true
+"#;
+        let report = validate::check_unknown_keys(text, &LayoutId::new("t"));
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        let finding = &report.errors[0];
+        assert_eq!(
+            finding.key,
+            "outputs.*.layers.desktop.areas.widgets.groups.weather.stacked"
+        );
+        assert_eq!(finding.message.key(), Some("finding.retired_key"));
+        assert!(
+            finding.message.english().contains(r#"arrange = "pages""#),
+            "{}",
+            finding.message.english()
+        );
+        let span = finding.span.as_ref().expect("located");
+        assert_eq!((span.line, span.column), (12, 1), "at the key itself");
+
+        let komponent = format!("stacked = true\n{PILL}");
+        assert!(toml::from_str::<Komponent>(&komponent).is_err());
+        let finding = validate::retired_in_komponent(&komponent, "components/pill.toml")
+            .expect("named for what it is");
+        assert_eq!(
+            (finding.key.as_str(), finding.message.key()),
+            ("stacked", Some("finding.retired_key"))
+        );
+        assert_eq!(finding.span.map(|span| span.line), Some(1));
+        assert!(validate::retired_in_komponent(PILL, "components/pill.toml").is_none());
+    }
+
+    /// A bar's zone already lays its run along the edge, so a group there takes `pages` and nothing else — and one written otherwise is drawn as a loose run.
+    #[test]
+    fn a_zone_group_arranges_its_children_only_as_pages() {
+        let zoned = |arrange: &str| {
+            layout(&ONE_BAR.replace(
+                "id = \"start\"",
+                &format!("id = \"start\"\narrange = \"{arrange}\""),
+            ))
+        };
+        for arrange in ["row", "column", "grid", "free"] {
+            let parsed = zoned(arrange);
+            let report = validate(&parsed, &Modules);
+            assert!(
+                finding_at(&report, "groups.start.arrange", "finding.zone_arrange"),
+                "{arrange}: {}",
+                report.render()
+            );
+            let resolved = alone(&parsed, "DP-1");
+            assert_eq!(
+                group_of(&resolved, LayerKind::Top, "start").arrange,
+                None,
+                "{arrange}"
+            );
+        }
+        let pages = zoned("pages");
+        assert!(validate(&pages, &Modules).is_clean());
+        assert!(group_of(&alone(&pages, "DP-1"), LayerKind::Top, "start").is_pages());
+    }
+
+    /// `weight`, `cell` and `rect` each place a child of one arrangement, and mean nothing anywhere else.
+    #[test]
+    fn a_child_place_needs_the_arrangement_that_takes_it() {
+        let cases = [
+            (
+                "arrange = \"row\"",
+                "cell = { col = 0, row = 0 }",
+                "cell",
+                "finding.child_cell",
+            ),
+            (
+                "arrange = \"column\"",
+                "rect = { x = 0, y = 0, w = 1, h = 1 }",
+                "rect",
+                "finding.child_rect",
+            ),
+            (
+                "arrange = \"grid\"",
+                "weight = 2",
+                "weight",
+                "finding.child_weight",
+            ),
+            (
+                "arrange = \"free\"",
+                "cell = { col = 0, row = 0 }",
+                "cell",
+                "finding.child_cell",
+            ),
+            (
+                "arrange = \"pages\"",
+                "weight = 2",
+                "weight",
+                "finding.child_weight",
+            ),
+            (
+                "",
+                "rect = { x = 0, y = 0, w = 1, h = 1 }",
+                "rect",
+                "finding.child_rect",
+            ),
+        ];
+        for (arrange, place, key, message) in cases {
+            let report = validate(&container(arrange, &child("clock-1", place)), &Modules);
+            assert!(
+                finding_at(&report, &format!("children.clock-1.{key}"), message),
+                "{arrange} with {place}: {}",
+                report.render()
+            );
+            assert_eq!(report.errors.len(), 1, "{}", report.render());
+        }
+        for (arrange, place) in [
+            ("arrange = \"row\"", "weight = 2"),
+            ("arrange = \"column\"", "weight = 0.5"),
+            ("arrange = \"grid\"", "cell = { col = 1, row = 1 }"),
+            (
+                "arrange = \"free\"",
+                "rect = { x = 0.5, y = 0, w = 0.5, h = 1 }",
+            ),
+        ] {
+            let report = validate(&container(arrange, &child("clock-1", place)), &Modules);
+            assert!(
+                report.is_clean(),
+                "{arrange} with {place}: {}",
+                report.render()
+            );
+        }
+    }
+
+    /// A place written at one level and an arrangement written at another are judged on the merged group, and reported at the level that writes either half.
+    #[test]
+    fn a_child_place_is_judged_on_the_merged_group() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            arrange = "grid"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            cell = { col = 1, row = 0 }
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            arrange = "row"
+            "#,
+        );
+        let report = validate(&parsed, &Modules);
+        let keys: Vec<&str> = report.errors.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["outputs.DP-1.layers.desktop.areas.widgets.groups.box.children.clock-1.cell"],
+            "the monitor rule makes the cell mean nothing, so it is the one told: {}",
+            report.render()
+        );
+
+        let extending = layout(
+            r#"
+            id = "test"
+            extends = "parent"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-1"
+            module = "clock"
+            cell = { col = 1, row = 0 }
+            "#,
+        );
+        assert!(
+            validate(&extending, &Modules).is_clean(),
+            "a group the parent places may be a grid there"
+        );
+    }
+
+    /// A weight is a share of the group's length, so one that is not above 0 is refused wherever it is written.
+    #[test]
+    fn a_weight_is_above_zero() {
+        for weight in ["0", "-1", "nan"] {
+            let parsed = container(
+                "arrange = \"row\"",
+                &child("clock-1", &format!("weight = {weight}")),
+            );
+            let report = validate(&parsed, &Modules);
+            assert!(
+                finding_at(
+                    &report,
+                    "children.clock-1.weight",
+                    "finding.weight_not_positive"
+                ),
+                "{weight}: {}",
+                report.render()
+            );
+            assert_eq!(
+                placements_of(group_of(&alone(&parsed, "DP-1"), LayerKind::Desktop, "box")),
+                [Some(Placement::Weight(1.0))],
+                "{weight} is drawn as the weight a child has unless it says"
+            );
+        }
+    }
+
+    /// An inner grid has at least one column and one row, and a gap is not negative.
+    #[test]
+    fn an_inner_grid_has_tracks_and_a_gap_is_not_negative() {
+        let report = validate(
+            &container("arrange = \"grid\"\ncols = 0\nrows = 0\ngap = -4", ""),
+            &Modules,
+        );
+        assert!(finding_at(&report, "groups.box.cols", "finding.no_tracks"));
+        assert!(finding_at(&report, "groups.box.rows", "finding.no_tracks"));
+        assert!(finding_at(
+            &report,
+            "groups.box.gap",
+            "finding.gap_negative"
+        ));
+        assert_eq!(report.errors.len(), 3, "{}", report.render());
+    }
+
+    /// A gap that is no number at all is refused as a negative one is, on a group, a grid and a panel alike.
+    #[test]
+    fn a_gap_that_is_no_number_is_refused() {
+        let grouped = container("arrange = \"row\"\ngap = nan", "");
+        let gridded = layout(&format!(
+            r#"{ONE_BAR}
+            [[outputs.layers.desktop.areas]]
+            id = "grid"
+            kind = "grid"
+            gap = nan
+            "#
+        ));
+        let paneled = with_owners(&panel("panel-clock", "owner = \"clock-1\"\ngap = nan"));
+        for (parsed, key) in [
+            (grouped, "groups.box.gap"),
+            (gridded, "areas.grid.gap"),
+            (paneled, "areas.panel-clock.gap"),
+        ] {
+            let report = validate(&parsed, &Modules);
+            assert!(
+                finding_at(&report, key, "finding.gap_negative"),
+                "{key}: {}",
+                report.render()
+            );
+            assert_eq!(report.errors.len(), 1, "{key}: {}", report.render());
+        }
+    }
+
+    /// `cols` and `rows` size a `grid` group's inner grid and `gap` spaces what a group arranges, so one written where its group's arrangement reads none is reported, wherever the arrangement comes from.
+    #[test]
+    fn arrangement_keys_the_arrangement_does_not_read_are_reported() {
+        for (group, key, message) in [
+            (
+                "arrange = \"row\"\ncols = 3",
+                "groups.box.cols",
+                "finding.tracks_off_grid",
+            ),
+            (
+                "arrange = \"free\"\nrows = 3",
+                "groups.box.rows",
+                "finding.tracks_off_grid",
+            ),
+            (
+                "arrange = \"pages\"\ngap = 4",
+                "groups.box.gap",
+                "finding.gap_unspaced",
+            ),
+            ("gap = 4", "groups.box.gap", "finding.gap_unspaced"),
+        ] {
+            let report = validate(&container(group, ""), &Modules);
+            assert!(
+                finding_at(&report, key, message),
+                "{group}: {}",
+                report.render()
+            );
+            assert_eq!(report.errors.len(), 1, "{group}: {}", report.render());
+        }
+        for group in [
+            "arrange = \"grid\"\ncols = 3\nrows = 3\ngap = 4",
+            "arrange = \"row\"\ngap = 4",
+            "arrange = \"free\"\ngap = 4",
+        ] {
+            let report = validate(&container(group, ""), &Modules);
+            assert!(report.is_clean(), "{group}: {}", report.render());
+        }
+
+        let rearranged = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            arrange = "grid"
+            cols = 3
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            arrange = "column"
+            "#,
+        );
+        let report = validate(&rearranged, &Modules);
+        assert!(
+            finding_at(
+                &report,
+                "outputs.DP-1.layers.desktop.areas.widgets.groups.box.cols",
+                "finding.tracks_off_grid"
+            ),
+            "the level that changes the arrangement hears of it: {}",
+            report.render()
+        );
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+
+        let mut komponent = pill();
+        komponent.arrange = Some(Arrange::Row);
+        komponent.cols = Some(2);
+        let report = validate_komponent(&KomponentId::new("pill"), &komponent, &Modules);
+        assert!(
+            finding_at(&report, "cols", "finding.tracks_off_grid"),
+            "{}",
+            report.render()
+        );
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+    }
+
+    /// Each child of a `grid` or `free` group has a place of its own, so a list repeated over them is refused — where a grid cell's own rule does not already say so.
+    #[test]
+    fn repeat_is_refused_where_each_child_has_a_place() {
+        for arrange in ["grid", "free"] {
+            let zoned = layout(&ONE_BAR.replace(
+                "id = \"start\"",
+                &format!("id = \"start\"\narrange = \"{arrange}\"\nrepeat = \"$battery.cells\""),
+            ));
+            let report = validate(&zoned, &Modules);
+            assert!(
+                finding_at(&report, "groups.start.repeat", "finding.arranged_repeats"),
+                "{}",
+                report.render()
+            );
+
+            let celled = container(
+                &format!("arrange = \"{arrange}\"\nrepeat = \"$battery.cells\""),
+                "",
+            );
+            let report = validate(&celled, &Modules);
+            let messages: Vec<_> = report
+                .errors
+                .iter()
+                .filter_map(|f| f.message.key())
+                .collect();
+            assert_eq!(messages, ["finding.cell_repeats"], "said once");
+
+            let mut komponent = pill();
+            komponent.arrange = Some(if arrange == "grid" {
+                Arrange::Grid
+            } else {
+                Arrange::Free
+            });
+            komponent.repeat = Some(Expr("$battery.cells".into()));
+            let report = validate_komponent(&KomponentId::new("pill"), &komponent, &Modules);
+            assert!(
+                finding_at(&report, "repeat", "finding.arranged_repeats"),
+                "{}",
+                report.render()
+            );
+        }
+        let rows = layout(&ONE_BAR.replace(
+            "id = \"start\"",
+            "id = \"start\"\narrange = \"pages\"\nrepeat = \"$battery.cells\"",
+        ));
+        assert!(validate(&rows, &Modules).is_clean());
+    }
+
+    /// A komponent arranges its children itself: what its file places is checked against its own `arrange`, and a use in a bar's zone takes `pages` only.
+    #[test]
+    fn a_komponent_arranges_its_children_and_a_zone_use_takes_pages() {
+        let id = KomponentId::new("pill");
+        let mut grid = pill();
+        grid.arrange = Some(Arrange::Grid);
+        grid.cols = Some(0);
+        grid.children[0].cell = Some(ChildCell::at(1, 0));
+        grid.children[1].weight = Some(2.0);
+        let report = validate_komponent(&id, &grid, &Modules);
+        assert!(finding_at(&report, "cols", "finding.no_tracks"));
+        assert!(finding_at(
+            &report,
+            "children.clock.weight",
+            "finding.child_weight"
+        ));
+        assert_eq!(report.errors.len(), 2, "{}", report.render());
+        assert_eq!(report.errors[0].key, "cols");
+
+        let report = validate_komponents(&layout(TWO_PILLS), &with_pill_as(grid.clone()), &Modules);
+        assert!(
+            finding_at(&report, "groups.start.komponent", "finding.zone_arrange"),
+            "{}",
+            report.render()
+        );
+
+        let used = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            komponent = "pill"
+            "#,
+        );
+        grid.cols = Some(3);
+        let library = with_pill_as(grid);
+        let no_parameters = BTreeMap::new();
+        let at_zone = check_use(
+            &library,
+            &Modules,
+            (&KomponentId::new("pill"), &no_parameters),
+            LayerKind::Top,
+            false,
+        );
+        assert_eq!(at_zone.err(), Some(UseError::ZoneArrange(Arrange::Grid)));
+        assert!(validate_komponents(&used, &library, &Modules).is_clean());
+        let (resolved, _) = resolve(&used, &library, "DP-1", None);
+        let drawn = group_of(&resolved, LayerKind::Desktop, "box");
+        assert_eq!((drawn.arrange, drawn.cols), (Some(Arrange::Grid), 3));
+        assert_eq!(
+            placements_of(drawn),
+            [
+                Some(Placement::Cell(ChildCell::at(1, 0))),
+                Some(Placement::Cell(ChildCell::at(0, 0))),
+            ]
+        );
+
+        let holding_more = layout(&TWO_PILLS.replace(
+            "zone = \"end\"\n        komponent = \"pill\"",
+            "zone = \"end\"\n        komponent = \"pill\"\n        arrange = \"pages\"",
+        ));
+        let (_, report) = resolve(&holding_more, &with_pill([]), "DP-1", None);
+        assert!(
+            finding_at(
+                &report,
+                "groups.end.komponent",
+                "finding.komponent_holds_more"
+            ),
+            "{}",
+            report.render()
+        );
+    }
+
+    fn with_pill_as(komponent: Komponent) -> Library {
+        Library::default().with_komponent("pill", komponent)
+    }
+
+    /// The lock layer takes containers: what it refuses is decided per child, as for any group there.
+    #[test]
+    fn a_lock_layer_container_still_holds_readings_only() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.lock.areas]]
+            id = "readings"
+            kind = "grid"
+            [[outputs.layers.lock.areas.groups]]
+            id = "box"
+            place = "cell"
+            col = 0
+            row = 0
+            arrange = "row"
+            [[outputs.layers.lock.areas.groups.children]]
+            id = "lock-clock"
+            module = "clock"
+            weight = 2
+            [[outputs.layers.lock.areas.groups.children]]
+            id = "lock-mixer"
+            module = "mixer"
+            [[outputs.layers.lock.areas]]
+            id = "prompt"
+            kind = "prompt"
+            "#,
+        );
+        for report in [
+            validate(&parsed, &Modules),
+            crate::validate::validate_lock(&parsed, &Modules),
+        ] {
+            let keys: Vec<(&str, Option<&str>)> = report
+                .errors
+                .iter()
+                .map(|f| (f.key.as_str(), f.message.key()))
+                .collect();
+            assert_eq!(
+                keys,
+                [(
+                    "outputs.*.layers.lock.areas.readings.groups.box.children.lock-mixer.module",
+                    Some("finding.lock_interactive")
+                )],
+                "{}",
+                report.render()
+            );
+        }
+    }
+
+    /// The prototype's `normalize`: a child with no cell takes the first cell no other child covers, in reading order; one past the inner grid is pulled back onto it and said so; and a `free` child with no `rect` is half the box, a step down from the one before.
+    #[test]
+    fn missing_and_stray_child_places_are_answered() {
+        use crate::container::cells;
+        let wide = ChildCell {
+            col: 0,
+            row: 0,
+            col_span: 2,
+            row_span: 1,
+        };
+        assert_eq!(
+            cells(&[None, Some(wide), None, None], 3, 2),
+            [
+                ChildCell::at(2, 0),
+                wide,
+                ChildCell::at(0, 1),
+                ChildCell::at(1, 1),
+            ],
+            "the written cell is placed first, then the rest in reading order around it"
+        );
+        assert_eq!(
+            cells(
+                &[Some(ChildCell {
+                    col: 5,
+                    row: 1,
+                    col_span: 4,
+                    row_span: 3,
+                })],
+                2,
+                2
+            ),
+            [ChildCell {
+                col: 1,
+                row: 1,
+                col_span: 1,
+                row_span: 1,
+            }]
+        );
+        assert_eq!(
+            cells(&[None, None], 1, 1),
+            [ChildCell::at(0, 0), ChildCell::at(0, 0)],
+            "a full inner grid puts the rest at its top left"
+        );
+
+        let stray = container(
+            "arrange = \"grid\"",
+            &format!(
+                "{}{}",
+                child("clock-1", "cell = { col = 4, row = 0 }"),
+                child("clock-2", "")
+            ),
+        );
+        let (resolved, report) = resolve(&stray, &Library::default(), "DP-1", None);
+        assert_eq!(
+            placements_of(group_of(&resolved, LayerKind::Desktop, "box")),
+            [
+                Some(Placement::Cell(ChildCell::at(1, 0))),
+                Some(Placement::Cell(ChildCell::at(0, 0))),
+            ]
+        );
+        let keys: Vec<(&str, Option<&str>)> = report
+            .warnings
+            .iter()
+            .map(|f| (f.key.as_str(), f.message.key()))
+            .collect();
+        assert_eq!(
+            keys,
+            [(
+                "layers.desktop.areas.widgets.groups.box.children.clock-1.cell",
+                Some("finding.cell_off_grid")
+            )]
+        );
+        assert!(report.errors.is_empty(), "{}", report.render());
+
+        let free = container(
+            "arrange = \"free\"",
+            &format!(
+                "{}{}{}",
+                child("clock-1", ""),
+                child("clock-2", "rect = { x = 0.5, y = 0.5, w = 0.5, h = 0.5 }"),
+                child("clock-3", "")
+            ),
+        );
+        let half = |x: f32, y: f32| {
+            Some(Placement::Rect(Rect {
+                x,
+                y,
+                w: 0.5,
+                h: 0.5,
+            }))
+        };
+        assert_eq!(
+            placements_of(group_of(&alone(&free, "DP-1"), LayerKind::Desktop, "box")),
+            [half(0.0, 0.0), half(0.5, 0.5), half(0.1, 0.1)]
+        );
+
+        let loose = container("", &child("clock-1", ""));
+        assert_eq!(
+            placements_of(group_of(&alone(&loose, "DP-1"), LayerKind::Desktop, "box")),
+            [None]
+        );
+    }
+
+    /// Saving a container as a komponent keeps how it is arranged and where each child sits, cells written out as they are drawn; detaching gives the group the arrangement back.
+    #[test]
+    fn a_saved_container_keeps_its_arrangement_and_places() {
+        let parsed = container(
+            "arrange = \"grid\"\ncols = 3\ngap = 4",
+            &format!(
+                "{}{}",
+                child("clock-1", "cell = { col = 2, row = 0 }"),
+                child("clock-2", "")
+            ),
+        );
+        let resolved = alone(&parsed, "DP-1");
+        let saved = crate::components::saved(group_of(&resolved, LayerKind::Desktop, "box"), &[]);
+        assert_eq!(
+            (saved.arrange, saved.cols, saved.rows, saved.gap),
+            (Some(Arrange::Grid), Some(3), Some(2), Some(4.0))
+        );
+        let cells: Vec<Option<ChildCell>> = saved.children.iter().map(|it| it.cell).collect();
+        assert_eq!(
+            cells,
+            [Some(ChildCell::at(2, 0)), Some(ChildCell::at(0, 0))]
+        );
+        assert!(validate_komponent(&KomponentId::new("box"), &saved, &Modules).is_clean());
+
+        let row = container("arrange = \"row\"", &child("clock-1", ""));
+        let saved = crate::components::saved(
+            group_of(&alone(&row, "DP-1"), LayerKind::Desktop, "box"),
+            &[],
+        );
+        assert_eq!((saved.cols, saved.rows), (None, None));
+        assert_eq!(
+            saved.children[0].weight, None,
+            "a weight of 1 is what a child has"
+        );
+    }
+
+    /// Turning a group into a stack and back is one operation each way, its inner grid and gap riding along.
+    #[test]
+    fn set_group_arrange_puts_back_what_it_replaced() {
+        let mut parsed = container("arrange = \"grid\"\ncols = 3", "");
+        let before = parsed.clone();
+        let undo = crate::ops::apply(
+            &mut parsed,
+            &LayoutOp::SetGroupArrange {
+                site: Site::everywhere(LayerKind::Desktop),
+                area: AreaId::new("widgets"),
+                id: GroupId::new("box"),
+                arrange: Some(Arrange::Pages),
+                cols: None,
+                rows: None,
+                gap: Some(6.0),
+            },
+        )
+        .expect("applies");
+        let group = &parsed.outputs[0].layers.desktop.areas[0].groups[0];
+        assert_eq!(
+            (group.arrange, group.cols, group.gap),
+            (Some(Arrange::Pages), None, Some(6.0))
+        );
+        crate::ops::apply(&mut parsed, &undo).expect("undoes");
+        assert_eq!(parsed, before);
+    }
+
+    /// A bar with `clock-1` in it and a free area with `battery-1` on the top layer, a grid with `clock-2` on the desktop, and whatever `extra` adds.
+    fn with_owners(extra: &str) -> Layout {
+        layout(&format!(
+            r#"{ONE_BAR}
+            [[outputs.layers.top.areas]]
+            id = "corner"
+            kind = "free"
+            rect = {{ x = 0.0, y = 0.0, w = 0.2, h = 0.2 }}
+            [[outputs.layers.top.areas.groups]]
+            id = "held"
+            place = "zone"
+            zone = "start"
+            [[outputs.layers.top.areas.groups.children]]
+            id = "battery-1"
+            module = "battery"
+            [[outputs.layers.desktop.areas]]
+            id = "widgets"
+            kind = "grid"
+            [[outputs.layers.desktop.areas.groups]]
+            id = "w"
+            place = "cell"
+            col = 0
+            row = 0
+            [[outputs.layers.desktop.areas.groups.children]]
+            id = "clock-2"
+            module = "clock"
+            representation = "widget_m"
+            {extra}
+            "#
+        ))
+    }
+
+    /// A panel on the top layer of the `*` rule, `keys` written in it.
+    fn panel(id: &str, keys: &str) -> String {
+        format!(
+            r#"
+            [[outputs.layers.top.areas]]
+            id = "{id}"
+            kind = "panel"
+            {keys}
+            "#
+        )
+    }
+
+    fn panel_of(resolved: &Resolved, id: &str) -> Option<ResolvedAreaKind> {
+        resolved
+            .area(LayerKind::Top, &AreaId::new(id))
+            .map(|area| area.kind.clone())
+    }
+
+    /// T-1.3: a panel needs nothing but its owner: it is 4 × 3 of a grid's cells beside it, and holds cell groups like a grid. What it writes is what it is.
+    #[test]
+    fn a_panel_resolves_from_its_owner_with_a_grid_s_cells() {
+        let parsed = with_owners(&panel("panel-clock", "owner = \"clock-1\""));
+        assert!(
+            validate(&parsed, &Modules).is_clean(),
+            "{}",
+            validate(&parsed, &Modules).render()
+        );
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        assert_eq!(
+            panel_of(&resolved, "panel-clock"),
+            Some(ResolvedAreaKind::Panel {
+                owner: InstanceId::new("clock-1"),
+                along: false,
+                cols: 4,
+                rows: 3,
+                cell: 80.0,
+                gap: 16.0,
+            })
+        );
+
+        let written = with_owners(&format!(
+            "{}{}",
+            panel(
+                "panel-clock",
+                "owner = \"clock-1\"\nalong = true\ncols = 16\nrows = 2\ncell = 64\ngap = 8"
+            ),
+            r#"
+            [[outputs.layers.top.areas.groups]]
+            id = "inside"
+            place = "cell"
+            col = 0
+            row = 0
+            [[outputs.layers.top.areas.groups.children]]
+            id = "battery-2"
+            module = "battery"
+            representation = "widget_s"
+            "#
+        ));
+        assert!(validate(&written, &Modules).is_clean());
+        let resolved = alone(&written, "DP-1");
+        assert_eq!(
+            panel_of(&resolved, "panel-clock"),
+            Some(ResolvedAreaKind::Panel {
+                owner: InstanceId::new("clock-1"),
+                along: true,
+                cols: 16,
+                rows: 2,
+                cell: 64.0,
+                gap: 8.0,
+            })
+        );
+        assert_eq!(
+            child_ids(group_of(&resolved, LayerKind::Top, "inside")),
+            ["battery-2"]
+        );
+    }
+
+    /// A panel nothing opens is unfinished, like a bar with no edge: it is left out and the rest of the layer draws.
+    #[test]
+    fn a_panel_with_no_owner_is_left_out_and_reported() {
+        let parsed = with_owners(&panel("panel-clock", "cols = 2"));
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
+        assert!(
+            finding_at(
+                &report,
+                "layers.top.areas.panel-clock.owner",
+                "finding.area_needs"
+            ),
+            "{}",
+            report.render()
+        );
+        assert_eq!(area_ids(&resolved, LayerKind::Top), ["bar-top", "corner"]);
+    }
+
+    /// The owner is an instance of the panel's own layer: one on another layer, or none at all, opens nothing, so the panel is reported and not drawn.
+    #[test]
+    fn a_panel_s_owner_is_an_instance_on_its_own_layer() {
+        for owner in ["clock-2", "nobody"] {
+            let parsed = with_owners(&panel("panel-x", &format!("owner = \"{owner}\"")));
+            let report = validate(&parsed, &Modules);
+            assert!(
+                finding_at(
+                    &report,
+                    "outputs.*.layers.top.areas.panel-x.owner",
+                    "finding.panel_owner_missing"
+                ),
+                "{owner}: {}",
+                report.render()
+            );
+            assert_eq!(report.errors.len(), 1, "{owner}: {}", report.render());
+            assert_eq!(
+                panel_of(&alone(&parsed, "DP-1"), "panel-x"),
+                None,
+                "{owner}"
+            );
+        }
+    }
+
+    /// Nothing inside a panel opens another one (prototype `togglePanel`), so a panel of an instance in a panel is reported and only the outer one is drawn.
+    #[test]
+    fn nothing_inside_a_panel_opens_another() {
+        let parsed = with_owners(&format!(
+            "{}{}{}",
+            panel("panel-clock", "owner = \"clock-1\""),
+            r#"
+            [[outputs.layers.top.areas.groups]]
+            id = "inside"
+            place = "cell"
+            col = 0
+            row = 0
+            [[outputs.layers.top.areas.groups.children]]
+            id = "battery-2"
+            module = "battery"
+            "#,
+            panel("panel-battery", "owner = \"battery-2\"")
+        ));
+        let report = validate(&parsed, &Modules);
+        assert!(
+            finding_at(
+                &report,
+                "areas.panel-battery.owner",
+                "finding.panel_owner_in_panel"
+            ),
+            "{}",
+            report.render()
+        );
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        let resolved = alone(&parsed, "DP-1");
+        assert!(panel_of(&resolved, "panel-clock").is_some());
+        assert_eq!(panel_of(&resolved, "panel-battery"), None);
+    }
+
+    /// `along` runs a panel along its owner's bar, so it is said of an owner in a bar alone; one elsewhere is reported and drawn beside its owner.
+    #[test]
+    fn along_is_for_an_owner_in_a_bar() {
+        let off_bar = with_owners(&panel(
+            "panel-battery",
+            "owner = \"battery-1\"\nalong = true",
+        ));
+        let report = validate(&off_bar, &Modules);
+        assert!(
+            finding_at(&report, "areas.panel-battery.along", "finding.panel_along"),
+            "{}",
+            report.render()
+        );
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        assert!(matches!(
+            panel_of(&alone(&off_bar, "DP-1"), "panel-battery"),
+            Some(ResolvedAreaKind::Panel { along: false, .. })
+        ));
+
+        let beside = with_owners(&panel("panel-battery", "owner = \"battery-1\""));
+        assert!(validate(&beside, &Modules).is_clean());
+        let said_beside = with_owners(&panel(
+            "panel-battery",
+            "owner = \"battery-1\"\nalong = false",
+        ));
+        let report = validate(&said_beside, &Modules);
+        assert!(
+            report.is_clean(),
+            "`along = false` asks for what it gets: {}",
+            report.render()
+        );
+        let in_bar = with_owners(&panel("panel-clock", "owner = \"clock-1\"\nalong = true"));
+        assert!(validate(&in_bar, &Modules).is_clean());
+    }
+
+    /// An instance opens one panel at most, so a press has one answer: the second is reported and only the first is drawn.
+    #[test]
+    fn an_instance_opens_one_panel_at_most() {
+        let parsed = with_owners(&format!(
+            "{}{}",
+            panel("panel-clock", "owner = \"clock-1\""),
+            panel("dock-clock", "owner = \"clock-1\"\nalong = true")
+        ));
+        let report = validate(&parsed, &Modules);
+        assert!(
+            finding_at(
+                &report,
+                "areas.dock-clock.owner",
+                "finding.panel_owner_taken"
+            ),
+            "{}",
+            report.render()
+        );
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        let resolved = alone(&parsed, "DP-1");
+        assert!(panel_of(&resolved, "panel-clock").is_some());
+        assert_eq!(panel_of(&resolved, "dock-clock"), None);
+    }
+
+    /// A panel opens over what is there: one that says it reserves is reported, and reserves nothing.
+    #[test]
+    fn a_panel_never_reserves() {
+        let parsed = with_owners(&panel("panel-clock", "owner = \"clock-1\"\nreserve = true"));
+        let report = validate(&parsed, &Modules);
+        assert!(
+            finding_at(
+                &report,
+                "areas.panel-clock.reserve",
+                "finding.panel_reserve"
+            ),
+            "{}",
+            report.render()
+        );
+        let resolved = alone(&parsed, "DP-1");
+        assert_eq!(
+            resolved
+                .area(LayerKind::Top, &AreaId::new("panel-clock"))
+                .map(|area| area.reserve),
+            Some(false)
+        );
+        assert_eq!(resolved.reserved(config::Edge::Top), 32.0);
+    }
+
+    /// The lock layer holds readings and opens nothing, so a panel there is refused — by the check that decides whether the lock falls back to the minimal one too.
+    #[test]
+    fn a_panel_is_refused_on_the_lock_layer() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.lock.areas]]
+            id = "prompt"
+            kind = "prompt"
+            [[outputs.layers.lock.areas]]
+            id = "readings"
+            kind = "grid"
+            [[outputs.layers.lock.areas.groups]]
+            id = "time"
+            place = "cell"
+            col = 0
+            row = 0
+            [[outputs.layers.lock.areas.groups.children]]
+            id = "lock-clock"
+            module = "clock"
+            representation = "widget_m"
+            [[outputs.layers.lock.areas]]
+            id = "panel-clock"
+            kind = "panel"
+            owner = "lock-clock"
+            "#,
+        );
+        for report in [
+            validate(&parsed, &Modules),
+            validate::validate_lock(&parsed, &Modules),
+        ] {
+            assert!(
+                finding_at(
+                    &report,
+                    "layers.lock.areas.panel-clock.kind",
+                    "finding.panel_on_lock"
+                ),
+                "{}",
+                report.render()
+            );
+            assert_eq!(report.errors.len(), 1, "{}", report.render());
+        }
+        assert_eq!(
+            area_ids(&alone(&parsed, "DP-1"), LayerKind::Lock),
+            ["readings", "prompt"]
+        );
+    }
+
+    /// A panel reserves nothing, so a workspace rule may add one, and switching to that workspace re-tiles nothing.
+    #[test]
+    fn a_workspace_rule_may_add_a_panel() {
+        let parsed = with_owners(
+            r#"
+            [[outputs.workspaces]]
+            match = "web"
+            [[outputs.workspaces.layers.top.areas]]
+            id = "panel-clock"
+            kind = "panel"
+            owner = "clock-1"
+            along = true
+            "#,
+        );
+        let report = validate(&parsed, &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+        let web = ActiveWorkspace {
+            name: "web".into(),
+            ..ActiveWorkspace::default()
+        };
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", Some(&web));
+        assert!(report.is_clean(), "{}", report.render());
+        assert!(panel_of(&resolved, "panel-clock").is_some());
+        assert_eq!(resolved.reserved(config::Edge::Top), 32.0);
+
+        let mut edited = with_owners("");
+        crate::ops::apply_all(
+            &mut edited,
+            &[
+                LayoutOp::InsertWorkspaceRule {
+                    output: OutputMatch("*".into()),
+                    index: 0,
+                    rule: Box::new(WorkspaceRule {
+                        matches: WorkspaceMatch("web".into()),
+                        ..WorkspaceRule::default()
+                    }),
+                },
+                LayoutOp::InsertArea {
+                    site: Site::everywhere(LayerKind::Top).on_workspace("web"),
+                    index: 0,
+                    area: Box::new(Area {
+                        id: AreaId::new("panel-clock"),
+                        kind: Some(AreaKind::Panel {
+                            owner: Some(InstanceId::new("clock-1")),
+                            along: None,
+                            cols: None,
+                            rows: None,
+                            cell: None,
+                            gap: None,
+                        }),
+                        ..Area::default()
+                    }),
+                },
+            ],
+        )
+        .expect("an edit adds a panel in a workspace rule");
+    }
+
+    /// A monitor rule names a panel by id and changes one key, inheriting the rest.
+    #[test]
+    fn a_monitor_rule_merges_a_panel_key_by_key() {
+        let parsed = with_owners(&format!(
+            r#"{}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "panel-clock"
+            kind = "panel"
+            rows = 2
+            "#,
+            panel("panel-clock", "owner = \"clock-1\"\ncols = 6\ncell = 64")
+        ));
+        assert!(validate(&parsed, &Modules).is_clean());
+        assert_eq!(
+            panel_of(&alone(&parsed, "DP-1"), "panel-clock"),
+            Some(ResolvedAreaKind::Panel {
+                owner: InstanceId::new("clock-1"),
+                along: false,
+                cols: 6,
+                rows: 2,
+                cell: 64.0,
+                gap: 16.0,
+            })
+        );
+        assert!(matches!(
+            panel_of(&alone(&parsed, "HDMI-A-1"), "panel-clock"),
+            Some(ResolvedAreaKind::Panel { rows: 3, .. })
+        ));
+    }
+
+    /// A monitor rule that takes the owner away takes its panel with it on that monitor, without naming the panel and without a finding; every other monitor keeps both.
+    #[test]
+    fn a_panel_goes_where_its_owner_is_taken_away() {
+        let parsed = with_owners(&format!(
+            r#"{}
+            [[outputs]]
+            match = "DP-1"
+            [[outputs.layers.top.areas]]
+            id = "bar-top"
+            [[outputs.layers.top.areas.groups]]
+            id = "start"
+            remove = ["clock-1"]
+            "#,
+            panel("panel-clock", "owner = \"clock-1\"")
+        ));
+        let report = validate(&parsed, &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+        let (resolved, report) = resolve(&parsed, &Library::default(), "DP-1", None);
+        assert!(report.is_clean(), "{}", report.render());
+        assert_eq!(panel_of(&resolved, "panel-clock"), None);
+        assert!(panel_of(&alone(&parsed, "HDMI-A-1"), "panel-clock").is_some());
+    }
+
+    /// A child of a komponent a group draws can own a panel, by the id it is drawn under.
+    #[test]
+    fn a_komponent_s_child_can_own_a_panel() {
+        let parsed = layout(&format!(
+            "{TWO_PILLS}{}",
+            panel("panel-battery", "owner = \"bar-top.end/battery\"")
+        ));
+        let report = validate(&parsed, &Modules);
+        assert!(
+            report
+                .findings()
+                .all(|f| f.message.key() != Some("finding.panel_owner_missing")),
+            "{}",
+            report.render()
+        );
+        let library = with_pill([]);
+        let report = validate_komponents(&parsed, &library, &Modules);
+        assert!(report.is_clean(), "{}", report.render());
+        let (resolved, _) = resolve(&parsed, &library, "DP-1", None);
+        assert!(panel_of(&resolved, "panel-battery").is_some());
+    }
+
+    /// An owner under a komponent's use names a child the komponent holds: one it does not hold opens nothing, so it is reported where the library is known and not drawn.
+    #[test]
+    fn a_komponent_owner_names_a_child_the_komponent_holds() {
+        let parsed = layout(&format!(
+            "{TWO_PILLS}{}",
+            panel("panel-battery", "owner = \"bar-top.end/typo\"")
+        ));
+        let library = with_pill([]);
+        let report = validate_komponents(&parsed, &library, &Modules);
+        assert!(
+            finding_at(
+                &report,
+                "outputs.*.layers.top.areas.panel-battery.owner",
+                "finding.panel_owner_missing"
+            ),
+            "{}",
+            report.render()
+        );
+        assert_eq!(report.errors.len(), 1, "{}", report.render());
+        let (resolved, _) = resolve(&parsed, &library, "DP-1", None);
+        assert_eq!(panel_of(&resolved, "panel-battery"), None);
+    }
+
+    /// Detaching a komponent gives its children ids of their own, and a panel one of them opens follows it there rather than going with the old id.
+    #[test]
+    fn a_panel_follows_its_owner_out_of_a_detached_komponent() {
+        let mut parsed = layout(&format!(
+            "{TWO_PILLS}{}",
+            panel("panel-battery", "owner = \"bar-top.end/battery\"")
+        ));
+        let library = with_pill([]);
+        let ops = crate::components::detach(
+            &parsed,
+            &library,
+            (
+                &Site::everywhere(LayerKind::Top),
+                &AreaId::new("bar-top"),
+                &GroupId::new("end"),
+            ),
+            ("DP-1", None),
+        )
+        .expect("it detaches");
+        crate::ops::apply_all(&mut parsed, &ops).expect("applies");
+        let (resolved, _) = resolve(&parsed, &library, "DP-1", None);
+        let end = child_ids(group_of(&resolved, LayerKind::Top, "end"));
+        assert!(
+            matches!(
+                panel_of(&resolved, "panel-battery"),
+                Some(ResolvedAreaKind::Panel { owner, .. }) if end.contains(&owner.to_string())
+            ),
+            "{end:?}: {:?}",
+            panel_of(&resolved, "panel-battery")
+        );
+    }
+
+    /// T-1.3: removing a panel's owner — the way `hogar-shell layout remove <id>` does it — removes the panel in the same transaction, and one undo brings both back; a redo takes both away again.
+    #[test]
+    fn removing_an_owner_removes_its_panel_and_one_undo_brings_both_back() {
+        let dir = scratch("panel-owner");
+        let mine = with_owners(&panel("panel-clock", "owner = \"clock-1\""));
+        let mut store = store_with(&dir, &mine);
+        let id = LayoutId::new("mine");
+        let start = store.get(&id).expect("held").clone();
+        let owner = InstanceId::new("clock-1");
+
+        let at = crate::ops::placement_of(&start, &owner).expect("the owner is placed");
+        store
+            .commit(Transaction::new(
+                "Remove `clock-1`",
+                id.clone(),
+                vec![LayoutOp::DeleteInstance {
+                    spot: at.spot,
+                    id: owner.clone(),
+                }],
+            ))
+            .expect("the edit commits");
+        let removed = store.get(&id).expect("held").clone();
+        assert!(crate::ops::placement_of(&removed, &owner).is_none());
+        assert_eq!(
+            area_ids(&alone(&removed, "DP-1"), LayerKind::Top),
+            ["bar-top", "corner"],
+            "the panel went with its owner"
+        );
+        assert!(validate(&removed, &Modules).is_clean());
+
+        assert_eq!(store.undo_label(), Some("Remove `clock-1`"));
+        store.undo().expect("undo");
+        assert_eq!(store.get(&id), Some(&start), "one undo brings both back");
+        assert!(matches!(store.undo(), Err(StoreError::NothingToUndo)));
+        store.redo().expect("redo");
+        assert_eq!(store.get(&id), Some(&removed));
+    }
+
+    /// Whatever takes the owner out of the layout takes its panel: its group, its area, or a whole rule; an edit that keeps the owner somewhere keeps the panel.
+    #[test]
+    fn a_panel_goes_with_its_owner_however_the_owner_goes() {
+        let mine = with_owners(&panel("panel-clock", "owner = \"clock-1\""));
+        let top = Site::everywhere(LayerKind::Top);
+        let has_panel = |layout: &Layout| {
+            crate::ops::areas_at(layout, &top)
+                .iter()
+                .any(|area| area.id == AreaId::new("panel-clock"))
+        };
+        for ops in [
+            vec![LayoutOp::DeleteGroup {
+                site: top.clone(),
+                area: AreaId::new("bar-top"),
+                id: GroupId::new("start"),
+            }],
+            vec![LayoutOp::DeleteArea {
+                site: top.clone(),
+                id: AreaId::new("bar-top"),
+            }],
+        ] {
+            let mut edited = mine.clone();
+            let undo = crate::ops::apply_all(&mut edited, &ops).expect("applies");
+            assert!(!has_panel(&edited), "{ops:?}");
+            crate::ops::apply_all(&mut edited, &undo).expect("undoes");
+            assert_eq!(edited, mine, "{ops:?}");
+        }
+
+        let mut moved = mine.clone();
+        crate::ops::apply_all(
+            &mut moved,
+            &[LayoutOp::MoveInstance {
+                from: top_zone_of("start"),
+                to: Spot {
+                    site: top.clone(),
+                    area: AreaId::new("corner"),
+                    group: GroupId::new("held"),
+                },
+                id: InstanceId::new("clock-1"),
+                index: 0,
+            }],
+        )
+        .expect("moves");
+        assert!(has_panel(&moved), "the owner is still placed");
+
+        let mut replaced = mine.clone();
+        crate::ops::apply_all(
+            &mut replaced,
+            &[
+                LayoutOp::DeleteInstance {
+                    spot: top_zone_of("start"),
+                    id: InstanceId::new("clock-1"),
+                },
+                LayoutOp::InsertInstance {
+                    spot: top_zone_of("start"),
+                    index: 0,
+                    instance: Box::new(instance("clock-1", "clock")),
+                },
+            ],
+        )
+        .expect("applies");
+        assert!(
+            has_panel(&replaced),
+            "an owner put back in the same transaction keeps its panel"
         );
     }
 }

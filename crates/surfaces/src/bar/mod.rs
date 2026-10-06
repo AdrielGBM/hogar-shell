@@ -17,8 +17,8 @@ use crate::transient::standoff;
 use config::theme::NordTheme;
 use config::{Config, Edge, ResolvedShape, Shape, Variant};
 use layout::{
-    AreaStyle, AutoHide, BarShape, Corners, Extent, GroupId, GroupKind, LayerKind, ResolvedArea,
-    ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Zone,
+    AutoHide, BarShape, Corners, Extent, GroupId, GroupKind, LayerKind, ResolvedArea,
+    ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Sides, Style, Zone,
 };
 use ui::descriptor::{Built, ChipDef, ChipFrame, ModuleDescriptor};
 use ui::host::{Audience, Host, Instance, InstanceId, Representation, Size};
@@ -286,7 +286,7 @@ fn zones_of(groups: &[ResolvedGroup]) -> Zones<'_> {
         groups
             .iter()
             .filter(|group| matches!(group.kind, GroupKind::Zone { zone } if zone == wanted))
-            .flat_map(|group| match (group.repeat.is_some(), group.stacked) {
+            .flat_map(|group| match (group.repeat.is_some(), group.is_pages()) {
                 (true, _) => vec![Slot::Repeated(group)],
                 (false, true) => vec![Slot::Stacked(group)],
                 (false, false) => group
@@ -361,11 +361,11 @@ enum Granularity {
 struct Dress {
     fill: Option<Color>,
     alpha: f32,
-    padding: Option<f32>,
+    padding: Option<Sides>,
 }
 
 impl Dress {
-    fn of(config: &Config, style: &AreaStyle, theme: &NordTheme) -> Self {
+    fn of(config: &Config, style: &Style, theme: &NordTheme) -> Self {
         Self {
             fill: style
                 .fill
@@ -570,9 +570,13 @@ fn build_whole_bar(
     } = *chrome;
     let base = strip_fill(config, Shape::Bar, chrome.dress, theme.base);
     let spacing = shape.spacing;
-    let padding = chrome.dress.padding.unwrap_or_else(|| shape.padding());
-    // The whole bar already pads every side by `padding`, so an end that meets another bar is only owed the rest of a chip's worth of air.
-    let ends = end_air(abut, (spacing - padding).max(0.0));
+    let padding = chrome.dress.padding.unwrap_or(Sides::all(shape.padding()));
+    // The whole bar already pads each end by its padding there, so an end that meets another bar is only owed the rest of a chip's worth of air.
+    let (start, end) = match edge.is_horizontal() {
+        true => (padding.left(), padding.right()),
+        false => (padding.top(), padding.bottom()),
+    };
+    let ends = end_air(abut, ((spacing - start).max(0.0), (spacing - end).max(0.0)));
     let mut slots = Vec::with_capacity(3);
     for (entries, in_zone) in zones {
         // Modules blend into the shared surface (transparent rest); STRETCH makes every chip the bar's height so text pills and icon chips line up. The hover/press (and Filled) highlight rounds at the theme's chip radius, matching chip mode.
@@ -594,7 +598,7 @@ fn build_whole_bar(
     }
     let corners = chrome.corners;
     let style = axis(
-        fill().align_items(AlignItems::CENTER).padding_all(padding),
+        crate::area::padded(fill().align_items(AlignItems::CENTER), Some(padding)),
         edge,
     );
     strip_clipped(
@@ -661,16 +665,17 @@ fn build_units(
             edge,
             *in_zone,
             spacing,
-            end_air(abut, spacing),
+            end_air(abut, (spacing, spacing)),
             AlignItems::STRETCH,
             content,
         )?);
     }
     // No gap between the zones here: there are only ever three of them, so the only two joins it could space are the two the sides already hold open with a margin of their own (see [`zone`]). Both applying left twice the air at exactly the place a side is cut — a hole where the rest of the bar has one chip's worth.
     let style = axis(
-        fill()
-            .align_items(AlignItems::STRETCH)
-            .padding_all(chrome.dress.padding.unwrap_or(0.0)),
+        crate::area::padded(
+            fill().align_items(AlignItems::STRETCH),
+            chrome.dress.padding,
+        ),
         edge,
     );
     let base = strip_fill(config, shape.mode, chrome.dress, theme.base);
@@ -794,9 +799,9 @@ fn holding(style: LayoutStyle, slots: Vec<ChildSlot>) -> Result<Container, Layou
     Container::new(style, items)
 }
 
-fn end_air(abut: (bool, bool), air: f32) -> (f32, f32) {
-    let owed = |abuts: bool| if abuts { air } else { 0.0 };
-    (owed(abut.0), owed(abut.1))
+fn end_air(abut: (bool, bool), air: (f32, f32)) -> (f32, f32) {
+    let owed = |abuts: bool, air: f32| if abuts { air } else { 0.0 };
+    (owed(abut.0, air.0), owed(abut.1, air.1))
 }
 
 /// How a chip's wrapper is dressed: how it sits in its zone, and the surface it rests on.
@@ -1408,7 +1413,7 @@ mod tests {
             reserve: true,
             above_fullscreen: false,
             within: layout::Within::Output,
-            style: layout::AreaStyle::default(),
+            style: layout::Style::default(),
             visible: None,
             actions: Default::default(),
             groups,
@@ -1419,9 +1424,13 @@ mod tests {
         ResolvedGroup {
             id: layout::GroupId::new(id),
             kind: GroupKind::Zone { zone },
-            stacked: false,
+            arrange: None,
+            cols: layout::Arrange::TRACKS,
+            rows: layout::Arrange::TRACKS,
+            gap: None,
             repeat: None,
             komponent: None,
+            style: layout::Style::default(),
             children: ids.iter().map(|id| instance(id)).collect(),
         }
     }
@@ -1433,6 +1442,8 @@ mod tests {
             representation: layout::Representation::Chip,
             options: toml::Table::new(),
             bindings: std::collections::BTreeMap::new(),
+            style: layout::Style::default(),
+            placement: None,
             actions: std::collections::BTreeMap::new(),
         }
     }
@@ -1720,9 +1731,13 @@ mod tests {
                     vec![ResolvedGroup {
                         id: layout::GroupId::new("start"),
                         kind: GroupKind::Zone { zone: Zone::Start },
-                        stacked: false,
+                        arrange: None,
+                        cols: layout::Arrange::TRACKS,
+                        rows: layout::Arrange::TRACKS,
+                        gap: None,
                         repeat: None,
                         komponent: None,
+                        style: layout::Style::default(),
                         children: vec![
                             styled_instance("dummy", config::Variant::Filled, "green"),
                             instance(broken),
@@ -1847,12 +1862,13 @@ mod tests {
             let cfg = Config::default();
             let shape = shape_of(&format!("mode=\"{mode}\"\nradius=6\n"));
             let mut area = bar_in(shape, Edge::Top, 32.0, [&["dummy"], &[], &[]]);
-            area.style = AreaStyle {
+            area.style = Style {
                 fill: Some("#00ff00".to_string()),
                 radius: Some(Corners::all(9.0)),
                 opacity: Some(0.4),
-                padding: Some(3.0),
+                padding: Some(Sides::all(3.0)),
                 backdrop: None,
+                ..Style::default()
             };
             let bar = built(&cfg, &area, &registry(), (400.0, 32.0)).expect("the bar builds");
             let page = Container::new(
@@ -1910,7 +1926,7 @@ mod tests {
             let area = bar_in(shape, Edge::Top, 32.0, [&[], &["probe"], &[]]);
             let surface = telar::Paint::Solid(inner_fill(
                 &cfg,
-                Dress::of(&cfg, &AreaStyle::default(), &NordTheme::new()),
+                Dress::of(&cfg, &Style::default(), &NordTheme::new()),
                 NordTheme::new().surface,
             ));
             let bar = built(&cfg, &area, &registry, (400.0, 32.0)).expect("the bar builds");
@@ -3103,7 +3119,7 @@ mod tests {
             BUILT.with(|built| built.borrow_mut().clear());
             let _scope = telar::owner_scope();
             let mut area = bar_area(edge, 32.0, [&[], &[], &["wanted", "unwanted"]]);
-            area.groups[2].stacked = true;
+            area.groups[2].arrange = Some(layout::Arrange::Pages);
             let mut tree = laid(&area, &gestured());
             assert_eq!(
                 BUILT.with(|built| built.borrow().clone()),

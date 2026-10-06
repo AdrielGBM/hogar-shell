@@ -9,9 +9,9 @@ mod tests {
 
     use config::Config;
     use layout::{
-        AreaId, AreaStyle, Expr, GroupId, GroupKind, InstanceId as PlacedId, LayerKind, Rect,
-        Representation, ResolvedArea, ResolvedAreaKind, ResolvedExpr, ResolvedGroup,
-        ResolvedInstance, Within, Zone,
+        AreaId, Expr, GroupId, GroupKind, InstanceId as PlacedId, LayerKind, Rect, Representation,
+        ResolvedArea, ResolvedAreaKind, ResolvedExpr, ResolvedGroup, ResolvedInstance, Style,
+        Within, Zone,
     };
     use telar::{
         Color, ComponentList, Container, DrawCommand, Event, LayoutItem, LayoutStyle, Paint,
@@ -205,6 +205,8 @@ mod tests {
                 .iter()
                 .map(|(path, expr)| (path.to_string(), written(expr)))
                 .collect(),
+            style: Style::default(),
+            placement: None,
             actions: BTreeMap::new(),
         }
     }
@@ -224,14 +226,18 @@ mod tests {
             reserve: false,
             above_fullscreen: false,
             within: Within::Output,
-            style: AreaStyle::default(),
+            style: Style::default(),
             visible: visible.map(written),
             groups: vec![ResolvedGroup {
                 id: GroupId::new("g"),
                 kind: GroupKind::Zone { zone: Zone::Start },
-                stacked: false,
+                arrange: None,
+                cols: layout::Arrange::TRACKS,
+                rows: layout::Arrange::TRACKS,
+                gap: None,
                 repeat: None,
                 komponent: None,
+                style: Style::default(),
                 children,
             }],
             actions: BTreeMap::new(),
@@ -574,7 +580,7 @@ mod tests {
         );
     }
 
-    /// A free area holding a group `g` of `child` repeated over `repeat`, stacked when `stacked`, and beside it a plain group holding `b`.
+    /// A free area holding a group `g` of `child` repeated over `repeat`, shown one at a time when `stacked`, and beside it a plain group holding `b`.
     fn repeating(repeat: &str, stacked: bool, child: ResolvedInstance) -> ResolvedArea {
         let mut area = free(None, vec![placed("b", &[])]);
         area.groups[0].id = GroupId::new("plain");
@@ -583,9 +589,13 @@ mod tests {
             ResolvedGroup {
                 id: GroupId::new("g"),
                 kind: GroupKind::Zone { zone: Zone::Start },
-                stacked,
+                arrange: stacked.then_some(layout::Arrange::Pages),
+                cols: layout::Arrange::TRACKS,
+                rows: layout::Arrange::TRACKS,
+                gap: None,
                 repeat: Some(written(repeat)),
                 komponent: None,
+                style: Style::default(),
                 children: vec![child],
             },
         );

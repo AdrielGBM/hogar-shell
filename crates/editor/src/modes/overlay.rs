@@ -62,6 +62,7 @@ const NEW_ANCHORS: [Anchor; 9] = [
 
 pub(crate) fn install() {
     crate::host::add_tool(LayerKind::Overlay, tool);
+    crate::host::set_add(LayerKind::Overlay, add_stack);
     crate::host::add_toolbar_button(
         LayerKind::Overlay,
         (

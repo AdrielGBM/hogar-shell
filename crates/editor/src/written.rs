@@ -437,7 +437,7 @@ pub fn as_written(library: &Library) -> Library {
     written
 }
 
-/// Where a new entry goes in `layer`: after everything, so it overrides without restacking — except under the lock's prompt where the same layer writes it, since nothing may be stacked over the prompt (TA-8).
+/// Where a new entry goes in `layer`: after everything, so it overrides without restacking — except in front of the lock's prompt where the same layer writes it, so the file lists the areas in the order they are drawn: the prompt is always drawn last.
 fn new_at(layer: &layout::Layer) -> usize {
     layer
         .areas

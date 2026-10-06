@@ -99,7 +99,7 @@ pub enum LayoutOp {
     SetAreaStyle {
         site: Site,
         id: AreaId,
-        style: Box<AreaStyle>,
+        style: Box<Style>,
     },
     SetAreaFlags {
         site: Site,
@@ -131,12 +131,21 @@ pub enum LayoutOp {
         id: GroupId,
         kind: Option<GroupKind>,
     },
-    /// Turns "one at a time" on or off for a group, wherever it is placed: an instance dropped onto another, and the same stack taken apart again.
-    SetGroupStacked {
+    /// Changes how a group lays out its children, with its inner grid and gap, wherever it is placed: an instance dropped onto another makes a `pages` group, and the same stack taken apart again a loose one. Where each child sits in it is the child's own, through [`LayoutOp::SetInstance`].
+    SetGroupArrange {
         site: Site,
         area: AreaId,
         id: GroupId,
-        stacked: Option<bool>,
+        arrange: Option<Arrange>,
+        cols: Option<u32>,
+        rows: Option<u32>,
+        gap: Option<f32>,
+    },
+    SetGroupStyle {
+        site: Site,
+        area: AreaId,
+        id: GroupId,
+        style: Box<Style>,
     },
     InsertInstance {
         spot: Spot,
@@ -439,19 +448,39 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
                 kind: was,
             })
         }
-        LayoutOp::SetGroupStacked {
+        LayoutOp::SetGroupArrange {
             site,
             area,
             id,
-            stacked,
+            arrange,
+            cols,
+            rows,
+            gap,
         } => {
             let group = group_mut(layout, site, area, id)?;
-            let was = std::mem::replace(&mut group.stacked, *stacked);
-            Ok(LayoutOp::SetGroupStacked {
+            Ok(LayoutOp::SetGroupArrange {
                 site: site.clone(),
                 area: area.clone(),
                 id: id.clone(),
-                stacked: was,
+                arrange: std::mem::replace(&mut group.arrange, *arrange),
+                cols: std::mem::replace(&mut group.cols, *cols),
+                rows: std::mem::replace(&mut group.rows, *rows),
+                gap: std::mem::replace(&mut group.gap, *gap),
+            })
+        }
+        LayoutOp::SetGroupStyle {
+            site,
+            area,
+            id,
+            style,
+        } => {
+            let group = group_mut(layout, site, area, id)?;
+            let was = std::mem::replace(&mut group.style, (**style).clone());
+            Ok(LayoutOp::SetGroupStyle {
+                site: site.clone(),
+                area: area.clone(),
+                id: id.clone(),
+                style: Box::new(was),
             })
         }
         LayoutOp::InsertInstance {
@@ -624,21 +653,90 @@ pub fn apply(layout: &mut Layout, op: &LayoutOp) -> Result<LayoutOp, OpError> {
 /// Carries out a whole batch, or none of it.
 ///
 /// A gesture is one transaction, so a batch that fails half way must not leave the layout in a state no interface can show. The operations already applied are taken back in reverse before the error is returned.
+///
+/// A panel goes with its owner: a batch that leaves the layout writing no instance a panel opens from, where it wrote one before, deletes that panel too, so whatever took the owner out — an instance, its group, its area — one undo puts both back.
 pub fn apply_all(layout: &mut Layout, ops: &[LayoutOp]) -> Result<Vec<LayoutOp>, OpError> {
+    let owners = owners_written(layout);
     let mut undo = Vec::with_capacity(ops.len());
-    for op in ops {
-        match apply(layout, op) {
-            Ok(back) => undo.push(back),
-            Err(error) => {
-                for back in undo.iter().rev() {
-                    let _ = apply(layout, back);
-                }
-                return Err(error);
-            }
+    let applied = carry_out(layout, ops, &mut undo).and_then(|()| {
+        let orphaned = panels_without_owner(layout, &owners);
+        carry_out(layout, &orphaned, &mut undo)
+    });
+    if let Err(error) = applied {
+        for back in undo.iter().rev() {
+            let _ = apply(layout, back);
         }
+        return Err(error);
     }
     undo.reverse();
     Ok(undo)
+}
+
+fn carry_out(
+    layout: &mut Layout,
+    ops: &[LayoutOp],
+    undo: &mut Vec<LayoutOp>,
+) -> Result<(), OpError> {
+    for op in ops {
+        undo.push(apply(layout, op)?);
+    }
+    Ok(())
+}
+
+/// The owners of the panels `layout` writes that it also places.
+fn owners_written(layout: &Layout) -> BTreeSet<InstanceId> {
+    panels(layout)
+        .map(|(_, _, owner)| owner)
+        .filter(|owner| placed_anywhere(layout, owner))
+        .cloned()
+        .collect()
+}
+
+/// The deletions of the panels `layout` writes whose owner is one of `owners` and is no longer placed anywhere in it.
+fn panels_without_owner(layout: &Layout, owners: &BTreeSet<InstanceId>) -> Vec<LayoutOp> {
+    if owners.is_empty() {
+        return Vec::new();
+    }
+    panels(layout)
+        .filter(|(_, _, owner)| owners.contains(*owner) && !placed_anywhere(layout, owner))
+        .map(|(site, area, _)| LayoutOp::DeleteArea {
+            site,
+            id: area.id.clone(),
+        })
+        .collect()
+}
+
+/// The operations that make every panel `layout` writes for the instance `from` open from `to` instead: what an edit that gives an instance another id adds, so the panel follows it rather than going with the old id.
+pub fn reowned(layout: &Layout, from: &InstanceId, to: &InstanceId) -> Vec<LayoutOp> {
+    panels(layout)
+        .filter(|(_, _, owner)| *owner == from)
+        .map(|(site, area, _)| {
+            let mut kind = area.kind.clone();
+            if let Some(AreaKind::Panel { owner, .. }) = &mut kind {
+                *owner = Some(to.clone());
+            }
+            LayoutOp::SetAreaKind {
+                site,
+                id: area.id.clone(),
+                kind: Box::new(kind),
+            }
+        })
+        .collect()
+}
+
+/// Every panel `layout` writes with its owner, where it names one, and the site it is written at.
+fn panels(layout: &Layout) -> impl Iterator<Item = (Site, &Area, &InstanceId)> {
+    sites(layout).flat_map(|(site, layer)| {
+        layer.areas.iter().filter_map(move |area| {
+            let owner = area.kind.as_ref()?.owner()?;
+            Some((site.clone(), area, owner))
+        })
+    })
+}
+
+/// Whether `layout` places the instance `id` at any level.
+fn placed_anywhere(layout: &Layout, id: &InstanceId) -> bool {
+    sites(layout).any(|(_, layer)| layer.areas.iter().any(|area| area.places(id)))
 }
 
 /// The layer a site names, as the layout itself writes it.

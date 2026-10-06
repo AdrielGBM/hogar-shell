@@ -189,6 +189,7 @@ impl Expressions {
             let mut overlay = Overlay {
                 options: options.clone(),
                 accent: None,
+                style: BoundStyle::default(),
             };
             for (path, value) in written.get() {
                 match value.get() {
@@ -196,6 +197,9 @@ impl Expressions {
                         bindings::overlay(&mut overlay.options, &path, value)
                     }
                     Some(Written::Accent(accent)) => overlay.accent = Some(accent),
+                    Some(Written::Fill(fill)) => overlay.style.fill = Some(fill),
+                    Some(Written::Opacity(opacity)) => overlay.style.opacity = Some(opacity),
+                    Some(Written::BorderColor(color)) => overlay.style.border_color = Some(color),
                     None => {}
                 }
             }
@@ -459,11 +463,20 @@ pub fn drawn_item(group: &Node, index: usize) -> Option<Value> {
     repeat?.item_at(index)
 }
 
-/// An instance's options with what its bindings say laid over them, and the colour `accent` binds it to.
+/// An instance's options with what its bindings say laid over them, the colour `accent` binds it to, and the style keys its bindings drive.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Overlay {
     pub options: toml::Table,
     pub accent: Option<Color>,
+    pub style: BoundStyle,
+}
+
+/// What an instance's `style.*` bindings say now, over the `style` it is written with.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BoundStyle {
+    pub fill: Option<Color>,
+    pub opacity: Option<f32>,
+    pub border_color: Option<Color>,
 }
 
 impl Overlay {

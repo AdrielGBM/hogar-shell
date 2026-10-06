@@ -82,7 +82,12 @@ pub const KOMPONENT_MARK: char = '/';
 impl InstanceId {
     /// The child `child` of the komponent the group `group` of `area` uses, as it is drawn: two uses of one komponent never share an id, because no two groups share an address.
     pub fn in_komponent(area: &AreaId, group: &GroupId, child: &InstanceId) -> Self {
-        Self::new(format!("{area}.{group}{KOMPONENT_MARK}{child}"))
+        Self::new(format!("{}{child}", Self::komponent_prefix(area, group)))
+    }
+
+    /// What the id of every child of the komponent the group `group` of `area` uses starts with: `bar-top.end/`.
+    pub fn komponent_prefix(area: &AreaId, group: &GroupId) -> String {
+        format!("{area}.{group}{KOMPONENT_MARK}")
     }
 
     /// The id the komponent's own file gives this child, for a child of a komponent: `battery` for `bar-top.end/battery#2`.
@@ -455,14 +460,14 @@ pub struct Area {
     /// What kind of region this is. Required the first time the area is named; absent when a later level only adjusts one that already exists.
     #[serde(flatten)]
     pub kind: Option<AreaKind>,
-    /// Whether the compositor keeps windows out of this area's edge. Only an output-level area may reserve: a workspace rule that changes this is rejected, so switching workspaces never re-tiles windows.
+    /// Whether the compositor keeps windows out of this area's edge. A bar or a dock reserves unless this says otherwise, and any other area does not. Only an output-level area may reserve: a workspace rule that changes this is rejected, so switching workspaces never re-tiles windows.
     pub reserve: Option<bool>,
     /// Whether this area stays visible over a fullscreen window, which costs direct scanout on that output for as long as it is mapped.
     pub above_fullscreen: Option<bool>,
     /// Which box this area's geometry is measured in: the whole output, or what is left of it once the reserving areas have taken their edges.
     pub within: Option<Within>,
-    #[serde(skip_serializing_if = "AreaStyle::is_empty")]
-    pub style: AreaStyle,
+    #[serde(skip_serializing_if = "Style::is_empty")]
+    pub style: Style,
     /// An expression giving true or false that decides whether the area draws: while it is false the area paints nothing and takes no input, and nothing else on its layer is rebuilt when it flips. Shown until it first answers, and through an evaluation error after that it keeps its last answer. Not allowed on the lock prompt.
     pub visible: Option<Expr>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -476,6 +481,27 @@ pub struct Area {
     /// Expressions a level under this one gave the area that this level takes back, as though nothing under it had written them: `unset = ["visible"]` shows on one monitor an area a broader rule hides behind an expression. An area takes back `visible`. They are taken back before this level's own keys apply, so a level that takes a key back and writes it too is an error, and one that takes back what nothing under it writes is reported.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unset: Vec<Unset>,
+}
+
+impl Area {
+    /// Whether this area, as written, places the instance `id`: as a child of one of its groups, or as a child of the komponent one of them draws. The komponent's own file is not read here, so any child id under a use counts; [`Area::komponent_child`] names the komponent and the child for a caller that holds the library to check it against.
+    pub fn places(&self, id: &InstanceId) -> bool {
+        self.groups
+            .iter()
+            .any(|group| group.children.iter().any(|child| child.id == *id))
+            || self.komponent_child(id).is_some()
+    }
+
+    /// The komponent one of this area's groups draws and the id its file gives `id`, where `id` is drawn as a child of that use: `battery-pill` and `battery` for `bar-top.end/battery`.
+    pub fn komponent_child<'a>(&'a self, id: &'a InstanceId) -> Option<(&'a KomponentId, &'a str)> {
+        self.groups.iter().find_map(|group| {
+            let komponent = group.komponent.as_ref()?;
+            let child = id
+                .as_str()
+                .strip_prefix(&InstanceId::komponent_prefix(&self.id, &group.id))?;
+            (!child.is_empty()).then_some((komponent, child))
+        })
+    }
 }
 
 /// What kind of region an area is, and the geometry that kind needs, as a level wrote it.
@@ -583,6 +609,27 @@ pub enum AreaKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<Anchor>,
     },
+    /// A box one instance, its `owner`, opens and closes: the panel that instance opens, arranged by the user, beside the owner or, for an owner in a bar, along the bar's whole length. It holds cell groups like a grid and is sized in cells, so a widget fits it exactly. It reserves nothing, so a workspace rule may add one, and the lock layer has none, since it opens nothing. Read and checked, but not drawn yet: until it is, a press on the owner does what it does without one.
+    Panel {
+        /// The id of the instance that opens it: one on the same layer of the same output, not itself inside a panel, and opening no other panel. Required.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<InstanceId>,
+        /// Whether it runs along the whole length of its owner's bar, `rows` deep on a horizontal bar and `cols` deep on a vertical one, rather than sitting beside the owner. Only an owner in a bar has a bar to run along. False unless set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        along: Option<bool>,
+        /// How many cells wide it is. 4 unless set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cols: Option<u32>,
+        /// How many cells tall it is. 3 unless set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rows: Option<u32>,
+        /// How big one cell is, in logical pixels. 80 unless set, as on a grid.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cell: Option<f32>,
+        /// The space between two cells. 16 unless set, as on a grid.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gap: Option<f32>,
+    },
     /// The lock layer's password field, status line and biometric hint. Exactly one exists per output and it can never be removed or hidden. Its card is drawn from the area's own `style`: `fill`, `radius` and `opacity`, the fill held to a contrast the field's text can be read on and the opacity to 0.9 or above.
     Prompt {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -591,6 +638,15 @@ pub enum AreaKind {
 }
 
 impl AreaKind {
+    /// How big a grid's or a panel's cell is where it does not say, in logical pixels.
+    pub const CELL: f32 = 80.0;
+    /// The space between two cells of a grid or a panel where it does not say.
+    pub const GAP: f32 = 16.0;
+    /// How many cells wide a panel is where it does not say.
+    pub const PANEL_COLS: u32 = 4;
+    /// How many cells tall a panel is where it does not say.
+    pub const PANEL_ROWS: u32 = 3;
+
     pub fn name(&self) -> &'static str {
         match self {
             AreaKind::Bar { .. } => "bar",
@@ -600,7 +656,16 @@ impl AreaKind {
             AreaKind::Texture { .. } => "texture",
             AreaKind::Dock { .. } => "dock",
             AreaKind::Free { .. } => "free",
+            AreaKind::Panel { .. } => "panel",
             AreaKind::Prompt { .. } => "prompt",
+        }
+    }
+
+    /// The instance a panel opens from, as far as this level says.
+    pub fn owner(&self) -> Option<&InstanceId> {
+        match self {
+            AreaKind::Panel { owner, .. } => owner.as_ref(),
+            _ => None,
         }
     }
 
@@ -638,7 +703,7 @@ pub enum Extent {
     Fraction(f32),
 }
 
-/// A rectangle in fractions of the output, so one layout describes every monitor. `0,0` is the top left corner and `1,1` the bottom right.
+/// A rectangle in fractions of the box it is measured in, so one layout describes every monitor: an area's of its output, a child's of its `free` group. `0,0` is the top left corner and `1,1` the bottom right.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Rect {
@@ -901,90 +966,263 @@ impl From<Corners> for telar::BorderRadius {
 
 impl Serialize for Corners {
     fn serialize<S: serde::Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
-        match self.is_uniform() {
-            true => out.serialize_f32(self.0[0]),
-            false => self.0.serialize(out),
-        }
+        one_or_four(&self.0, out)
     }
 }
 
 impl<'de> Deserialize<'de> for Corners {
     fn deserialize<D: serde::Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
-        struct Written;
-
-        impl<'de> serde::de::Visitor<'de> for Written {
-            type Value = Corners;
-
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str(
-                    "one radius, or four as [top_left, top_right, bottom_right, bottom_left]",
-                )
-            }
-
-            fn visit_f64<E: serde::de::Error>(self, radius: f64) -> Result<Corners, E> {
-                Ok(Corners::all(radius as f32))
-            }
-
-            fn visit_i64<E: serde::de::Error>(self, radius: i64) -> Result<Corners, E> {
-                Ok(Corners::all(radius as f32))
-            }
-
-            fn visit_u64<E: serde::de::Error>(self, radius: u64) -> Result<Corners, E> {
-                Ok(Corners::all(radius as f32))
-            }
-
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> Result<Corners, A::Error> {
-                let mut corners = [0.0; 4];
-                for (at, corner) in corners.iter_mut().enumerate() {
-                    *corner = seq
-                        .next_element::<f32>()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(at, &self))?;
-                }
-                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::invalid_length(5, &self));
-                }
-                Ok(Corners(corners))
-            }
-        }
-
-        input.deserialize_any(Written)
+        read_one_or_four(
+            input,
+            "one radius, or four as [top_left, top_right, bottom_right, bottom_left]",
+        )
+        .map(Corners)
     }
 }
 
-/// Per-area appearance. Every field is optional because the theme answers whatever an area does not.
+/// How far a box holds what it contains off each of its edges, in logical pixels, clockwise from the top.
+///
+/// Written the way `Corners` is: one number when every side agrees, and `[top, right, bottom, left]` when they do not.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sides([f32; 4]);
+
+impl Sides {
+    pub const fn all(width: f32) -> Self {
+        Self([width; 4])
+    }
+
+    pub const fn each(top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        Self([top, right, bottom, left])
+    }
+
+    pub fn top(self) -> f32 {
+        self.0[0]
+    }
+
+    pub fn right(self) -> f32 {
+        self.0[1]
+    }
+
+    pub fn bottom(self) -> f32 {
+        self.0[2]
+    }
+
+    pub fn left(self) -> f32 {
+        self.0[3]
+    }
+
+    /// What the left and right sides take off a width together.
+    pub fn horizontal(self) -> f32 {
+        self.left() + self.right()
+    }
+
+    /// What the top and bottom sides take off a height together.
+    pub fn vertical(self) -> f32 {
+        self.top() + self.bottom()
+    }
+
+    pub fn is_uniform(self) -> bool {
+        self.0.iter().all(|side| *side == self.0[0])
+    }
+
+    pub fn largest(self) -> f32 {
+        self.0.into_iter().fold(0.0, f32::max)
+    }
+}
+
+impl Serialize for Sides {
+    fn serialize<S: serde::Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        one_or_four(&self.0, out)
+    }
+}
+
+impl<'de> Deserialize<'de> for Sides {
+    fn deserialize<D: serde::Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
+        read_one_or_four(input, "one width, or four as [top, right, bottom, left]").map(Sides)
+    }
+}
+
+fn one_or_four<S: serde::Serializer>(values: &[f32; 4], out: S) -> Result<S::Ok, S::Error> {
+    match values.iter().all(|value| *value == values[0]) {
+        true => out.serialize_f32(values[0]),
+        false => values.serialize(out),
+    }
+}
+
+fn read_one_or_four<'de, D: serde::Deserializer<'de>>(
+    input: D,
+    expecting: &'static str,
+) -> Result<[f32; 4], D::Error> {
+    struct Written(&'static str);
+
+    impl<'de> serde::de::Visitor<'de> for Written {
+        type Value = [f32; 4];
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str(self.0)
+        }
+
+        fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<[f32; 4], E> {
+            Ok([value as f32; 4])
+        }
+
+        fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<[f32; 4], E> {
+            Ok([value as f32; 4])
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<[f32; 4], E> {
+            Ok([value as f32; 4])
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<[f32; 4], A::Error> {
+            let mut values = [0.0; 4];
+            for (at, value) in values.iter_mut().enumerate() {
+                *value = seq
+                    .next_element::<f32>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(at, &self))?;
+            }
+            if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::invalid_length(5, &self));
+            }
+            Ok(values)
+        }
+    }
+
+    input.deserialize_any(Written(expecting))
+}
+
+/// How an area, a group or a placed instance is painted. Every field is optional: the theme, and the kind of what holds it, answer whatever it leaves out. A key that means nothing on what holds it — `backdrop` off an area, `padding` on an instance — is reported.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct AreaStyle {
-    /// A theme token name or a hex colour, painted across the area's whole box under what it holds. A bar paints it as its strip in place of the theme's base, and a wallpaper region shows it wherever its picture does not reach. Behind the lock's prompt it is the card the password field sits on, and one the field's text cannot be read on — below WCAG AA, 4.5:1 — is refused, because an unreadable prompt is a lockout too.
+pub struct Style {
+    /// A theme token name or a hex colour, painted across the whole box under what it holds. A bar paints it as its strip in place of the theme's base, and a wallpaper region shows it wherever its picture does not reach. Behind the lock's prompt it is the card the password field sits on, and one the field's text cannot be read on — below WCAG AA, 4.5:1 — is refused, because an unreadable prompt is a lockout too; the same holds for a group or an instance inside the prompt.
     pub fill: Option<String>,
     /// How far the corners are rounded, in logical pixels: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]`. A wallpaper region or a texture is cut to it. A bar is rounded by its own `shape.radius`, so one written here on a bar is reported and not drawn.
     pub radius: Option<Corners>,
-    /// How opaque the area's own paint is, from 0 to 1, whatever alpha its `fill` names: the fill, everything a bar paints — its strip, sections and resting chips — in place of `[theme] opacity`, a wallpaper region's picture, or a texture on top of its own `opacity`. What the area holds is drawn as it is. The lock's prompt is kept at 0.9 or above: a prompt faded into its background is a lockout.
+    /// How opaque its own paint is, from 0 to 1, whatever alpha its `fill` names: the fill, everything a bar paints — its strip, sections and resting chips — in place of `[theme] opacity`, a wallpaper region's picture, or a texture on top of its own `opacity`. What it holds is drawn as it is. The lock's prompt, and anything inside it, is kept at 0.9 or above: a prompt faded into its background is a lockout.
     pub opacity: Option<f32>,
-    /// How far the area holds its contents off its own edges. A bar that names none pads by half its spacing in `bar` mode and not at all in the others.
-    pub padding: Option<f32>,
+    /// How far an area or a group holds its contents off its own edges: one number for all four sides, or `[top, right, bottom, left]`. A bar that names none pads by half its spacing in `bar` mode and not at all in the others. An instance lays out its own content, so one written on an instance is reported.
+    pub padding: Option<Sides>,
+    /// A line around the box. A level that writes one of its keys keeps the other from the level under it. Read and checked, but not drawn yet.
+    pub border: Option<Border>,
+    /// How far the box is lifted off what is behind it, in one of four steps: `0` is no shadow, `1` a soft one, `2` a medium one and `3` a strong one. Left out, it is what its kind has. On a bar in `chips` mode each chip carries its own, so one written on the bar is reported. Read and checked, but not drawn yet.
+    pub shadow: Option<u8>,
+    /// What happens to what is behind an area. Only an area has a backdrop, so one written on a group or an instance is reported.
     pub backdrop: Option<Backdrop>,
 }
 
-impl AreaStyle {
+impl Style {
+    /// The strongest `shadow` step.
+    pub const DEEPEST_SHADOW: u8 = 3;
+
     pub fn is_empty(&self) -> bool {
         self.fill.is_none()
             && self.radius.is_none()
             && self.opacity.is_none()
             && self.padding.is_none()
+            && self.border.is_none()
+            && self.shadow.is_none()
             && self.backdrop.is_none()
     }
 
-    /// The colour `fill` paints, at `opacity` where the area names one. `None` when it names no fill.
+    /// The colour `fill` paints, at `opacity` where it names one. `None` when it names no fill.
     pub fn paint(&self, theme: &NordTheme) -> Option<Color> {
         let fill = color_of(self.fill.as_deref()?, theme);
         Some(match self.opacity {
             Some(opacity) => fill.with_alpha(opacity.clamp(0.0, 1.0)),
             None => fill,
         })
+    }
+}
+
+/// A line around a box. Either key may be left out.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Border {
+    /// How thick the line is, in logical pixels. Left out, it is 1; `0` is no line.
+    pub width: Option<f32>,
+    /// A theme token name or a hex colour. Left out, it is the theme's `highlight_low`.
+    pub color: Option<String>,
+}
+
+impl Border {
+    pub const WIDTH: f32 = 1.0;
+    pub const COLOR: &str = "highlight_low";
+
+    pub fn is_empty(&self) -> bool {
+        self.width.is_none() && self.color.is_none()
+    }
+
+    pub fn width(&self) -> f32 {
+        self.width.unwrap_or(Self::WIDTH)
+    }
+
+    pub fn color(&self, theme: &NordTheme) -> Color {
+        color_of(self.color.as_deref().unwrap_or(Self::COLOR), theme)
+    }
+}
+
+/// A key of an instance's `style` that a binding can drive, under the path `bindings` names it by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StyleBinding {
+    Fill,
+    Opacity,
+    BorderColor,
+}
+
+impl StyleBinding {
+    pub const ALL: [StyleBinding; 3] = [
+        StyleBinding::Fill,
+        StyleBinding::Opacity,
+        StyleBinding::BorderColor,
+    ];
+
+    pub fn path(self) -> &'static str {
+        match self {
+            StyleBinding::Fill => "style.fill",
+            StyleBinding::Opacity => "style.opacity",
+            StyleBinding::BorderColor => "style.border.color",
+        }
+    }
+
+    pub fn from_path(path: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.path() == path)
+    }
+
+    pub fn ty(self) -> telar_expression::Type {
+        match self {
+            StyleBinding::Fill | StyleBinding::BorderColor => telar_expression::Type::Color,
+            StyleBinding::Opacity => telar_expression::Type::Number,
+        }
+    }
+
+    /// What `style` writes at this key, as the value a file holds there.
+    pub fn written(self, style: &Style) -> Option<toml::Value> {
+        match self {
+            StyleBinding::Fill => style.fill.clone().map(toml::Value::String),
+            StyleBinding::Opacity => style
+                .opacity
+                .and_then(|it| it.to_string().parse().ok())
+                .map(toml::Value::Float),
+            StyleBinding::BorderColor => style
+                .border
+                .as_ref()
+                .and_then(|border| border.color.clone())
+                .map(toml::Value::String),
+        }
+    }
+
+    /// Takes this key out of `style`, as a binding that drives it replaces what it wrote.
+    pub fn forget(self, style: &mut Style) {
+        match self {
+            StyleBinding::Fill => style.fill = None,
+            StyleBinding::Opacity => style.opacity = None,
+            StyleBinding::BorderColor => {
+                if let Some(border) = &mut style.border {
+                    border.color = None;
+                }
+            }
+        }
     }
 }
 
@@ -1010,11 +1248,17 @@ pub struct BarShape {
     pub spacing: Option<f32>,
     /// How far its corners are rounded: one number for all four, or `[top_left, top_right, bottom_right, bottom_left]` so a bar that meets another at a corner can square that corner alone.
     pub radius: Option<Corners>,
+    /// The concave radius, in logical pixels, at the bar's inner corners, so the screen's free space meets the bar in a curve. Only a bar in `bar` mode has a strip to curve out of, and there is none unless set. Read and checked, but not drawn yet.
+    pub fillet: Option<f32>,
 }
 
 impl BarShape {
     pub fn is_empty(&self) -> bool {
-        self.mode.is_none() && self.gap.is_none() && self.spacing.is_none() && self.radius.is_none()
+        self.mode.is_none()
+            && self.gap.is_none()
+            && self.spacing.is_none()
+            && self.radius.is_none()
+            && self.fillet.is_none()
     }
 }
 
@@ -1039,11 +1283,11 @@ impl Default for AutoHide {
 
 /// The colour a layout names: a hex colour, or else a theme token — the vocabulary `fill` and a gradient stop share with `[theme.colors]`.
 pub fn color_of(token_or_hex: &str, theme: &NordTheme) -> Color {
-    Color::from_hex(token_or_hex).unwrap_or_else(|| theme.token(token_or_hex))
+    theme.paint_of(token_or_hex)
 }
 
 /// The card the lock paints behind its prompt, alpha included: the area's `fill`, or the theme's surface where it names none. The lock draws with it and validation measures the prompt's contrast against it, so the two can never be judging different cards.
-pub fn prompt_card(style: &AreaStyle, theme: &NordTheme) -> Color {
+pub fn prompt_card(style: &Style, theme: &NordTheme) -> Color {
     let fill = style
         .fill
         .as_deref()
@@ -1054,7 +1298,7 @@ pub fn prompt_card(style: &AreaStyle, theme: &NordTheme) -> Color {
 }
 
 /// What the prompt's text is read against: its card over the lock's own opaque background, which is the colour a translucent card actually shows.
-pub fn prompt_backdrop(style: &AreaStyle, theme: &NordTheme) -> Color {
+pub fn prompt_backdrop(style: &Style, theme: &NordTheme) -> Color {
     let card = prompt_card(style, theme);
     let under = theme.base;
     let mix = |over: f32, back: f32| over * card.a + back * (1.0 - card.a);
@@ -1080,23 +1324,47 @@ pub struct Group {
     /// Where in its area the group sits: `zone` in one of a bar's runs, or `cell` on a grid, with the keys that way needs beside it.
     #[serde(flatten)]
     pub kind: Option<GroupKind>,
-    /// Shows the group's instances one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Off unless set.
-    pub stacked: Option<bool>,
-    /// An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a stacked group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn.
+    /// How the group lays its children out in its own box: `column` and `row` share its length by each child's `weight`, `grid` puts each child on the `cell` it names in an inner grid of `cols` × `rows`, `free` puts each on the `rect` it names, and `pages` shows them one at a time, in the footprint of the largest, cycled by the wheel, the arrow keys or its dots, wherever `place` puts it. Left out, the children are a loose run at their own sizes. A group in a zone — of a bar, a dock, a stack or a free area — may only be `pages`, since the area already lays the zone's run out itself.
+    pub arrange: Option<Arrange>,
+    /// How many columns the inner grid of a `grid` group has. 2 unless set.
+    pub cols: Option<u32>,
+    /// How many rows the inner grid of a `grid` group has. 2 unless set.
+    pub rows: Option<u32>,
+    /// The space between two children of a group that arranges them, in logical pixels.
+    pub gap: Option<f32>,
+    /// An expression giving a list (`$notifications.apps`): the group's children are drawn once per item, in order, and each copy reads its item as `$item` and its place from 0 as `$index`. A copy is `<id>#<index>` where it is drawn — its own rect and its own state — while IPC and the editor address the child as written. In a `pages` group the copies are its pages. Not allowed on a grid cell, whose footprint is fixed, nor in a `grid` or `free` group, where each child has a place of its own. Until the list first answers, and while it is empty, the group draws nothing; through an evaluation error it keeps its last list. On the lock layer a list the lock may not show reads as empty, so nothing is drawn.
     pub repeat: Option<Expr>,
+    /// How the group is painted, as one box around its children. It is the group's own rather than what it holds, so a level that names another komponent keeps it. Read and checked, but not drawn yet.
+    #[serde(skip_serializing_if = "Style::is_empty")]
+    pub style: Style,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Instance>,
     /// Ids of instances an earlier level placed that this one takes away.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remove: Vec<InstanceId>,
-    /// The komponent this group draws, by the name of its file: `komponent = "battery-pill"` draws what `components/battery-pill.toml` holds — its children, and whether they repeat or stack — so the group holds nothing else, and a level that names another komponent, or names one where the group held its own children, replaces what the group held. Each child is drawn as `<area>.<group>/<child>`, so two groups using one komponent never share an id or what an instance keeps. A komponent that is missing or cannot be read is drawn as one placeholder that says which.
+    /// The komponent this group draws, by the name of its file: `komponent = "battery-pill"` draws what `components/battery-pill.toml` holds — its children, how they are arranged and whether they repeat — so the group holds nothing else, and a level that names another komponent, or names one where the group held its own children, replaces what the group held. Each child is drawn as `<area>.<group>/<child>`, so two groups using one komponent never share an id or what an instance keeps. A komponent that is missing or cannot be read is drawn as one placeholder that says which.
     pub komponent: Option<KomponentId>,
     /// What the komponent's parameters read here, by name: an expression of the type the parameter declares (`threshold = "15"`, `label = "'Home'"`, `level = "$battery.level"`), read where the group is drawn. A parameter left out reads its default. A name the komponent does not declare is an error.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters: BTreeMap<String, Expr>,
-    /// Expressions a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them, and `unset = ["parameters.label"]` puts back a komponent parameter's default. A group takes back `repeat` and `parameters.<name>`, the way an area takes back `visible`.
+    /// What a level under this one gave the group that this level takes back: `unset = ["repeat"]` draws its children once where a broader rule repeats them, `unset = ["parameters.label"]` puts back a komponent parameter's default, and `unset = ["arrange"]` makes the group a loose run again, dropping its `cols`, `rows` and `gap` with it. A group takes back `repeat`, `parameters.<name>` and `arrange`, the way an area takes back `visible`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unset: Vec<Unset>,
+}
+
+impl Group {
+    /// Whether the group writes any key an arrangement is made of, which `unset = ["arrange"]` takes back together.
+    pub fn writes_arrangement(&self) -> bool {
+        self.arrange.is_some() || self.cols.is_some() || self.rows.is_some() || self.gap.is_some()
+    }
+
+    /// Takes away the group's arrangement with every key it is made of, leaving a loose run.
+    pub fn clear_arrangement(&mut self) {
+        self.arrange = None;
+        self.cols = None;
+        self.rows = None;
+        self.gap = None;
+    }
 }
 
 /// Where in its area a group sits.
@@ -1118,6 +1386,59 @@ pub enum GroupKind {
         #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
         row_span: u32,
     },
+}
+
+/// How a group lays its children out inside its own box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Arrange {
+    Column,
+    Row,
+    Grid,
+    Free,
+    Pages,
+}
+
+impl Arrange {
+    /// How many columns and rows a `grid` group's inner grid has where it does not say.
+    pub const TRACKS: u32 = 2;
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Arrange::Column => "column",
+            Arrange::Row => "row",
+            Arrange::Grid => "grid",
+            Arrange::Free => "free",
+            Arrange::Pages => "pages",
+        }
+    }
+}
+
+/// The cells of its group's inner grid a child of a `grid` group covers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChildCell {
+    /// Which column of the inner grid the child starts at, counting from 0.
+    pub col: u32,
+    /// Which row it starts at.
+    pub row: u32,
+    /// How many columns it covers. 1 unless set.
+    #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
+    pub col_span: u32,
+    /// How many rows it covers. 1 unless set.
+    #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
+    pub row_span: u32,
+}
+
+impl ChildCell {
+    pub fn at(col: u32, row: u32) -> Self {
+        Self {
+            col,
+            row,
+            col_span: 1,
+            row_span: 1,
+        }
+    }
 }
 
 fn one_span() -> u32 {
@@ -1151,9 +1472,18 @@ pub struct Instance {
     /// Option overrides for this instance alone, over its module's defaults: any key of the module's own section (`[clock]` for a clock), and any of `[modules.<id>]` — `accent`, `variant`, `open` and the sizes of what it opens. A key the module does not have is an error.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]
     pub options: toml::Table,
-    /// Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), or `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`). Each value is laid over `options` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value.
+    /// Options driven by an expression instead of a fixed value, keyed by the option's path: any key `options` takes, of the type that option takes (`show_date = "$battery.level > 50"`), `accent`, a colour (`accent = "mix($theme.accent, #f00, $cpu.usage / 100)"`), or one of `style.fill` and `style.border.color`, colours, and `style.opacity`, a number. Each value is laid over `options` or `style` as it changes, and only this instance is drawn again. One that does not check is reported and left out; through an evaluation error a binding keeps its last value.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, Expr>,
+    /// How the instance's own box is painted, over what its kind of chip or widget draws. Its `fill`, `opacity` and `border.color` can be bound like an option, as `style.fill`, `style.opacity` and `style.border.color`. Read and checked, but not drawn yet.
+    #[serde(skip_serializing_if = "Style::is_empty")]
+    pub style: Style,
+    /// How much of a `row` or `column` group's length this child takes against its siblings' weights: one of `2` beside two of `1` takes half. 1 unless set, and above 0.
+    pub weight: Option<f32>,
+    /// Which cells of a `grid` group's inner grid this child covers. A child that names none takes the first free cell in reading order, and one that runs past the inner grid is pulled back onto it.
+    pub cell: Option<ChildCell>,
+    /// Where in a `free` group's box this child sits, in fractions of the box inside the group's padding. A later child is drawn over an earlier one. A child that names none is half the box each way, each one a step further from the top left corner than the one before.
+    pub rect: Option<Rect>,
     /// What each gesture on this instance runs.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub actions: BTreeMap<Trigger, Action>,
@@ -1259,12 +1589,16 @@ impl fmt::Display for Expr {
     }
 }
 
-/// An expression a level takes back from the levels under it, written as the path of the key it takes back: `visible` on an area, `repeat` or `parameters.<name>` on a group, `bindings.<path>` on an instance.
+/// What a level takes back from the levels under it, written as the path of the key it takes back: `visible` on an area, `repeat`, `parameters.<name>` or `arrange` on a group, `bindings.<path>` on an instance.
+///
+/// `arrange` takes back the whole arrangement: `cols`, `rows` and `gap` mean something only under an arrangement, so they go with it and the group is a loose run again, never a half-arranged one. A level that takes `arrange` back therefore may not write `arrange`, `cols`, `rows` or `gap`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(from = "String", into = "String", rename_all = "snake_case")]
 pub enum Unset {
     Visible,
     Repeat,
+    /// A group's `arrange` with its `cols`, `rows` and `gap`.
+    Arrange,
     Binding(String),
     Parameter(String),
     /// A path that names no expression, kept as written so validation can say where it is. It takes nothing back.
@@ -1290,6 +1624,7 @@ impl From<&str> for Unset {
         match path {
             "visible" => Self::Visible,
             "repeat" => Self::Repeat,
+            "arrange" => Self::Arrange,
             _ => match (under(Self::BINDINGS), under(Self::PARAMETERS)) {
                 (Some(binding), _) => Self::Binding(binding.to_string()),
                 (_, Some(parameter)) => Self::Parameter(parameter.to_string()),
@@ -1316,6 +1651,7 @@ impl fmt::Display for Unset {
         match self {
             Unset::Visible => f.write_str("visible"),
             Unset::Repeat => f.write_str("repeat"),
+            Unset::Arrange => f.write_str("arrange"),
             Unset::Binding(path) => write!(f, "{}{path}", Self::BINDINGS),
             Unset::Parameter(name) => write!(f, "{}{name}", Self::PARAMETERS),
             Unset::Unknown(path) => f.write_str(path),
@@ -1482,13 +1818,26 @@ pub struct Komponent {
     /// The values a use can set, by the name its expressions read each as (`$label`): letters, digits and `_`, and neither `item` nor `index`, which a copy of a repeated group reads.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters: BTreeMap<String, Parameter>,
-    /// Shows the children one at a time, as a group's `stacked` does.
-    pub stacked: Option<bool>,
-    /// An expression giving a list the children are drawn once per item of, as a group's `repeat` is; it may read the parameters. Not allowed where the komponent is used in a grid cell, whose footprint is fixed.
+    /// How the children are laid out, as a group's `arrange` says. A use in a zone, of whatever area, takes only `pages`.
+    pub arrange: Option<Arrange>,
+    /// How many columns the inner grid of a `grid` komponent has, as a group's `cols` says.
+    pub cols: Option<u32>,
+    /// How many rows the inner grid of a `grid` komponent has, as a group's `rows` says.
+    pub rows: Option<u32>,
+    /// The space between two children it arranges, as a group's `gap` says.
+    pub gap: Option<f32>,
+    /// An expression giving a list the children are drawn once per item of, as a group's `repeat` is; it may read the parameters. Not allowed where the komponent is used in a grid cell, whose footprint is fixed, nor in a `grid` or `free` komponent.
     pub repeat: Option<Expr>,
     /// The instances it holds, written as a group's are. What each one may do is what the layer it is used on allows: on the lock layer only readings, and no actions.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Instance>,
+}
+
+impl Komponent {
+    /// Whether the komponent writes any key an arrangement is made of, as [`Group::writes_arrangement`] asks of a group.
+    pub fn writes_arrangement(&self) -> bool {
+        self.arrange.is_some() || self.cols.is_some() || self.rows.is_some() || self.gap.is_some()
+    }
 }
 
 /// One value a komponent's use can set.

@@ -439,7 +439,10 @@ pub fn read(dir: &Path) -> Result<Bundle, Report> {
                 texts.insert(komponent_path(&id), text);
                 komponents.insert(id, komponent);
             }
-            Err(why) => report.error(Finding::new(&path, "", Message::verbatim(why.to_string()))),
+            Err(why) => report.error(
+                crate::validate::retired_in_komponent(&text, &path)
+                    .unwrap_or_else(|| Finding::new(&path, "", Message::verbatim(why.to_string()))),
+            ),
         }
     }
     if layouts.is_empty() && report.errors.is_empty() {

@@ -46,14 +46,26 @@ An **area** has a `kind` that says what it is, and the keys of that kind follow 
 | `grid` | Cells that widgets are placed into by explicit coordinates. | yes |
 | `stack` | A column that notification, toast and volume cards land in. | yes |
 | `free` | A rectangle placed by hand. | yes |
+| `panel` | A box one instance, its `owner`, opens and closes, sized in cells like a grid. | yes |
 | `wallpaper_region` | A rectangle with a picture of its own. | no |
 | `texture` | An image or gradient painted over what is behind it. | no |
 | `prompt` | The lock screen's password field. Lock layer only; exactly one per output. | no |
 
-A **group** is written with `place = "zone"` (and a `zone`) on a bar, or `place = "cell"` (with `col`, `row` and spans)
-on a grid. An **instance** is `module`, plus `representation` — `chip`, `widget_s`, `widget_m`, `widget_l` or `card` — and
-optionally `options`, `bindings` and `actions`. Wallpaper regions and textures are paint: a group put in one is dropped
-with a finding.
+A **group** is written with `place = "zone"` (and a `zone`) on a bar, a dock, a stack or a free area, or `place = "cell"`
+(with `col`, `row` and spans) on a grid or a panel. An **instance** is `module`, plus `representation` — `chip`,
+`widget_s`, `widget_m`, `widget_l` or `card` — and optionally `options`, `bindings` and `actions`. Wallpaper regions and
+textures are paint: a group put in one is dropped with a finding.
+
+A group draws its instances as a loose run unless it says how to `arrange` them. `pages` shows them one at a time, cycled
+by the wheel, the arrow keys or its dots (a Smart Stack), and is the only arrangement a zone takes, whatever area holds it.
+A group on a cell can also be a container: `row` and `column` share its box by each instance's `weight`, `grid` puts each
+instance on the `cell` it names in the group's own `cols` × `rows` (one with no cell takes the first free one), and `free`
+on the `rect` it names, in fractions of the box. Until containers are drawn, the shell draws one as a loose run.
+
+A layout `panel` is the panel its owner opens, arranged by you: an instance with no layout panel opens its module's own
+[panel](../surfaces/panels.md) — a [drawer](../surfaces/drawers.md) or a float, as its `open` says. Like containers, some
+keys are read and checked but **not drawn yet**: `panel` areas (until they are, the owner opens what it opened before),
+`border` and `shadow` in any `style`, the whole `style` of a group or an instance, and a bar's `shape.fillet`.
 
 Ids are what everything addresses. An area's id is unique on its layer, a group's within its area, and an instance's
 across the whole layout — `clock`, then `clock-2` — which is what IPC, the editor and [rules](data-and-rules.md#rules)
@@ -119,8 +131,10 @@ keeps following the layout it refines.
 - An id in a `remove` list (a layer's `remove` takes areas, an area's takes groups, a group's takes instances) is
   **removed**. Removals apply before additions, so a level that removes an id and names it again is placing a new one.
 - A level takes back an expression it inherited with `unset` on the area, group or instance that holds it: `visible`
-  on an area; `repeat` and `parameters.<name>` on a group; `bindings.<path>` on an instance. Writing a key and
-  unsetting it at one level is an error, and unsetting what nothing under the level writes is reported.
+  on an area; `repeat`, `parameters.<name>` and `arrange` on a group; `bindings.<path>` on an instance. `arrange` takes back the
+  whole arrangement with its `cols`, `rows` and `gap`, so the group is a loose run again. Writing a key and
+  unsetting it at one level is an error (any of `arrange`, `cols`, `rows` or `gap` clashes with `unset = ["arrange"]`),
+  and unsetting what nothing under the level writes is reported.
 
 The levels, loosest to tightest:
 
@@ -161,6 +175,60 @@ remove = ["background"]
   reserves space, or change what an area reserves: reservation comes from the output rules alone, so switching workspaces
   never re-tiles your windows.
 - It has no lock layer. No workspace is visible while the screen is locked.
+
+### A desktop per workspace
+
+Launchers call them pages; here each one is a workspace rule. A rule that writes only the desktop layer gives that
+workspace its own widgets, and switching workspaces is switching pages. In the desktop mode, `w` sends the edits into
+the rule of the workspace that is up — making it if there is none — and `w` again goes back to every workspace (see
+[Edit modes](edit-modes.md#what-every-mode-shares)).
+
+```toml
+[[outputs]]
+match = "*"
+
+[[outputs.layers.desktop.areas]]
+id = "widgets"
+kind = "grid"
+rect = { x = 0.05, y = 0.1, w = 0.9, h = 0.8 }
+cell = 80
+gap = 16
+
+[[outputs.layers.desktop.areas.groups]]
+id = "clock"
+place = "cell"
+col = 4
+row = 2
+
+[[outputs.layers.desktop.areas.groups.children]]
+id = "clock"
+module = "clock"
+representation = "widget_m"
+
+[[outputs.workspaces]]
+match = "music"
+
+[[outputs.workspaces.layers.desktop.areas]]
+id = "widgets"
+remove = ["clock"]
+
+[[outputs.workspaces.layers.desktop.areas.groups]]
+id = "visualiser"
+place = "cell"
+col = 3
+row = 2
+col_span = 4
+row_span = 3
+
+[[outputs.workspaces.layers.desktop.areas.groups.children]]
+id = "visualiser"
+module = "visualiser"
+representation = "widget_l"
+```
+
+Every workspace shows the clock except `music`, which takes it away and places a visualiser in its cells. The rule
+names the grid by its id and writes only what differs, so the grid's geometry and any other group still come from the
+output rule. `match` takes a workspace name, or `id:<n>` and `special:<name>` where the compositor reports them.
 
 See [Per-monitor setup](../../guides/per-monitor.md) for the same idea from the monitor's side.
 

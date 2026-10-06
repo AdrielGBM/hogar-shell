@@ -64,6 +64,9 @@ only from its edit mode.
   - **Behaviour**: whether it keeps windows out of its edge, whether it stays above fullscreen windows — with the note that
     this keeps the screen off direct scanout — and which box it is measured in.
 - **A group that draws a komponent** gets that komponent's parameters, each with the komponent's default shown beside it.
+- **The theme**, from **Theme…** on an edit mode's strip or in-mode menu, has the palette, accent, base radius, plate opacity
+  and text size. It edits `[theme]` in `config.toml` rather than the layout, so it previews on every window, is written
+  when it closes and stays out of the undo history — see [Edit modes](edit-modes.md#the-theme).
 
 Where the card goes: beside what it customizes, on the side that item faces, and always inside what the bars leave of the
 screen.
@@ -76,6 +79,9 @@ screen.
 | --- | --- |
 | Enter, click outside, press Done, or close it any other way | Everything you changed is **one entry** in the undo history. |
 | Esc, or the other mouse button on a gesture | The layout goes back **exactly** as it was when the popover opened. |
+
+The theme popover and the lock screen's privacy popover take the same keys, but what they keep is written to
+`config.toml` rather than added to the undo history, and Esc puts back the config they opened with.
 
 The same convention runs everywhere: a drag previews every frame and commits when you let go; Esc or the other button
 puts it back. Only one edit is open at a time — starting a second is refused with a message instead of being nested. A

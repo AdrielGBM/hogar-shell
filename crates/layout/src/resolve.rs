@@ -13,6 +13,7 @@ use config::{Edge, glob_matches};
 use telar_expression::Type;
 use util::report::{Finding, Message, Report};
 
+use crate::container::Placement;
 use crate::library::{Library, komponent_path};
 use crate::merge::{At, Origins, merge_layers, merge_session_layers, merge_sources};
 use crate::model::*;
@@ -184,7 +185,7 @@ pub struct ResolvedArea {
     pub above_fullscreen: bool,
     /// Which box this area's geometry is measured in.
     pub within: Within,
-    pub style: AreaStyle,
+    pub style: Style,
     pub visible: Option<ResolvedExpr>,
     pub groups: Vec<ResolvedGroup>,
     pub actions: BTreeMap<Trigger, Action>,
@@ -236,6 +237,15 @@ pub enum ResolvedAreaKind {
         rect: Rect,
         anchor: Anchor,
     },
+    /// Only ever one off the lock layer whose owner is an instance of the same layer outside any panel, and the first panel that owner has: validation reports the others, and a file edited past that leaves them out. `along` only where the owner sits in a bar, and `cols` and `rows` at least 1.
+    Panel {
+        owner: InstanceId,
+        along: bool,
+        cols: u32,
+        rows: u32,
+        cell: f32,
+        gap: f32,
+    },
     Prompt {
         rect: Rect,
     },
@@ -258,6 +268,7 @@ impl ResolvedAreaKind {
             ResolvedAreaKind::Texture { .. } => "texture",
             ResolvedAreaKind::Dock { .. } => "dock",
             ResolvedAreaKind::Free { .. } => "free",
+            ResolvedAreaKind::Panel { .. } => "panel",
             ResolvedAreaKind::Prompt { .. } => "prompt",
         }
     }
@@ -302,13 +313,44 @@ impl ResolvedAreaKind {
 pub struct ResolvedGroup {
     pub id: GroupId,
     pub kind: GroupKind,
-    /// Whether the group shows one instance at a time.
-    pub stacked: bool,
+    /// How the group lays out its children. Never anything but `pages` in a zone: validation refuses it there, and a file edited past that draws a loose run.
+    pub arrange: Option<Arrange>,
+    /// How many columns the inner grid a `grid` group's children are placed on has.
+    pub cols: u32,
+    /// How many rows that inner grid has.
+    pub rows: u32,
+    /// The space between two children it arranges; left out, what is drawn picks one for where the group sits.
+    pub gap: Option<f32>,
     /// The list the children are drawn once per item of. Never on a grid cell: validation refuses it there, and a file edited past that draws the children once, as written.
     pub repeat: Option<ResolvedExpr>,
-    /// The komponent the group draws, where it uses one: its children, `stacked` and `repeat` are then the komponent's, each child under its use's id (`<area>.<group>/<child>`). A komponent the library does not hold is one placeholder child named by its file.
+    /// The komponent the group draws, where it uses one: its children, how they are arranged and `repeat` are then the komponent's, each child under its use's id (`<area>.<group>/<child>`). A komponent the library does not hold is one placeholder child named by its file.
     pub komponent: Option<Arc<KomponentUse>>,
+    /// The group's own style: a use of a komponent keeps it, since what the komponent holds is drawn inside it.
+    pub style: Style,
     pub children: Vec<ResolvedInstance>,
+}
+
+impl ResolvedGroup {
+    /// Whether the group shows its children one at a time.
+    pub fn is_pages(&self) -> bool {
+        self.arrange == Some(Arrange::Pages)
+    }
+
+    /// The group as a layout writes it in full, without its children: `cols` and `rows` only where it arranges them on an inner grid, the one arrangement that reads them.
+    pub fn written(&self) -> Group {
+        let grid = self.arrange == Some(Arrange::Grid);
+        Group {
+            id: self.id.clone(),
+            kind: Some(self.kind),
+            arrange: self.arrange,
+            cols: grid.then_some(self.cols),
+            rows: grid.then_some(self.rows),
+            gap: self.gap,
+            repeat: self.repeat.as_ref().map(|repeat| repeat.expr.clone()),
+            style: self.style.clone(),
+            ..Group::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -318,6 +360,9 @@ pub struct ResolvedInstance {
     pub representation: Representation,
     pub options: toml::Table,
     pub bindings: BTreeMap<String, ResolvedExpr>,
+    pub style: Style,
+    /// Where it sits in a group that arranges its children; `None` in a loose run or a `pages` group.
+    pub placement: Option<Placement>,
     pub actions: BTreeMap<Trigger, Action>,
 }
 
@@ -618,12 +663,44 @@ fn matches_workspace(
 }
 
 fn answer_layer(layer: &Layer, answering: Answering<'_>, report: &mut Report) -> ResolvedLayer {
-    let areas = layer
+    let mut areas: Vec<ResolvedArea> = layer
         .areas
         .iter()
         .filter_map(|area| answer_area(area, answering, report))
         .collect();
-    ResolvedLayer { areas }
+    if answering.layer == LayerKind::Lock {
+        areas.sort_by_key(|area| matches!(area.kind, ResolvedAreaKind::Prompt { .. }));
+    }
+    ResolvedLayer {
+        areas: owned_panels(areas, answering.layer),
+    }
+}
+
+/// `areas` with each panel kept only where validation would let it be drawn: off the lock layer, its owner an instance of this layer outside every panel, and no earlier panel of that owner. `along` is dropped where the owner is not in a bar. An owner a narrower level takes away takes its panel with it, which is how a panel goes from one monitor without being named there.
+fn owned_panels(mut areas: Vec<ResolvedArea>, layer: LayerKind) -> Vec<ResolvedArea> {
+    let in_bar: BTreeMap<InstanceId, bool> = areas
+        .iter()
+        .filter(|area| !matches!(area.kind, ResolvedAreaKind::Panel { .. }))
+        .flat_map(|area| {
+            let in_bar = matches!(area.kind, ResolvedAreaKind::Bar { .. });
+            area.groups
+                .iter()
+                .flat_map(|group| group.children.iter())
+                .map(move |child| (child.id.clone(), in_bar))
+        })
+        .collect();
+    let mut opened = std::collections::BTreeSet::new();
+    areas.retain_mut(|area| {
+        let ResolvedAreaKind::Panel { owner, along, .. } = &mut area.kind else {
+            return true;
+        };
+        let Some(in_bar) = in_bar.get(owner).filter(|_| layer != LayerKind::Lock) else {
+            return false;
+        };
+        *along &= *in_bar;
+        opened.insert(owner.clone())
+    });
+    areas
 }
 
 fn answer_area(area: &Area, answering: Answering<'_>, report: &mut Report) -> Option<ResolvedArea> {
@@ -672,11 +749,15 @@ fn answer_area(area: &Area, answering: Answering<'_>, report: &mut Report) -> Op
         }
         Vec::new()
     };
+    let reserve = area.reserve.unwrap_or(matches!(
+        kind,
+        ResolvedAreaKind::Bar { .. } | ResolvedAreaKind::Dock { .. }
+    )) && !matches!(kind, ResolvedAreaKind::Panel { .. });
 
     Some(ResolvedArea {
         id: area.id.clone(),
         kind,
-        reserve: area.reserve.unwrap_or(false),
+        reserve,
         above_fullscreen: area.above_fullscreen.unwrap_or(false),
         within: area.within.unwrap_or_default(),
         style: area.style.clone(),
@@ -726,8 +807,8 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
             anchor,
         } => Some(ResolvedAreaKind::Grid {
             rect: rect.unwrap_or_default(),
-            cell: cell.unwrap_or(80.0),
-            gap: gap.unwrap_or(16.0),
+            cell: cell.unwrap_or(AreaKind::CELL),
+            gap: gap.unwrap_or(AreaKind::GAP),
             anchor: anchor.unwrap_or(Anchor::TopLeft),
         }),
         AreaKind::Stack {
@@ -794,6 +875,21 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
                 anchor: anchor.unwrap_or(Anchor::TopLeft),
             })
         }
+        AreaKind::Panel {
+            owner,
+            along,
+            cols,
+            rows,
+            cell,
+            gap,
+        } => need(owner.is_some(), "owner").then(|| ResolvedAreaKind::Panel {
+            owner: owner.clone().expect("checked"),
+            along: along.unwrap_or(false),
+            cols: cols.unwrap_or(AreaKind::PANEL_COLS).max(1),
+            rows: rows.unwrap_or(AreaKind::PANEL_ROWS).max(1),
+            cell: cell.unwrap_or(AreaKind::CELL),
+            gap: gap.unwrap_or(AreaKind::GAP),
+        }),
         AreaKind::Prompt { rect } => Some(ResolvedAreaKind::Prompt {
             rect: rect.unwrap_or(Rect {
                 x: 0.3,
@@ -843,11 +939,20 @@ fn answer_group(
         ));
     }
     let held = (area, &group.id);
-    let children = group
+    let drawn = group
         .children
         .iter()
-        .filter_map(|instance| answer_instance(instance, held, &at, answering, report))
+        .filter_map(|instance| {
+            let resolved = answer_instance(instance, held, &at, answering, report)?;
+            Some((instance, resolved))
+        })
         .collect();
+    let arrange = arranged(group.arrange, kind);
+    let (cols, rows) = tracks(group.cols, group.rows);
+    let file = layout_path(&layout.id);
+    let children = placed((arrange, cols, rows), drawn, report, |child| {
+        (file.clone(), format!("{at}.children.{}.cell", child.id))
+    });
     let at = |slot| {
         (
             answering.layer,
@@ -860,18 +965,22 @@ fn answer_group(
     Some(ResolvedGroup {
         id: group.id.clone(),
         kind,
-        stacked: group.stacked.unwrap_or(false),
+        arrange,
+        cols,
+        rows,
+        gap: group.gap,
         repeat: group
             .repeat
             .as_ref()
             .filter(|_| !matches!(kind, GroupKind::Cell { .. }))
             .map(|repeat| answering.sourced(repeat, at(Unset::Repeat))),
         komponent: None,
+        style: group.style.clone(),
         children,
     })
 }
 
-/// A group drawing the komponent `id`: the komponent's children under the use's ids, its `stacked` and `repeat`, and what each parameter reads here. What the merged group holds besides is reported and not drawn; a komponent the library does not hold is one placeholder child named by its file, so the area still draws and says what is missing.
+/// A group drawing the komponent `id`: the komponent's children under the use's ids, how it arranges them and its `repeat`, and what each parameter reads here. What the merged group holds besides is reported and not drawn; a komponent the library does not hold is one placeholder child named by its file, so the area still draws and says what is missing.
 fn answer_use(
     group: &Group,
     kind: GroupKind,
@@ -882,7 +991,7 @@ fn answer_use(
     report: &mut Report,
 ) -> ResolvedGroup {
     let file = layout_path(&answering.layout.id);
-    if !group.children.is_empty() || group.repeat.is_some() || group.stacked.is_some() {
+    if !group.children.is_empty() || group.repeat.is_some() || group.writes_arrangement() {
         report.error(Finding::new(
             file.clone(),
             format!("{at}.komponent"),
@@ -920,14 +1029,20 @@ fn answer_use(
             },
             options: toml::Table::new(),
             bindings: BTreeMap::new(),
+            style: Style::default(),
+            placement: None,
             actions: BTreeMap::new(),
         };
         return ResolvedGroup {
             id: group.id.clone(),
             kind,
-            stacked: false,
+            arrange: None,
+            cols: Arrange::TRACKS,
+            rows: Arrange::TRACKS,
+            gap: None,
             repeat: None,
             komponent: Some(Arc::new(used)),
+            style: group.style.clone(),
             children: vec![standing_in],
         };
     };
@@ -974,16 +1089,74 @@ fn answer_use(
     let children = komponent
         .children
         .iter()
-        .filter_map(|child| answer_komponent_child(child, &used, &drawn, report))
+        .filter_map(|child| {
+            let resolved = answer_komponent_child(child, &used, &drawn, report)?;
+            Some((child, resolved))
+        })
         .collect();
+    let arrange = arranged(komponent.arrange, kind);
+    let (cols, rows) = tracks(komponent.cols, komponent.rows);
+    let children = placed((arrange, cols, rows), children, report, |child| {
+        (komponent_path(id), format!("children.{}.cell", child.id))
+    });
     ResolvedGroup {
         id: group.id.clone(),
         kind,
-        stacked: komponent.stacked.unwrap_or(false),
+        arrange,
+        cols,
+        rows,
+        gap: komponent.gap,
         repeat: komponent.repeat.as_ref().filter(|_| !on_cell).map(&drawn),
         komponent: Some(Arc::clone(&used)),
+        style: group.style.clone(),
         children,
     }
+}
+
+/// The `arrange` a group placed as `kind` is drawn with: in a zone, of whatever area, anything but `pages` is refused by validation and drawn as a loose run.
+fn arranged(arrange: Option<Arrange>, kind: GroupKind) -> Option<Arrange> {
+    arrange.filter(|arrange| *arrange == Arrange::Pages || matches!(kind, GroupKind::Cell { .. }))
+}
+
+/// The columns and rows of a group's inner grid: 2 each where it names none, and never fewer than one.
+fn tracks(cols: Option<u32>, rows: Option<u32>) -> (u32, u32) {
+    let track = |written: Option<u32>| written.unwrap_or(Arrange::TRACKS).max(1);
+    (track(cols), track(rows))
+}
+
+/// The resolved children of a group arranged as `arrange` on an inner grid of `cols` × `rows`, each with where it sits, beside what its file wrote. A written `cell` pulled back onto the inner grid is a warning at the file and key `cell_at` names.
+fn placed(
+    (arrange, cols, rows): (Option<Arrange>, u32, u32),
+    drawn: Vec<(&Instance, ResolvedInstance)>,
+    report: &mut Report,
+    cell_at: impl Fn(&Instance) -> (String, String),
+) -> Vec<ResolvedInstance> {
+    let written: Vec<&Instance> = drawn.iter().map(|(written, _)| *written).collect();
+    let placements = crate::container::placements(arrange, (cols, rows), &written);
+    drawn
+        .into_iter()
+        .zip(placements)
+        .map(|((written, mut resolved), placement)| {
+            if let (Some(Placement::Cell(kept)), Some(cell)) = (placement, written.cell)
+                && kept != cell
+            {
+                let (file, key) = cell_at(written);
+                report.warn(Finding::new(
+                    file,
+                    key,
+                    util::message!(
+                        "finding.cell_off_grid",
+                        cols = cols,
+                        rows = rows,
+                        col = kept.col,
+                        row = kept.row
+                    ),
+                ));
+            }
+            resolved.placement = placement;
+            resolved
+        })
+        .collect()
 }
 
 /// The parameters `komponent` declares, as a sentence lists them.
@@ -1033,6 +1206,8 @@ fn answer_komponent_child(
             .iter()
             .map(|(path, expr)| (path.clone(), drawn(expr)))
             .collect(),
+        style: child.style.clone(),
+        placement: None,
         actions: child.actions.clone(),
     })
 }
@@ -1082,6 +1257,8 @@ fn answer_instance(
         representation: instance.representation.unwrap_or(Representation::Chip),
         options: instance.options.clone(),
         bindings,
+        style: instance.style.clone(),
+        placement: None,
         actions: instance.actions.clone(),
     })
 }

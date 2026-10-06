@@ -40,7 +40,7 @@ const APART: f32 = 36.0;
 const GRIP: f32 = 14.0;
 
 /// The toolbar button that lays a texture over the selected region, in every mode with the region tools.
-pub(crate) const TEXTURE_BUTTON: crate::host::ToolbarButton = (
+pub(crate) const TEXTURE_BUTTON: crate::host::StripButton = (
     || telar::t!("editor.texture.add"),
     || said(texture_selected(&session::selected())),
 );
@@ -50,6 +50,9 @@ pub(crate) fn install() {
     crate::popover::add_area_tool("texture", texture::tool);
     crate::host::add_tool(LayerKind::Background, tool);
     crate::host::add_toolbar_button(LayerKind::Background, TEXTURE_BUTTON);
+    crate::host::set_add(LayerKind::Background, || {
+        texture_selected(&session::selected())
+    });
     context::add_area_rows("wallpaper_region", region_rows);
     keys::add_key_op(
         "wallpaper_region",

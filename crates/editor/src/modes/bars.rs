@@ -399,7 +399,8 @@ impl Carried {
                         .groups
                         .iter()
                         .filter(|group| {
-                            group.kind == layout::GroupKind::Zone { zone } && !group.stacked
+                            group.kind == layout::GroupKind::Zone { zone }
+                                && group.arrange.is_none()
                         })
                         .flat_map(|group| {
                             group

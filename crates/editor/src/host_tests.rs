@@ -76,7 +76,7 @@ mod tests {
             refused: None,
         };
         let said = said(&mode, Under::Nothing);
-        for expected in ["Desktop", "DP-1", "Done", "a desktop tool"] {
+        for expected in ["Desktop ▾", "DP-1", "Done", "a desktop tool"] {
             assert!(
                 said.iter().any(|text| text == expected),
                 "{expected}: {said:?}"

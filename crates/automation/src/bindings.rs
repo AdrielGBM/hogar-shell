@@ -1,10 +1,11 @@
 //! What a binding in the layout drives: the type an instance's option takes as an expression, and how an evaluated value is written back as that option.
 //!
-//! **Targets.** A binding's path is an option its module declares (`config::fields`, through `ModuleDescriptor::option_fields`) or `accent`. An option takes the type its control does — a bool, a number, a text, a list of one of those; one of a fixed set of words is a text, checked against the set when it is written. `accent` takes a colour and paints the instance itself, rather than naming one of the theme's accents as the written option does. A table, a map or a type the inspector cannot edit has no expression form.
+//! **Targets.** A binding's path is an option its module declares (`config::fields`, through `ModuleDescriptor::option_fields`), `accent`, or one of the instance's own style keys (`style.fill`, `style.opacity`, `style.border.color`). An option takes the type its control does — a bool, a number, a text, a list of one of those; one of a fixed set of words is a text, checked against the set when it is written. `accent` takes a colour and paints the instance itself, rather than naming one of the theme's accents as the written option does; a style key paints the instance's box the way its `style` does.
 //!
 //! **Writing.** A value is written in the control's own spelling — a whole number for an integer, a word for one of a set — and then checked as a written value would be, so a binding can never put an option somewhere `layout set` could not.
 
 use config::fields::{Control, OptionField};
+use layout::StyleBinding;
 use telar::Color;
 use telar_expression::{Type, Value};
 use util::report::Message;
@@ -17,6 +18,8 @@ pub const ACCENT: &str = "accent";
 pub enum Target {
     /// The colour the instance is painted with, in place of the accent its options name.
     Accent,
+    /// A key of the instance's own `style`.
+    Style(StyleBinding),
     Option(OptionField),
 }
 
@@ -24,6 +27,10 @@ pub enum Target {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Written {
     Accent(Color),
+    Fill(Color),
+    /// Already within 0 to 1.
+    Opacity(f32),
+    BorderColor(Color),
     Option(toml::Value),
 }
 
@@ -32,6 +39,9 @@ impl Target {
     pub fn of(fields: &[OptionField], path: &str) -> Result<Self, Message> {
         if path == ACCENT {
             return Ok(Target::Accent);
+        }
+        if let Some(key) = StyleBinding::from_path(path) {
+            return Ok(Target::Style(key));
         }
         let field = fields
             .iter()
@@ -46,6 +56,7 @@ impl Target {
     pub fn ty(&self) -> Type {
         match self {
             Target::Accent => Type::Color,
+            Target::Style(key) => key.ty(),
             Target::Option(field) => type_of(&field.control).unwrap_or(Type::Never),
         }
     }
@@ -56,6 +67,19 @@ impl Target {
             (Target::Accent, Value::Color(color)) => Ok(Written::Accent(*color)),
             (Target::Accent, other) => Err(util::message!(
                 "finding.accent_takes_colour",
+                found = Message::type_name(&other.type_of())
+            )),
+            (Target::Style(StyleBinding::Fill), Value::Color(color)) => Ok(Written::Fill(*color)),
+            (Target::Style(StyleBinding::BorderColor), Value::Color(color)) => {
+                Ok(Written::BorderColor(*color))
+            }
+            (Target::Style(StyleBinding::Opacity), Value::Number(n)) => {
+                Ok(Written::Opacity(n.clamp(0.0, 1.0) as f32))
+            }
+            (Target::Style(key), other) => Err(util::message!(
+                "finding.style_takes",
+                path = key.path(),
+                wanted = Message::type_name(&key.ty()),
                 found = Message::type_name(&other.type_of())
             )),
             (Target::Option(field), value) => {
@@ -167,6 +191,28 @@ mod tests {
         let red = Color::from_hex("#ff0000").unwrap();
         assert_eq!(accent.write(&Value::Color(red)), Ok(Written::Accent(red)));
         assert!(accent.write(&Value::text("red")).is_err());
+    }
+
+    #[test]
+    fn a_style_key_takes_its_own_type_on_any_module() {
+        let ty = |path: &str| Target::of(&[], path).map(|target| target.ty());
+        assert_eq!(ty("style.fill"), Ok(Type::Color));
+        assert_eq!(ty("style.border.color"), Ok(Type::Color));
+        assert_eq!(ty("style.opacity"), Ok(Type::Number));
+        assert!(
+            ty("style.radius").is_err(),
+            "only a colour or a number binds"
+        );
+
+        let red = Color::from_hex("#ff0000").unwrap();
+        let fill = Target::Style(StyleBinding::Fill);
+        assert_eq!(fill.write(&Value::Color(red)), Ok(Written::Fill(red)));
+        assert!(fill.write(&Value::Number(1.0)).is_err());
+        assert_eq!(
+            Target::Style(StyleBinding::Opacity).write(&Value::Number(1.5)),
+            Ok(Written::Opacity(1.0)),
+            "an opacity is held within 0 to 1"
+        );
     }
 
     #[test]

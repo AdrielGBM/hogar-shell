@@ -1064,16 +1064,14 @@ impl LayerApp {
         blurring: RwSignal<Vec<(u64, RwSignal<Rect>)>>,
     ) -> impl Fn(Drawn) -> Result<Box<dyn LayoutItem>, LayoutError> + 'static {
         let (kind, output) = (self.kind, self.output.clone());
-        let config = self.config.clone();
         let demands = Rc::clone(&self.demands);
         let areas = Rc::clone(&self.areas);
         let tokens = Rc::new(Cell::new(0u64));
         move |drawn| {
-            let config = config.get();
             let building = Building {
                 window: kind,
                 output: output.as_deref(),
-                config: &config,
+                config: &drawn.config,
                 theme: drawn.theme,
                 size: drawn.screen.size,
                 reserved: drawn.screen.reserved,
@@ -1098,7 +1096,7 @@ impl LayerApp {
         }
     }
 
-    /// What the window draws now — its reconciled areas, or a preview's in their place — one entry per area, keyed by the build it belongs to and a version that moves only when that area, or the screen it is placed on, changes: an edit or a preview rebuilds the areas it touched and keeps every other node, and a config edit, which every area is built against, rebuilds them all.
+    /// What the window draws now — its reconciled areas, or a preview's in their place — one entry per area, keyed by the build it belongs to and a version that moves only when that area, or the screen it is placed on, changes: an edit or a preview rebuilds the areas it touched and keeps every other node, and a config edit or a config preview, which every area is built against, rebuilds them all.
     fn drawing(
         &self,
         generation: RwSignal<Builds>,
@@ -1116,15 +1114,19 @@ impl LayerApp {
         move || {
             let build = generation.get().build;
             let drawn = previewed(&key).unwrap_or_else(|| layer.get());
+            let (reconfigured, config) = crate::reconcile::shown_config(&config.get());
             let mut seen = seen.borrow_mut();
-            if seen.build != Some(build) {
-                let config = config.get();
+            if seen.build != Some(build) || seen.reconfigured != reconfigured {
                 let resolved = config.resolve_theme();
                 theme.set(resolved);
                 services::locale::attach(config.language());
+                // Kept across a config preview, whose areas are of the same build: a version handed out again would name a node already built.
+                let next = seen.next;
                 *seen = Seen {
                     build: Some(build),
+                    reconfigured,
                     theme: Some(resolved),
+                    next,
                     ..Seen::default()
                 };
             }
@@ -1132,7 +1134,7 @@ impl LayerApp {
                 return Vec::new();
             }
             let screen = screen.get();
-            let theme = seen.theme.unwrap_or_else(|| config.get().resolve_theme());
+            let theme = seen.theme.unwrap_or_else(|| config.resolve_theme());
             let mut areas = HashMap::with_capacity(drawn.areas.len());
             let list = drawn
                 .areas
@@ -1167,6 +1169,7 @@ impl LayerApp {
                         home: *home,
                         area: area.clone(),
                         screen,
+                        config: Arc::clone(&config),
                         theme,
                     }
                 })
@@ -1177,10 +1180,11 @@ impl LayerApp {
     }
 }
 
-/// What [`LayerApp::drawing`] remembers of the areas it last handed out: the build they belong to, the theme that build resolved, and each area's version with what it was drawn from.
+/// What [`LayerApp::drawing`] remembers of the areas it last handed out: the build they belong to, the config preview and theme they were drawn with, and each area's version with what it was drawn from.
 #[derive(Default)]
 struct Seen {
     build: Option<u64>,
+    reconfigured: Option<u64>,
     theme: Option<NordTheme>,
     next: u64,
     areas: HashMap<(LayerKind, AreaId), (u64, ResolvedArea, Screen)>,
@@ -1194,6 +1198,7 @@ struct Drawn {
     home: LayerKind,
     area: ResolvedArea,
     screen: Screen,
+    config: Arc<Config>,
     theme: NordTheme,
 }
 
@@ -1379,8 +1384,8 @@ mod tests {
 
     use config::Edge;
     use layout::{
-        AreaId, AreaStyle, BarShape, Expr, Extent, GroupId, GroupKind, InstanceId, Representation,
-        ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Zone,
+        AreaId, BarShape, Expr, Extent, GroupId, GroupKind, InstanceId, Representation,
+        ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Style, Zone,
     };
     use telar::set_theme;
     use ui::scale::paint;
@@ -1438,15 +1443,19 @@ mod tests {
             reserve: true,
             above_fullscreen: false,
             within: layout::Within::Output,
-            style: AreaStyle::default(),
+            style: Style::default(),
             visible: None,
             actions: Default::default(),
             groups: vec![ResolvedGroup {
                 id: GroupId::new("start"),
                 kind: GroupKind::Zone { zone: Zone::Start },
-                stacked: false,
+                arrange: None,
+                cols: layout::Arrange::TRACKS,
+                rows: layout::Arrange::TRACKS,
+                gap: None,
                 repeat: None,
                 komponent: None,
+                style: Style::default(),
                 children: modules.iter().map(instance).collect(),
             }],
         }
@@ -1459,6 +1468,8 @@ mod tests {
             representation: Representation::Chip,
             options: toml::Table::new(),
             bindings: BTreeMap::new(),
+            style: Style::default(),
+            placement: None,
             actions: BTreeMap::new(),
         }
     }
@@ -1475,7 +1486,7 @@ mod tests {
             reserve: false,
             above_fullscreen: false,
             within: layout::Within::Output,
-            style: AreaStyle::default(),
+            style: Style::default(),
             visible: None,
             actions: Default::default(),
             groups: Vec::new(),
@@ -1709,7 +1720,7 @@ mod tests {
             reserve: false,
             above_fullscreen: false,
             within: layout::Within::Usable,
-            style: AreaStyle::default(),
+            style: Style::default(),
             visible: None,
             actions: Default::default(),
             groups: Vec::new(),
@@ -2224,7 +2235,7 @@ mod tests {
             reserve: false,
             above_fullscreen: false,
             within: Within::Output,
-            style: AreaStyle::default(),
+            style: Style::default(),
             visible: None,
             groups: Vec::new(),
             actions: BTreeMap::new(),
@@ -2399,6 +2410,55 @@ mod tests {
         crate::reconcile::end_preview();
         assert_eq!((top.get(), wallpaper.get()), (3, 1));
         assert!(Rc::ptr_eq(&crate::reconcile::desktops(), &reconciled));
+    }
+
+    struct Radii(Rc<RefCell<Vec<f32>>>);
+
+    impl Areas for Radii {
+        fn build(&self, area: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+            assert_eq!(area.theme.radius, area.config.resolve_theme().radius);
+            self.0.borrow_mut().push(area.theme.radius);
+            Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?))
+        }
+    }
+
+    /// A config preview builds every area of the window again with the previewed config and its theme, and ending it builds them again with the reconciled one.
+    #[test]
+    fn a_config_preview_rebuilds_every_area_with_it_and_ending_it_puts_the_reconciled_one_back() {
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        let (resolved, _) = layout::resolve(
+            &layout::built_in(),
+            &layout::Library::default(),
+            SCREEN,
+            None,
+        );
+        let built = Rc::new(RefCell::new(Vec::new()));
+        let app = LayerApp {
+            areas: Rc::new(Radii(Rc::clone(&built))),
+            ..counting_app(LayerKind::Top, &resolved, &Rc::new(Cell::new(0)))
+        };
+        let _root = app.root();
+        let was = config().resolve_theme().radius;
+        let areas = built.borrow().len();
+        assert!(areas > 0);
+        assert!(built.borrow().iter().all(|radius| *radius == was));
+
+        crate::reconcile::preview_config(|config| {
+            let mut config = config.clone();
+            config.theme.radius = Some(21);
+            config
+        });
+        assert_eq!(built.borrow().len(), 2 * areas);
+        assert!(built.borrow()[areas..].iter().all(|radius| *radius == 21.0));
+
+        crate::reconcile::end_config_preview();
+        assert_eq!(built.borrow().len(), 3 * areas);
+        assert!(
+            built.borrow()[2 * areas..]
+                .iter()
+                .all(|radius| *radius == was)
+        );
     }
 
     /// TA-4's fallback draws a layer's areas in the overlay window, so the window they came from must stop drawing them for exactly as long as that lasts — and must go back to drawing them without anyone rebuilding it by hand.
@@ -2907,9 +2967,13 @@ mod tests {
         area.groups.push(ResolvedGroup {
             id: GroupId::new("end"),
             kind: GroupKind::Zone { zone: Zone::End },
-            stacked: false,
+            arrange: None,
+            cols: layout::Arrange::TRACKS,
+            rows: layout::Arrange::TRACKS,
+            gap: None,
             repeat: None,
             komponent: None,
+            style: Style::default(),
             children: end.iter().map(instance).collect(),
         });
         area
@@ -3089,8 +3153,8 @@ mod grid_tests {
 
     use config::Config;
     use layout::{
-        Anchor, AreaId, AreaStyle, GroupId, GroupKind, InstanceId, LayerKind, Representation,
-        ResolvedArea, ResolvedAreaKind, ResolvedGroup, ResolvedInstance, ResolvedLayer, Within,
+        Anchor, AreaId, GroupId, GroupKind, InstanceId, LayerKind, Representation, ResolvedArea,
+        ResolvedAreaKind, ResolvedGroup, ResolvedInstance, ResolvedLayer, Style, Within,
     };
     use platform_wayland::Layer;
     use telar::{Component, LayoutError, LayoutItem, set_theme};
@@ -3137,15 +3201,21 @@ mod grid_tests {
                 col_span: 1,
                 row_span: 1,
             },
-            stacked: false,
+            arrange: None,
+            cols: layout::Arrange::TRACKS,
+            rows: layout::Arrange::TRACKS,
+            gap: None,
             repeat: None,
             komponent: None,
+            style: Style::default(),
             children: vec![ResolvedInstance {
                 id: InstanceId::new(id),
                 module: id.to_string(),
                 representation,
                 options: toml::Table::new(),
                 bindings: BTreeMap::new(),
+                style: Style::default(),
+                placement: None,
                 actions: BTreeMap::new(),
             }],
         }
@@ -3163,7 +3233,7 @@ mod grid_tests {
             reserve: false,
             above_fullscreen: false,
             within: Within::Output,
-            style: AreaStyle::default(),
+            style: Style::default(),
             visible: None,
             groups,
             actions: BTreeMap::new(),
@@ -3265,7 +3335,7 @@ mod grid_tests {
         assert!(!crate::area::moves_only(&was, &resized));
         assert!(!crate::area::moves_only(&was, &renamed));
         let mut padded = moved.clone();
-        padded.style.padding = Some(8.0);
+        padded.style.padding = Some(layout::Sides::all(8.0));
         assert!(!crate::area::moves_only(&was, &padded));
     }
 }

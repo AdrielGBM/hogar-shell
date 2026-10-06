@@ -52,8 +52,8 @@ Item-level blur — a single drawer or card blurred while its bar is not — is 
 requested per area, in the layout, with `style.backdrop = "blur"`; the shell asks for it through
 `ext-background-effect-v1` and unions the rounded rects of every area styled that way into one blur region. On
 a compositor that does not bind the protocol, those areas render translucent instead of blurred, and
-`hogar-shell layout check` says why. See the [Layout reference](../reference/layout.md#areastyle) for
-`AreaStyle`.
+`hogar-shell layout check` says why. See the [Layout reference](../reference/layout.md#style) for
+`Style`.
 
 ## Animation
 

@@ -12,7 +12,7 @@ use crate::load::{
 };
 use crate::scheme;
 use crate::sections::*;
-use crate::theme::NordTheme;
+use crate::theme::{NordTheme, OPACITY_RANGE};
 use util::{paths, writer};
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -243,7 +243,7 @@ impl Config {
         }
         theme.fonts = t.fonts;
         for (name, hex) in &t.colors {
-            match Color::from_hex(hex) {
+            match crate::theme::parse_hex(hex) {
                 Some(c) => theme = theme.with_color(name, c),
                 None => tracing::warn!("theme color '{name}': invalid hex '{hex}'"),
             }
@@ -284,7 +284,9 @@ impl Config {
     /// Floored well above transparent, and clamped rather than trusted: a shell painted at `0` is one whose panels are invisible and whose clicks land on them anyway, which reads as the whole thing being broken. A non-finite value in the file falls back to solid instead of poisoning every colour it touches.
     pub fn opacity(&self) -> f32 {
         if self.theme.opacity.is_finite() {
-            self.theme.opacity.clamp(0.2, 1.0)
+            self.theme
+                .opacity
+                .clamp(*OPACITY_RANGE.start(), *OPACITY_RANGE.end())
         } else {
             1.0
         }

@@ -31,8 +31,12 @@ const ORDER: &[&str] = &[
     "AreaKind::Texture",
     "AreaKind::Dock",
     "AreaKind::Free",
+    "AreaKind::Panel",
     "AreaKind::Prompt",
-    "AreaStyle",
+    "Style",
+    "Border",
+    "Corners",
+    "Sides",
     "BarShape",
     "AutoHide",
     "Rect",
@@ -45,11 +49,12 @@ const ORDER: &[&str] = &[
     "GroupKind::Zone",
     "GroupKind::Cell",
     "Instance",
+    "ChildCell",
     "Komponent",
     "Parameter",
 ];
 
-/// One item of the layout file's vocabulary: a table a file can hold, or a variant of one, with what it is for and the keys it has.
+/// One item of the layout file's vocabulary: a table a file can hold, a variant of one, or a value written in place of a table (`Corners`, `Sides`), with what it is for and the keys it has.
 pub struct Item {
     pub name: &'static str,
     pub doc: Option<&'static str>,
@@ -82,7 +87,7 @@ pub fn vocabulary() -> Vec<Item> {
 
 /// The layout the reference prints.
 ///
-/// The shipped layout plus one area of every kind it does not use, so the file shows the whole vocabulary — and still parses back as a layout, which a reference written by hand would stop doing the first time a field was renamed. The extra areas hold no instances: what a module is called is the module table's business, and a reference that named one would be a reference that goes stale when a module is renamed.
+/// The shipped layout plus one area of every kind it does not use and a container on its grid, so the file shows the whole vocabulary — and still parses back as a layout, which a reference written by hand would stop doing the first time a field was renamed. The extra areas hold no instances: what a module is called is the module table's business, and a reference that named one would be a reference that goes stale when a module is renamed.
 pub fn reference() -> Layout {
     let mut layout = crate::built_in::layout();
     layout.sources.insert(
@@ -99,6 +104,28 @@ pub fn reference() -> Layout {
     let Some(rule) = layout.outputs.first_mut() else {
         return layout;
     };
+    if let Some(grid) = rule
+        .layers
+        .desktop
+        .areas
+        .iter_mut()
+        .find(|area| area.id == AreaId::new("widgets"))
+    {
+        grid.groups.push(Group {
+            id: GroupId::new("container"),
+            kind: Some(GroupKind::Cell {
+                col: 0,
+                row: 0,
+                col_span: 4,
+                row_span: 2,
+            }),
+            arrange: Some(Arrange::Grid),
+            cols: Some(2),
+            rows: Some(1),
+            gap: Some(8.0),
+            ..Group::default()
+        });
+    }
     rule.layers.desktop.areas.extend([
         area(
             "cards",
@@ -143,17 +170,26 @@ pub fn reference() -> Layout {
                 opacity: Some(0.6),
             },
         ),
-        area(
-            "visualiser",
-            AreaKind::Dock {
-                edge: Some(config::Edge::Bottom),
-                thickness: Some(96.0),
-            },
-        ),
         Area {
-            style: AreaStyle {
+            reserve: Some(false),
+            ..area(
+                "visualiser",
+                AreaKind::Dock {
+                    edge: Some(config::Edge::Bottom),
+                    thickness: Some(96.0),
+                },
+            )
+        },
+        Area {
+            style: Style {
                 radius: Some(Corners::each(16.0, 16.0, 0.0, 16.0)),
-                ..AreaStyle::default()
+                padding: Some(Sides::each(8.0, 12.0, 8.0, 12.0)),
+                border: Some(Border {
+                    width: Some(1.0),
+                    color: Some(Border::COLOR.to_string()),
+                }),
+                shadow: Some(1),
+                ..Style::default()
             },
             ..area(
                 "note",
@@ -169,6 +205,27 @@ pub fn reference() -> Layout {
             )
         },
     ]);
+    if let Some(AreaKind::Bar { shape, .. }) = rule
+        .layers
+        .top
+        .areas
+        .iter_mut()
+        .find(|area| area.id == AreaId::new("bar-top"))
+        .and_then(|area| area.kind.as_mut())
+    {
+        shape.fillet = Some(12.0);
+    }
+    rule.layers.top.areas.push(area(
+        "panel-clock",
+        AreaKind::Panel {
+            owner: Some(InstanceId::new("clock")),
+            along: Some(false),
+            cols: Some(4),
+            rows: Some(3),
+            cell: Some(64.0),
+            gap: Some(8.0),
+        },
+    ));
     layout
 }
 
@@ -477,12 +534,12 @@ mod tests {
         );
     }
 
-    /// And the vocabulary is what the manual and the docs reference walk, so an item with no keys at all in it would be a heading with nothing under it.
+    /// And the vocabulary is what the manual and the docs reference walk, so an item with no keys at all in it would be a heading with nothing under it — unless it is a value written in place of a table, which its explanation alone describes.
     #[test]
     fn every_item_in_the_vocabulary_has_keys_and_an_explanation() {
         for item in vocabulary() {
             assert!(
-                !item.keys.is_empty(),
+                !item.keys.is_empty() || ["Corners", "Sides"].contains(&item.name),
                 "`{}` has no keys, so it is not a table a file writes",
                 item.name
             );
@@ -492,5 +549,34 @@ mod tests {
                 item.name
             );
         }
+    }
+
+    /// One style is written on areas, groups and instances, so the reference names it once, with the border, the shadow steps and the four sides of its padding.
+    #[test]
+    fn the_reference_lists_one_style_with_its_border_and_sides() {
+        let items = vocabulary();
+        let item = |name: &str| {
+            items
+                .iter()
+                .find(|item| item.name == name)
+                .unwrap_or_else(|| panic!("`{name}` is in the reference"))
+        };
+        let style: Vec<&str> = item("Style").keys.iter().map(|key| key.name).collect();
+        for key in [
+            "fill", "radius", "opacity", "padding", "border", "shadow", "backdrop",
+        ] {
+            assert!(style.contains(&key), "`Style.{key}`: {style:?}");
+        }
+        let border: Vec<&str> = item("Border").keys.iter().map(|key| key.name).collect();
+        assert_eq!(border, ["width", "color"]);
+        assert!(
+            item("Sides")
+                .doc
+                .is_some_and(|doc| doc.contains("[top, right, bottom, left]"))
+        );
+        for holder in ["Area", "Group", "Instance"] {
+            assert_eq!(type_of(holder, "style"), Some("Style"), "{holder}");
+        }
+        assert!(items.iter().all(|item| item.name != "AreaStyle"));
     }
 }

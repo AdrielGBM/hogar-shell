@@ -3,34 +3,25 @@
 //! What is left here is the forms this area cannot say in `.rsx`: the ones whose rows are a list the machine decides the length of. The static-shape forms are `.rsx` components beside this file.
 
 use std::rc::Rc;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use ui::scale::space;
 
 use telar::{
-    AlignItems, Children, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
-    Reactive, RectStyle, RwSignal, StyledContainer, Text, box_item, signal,
+    Children, Container, LayoutError, LayoutItem, LayoutStyle, Reactive, RectStyle, RwSignal,
+    StyledContainer, signal,
 };
 
 use crate::form::*;
-use config::theme::{BUILT_IN_THEMES, FontRole, NordTheme, THEME_TOKENS};
+use config::theme::{ACCENTS, BUILT_IN_THEMES, NordTheme, THEME_TOKENS};
 use config::{Config, ScaleConfig, ThemeConfig};
 use ui::form::enum_row::{EnumRowProps, enum_row};
 use ui::form::labelled::labelled;
+use ui::form::swatch_row::{SwatchRowProps, swatch_row};
 use ui::form::text_row::{TextRowProps, text_row};
+use ui::form::theme_tiles::theme_tiles;
 
 /// A palette a control draws from and re-reads: the pending `[theme]` selection resolved through [`Config::theme_with`], so a swatch shows the theme being chosen rather than the one being worn.
 type Palette = Rc<dyn Fn() -> NordTheme>;
-
-/// What the theme picker cycles: every built-in palette, `custom` (which starts from nord for `[theme.colors]` to override) and `dynamic` (the wallpaper's own). Derived from [`BUILT_IN_THEMES`] so a new palette shows up here on its own.
-fn theme_options() -> &'static [&'static str] {
-    static OPTIONS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    OPTIONS.get_or_init(|| {
-        let mut options = BUILT_IN_THEMES.to_vec();
-        options.push("custom");
-        options.push(config::scheme::DYNAMIC);
-        options
-    })
-}
 
 /// The palette tokens the preview strip shows, in the order they read as a design rather than as a list: the three surfaces the shell is built out of, the two inks over them, then the hues.
 const PREVIEW_TOKENS: &[&str] = &[
@@ -38,15 +29,8 @@ const PREVIEW_TOKENS: &[&str] = &[
     "cyan", "blue", "teal", "purple",
 ];
 
-/// What `[theme] accent` accepts, in the order [`NordTheme::accent_by_name`] resolves them. `""` is the palette's own accent, which is the value a config that never set one carries.
-const ACCENT_NAMES: &[&str] = &[
-    "", "blue", "cyan", "teal", "red", "orange", "yellow", "green", "purple",
-];
-
 const SWATCH: f32 = 22.0;
 const SWATCH_RADIUS: f32 = 6.0;
-const TILE_WIDTH: f32 = 76.0;
-const TILE_HEIGHT: f32 = 40.0;
 
 /// Resolves the page's unsaved `[theme]` selection into a palette, on every read.
 ///
@@ -100,137 +84,26 @@ fn palette_preview(palette: Palette, theme: NordTheme) -> Result<Box<dyn LayoutI
     )
 }
 
-/// One tile per selectable theme, each painted in its own colours: the surface it would give the shell, the ink it would write with, and its accent. The tile a cycle button replaces — ten presses to see ten palettes is the control this page had, and the reason K2 existed.
 fn theme_swatches(
     name: RwSignal<String>,
     mode: telar::ReadSignal<String>,
     config: Config,
-    theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let config = Arc::new(config);
-    let mut tiles: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(theme_options().len());
-    for option in theme_options() {
-        tiles.push(theme_tile(option, name, mode, &config, theme)?);
-    }
-    let grid = Container::new(
-        LayoutStyle::new()
-            .flex_row()
-            .flex_wrap()
-            .gap(space::md())
-            .flex_grow(1.0)
-            .min_width(0.0),
-        tiles,
-    )?;
     labelled(
         Reactive::of(|| telar::t!("settings.field.name")),
-        Box::new(grid),
+        theme_tiles(name, mode, Arc::new(config))?,
     )
 }
 
-fn theme_tile(
-    option: &'static str,
-    name: RwSignal<String>,
-    mode: telar::ReadSignal<String>,
-    config: &Arc<Config>,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let saved = config.theme.clone();
-    let config = Arc::clone(config);
-    // Resolved with the page's *pending* mode, so switching to light repaints every tile rather than showing ten dark palettes above a mode the user has already changed.
-    let swatch_of = move || {
-        let mode = mode.get();
-        config.theme_with(&ThemeConfig {
-            name: option.to_string(),
-            mode,
-            ..saved.clone()
-        })
-    };
-
-    let ink = swatch_of.clone();
-    let label = Text::new(
-        move || option.to_string(),
-        LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, ink().text),
-    )?;
-    let dot_of = swatch_of.clone();
-    let dot = StyledContainer::new(
-        LayoutStyle::new().width(10.0).height(10.0).flex_shrink(0.0),
-        move |_r| RectStyle::filled(dot_of().accent, 5.0),
-        vec![],
-    )?;
-    let row = Container::new(
-        LayoutStyle::new()
-            .flex_row()
-            .align_items(AlignItems::CENTER)
-            .gap(space::sm()),
-        vec![Box::new(dot), box_item(label)],
-    )?;
-
-    let selected = name.read_only();
-    let fill = swatch_of;
-    let tile = StyledContainer::new(
-        LayoutStyle::new()
-            .width(TILE_WIDTH)
-            .height(TILE_HEIGHT)
-            .padding_horizontal(space::md())
-            .align_items(AlignItems::CENTER)
-            .justify_content(JustifyContent::CENTER),
-        move |_r| {
-            // Read both out before painting: `selected` and the palette closure each touch the runtime.
-            let chosen = selected.get() == option;
-            let palette = fill();
-            let border = if chosen { theme.accent } else { theme.overlay };
-            RectStyle::filled(palette.surface, SWATCH_RADIUS).with_border(telar::Border::uniform(
-                border,
-                if chosen { 2.0 } else { 1.0 },
-            ))
-        },
-        vec![Box::new(row)],
-    )?
-    .on_press(move || name.set(option.to_string()));
-    Ok(Box::new(tile))
-}
-
-/// The accents `[theme] accent` accepts, each drawn in the pending palette's own version of that hue — so "cyan" under rosé-pine is rosé-pine's cyan, which is the whole point of naming a hue rather than a hex.
-fn accent_swatches(
-    accent: RwSignal<String>,
-    palette: Palette,
-    theme: NordTheme,
-) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let mut swatches: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(ACCENT_NAMES.len());
-    for option in ACCENT_NAMES {
-        let selected = accent.read_only();
-        let palette = palette.clone();
-        let set = accent;
-        swatches.push(Box::new(
-            StyledContainer::new(
-                LayoutStyle::new().width(SWATCH).height(SWATCH),
-                move |_r| {
-                    let chosen = selected.get() == *option;
-                    let colour = palette().accent_by_name(option);
-                    let border = if chosen { theme.text } else { theme.overlay };
-                    RectStyle::filled(colour, SWATCH_RADIUS).with_border(telar::Border::uniform(
-                        border,
-                        if chosen { 2.0 } else { 1.0 },
-                    ))
-                },
-                vec![],
-            )?
-            .on_press(move || set.set(option.to_string())),
-        ));
-    }
-    let row = Container::new(
-        LayoutStyle::new()
-            .flex_row()
-            .flex_wrap()
-            .gap(space::md())
-            .flex_grow(1.0)
-            .min_width(0.0),
-        swatches,
-    )?;
-    labelled(
-        Reactive::of(|| telar::t!("settings.field.accent")),
-        Box::new(row),
+fn accent_row(accent: RwSignal<String>) -> Result<Box<dyn LayoutItem>, LayoutError> {
+    swatch_row(
+        SwatchRowProps::props()
+            .label(Reactive::of(|| telar::t!("settings.field.accent")))
+            .value(accent)
+            .tokens(Rc::<[&'static str]>::from(ACCENTS))
+            .accepts(Rc::new(NordTheme::has_accent))
+            .build(),
+        Children::default(),
     )
 }
 
@@ -265,8 +138,8 @@ pub(crate) fn theme_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let rows = vec![
         palette_preview(pending.clone(), theme)?,
-        theme_swatches(name, mode.read_only(), config.clone(), theme)?,
-        accent_swatches(accent, pending, theme)?,
+        theme_swatches(name, mode.read_only(), config.clone())?,
+        accent_row(accent)?,
         enum_row(
             EnumRowProps::props()
                 .label(Reactive::of(|| telar::t!("settings.field.color_mode")))
@@ -482,4 +355,35 @@ pub(crate) fn theme_colors_section() -> Result<Box<dyn LayoutItem>, LayoutError>
         save,
         theme,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hex_accent_is_the_pending_palettes_accent_and_lights_no_swatch() {
+        let config = Config::default();
+        let (name, mode) = (signal(config.theme.name.clone()), signal(String::new()));
+        let accent = signal("#ff8800".to_string());
+        let palette = pending_palette(
+            &config,
+            name.read_only(),
+            mode.read_only(),
+            accent.read_only(),
+        );
+        assert_eq!(
+            palette().accent,
+            telar::Color::from_hex("#ff8800").expect("a colour")
+        );
+        assert!(!ACCENTS.contains(&accent.peek().as_str()));
+    }
+
+    #[test]
+    fn the_accent_row_takes_what_the_theme_takes() {
+        assert!(NordTheme::has_accent("#ff8800"));
+        for refused in ["surface", "bad", "add", "#12345", "#ff880080"] {
+            assert!(!NordTheme::has_accent(refused), "{refused:?} accepted");
+        }
+    }
 }

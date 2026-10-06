@@ -285,7 +285,11 @@ fn saved(saving: &Saving) -> Result<(), EditError> {
         }
     };
     changed.groups[at] = components::used(&changed.groups[at], &id);
-    let ops = written.ops(&changed);
+    let followed = komponent.children.iter().flat_map(|child| {
+        let drawn = layout::InstanceId::in_komponent(&saving.area.area, &saving.group, &child.id);
+        layout::ops::reowned(&layout, &child.id, &drawn)
+    });
+    let ops = written.ops(&changed).into_iter().chain(followed).collect();
     let label = telar::t!(
         "editor.komponent.saved",
         group = saving.group.to_string(),

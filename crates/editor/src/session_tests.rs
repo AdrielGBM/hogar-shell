@@ -20,7 +20,7 @@ mod tests {
 
     use crate::mode::{self, Compositor};
     use crate::rig::{SCREEN, rig};
-    use crate::session::{self, Edit, EditError, History, Selection};
+    use crate::session::{self, Edit, EditError, Selection, Way};
 
     const MOVE: &str = "Move the clock";
 
@@ -454,10 +454,10 @@ mod tests {
         };
         let key = |ch: char| Key::Char(ch);
         let cases = [
-            (key('z'), with(true, false), Some(History::Undo)),
-            (key('Z'), with(true, true), Some(History::Redo)),
-            (key('z'), with(true, true), Some(History::Redo)),
-            (key('y'), with(true, false), Some(History::Redo)),
+            (key('z'), with(true, false), Some(Way::Undo)),
+            (key('Z'), with(true, true), Some(Way::Redo)),
+            (key('z'), with(true, true), Some(Way::Redo)),
+            (key('y'), with(true, false), Some(Way::Redo)),
             (key('z'), with(false, false), None),
             (key('y'), with(true, true), None),
             (

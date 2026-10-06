@@ -187,7 +187,13 @@ fn scalar(
         }
         Control::Colour => {
             let value = text_of(draft, path, shown);
-            rows::colour(label, help, value, Rc::from(config::theme::ACCENTS))
+            rows::colour(
+                label,
+                help,
+                value,
+                Rc::from(config::theme::ACCENTS),
+                Rc::new(ui::form::swatch_row::is_colour),
+            )
         }
         Control::Unknown(declared) => {
             let declared = *declared;

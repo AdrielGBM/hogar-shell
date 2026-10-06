@@ -13,8 +13,8 @@ mod tests {
     use config::theme::{FontRole, NordTheme};
     use config::{Config, MediaDetail, NotificationDetail};
     use layout::{
-        Area, AreaId, AreaKind, AreaStyle, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind,
-        SMALLEST_PROMPT, Site,
+        Area, AreaId, AreaKind, LayerKind, Layout, LayoutOp, Rect, ResolvedAreaKind,
+        SMALLEST_PROMPT, Site, Style,
     };
     use modules::lock::LockLayout;
     use surfaces::catalogue::Descriptors;
@@ -412,23 +412,23 @@ mod tests {
         assert!(refused(&stored(&rig)).is_empty());
     }
 
-    /// The prompt's style row says how readable its text is, live; a fill or an opacity the lock would refuse is flagged and never kept, and an area put over the prompt is refused before it is shown — each with the lock's own reason.
+    /// The prompt's style row says how readable its text is, live; a fill or an opacity the lock would refuse is flagged and never kept — each with the lock's own reason. An area listed after the prompt is kept, since the lock layer resolves with the prompt last.
     #[test]
     fn an_edit_the_lock_would_fall_back_from_is_flagged_and_not_kept() {
         let rig = rig_with("lock-contrast", |_| {});
         let _owner = Owner::new();
         let _host = enter();
         let theme = Config::default().resolve_theme();
-        let styled = |fill: &str| AreaStyle {
+        let styled = |fill: &str| Style {
             fill: Some(fill.to_string()),
-            ..AreaStyle::default()
+            ..Style::default()
         };
         assert!(lock_mode::contrast_of(&styled("text"), &theme).contains("fall back"));
         assert!(!lock_mode::contrast_of(&styled("surface"), &theme).contains("fall back"));
-        assert!(!lock_mode::contrast_of(&AreaStyle::default(), &theme).contains("fall back"));
+        assert!(!lock_mode::contrast_of(&Style::default(), &theme).contains("fall back"));
 
         let before = stored(&rig);
-        let restyled = |style: AreaStyle| {
+        let restyled = |style: Style| {
             let mut area = lock_areas(&session::draft().peek())
                 .into_iter()
                 .find(|area| area.id.as_str() == "prompt")
@@ -445,15 +445,15 @@ mod tests {
         };
         let unreadable = restyled(styled("text")).expect_err("refused");
         assert!(unreadable.to_string().contains("minimal"), "{unreadable}");
-        let faint = restyled(AreaStyle {
+        let faint = restyled(Style {
             opacity: Some(0.5),
-            ..AreaStyle::default()
+            ..Style::default()
         })
         .expect_err("refused");
         assert!(faint.to_string().contains("too faint"), "{faint}");
         assert_eq!(stored(&rig), before);
 
-        let covering = context::commit(
+        context::commit(
             "cover".to_string(),
             vec![LayoutOp::InsertArea {
                 site: lock_site(),
@@ -468,12 +468,8 @@ mod tests {
                 }),
             }],
         )
-        .expect_err("refused");
-        assert!(
-            covering.to_string().contains("stacked over the prompt"),
-            "{covering}"
-        );
-        assert_eq!(stored(&rig), before);
+        .expect("an area listed after the prompt is kept, for the prompt is always resolved last");
+        assert!(refused(&stored(&rig)).is_empty());
 
         restyled(styled("surface")).expect("a readable card is kept");
         assert!(refused(&stored(&rig)).is_empty());
@@ -483,22 +479,21 @@ mod tests {
     #[test]
     fn the_preview_falls_back_as_the_lock_would_and_says_why() {
         let _rig = rig_with("lock-preview-falls-back", |layout| {
-            layout.outputs[0].layers.lock.areas.push(Area {
-                id: AreaId::new("over"),
-                kind: Some(AreaKind::Free {
-                    rect: Some(Rect::default()),
-                    anchor: None,
-                }),
-                ..Area::default()
-            });
+            let prompt = layout.outputs[0]
+                .layers
+                .lock
+                .areas
+                .iter_mut()
+                .find(|area| area.id.as_str() == "prompt")
+                .expect("the prompt");
+            prompt.style.opacity = Some(0.2);
         });
         let _owner = Owner::new();
         let _host = enter();
         let said = draw();
         assert!(
             said.iter()
-                .any(|text| text.contains("minimal lock")
-                    && text.contains("stacked over the prompt")),
+                .any(|text| text.contains("minimal lock") && text.contains("too faint")),
             "{said:?}"
         );
         assert!(said.iter().any(|text| text == "Preview"), "{said:?}");

@@ -338,7 +338,7 @@ mod tests {
     fn a_rows_help_is_the_doc_comment_of_what_it_edits() {
         let thickness = help("AreaKind::Bar", "thickness").expect("documented");
         assert!(thickness.contains("thick"), "{thickness}");
-        assert!(help("AreaStyle", "fill").is_some());
+        assert!(help("Style", "fill").is_some());
         assert_eq!(help("AreaKind::Bar", "nothing"), None);
     }
 

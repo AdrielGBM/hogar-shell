@@ -46,8 +46,9 @@ accent = "if($battery.level < $threshold, #bf616a, $theme.accent)"
   The name is what the komponent's expressions read as `$threshold`, before any of the shell's own names; it is letters, digits and `_`,
   and neither `item` nor `index` (which a copy of a [repeated group](data-and-rules.md#repeat) reads) nor the name of a module's reading.
   A picture's path and a font's family are `text`.
-- **`children`** are written as a group's are. Their ids only have to be unique within the file. `stacked` and `repeat` may be set on
-  the komponent too, and `repeat` may read the parameters.
+- **`children`** are written as a group's are. Their ids only have to be unique within the file. `arrange` (with `cols`, `rows` and `gap`) and
+  `repeat` may be set on the komponent too, and `repeat` may read the parameters; each child places itself in it with `weight`, `cell` or
+  `rect` as a group's does.
 - **Name.** Lowercase ASCII letters, digits, `-` and `_`: the name is the file's, and a letter of another script cannot pass for a Latin one ([names](#names)).
 - **On the lock layer** a komponent may hold readings only and no actions; a use that would break that is refused.
 
@@ -65,7 +66,7 @@ parameters = { threshold = "15" }
 ```
 
 A parameter left out reads its default; a name the komponent does not declare is an error. **The komponent supplies the group's
-`children`, `stacked` and `repeat`**, so naming one replaces what the group held, and a group that holds more is a located error and the komponent wins.
+`children`, how they are arranged (`arrange`, `cols`, `rows`, `gap`) and `repeat`**, so naming one replaces what the group held, and a group that holds more is a located error and the komponent wins.
 Each child is drawn as `<area>.<group>/<child>` (`bar-top.pill/level`), so two uses never share an id or an instance's state.
 A komponent that is missing or cannot be read is one placeholder that says which file, plus a finding; the area still draws.
 

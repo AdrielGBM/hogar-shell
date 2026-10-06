@@ -5,7 +5,7 @@ title: Edit modes
 summary: One mode per layer — background, desktop, top, overlay, lock — each with the tools that layer needs, all reachable from the keyboard.
 status: stable
 compositor: any
-config: [keynav, lock]
+config: [keynav, lock, theme]
 commands: [layout]
 deps: [wlr-layer-shell, ext-session-lock]
 see_also: [layouts, popovers, data-and-rules, bars, widgets, wallpaper, lock, keybinds]
@@ -47,9 +47,14 @@ unplugged. To leave on purpose, press **Esc**, press **Done** on the strip, or r
 whatever is open above the mode first — a popover, a menu, an edit you are holding — then clears the selection, and only
 then leaves, so a stray Esc never throws away your place.
 
-The strip names the mode and the screen, and says in one line why the last thing you asked for was not done. A thin
-accent border runs round the edited screen so it is never unclear which one is being edited. While a mode is up it holds
-the keyboard, so modifiers and Esc arrive without a click.
+The **strip** sits at the foot of the screen, under the mode's toolbar, and is dragged anywhere by its grip; it stays
+where you put it, across modes, until the shell restarts. In the top mode it sits higher while the bottom edge has no
+bar, so the edge a new bar is pulled out of stays reachable. It names the mode — press the name for every layer to
+switch to — and the screen; `+` opens the mode's Add (the palette, a texture in the background mode, or a new stack in the overlay mode; the top mode has none yet); **History ▸**
+lists the undo history to jump through; **Theme…** opens the [theme popover](#the-theme); and **Keys** and **Done**. Under it, one line says what the last thing you asked
+for did where that is not plain to see — "Undone: …", "Redone: …", a fork of the built-in layout — or why it was not
+done, for six seconds. A thin accent border runs round the edited screen so it is never unclear which one is being
+edited. While a mode is up it holds the keyboard, so modifiers and Esc arrive without a click.
 
 On the background and desktop layers the mode raises that layer's window above your application windows for the
 session, so you edit the real items rather than copies of them; on a compositor that cannot move a layer window, the
@@ -60,7 +65,10 @@ edit. `lock` is refused while the session is locked.
 
 ## What every mode shares
 
-- **Select, then act.** Click an item, area or group to select it; the tools of the mode act on the selection.
+- **Select, then act.** Click an item, area or group to select it; the tools of the mode act on the selection. As the
+  pointer passes over the layer, a thin outline shows what a click there would select. A selected group or widget has
+  its size under it — in cells where it sits on a grid's cells, then in pixels — and a double-click customizes what it
+  selects, as Enter does.
 - **Drag with the pointer** — and everything a drag does has a key too, so nothing needs a pointer:
 
   | Keys | Does |
@@ -82,15 +90,30 @@ edit. `lock` is refused while the session is locked.
   A held key is one undo entry however long the keyboard repeats it, and is previewed until you let go.
 - **Context menus.** Right-click an item for its own actions plus Customize, Remove, Reset, the move to an area that draws
   it the other way (chip to widget and back, keeping its id, options and state), and save as a [komponent](bundles.md#komponents).
-  Right-click an area for Customize and what its kind adds.
+  Right-click an area for Customize and what its kind adds. On the layer being edited, both menus end with Undo, Redo,
+  History and Theme….
 - **Every change is a layout edit.** One gesture, one popover, one key press, one script line is one undo entry; Ctrl+Z
-  and `hogar-shell layout undo` take back the same history, whatever made the change. The first edit of the built-in
-  layout [forks it](layouts.md#files).
+  and `hogar-shell layout undo` take back the same history, whatever made the change. The history list on the strip
+  and in the context menu shows every entry, the one the layout is at marked, each with how many steps back or forward it
+  is (redo entries dimmed); picking one walks there one ordinary undo or redo at a time. The first edit of the built-in
+  layout [forks it](layouts.md#files), and the strip says so.
 - **Where the edit is written.** Into the narrowest output rule of the layout that already writes the thing, which is where
   the value it replaces came from. Something only a layout it extends writes gets a partial entry in the narrowest rule
   that covers the screen, naming just what changed, so the change lies over the inherited area instead of copying it.
   With `w`, the change goes into that workspace's rule instead, made for it if there is none — and resolves on that
   workspace only. The top layer has no workspace variant: bars reserve space, which a workspace rule may not change.
+
+## The theme
+
+**Theme…** on the strip, or in the context menu of anything on the layer being edited, opens a popover for how the whole
+shell looks: the palette (one tile per palette, painted in its own colours), the accent (a hue swatch or a `#rrggbb`),
+the base radius, the opacity of the plates and the size of the text. Every change shows at once on every bar, widget and
+other area. The theme is `[theme]` config rather than layout, so it is **outside the layout's undo history**: closing the
+popover any way but Esc writes it to `config.toml`, keeping the comments and everything else the file says, and **Esc**
+or **Cancel** puts back the theme it opened with.
+
+Before the theme is saved, the popover runs the lock screen's own check against it: where the lock would fall back to
+the minimal one with it — a prompt fill its text would no longer be readable on, say — the popover says so and why.
 
 ## Tools by layer
 
@@ -110,6 +133,8 @@ drag to 45°), and a handle per stop, at most eight. See [Wallpaper](../surfaces
 Grids of widgets placed by explicit cells, which are where the grid's rectangle puts them whatever is on it. `a` opens
 the **palette** of every module that draws as a widget and the komponents you have saved. A widget
 dropped where another is never deletes it: the one in the way moves to the free cells nearest, and nothing else moves.
+A widget being dragged leaves a translucent copy under the pointer, with a note beside it saying where it would land:
+the cell, counted from one, or that it goes into a container or onto a stack.
 Drop a widget on the middle of another to stack the two into a **Smart Stack**, and drag it out to make it a widget again;
 the corner handle steps its size through S, M and L, or use Ctrl+arrows. Shift+N makes a grid; Ctrl+Shift+arrows stack a
 widget onto the one that way. See [Desktop widgets](../surfaces/widgets.md).

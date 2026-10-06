@@ -3,7 +3,7 @@
 pub(crate) mod background;
 pub(crate) mod bars;
 pub(crate) mod desktop;
-mod gesture;
+pub(crate) mod gesture;
 pub(crate) mod grid;
 pub(crate) mod lock;
 pub(crate) mod overlay;

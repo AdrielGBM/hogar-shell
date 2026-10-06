@@ -180,4 +180,53 @@ mod tests {
             "no workspace is visible while the screen is locked"
         );
     }
+
+    /// Restyling an instance the layout only inherits writes its id and the one key that changed into the narrowest rule covering the screen, so the instance keeps following everything else the layout it extends says about it.
+    #[test]
+    fn an_inherited_instance_restyled_on_one_monitor_writes_one_key() {
+        let mut layout = Layout {
+            id: LayoutId::new("mine"),
+            extends: Some(layout::built_in().id),
+            ..Layout::default()
+        };
+        for pattern in ["*", "DP-*"] {
+            layout.outputs.push(OutputRule {
+                matches: OutputMatch(pattern.to_string()),
+                ..OutputRule::default()
+            });
+        }
+        let written = Written::area(&layout, Some("DP-1"), LayerKind::Top, &bar(), None)
+            .expect("a rule covers it");
+        let clock = written.instance(&GroupId::new("center"), &InstanceId::new("clock"));
+        let mut shadowed = clock.instance.clone();
+        shadowed.style.shadow = Some(2);
+        layout::ops::apply_all(&mut layout, &clock.ops(&shadowed)).expect("it applies");
+
+        let text = toml::to_string(&layout).expect("it serializes");
+        let file: toml::Table = toml::from_str(&text).expect("it parses back");
+        let rule = &file["outputs"].as_array().expect("its rules")[1];
+        let entry = rule["layers"]["top"]["areas"][0]["groups"][0]["children"][0]
+            .as_table()
+            .expect("the instance's entry");
+        assert_eq!(entry.keys().collect::<Vec<_>>(), ["id", "style"], "{text}");
+        assert_eq!(
+            entry["style"]
+                .as_table()
+                .map(|style| style.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["shadow"]),
+            "{text}"
+        );
+
+        let known = layout::Library::of_layouts([layout::built_in()]);
+        let (screen, _) = layout::resolve(&layout, &known, "DP-1", None);
+        let drawn = screen
+            .instances()
+            .find(|it| it.id.as_str() == "clock")
+            .expect("the clock is still drawn");
+        assert_eq!(drawn.module, "clock", "what it shows is inherited");
+        assert_eq!(drawn.style.shadow, Some(2));
+        let (elsewhere, _) = layout::resolve(&layout, &known, "eDP-1", None);
+        let other = elsewhere.instances().find(|it| it.id.as_str() == "clock");
+        assert_eq!(other.map(|it| it.style.shadow), Some(None));
+    }
 }

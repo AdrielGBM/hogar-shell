@@ -203,18 +203,21 @@ pub fn action(label: impl Fn() -> String + 'static, act: impl Fn() + 'static) ->
     )
 }
 
-/// One of the theme's colours, by name.
+/// A theme token or a hex colour, typed, picked from the swatches or mixed from its channels.
 pub fn colour(
     label: Reactive<String>,
     help: Option<String>,
     value: RwSignal<String>,
     tokens: Rc<[&'static str]>,
+    accepts: Rc<dyn Fn(&str) -> bool>,
 ) -> Built {
     let row = swatch_row(
         SwatchRowProps::props()
             .label(label.clone())
             .value(value)
             .tokens(tokens)
+            .accepts(accepts)
+            .placeholder(Reactive::of(|| telar::t!("editor.popover.colour_hint")))
             .build(),
         Children::default(),
     )?;

@@ -49,6 +49,19 @@ impl Transaction {
     }
 }
 
+/// The labels of the undo history: what each undo would take back, the oldest first, so the last is where the layout is now; and what each redo would put back, the next one first.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct History {
+    pub undo: Vec<String>,
+    pub redo: Vec<String>,
+}
+
+impl History {
+    pub fn is_empty(&self) -> bool {
+        self.undo.is_empty() && self.redo.is_empty()
+    }
+}
+
 /// A committed transaction and the operations that undo it.
 #[derive(Clone, Debug)]
 struct Done {
@@ -166,7 +179,7 @@ impl LayoutStore {
                     seen_komponents.insert(id.clone(), held);
                     library.komponents.insert(id, komponent);
                 }
-                Err(why) => report.error(Finding::new(path, "", Message::verbatim(why))),
+                Err(unreadable) => report.error(*unreadable),
             }
         }
 
@@ -251,7 +264,7 @@ impl LayoutStore {
                     self.seen_komponents.insert(id.clone(), held);
                     self.library.komponents.insert(id, komponent);
                 }
-                Err(why) => report.error(Finding::new(path, "", Message::verbatim(why))),
+                Err(unreadable) => report.error(*unreadable),
             }
         }
         self.library
@@ -529,6 +542,19 @@ impl LayoutStore {
         self.undone.last().map(|entry| entry.label.as_str())
     }
 
+    /// Every entry an undo and a redo would walk through, for a history list that jumps several at once.
+    pub fn history(&self) -> History {
+        History {
+            undo: self.done.iter().map(|entry| entry.label.clone()).collect(),
+            redo: self
+                .undone
+                .iter()
+                .rev()
+                .map(|entry| entry.label.clone())
+                .collect(),
+        }
+    }
+
     fn mark(&mut self, id: &LayoutId) {
         self.dirty.insert(id.clone());
         self.changed_at = Some(Instant::now());
@@ -769,10 +795,16 @@ fn komponent_files(dir: &Path) -> Vec<(PathBuf, KomponentId)> {
         .collect()
 }
 
-/// Reads one komponent and what its file held.
-pub fn read_komponent(path: &Path) -> Result<(Komponent, u64), String> {
-    let text = config::fingerprint::read_layout_text(path).map_err(|why| why.to_string())?;
-    let komponent: Komponent = toml::from_str(&text).map_err(|why| why.to_string())?;
+/// Reads one komponent and what its file held, or why it cannot be read.
+pub fn read_komponent(path: &Path) -> Result<(Komponent, u64), Box<Finding>> {
+    let unreadable = |why: String| Box::new(Finding::new(path, "", Message::verbatim(why)));
+    let text =
+        config::fingerprint::read_layout_text(path).map_err(|why| unreadable(why.to_string()))?;
+    let komponent: Komponent = toml::from_str(&text).map_err(|why| {
+        crate::validate::retired_in_komponent(&text, path)
+            .map(Box::new)
+            .unwrap_or_else(|| unreadable(why.to_string()))
+    })?;
     Ok((komponent, held(text.as_bytes())))
 }
 

@@ -298,6 +298,15 @@ fn painted_rect(command: &DrawCommand) -> Option<Rect> {
     }
 }
 
+/// A `Rect` with no fill, border or shadow draws nothing at any size, which is all a `display: none` container leaves behind: telar still emits its box at 0x0 and no command names the node it came from.
+fn is_invisible_box(command: &DrawCommand) -> bool {
+    matches!(
+        command,
+        DrawCommand::Rect { style, .. }
+            if style.fill.is_none() && style.border.is_none() && style.shadow.is_none()
+    )
+}
+
 /// Whether this command puts ink on the screen at all.
 ///
 /// Wider than [`painted_rect`] by exactly the two commands that carry artwork: every icon in the shell is a path, and an `icon_glyph` chip — `battery`, `volume`, `network`, `mic`, `brightness`, `lockstatus` — draws nothing else. Counting only boxes made those modules invisible to this file rather than measured by it, which is why "did this draw anything" reported them blank on a machine where they render perfectly.
@@ -400,7 +409,7 @@ fn nothing_a_preview_draws_collapses_to_nothing() {
             let Some(rect) = painted_rect(&command) else {
                 continue;
             };
-            if rect.width >= COLLAPSED && rect.height >= COLLAPSED {
+            if is_invisible_box(&command) || (rect.width >= COLLAPSED && rect.height >= COLLAPSED) {
                 continue;
             }
             collapsed.push(format!(
@@ -679,6 +688,8 @@ fn instance(module: &str, representation: layout::Representation) -> layout::Res
         representation,
         options: toml::Table::new(),
         bindings: std::collections::BTreeMap::new(),
+        style: layout::Style::default(),
+        placement: None,
         actions: std::collections::BTreeMap::new(),
     }
 }
@@ -690,21 +701,67 @@ fn group(
     layout::ResolvedGroup {
         id: layout::GroupId::new("swept"),
         kind,
-        stacked: false,
+        arrange: None,
+        cols: layout::Arrange::TRACKS,
+        rows: layout::Arrange::TRACKS,
+        gap: None,
         repeat: None,
         komponent: None,
+        style: layout::Style::default(),
         children,
     }
 }
 
-fn stacked(
+fn paged(
     kind: layout::GroupKind,
     children: Vec<layout::ResolvedInstance>,
 ) -> layout::ResolvedGroup {
     layout::ResolvedGroup {
-        stacked: true,
+        arrange: Some(layout::Arrange::Pages),
         ..group(kind, children)
     }
+}
+
+/// One group of each arrangement that shares its box out, two children each placed the way it takes, on a 2 × 2 of 4 × 4 cells.
+fn containers() -> Vec<layout::ResolvedGroup> {
+    use layout::{Arrange, ChildCell, GroupKind, Placement, Representation as Placed};
+    let placed = |arrange: Arrange, index: u32| match arrange {
+        Arrange::Grid => Placement::Cell(ChildCell::at(index, 0)),
+        Arrange::Free => Placement::Rect(layout::Rect {
+            x: 0.25 * index as f32,
+            y: 0.25 * index as f32,
+            w: 0.5,
+            h: 0.5,
+        }),
+        _ => Placement::Weight(1.0 + index as f32),
+    };
+    [Arrange::Row, Arrange::Column, Arrange::Grid, Arrange::Free]
+        .into_iter()
+        .zip(0u32..)
+        .map(|(arrange, at)| {
+            let children = [("clock", Placed::WidgetM), ("visualiser", Placed::WidgetL)]
+                .into_iter()
+                .zip(0u32..)
+                .map(
+                    |((module, representation), index)| layout::ResolvedInstance {
+                        placement: Some(placed(arrange, index)),
+                        ..instance(module, representation)
+                    },
+                )
+                .collect();
+            let cell = GroupKind::Cell {
+                col: at % 2 * 4,
+                row: at / 2 * 4,
+                col_span: 4,
+                row_span: 4,
+            };
+            layout::ResolvedGroup {
+                id: layout::GroupId::new(format!("container-{}", arrange.as_str())),
+                arrange: Some(arrange),
+                ..group(cell, children)
+            }
+        })
+        .collect()
 }
 
 fn area_of(
@@ -719,7 +776,7 @@ fn area_of(
         reserve,
         above_fullscreen: false,
         within: layout::Within::Output,
-        style: layout::AreaStyle::default(),
+        style: layout::Style::default(),
         visible: None,
         actions: Default::default(),
         groups,
@@ -738,7 +795,7 @@ fn every_area() -> Vec<layout::ResolvedArea> {
                 GroupKind::Zone { zone: Zone::Center },
                 vec![instance("clock", Placed::Chip)],
             ),
-            stacked(
+            paged(
                 GroupKind::Zone { zone: Zone::End },
                 vec![
                     instance("notes", Placed::Chip),
@@ -826,6 +883,16 @@ fn every_area() -> Vec<layout::ResolvedArea> {
         ));
     }
     areas.push(area_of(
+        "containers".into(),
+        ResolvedAreaKind::Grid {
+            rect: layout::Rect::default(),
+            cell: 80.0,
+            gap: 16.0,
+            anchor: Anchor::TopLeft,
+        },
+        containers(),
+    ));
+    areas.push(area_of(
         "free".into(),
         ResolvedAreaKind::Free {
             rect: layout::Rect {
@@ -836,7 +903,7 @@ fn every_area() -> Vec<layout::ResolvedArea> {
             },
             anchor: layout::Anchor::TopLeft,
         },
-        vec![stacked(
+        vec![paged(
             GroupKind::Zone { zone: Zone::Start },
             vec![instance("clock", Placed::Card)],
         )],

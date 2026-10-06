@@ -42,12 +42,6 @@ const STOP_STEP: f32 = 0.01;
 /// The insets a newly sliced image starts with where its size is not known yet.
 const FIRST_INSET: f32 = 16.0;
 
-/// The colours a gradient's stops are picked from.
-const STOP_COLOURS: &[&str] = &[
-    "base", "surface", "overlay", "muted", "text", "blue", "cyan", "teal", "red", "orange",
-    "yellow", "green", "purple",
-];
-
 /// Why a gradient kept the stops it had.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
@@ -566,7 +560,8 @@ impl Parts {
                 label!("editor.texture.stop_colour"),
                 help("GradientStop", "color"),
                 self.stop_colour,
-                Rc::from(STOP_COLOURS),
+                Rc::from(config::theme::PAINT_TOKENS),
+                Rc::new(ui::form::swatch_row::is_colour),
             )?,
             rows::action(
                 || telar::t!("editor.texture.add_stop"),

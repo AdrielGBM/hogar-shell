@@ -766,6 +766,9 @@ The `temperature` module. `sensor` names an hwmon chip (`k10temp`, `coretemp`) o
 Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dynamic` (a palette generated from the current wallpaper); the rest override individual tokens on top of it — numbers directly, `[theme.scale]` proportionally, and `[theme.colors]` per-token hex (`base = "#2e3440"`), keyed by the same names [`NordTheme::accent_by_name`] uses. Any unset field keeps the built-in's value.
 
 - **`accent`** · default `"cyan"`
+
+  One of the palette's hues by name (`blue`, `cyan`, `teal`, `red`, `orange`, `yellow`, `green`, `purple`), an opaque `#rrggbb` (the `#` and six digits; `bad`, `add` and `#ff880080` are refused), or empty for the palette's own accent.
+
 - **`fallback`** · default `"nord"`
 
   The palette a `dynamic` theme falls back to before a wallpaper has been quantised — on the very first start, or with no wallpaper set at all.

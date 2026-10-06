@@ -43,7 +43,7 @@ driving a mode change yet.
 `[theme.colors]` overrides individual tokens on top of whichever palette is selected, as `#rrggbb`. Setting
 `[theme] name = "custom"` starts from nord and lets the config say the rest.
 
-`[theme] accent` picks the accent token; a module can override it for itself with `[modules.<id>] accent`.
+`[theme] accent` picks the accent: one of the palette's hues by name, or an opaque `#rrggbb` (the `#` and six digits; a colour without its `#`, a three-digit one or one with alpha is reported by `config check` and the palette's own accent stays). The Theme popover and the settings page offer the same values, so a theme token such as `surface` is refused there too. A module can override it for itself with `[modules.<id>] accent`.
 
 ## Type and scale
 

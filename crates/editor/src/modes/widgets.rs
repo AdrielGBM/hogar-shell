@@ -11,7 +11,7 @@ use telar::{
 };
 
 use config::theme::NordTheme;
-use layout::{AreaId, GroupId, InstanceId, LayerKind, ResolvedArea, ResolvedAreaKind};
+use layout::{AreaId, Arrange, GroupId, InstanceId, LayerKind, ResolvedArea, ResolvedAreaKind};
 use surfaces::reconcile;
 use surfaces::rects::{self, Node, Part};
 use ui::descriptor::Built;
@@ -21,7 +21,7 @@ use crate::mode::{Mode, said};
 use crate::session::{self, Edit, EditError, Selection};
 
 use super::desktop::{self, Landing};
-use super::gesture::{self, pressable};
+use super::gesture::{self, Hint, pressable};
 use super::grid::{self, Cells, Room};
 use super::palette::{self, Pick};
 
@@ -159,6 +159,28 @@ pub(crate) fn landing_at(
         },
         Aim::Cells(geometry.rect_of(cells)),
     ))
+}
+
+/// What the tag at the pointer says of `landing` on the grid `onto`: the cell the carried widget's corner goes on, counted from one, or what letting go onto a group does — joins a container, or stacks.
+fn landing_tag(grids: &[(Geometry, ResolvedArea)], onto: &AreaId, landing: &Landing) -> String {
+    match landing {
+        Landing::Cell { col, row } => {
+            telar::t!("editor.pointer.cell", col = col + 1, row = row + 1)
+        }
+        Landing::Onto(group) => {
+            let contained = grids
+                .iter()
+                .filter(|(geometry, _)| geometry.area == *onto)
+                .flat_map(|(_, area)| &area.groups)
+                .find(|held| held.id == *group)
+                .and_then(|held| held.arrange)
+                .is_some_and(|arrange| arrange != Arrange::Pages);
+            match contained {
+                true => telar::t!("editor.pointer.into"),
+                false => telar::t!("editor.pointer.stack"),
+            }
+        }
+    }
 }
 
 /// The desktop mode's layer over the edited screen.
@@ -310,6 +332,8 @@ fn target(
 struct Carried {
     node: Node,
     grab: (f32, f32),
+    /// How big the widget was drawn when it was taken hold of.
+    size: (f32, f32),
     footprint: Cells,
     grids: Grids,
 }
@@ -339,26 +363,38 @@ impl Carried {
         Self {
             node,
             grab: (point.0 - rect.x, point.1 - rect.y),
+            size: (rect.width, rect.height),
             footprint,
             grids,
         }
     }
 
-    /// Previews where the widget lands with the pointer at `point`, and outlines it; over no grid, the layout stays as it was.
+    /// Previews where the widget lands with the pointer at `point`, and outlines it, with its ghost under the pointer and a tag beside it saying where it lands; over no grid, the layout stays as it was.
     fn preview(&self, edit: &Edit, point: (f32, f32)) {
         let own = match &self.node.part {
             Part::Instance(group, _) => Some((&self.node.area, group)),
             _ => None,
         };
-        let planned = landing_at(&self.grids, point, self.grab, self.footprint, own).and_then(
-            |(onto, landing, aimed)| {
-                let before = edit.transaction().before()?;
-                let desktop = reconcile::desktop_now(self.node.output.as_deref())?;
-                desktop::dropped(&before, &desktop, &self.node, &onto, &landing)
-                    .ok()
-                    .map(|ops| (ops, aimed))
-            },
-        );
+        let landed = landing_at(&self.grids, point, self.grab, self.footprint, own);
+        gesture::hint().set(Some(Hint {
+            pointer: point,
+            tag: landed
+                .as_ref()
+                .map(|(onto, landing, _)| landing_tag(&self.grids, onto, landing)),
+            ghost: Some(Rect::new(
+                point.0 - self.grab.0,
+                point.1 - self.grab.1,
+                self.size.0,
+                self.size.1,
+            )),
+        }));
+        let planned = landed.and_then(|(onto, landing, aimed)| {
+            let before = edit.transaction().before()?;
+            let desktop = reconcile::desktop_now(self.node.output.as_deref())?;
+            desktop::dropped(&before, &desktop, &self.node, &onto, &landing)
+                .ok()
+                .map(|ops| (ops, aimed))
+        });
         gesture::aimed(edit, planned, aim());
     }
 }

@@ -29,9 +29,9 @@ use crate::rects;
 use config::theme::NordTheme;
 use config::{Align, Config, Edge};
 use layout::{
-    Anchor, AreaId, AreaStyle, Blend, Fit, GroupId, GroupKind, InstanceId as PlacedId, LayerKind,
+    Anchor, AreaId, Blend, Fit, GroupId, GroupKind, InstanceId as PlacedId, LayerKind,
     Paint as AreaPaint, Rect, Representation as Placed, ResolvedArea, ResolvedAreaKind,
-    ResolvedGroup, ResolvedInstance, Tile, Transition, Zone,
+    ResolvedGroup, ResolvedInstance, Sides, Style, Tile, Transition, Zone,
 };
 use services::wallpaper;
 use ui::descriptor::Built;
@@ -208,7 +208,7 @@ pub fn empty_space(
 }
 
 /// Whether an area [`dressed`] in `style` paints a fill, which is what makes it claim the pointer.
-pub fn is_filled(style: &AreaStyle, theme: &NordTheme) -> bool {
+pub fn is_filled(style: &Style, theme: &NordTheme) -> bool {
     style.paint(theme).is_some_and(|fill| fill.a > 0.0)
 }
 
@@ -393,14 +393,15 @@ pub fn moves_only(was: &ResolvedArea, now: &ResolvedArea) -> bool {
     }
     placed_as_before == *was
 }
-
 /// How many cells a grid `area` placed at `region` has room for: every whole cell that fits inside its padding, never less than one each way.
 fn room_in(area: &ResolvedArea, region: telar::Rect, cell: f32, gap: f32) -> Footprint {
-    let pad = 2.0 * area.style.padding.unwrap_or(0.0);
-    let fitting = |length: f32| (((length - pad + gap) / (cell + gap).max(1.0)).floor() as u16).max(1);
+    let pad = padding_of(&area.style);
+    let fitting = |length: f32, pad: f32| {
+        (((length - pad + gap) / (cell + gap).max(1.0)).floor() as u16).max(1)
+    };
     Footprint {
-        columns: fitting(region.width),
-        rows: fitting(region.height),
+        columns: fitting(region.width, pad.horizontal()),
+        rows: fitting(region.height, pad.vertical()),
     }
 }
 
@@ -427,10 +428,10 @@ pub fn grid_block(area: &ResolvedArea, region: telar::Rect) -> Option<telar::Rec
     else {
         return None;
     };
-    let pad = area.style.padding.unwrap_or(0.0);
+    let pad = padding_of(&area.style);
     let (width, height) = (
-        (region.width - 2.0 * pad).max(0.0),
-        (region.height - 2.0 * pad).max(0.0),
+        (region.width - pad.horizontal()).max(0.0),
+        (region.height - pad.vertical()).max(0.0),
     );
     let extent = lattice(area, region)?.extent(cell, gap);
     let (vertical, horizontal) = anchored(anchor);
@@ -440,8 +441,8 @@ pub fn grid_block(area: &ResolvedArea, region: telar::Rect) -> Option<telar::Rec
         Align::End => room,
     };
     Some(telar::Rect::new(
-        region.x + pad + offset(horizontal, width - extent.width),
-        region.y + pad + offset(vertical, height - extent.height),
+        region.x + pad.left() + offset(horizontal, width - extent.width),
+        region.y + pad.top() + offset(vertical, height - extent.height),
         extent.width,
         extent.height,
     ))
@@ -878,7 +879,7 @@ fn blank() -> Arc<ImageData> {
 
 /// The pointer stops only where the fill can be seen ([`painted_chrome`]); a bar never comes through here, because its strip is its paint.
 pub fn dressed(
-    style: &AreaStyle,
+    style: &Style,
     theme: &NordTheme,
     layout: LayoutStyle,
     children: Vec<Box<dyn LayoutItem>>,
@@ -891,11 +892,7 @@ pub fn dressed(
         ..RectStyle::default()
     };
     Ok(painted_chrome(
-        StyledContainer::new(
-            layout.padding_all(style.padding.unwrap_or(0.0)),
-            move |_| paint,
-            children,
-        )?,
+        StyledContainer::new(padded(layout, style.padding), move |_| paint, children)?,
         fill.unwrap_or(Color::TRANSPARENT),
     ))
 }
@@ -911,7 +908,21 @@ fn frosted(painted: StyledContainer, area: &ResolvedArea, surround: Surround) ->
     }
 }
 
-fn corners(style: &AreaStyle) -> BorderRadius {
+/// `layout` holding its contents off each side by what `padding` says there, and by nothing where it says nothing.
+pub fn padded(layout: LayoutStyle, padding: Option<Sides>) -> LayoutStyle {
+    let sides = padding.unwrap_or(Sides::all(0.0));
+    layout
+        .padding_top(sides.top())
+        .padding_right(sides.right())
+        .padding_bottom(sides.bottom())
+        .padding_left(sides.left())
+}
+
+fn padding_of(style: &Style) -> Sides {
+    style.padding.unwrap_or(Sides::all(0.0))
+}
+
+fn corners(style: &Style) -> BorderRadius {
     style
         .radius
         .map_or(BorderRadius::zero(), BorderRadius::from)
@@ -919,7 +930,7 @@ fn corners(style: &AreaStyle) -> BorderRadius {
 
 /// A picture claims the pointer only where the layout binds a gesture to its empty space ([`empty_space`]): otherwise it is behind the shell, not a part of it to press.
 fn picture(
-    style: &AreaStyle,
+    style: &Style,
     under: Option<Color>,
     theme: &NordTheme,
     layout: LayoutStyle,
@@ -935,15 +946,11 @@ fn picture(
         radius: corners(style),
         ..RectStyle::default()
     };
-    StyledContainer::new(
-        layout.padding_all(style.padding.unwrap_or(0.0)),
-        move |_| paint,
-        children,
-    )
+    StyledContainer::new(padded(layout, style.padding), move |_| paint, children)
 }
 
 /// Only the paint is cut, so a gesture bound to the region answers over the whole of its box.
-fn rounded(style: &AreaStyle, picture: StyledContainer) -> Box<dyn LayoutItem> {
+fn rounded(style: &Style, picture: StyledContainer) -> Box<dyn LayoutItem> {
     match style.radius {
         Some(radius) => Box::new(ClippedItem::new(
             Box::new(picture),
@@ -1056,7 +1063,7 @@ fn arranged(
         }
         None => {
             // A stack is the one child of the box its placement gives the group, so it is packed where the group would be: a dock's end zone packs it to the end instead of it stretching across the run.
-            let items = match group.stacked {
+            let items = match group.is_pages() {
                 true => vec![smart_stack(
                     key,
                     &group.children,
@@ -1084,7 +1091,7 @@ fn arranged(
 /// Builds one instance of a group, under the surround it is handed — which a Smart Stack hands it again whenever it is cycled.
 pub(crate) type BuildCopy = Rc<dyn Fn(&ResolvedInstance, Surround) -> Built>;
 
-/// `group`'s children once per item of `repeat`, as what fills the group's own box: each copy a child of the box keyed by its index, so a list that grows or shrinks adds or drops copies at its end and leaves the others built; or, stacked, the copies as the pages of a stack laid out by `pages`, the stack built again only when how many there are changes. A `repeat` that cannot be read fills nothing.
+/// `group`'s children once per item of `repeat`, as what fills the group's own box: each copy a child of the box keyed by its index, so a list that grows or shrinks adds or drops copies at its end and leaves the others built; or, in a `pages` group, the copies as the pages of a stack laid out by `pages`, the stack built again only when how many there are changes. A `repeat` that cannot be read fills nothing.
 pub(crate) fn copies(
     group: &ResolvedGroup,
     repeat: Option<Repeat>,
@@ -1104,7 +1111,7 @@ pub(crate) fn copies(
             build(copy, surround)
         })
     };
-    let slot = match group.stacked {
+    let slot = match group.is_pages() {
         true => telar::fragment(
             move || vec![repeat.copies(&children)],
             |copies: &Vec<ResolvedInstance>| copies.len(),
@@ -1578,7 +1585,7 @@ fn footprint(instance: &ResolvedInstance) -> Footprint {
     }
 }
 
-/// The cells a group covers: the span it was placed with, widened to hold its instances down the column they are laid out in — or, stacked, the largest of them.
+/// The cells a group covers: the span it was placed with, widened to hold its instances down the column they are laid out in — or, in a `pages` group, the largest of them.
 pub fn cells_of(group: &ResolvedGroup) -> Footprint {
     let asked = match group.kind {
         GroupKind::Cell {
@@ -1593,7 +1600,7 @@ pub fn cells_of(group: &ResolvedGroup) -> Footprint {
         },
     };
     // A Smart Stack shows one child at a time, so it covers the largest of them; any other group is a column of all of them.
-    let one_at_a_time = group.stacked;
+    let one_at_a_time = group.is_pages();
     let held = group.children.iter().map(footprint).fold(
         Footprint {
             columns: 0,
@@ -1690,7 +1697,7 @@ mod tests {
         track_layout,
     };
 
-    use layout::{AreaId, AreaStyle, GroupId, InstanceId as PlacedId};
+    use layout::{AreaId, Arrange, GroupId, InstanceId as PlacedId, Style};
     use ui::descriptor::{Input, ModuleDescriptor, Representations, WidgetDef};
 
     fn instance(module: &str, representation: Placed) -> ResolvedInstance {
@@ -1700,6 +1707,8 @@ mod tests {
             representation,
             options: toml::Table::new(),
             bindings: BTreeMap::new(),
+            style: Style::default(),
+            placement: None,
             actions: BTreeMap::new(),
         }
     }
@@ -1708,16 +1717,20 @@ mod tests {
         ResolvedGroup {
             id: GroupId::new("run"),
             kind,
-            stacked: false,
+            arrange: None,
+            cols: Arrange::TRACKS,
+            rows: Arrange::TRACKS,
+            gap: None,
             repeat: None,
             komponent: None,
+            style: Style::default(),
             children,
         }
     }
 
     fn stacked_group(kind: GroupKind, children: Vec<ResolvedInstance>) -> ResolvedGroup {
         ResolvedGroup {
-            stacked: true,
+            arrange: Some(Arrange::Pages),
             ..group(kind, children)
         }
     }
@@ -1729,7 +1742,7 @@ mod tests {
             reserve: false,
             above_fullscreen: false,
             within: layout::Within::Output,
-            style: AreaStyle::default(),
+            style: Style::default(),
             visible: None,
             actions: Default::default(),
             groups,
@@ -2143,12 +2156,13 @@ mod tests {
             },
             vec![group(cell(0, 0), vec![instance("probe", Placed::WidgetS)])],
         );
-        placed.style = AreaStyle {
+        placed.style = Style {
             fill: Some("#ff0000".to_string()),
             radius: Some(layout::Corners::each(1.0, 2.0, 3.0, 4.0)),
             opacity: Some(0.5),
-            padding: Some(10.0),
+            padding: Some(layout::Sides::all(10.0)),
             backdrop: None,
+            ..Style::default()
         };
         let tree = drawn(build(&placed, surrounded(&config)).expect("a grid builds"));
 
@@ -2177,9 +2191,9 @@ mod tests {
         );
 
         let theme = config.resolve_theme();
-        placed.style = AreaStyle {
+        placed.style = Style {
             fill: Some("surface".to_string()),
-            ..AreaStyle::default()
+            ..Style::default()
         };
         let tree = drawn(build(&placed, surrounded(&config)).expect("a grid builds"));
         assert_eq!(

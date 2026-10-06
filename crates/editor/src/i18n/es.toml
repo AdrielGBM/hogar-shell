@@ -34,6 +34,7 @@ reset = "Restablecer"
 add = "Añadir"
 remove = "Quitar"
 new_name = "Nombre nuevo"
+colour_hint = "token o #hex"
 
 [editor.expr]
 visible = "Visible mientras"
@@ -135,6 +136,7 @@ wallpaper_region = "región del fondo"
 texture = "textura"
 dock = "dock"
 free = "área"
+panel = "panel"
 prompt = "indicador"
 
 [editor.menu.trigger]
@@ -436,3 +438,42 @@ add = "Añadir componente"
 start = "Al principio"
 center = "En el medio"
 end = "Al final"
+
+[editor.pointer]
+cells = "{cols} × {rows} celdas · {width} × {height}"
+pixels = "{width} × {height}"
+cell = "col {col} · fila {row}"
+into = "Meter en el contenedor"
+stack = "Apilar"
+
+[editor.strip]
+grip = "Arrastrar para mover la tira"
+layers = "Cambiar de capa"
+add = "Añadir"
+forked = "El diseño integrado es de solo lectura: se ha bifurcado en '{name}'"
+
+[editor.history]
+title = "Historial"
+undo = "Deshacer"
+redo = "Rehacer"
+undone = "Deshecho: {label}"
+redone = "Rehecho: {label}"
+start = "Al empezar"
+now = "ahora"
+back = "{steps} atrás"
+forward = "{steps} adelante"
+
+[editor.theme]
+open = "Tema…"
+title = "Tema"
+palette = "Paleta"
+accent = "Acento"
+shape = "Forma"
+radius = "Radio base"
+opacity = "Opacidad de las placas"
+text = "Texto"
+size = "Tamaño"
+note = "Se guarda en config.toml al cerrar, fuera del deshacer del diseño; Esc o Cancelar lo devuelve como estaba al abrir"
+lock_falls_back = "Con este tema la pantalla de bloqueo pasaría al bloqueo mínimo — {why}"
+cancel = "Cancelar (Esc)"
+not_saved = "No se guardó el tema: {why}"

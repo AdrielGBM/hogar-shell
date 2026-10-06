@@ -381,9 +381,12 @@ impl Pending {
             return;
         }
         let committed = match layouts::read(|store| store.active_id().clone()) {
-            Some(active) => {
-                layouts::commit(layout::Transaction::new(self.label.clone(), active, ops))
-            }
+            Some(active) => layouts::commit(layout::Transaction::new(
+                self.label.clone(),
+                active.clone(),
+                ops,
+            ))
+            .map(|()| say_if_forked(&active)),
             None => Err(layouts::no_store()),
         };
         if let Err(why) = committed {
@@ -397,6 +400,18 @@ impl Pending {
                 DRAFT.with(|draft| draft.set(stored));
             }
         }
+    }
+}
+
+/// Says in the strip that the edit just committed to `was` went into a copy instead, which is what the first edit of the read-only built-in layout does: the file the user's layout now lives in is not one they named.
+fn say_if_forked(was: &layout::LayoutId) {
+    if was.as_str() != layout::BUILT_IN {
+        return;
+    }
+    if let Some(now) = layouts::read(|store| store.active_id().clone())
+        && now != *was
+    {
+        mode::confirm(telar::t!("editor.strip.forked", name = now.to_string()));
     }
 }
 
@@ -433,24 +448,80 @@ pub fn redo() -> Result<String, String> {
 
 /// Which way through the history a key asks to go.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum History {
+pub enum Way {
     Undo,
     Redo,
 }
 
+impl Way {
+    /// The way a walk of `steps` goes: back while negative, forward otherwise.
+    pub fn of(steps: isize) -> Self {
+        match steps < 0 {
+            true => Way::Undo,
+            false => Way::Redo,
+        }
+    }
+
+    /// One step that way: -1 back, +1 forward.
+    pub fn steps(self) -> isize {
+        match self {
+            Way::Undo => -1,
+            Way::Redo => 1,
+        }
+    }
+}
+
 /// Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo.
-pub fn history_key(key: &Key, modifiers: ModifiersState) -> Option<History> {
+pub fn history_key(key: &Key, modifiers: ModifiersState) -> Option<Way> {
     if !modifiers.is_ctrl || modifiers.is_alt || modifiers.is_meta {
         return None;
     }
     match key {
         Key::Char(ch) if ch.eq_ignore_ascii_case(&'z') => Some(match modifiers.is_shift {
-            true => History::Redo,
-            false => History::Undo,
+            true => Way::Redo,
+            false => Way::Undo,
         }),
-        Key::Char(ch) if ch.eq_ignore_ascii_case(&'y') && !modifiers.is_shift => {
-            Some(History::Redo)
-        }
+        Key::Char(ch) if ch.eq_ignore_ascii_case(&'y') && !modifiers.is_shift => Some(Way::Redo),
         _ => None,
+    }
+}
+
+/// One step through the history: which way it went, and the entry it walked over.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Travelled {
+    pub way: Way,
+    pub label: String,
+}
+
+impl Travelled {
+    /// What the strip says of it: "Undone: …" or "Redone: …".
+    pub fn said(&self) -> String {
+        match self.way {
+            Way::Undo => telar::t!("editor.history.undone", label = self.label.clone()),
+            Way::Redo => telar::t!("editor.history.redone", label = self.label.clone()),
+        }
+    }
+}
+
+/// Walks `steps` entries through the history — back while negative, forward while positive — each one an ordinary [`undo`] or [`redo`] of its own, so a jump is taken back the way it came, step by step. Answers with the last entry walked over, `None` for a walk of nothing, and stops at the first step refused, with the steps before it taken.
+pub fn travel(steps: isize) -> Result<Option<Travelled>, String> {
+    let way = Way::of(steps);
+    let mut last = None;
+    for _ in 0..steps.unsigned_abs() {
+        let label = match way {
+            Way::Undo => undo()?,
+            Way::Redo => redo()?,
+        };
+        last = Some(Travelled { way, label });
+    }
+    Ok(last)
+}
+
+/// [`travel`], saying in the strip where it went or why it stopped there.
+pub(crate) fn travel_saying(steps: isize) {
+    match travel(steps) {
+        Ok(Some(travelled)) => mode::confirm(travelled.said()),
+        Ok(None) => {}
+        Err(why) => mode::refuse(why),
     }
 }

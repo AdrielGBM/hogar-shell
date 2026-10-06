@@ -1211,11 +1211,6 @@ mod lock_layer_tests {
                 "a-hideable-prompt",
                 "[[outputs.layers.lock.areas]]\nid = \"prompt\"\nkind = \"prompt\"\nvisible = \"gaming\"",
             ),
-            (
-                "a-covered-prompt",
-                "[[outputs.layers.lock.areas]]\nid = \"prompt\"\nkind = \"prompt\"\n\
-                 [[outputs.layers.lock.areas]]\nid = \"over\"\nkind = \"grid\"",
-            ),
         ];
 
         for (name, lock) in faults {

@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use telar::Color;
 
 use crate::config::Config;
 use crate::scheme;
@@ -149,7 +148,7 @@ impl TokenOverrides {
             theme.icon_stroke = self.icon_stroke;
         }
         for (name, hex) in &self.colors {
-            match Color::from_hex(hex) {
+            match crate::theme::parse_hex(hex) {
                 Some(c) => *theme = theme.with_color(name, c),
                 None => tracing::warn!("token color '{name}': invalid hex '{hex}'"),
             }
@@ -317,6 +316,7 @@ impl ScaleConfig {
 #[serde(default)]
 pub struct ThemeConfig {
     pub name: String,
+    /// One of the palette's hues by name (`blue`, `cyan`, `teal`, `red`, `orange`, `yellow`, `green`, `purple`), an opaque `#rrggbb` (the `#` and six digits; `bad`, `add` and `#ff880080` are refused), or empty for the palette's own accent.
     pub accent: String,
     /// `dark`, `light`, or `auto` (the default) to keep whatever the named palette already is. A built-in with a sibling in the asked-for mode switches to it (`gruvbox` ↔ `gruvbox-light`); one without keeps its own.
     pub mode: String,

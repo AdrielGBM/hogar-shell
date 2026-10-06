@@ -22,7 +22,7 @@ use util::report::{Finding, Message, Report, Span};
 use crate::library::{Library, komponent_path};
 use crate::merge::{At, merge_layers, merge_session_layers};
 use crate::model::*;
-use crate::resolve::{Resolved, ResolvedAreaKind};
+use crate::resolve::{Resolved, ResolvedArea, ResolvedAreaKind};
 
 /// What validation has to ask someone else.
 pub trait Catalogue {
@@ -117,8 +117,14 @@ pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
         };
         check_expressions(level, catalogue, Severity::Error, &mut report);
         check_unsets(level, catalogue, Severity::Error, &mut report);
+        check_containers(level, &mut report);
+        check_panels(level, &mut report);
+        check_panel_reserve(&rule.layers, &scope, &at, &file, &mut report);
         check_gradients(&rule.layers, &at, &file, &mut report);
-        check_bar_corners(&rule.layers, &at, &file, &mut report);
+        check_bar_corners(&rule.layers, &scope, &at, &file, &mut report);
+        check_cell_areas(&rule.layers, &at, &file, &mut report);
+        check_styles(&rule.layers, &at, &file, &mut report);
+        check_chip_bars(&rule.layers, &scope, &at, &file, &mut report);
         check_workspace_rules(layout, rule, &at, &file, catalogue, &mut report);
     }
     check_sources(layout, &file, catalogue, &mut report);
@@ -171,7 +177,9 @@ pub fn validate_lock(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
         };
         check_expressions(level, catalogue, Severity::Warning, &mut report);
         check_unsets(level, catalogue, Severity::Warning, &mut report);
+        check_containers(level, &mut report);
         check_gradients(&alone, &at, &file, &mut report);
+        check_styles(&alone, &at, &file, &mut report);
     }
     report
 }
@@ -185,18 +193,19 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
         return report;
     };
 
-    let prompts: Vec<usize> = lock
+    let prompts: Vec<(&ResolvedArea, &Rect)> = lock
         .areas
         .iter()
-        .enumerate()
-        .filter(|(_, area)| matches!(area.kind, ResolvedAreaKind::Prompt { .. }))
-        .map(|(at, _)| at)
+        .filter_map(|area| match &area.kind {
+            ResolvedAreaKind::Prompt { rect } => Some((area, rect)),
+            _ => None,
+        })
         .collect();
 
     let at = format!("layers.lock on {}", resolved.output);
-    match prompts.len() {
-        1 => {}
-        0 => {
+    let (prompt, rect) = match prompts.as_slice() {
+        [prompt] => *prompt,
+        [] => {
             report.error(Finding::new(
                 file,
                 at.clone(),
@@ -208,16 +217,10 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
             report.error(Finding::new(
                 file,
                 at.clone(),
-                util::message!("finding.prompts", count = several),
+                util::message!("finding.prompts", count = several.len()),
             ));
             return report;
         }
-    }
-
-    let prompt_at = prompts[0];
-    let prompt = &lock.areas[prompt_at];
-    let ResolvedAreaKind::Prompt { rect } = &prompt.kind else {
-        return report;
     };
 
     if prompt.visible.is_some() {
@@ -241,13 +244,38 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
             util::message!("finding.prompt_too_small"),
         ));
     }
-    let style = &prompt.style;
+    let held = format!("{at}.areas.{}", prompt.id);
+    check_prompt_style(&prompt.style, &held, file, theme, &mut report);
+    for group in &prompt.groups {
+        let held = format!("{held}.groups.{}", group.id);
+        check_prompt_style(&group.style, &held, file, theme, &mut report);
+        for child in &group.children {
+            let held = format!("{held}.children.{}", child.id);
+            check_prompt_style(&child.style, &held, file, theme, &mut report);
+            for path in child
+                .bindings
+                .keys()
+                .filter(|path| StyleBinding::from_path(path).is_some())
+            {
+                report.error(Finding::new(
+                    file,
+                    format!("{held}.bindings.{path}"),
+                    util::message!("finding.prompt_style_bound"),
+                ));
+            }
+        }
+    }
+    report
+}
+
+/// The prompt, and every group and instance drawn inside it, stays opaque enough to find and its text readable on whatever card it paints.
+fn check_prompt_style(style: &Style, at: &str, file: &str, theme: &NordTheme, report: &mut Report) {
     if let Some(opacity) = style.opacity
-        && opacity < FAINTEST_PROMPT
+        && below(opacity, FAINTEST_PROMPT)
     {
         report.error(Finding::new(
             file,
-            format!("{at}.areas.{}.style.opacity", prompt.id),
+            format!("{at}.style.opacity"),
             util::message!(
                 "finding.prompt_faint",
                 opacity = opacity,
@@ -261,7 +289,7 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
         if !scheme::is_readable(theme.text, card) {
             report.error(Finding::new(
                 file,
-                format!("{at}.areas.{}.style.fill", prompt.id),
+                format!("{at}.style.fill"),
                 util::message!(
                     "finding.prompt_contrast",
                     ratio = format!("{:.1}", theme.text.contrast_ratio(card)),
@@ -270,14 +298,6 @@ pub fn validate_resolved(resolved: &Resolved, file: &str, theme: &NordTheme) -> 
             ));
         }
     }
-    for covering in &lock.areas[prompt_at + 1..] {
-        report.error(Finding::new(
-            file,
-            format!("{at}.areas.{}", covering.id),
-            util::message!("finding.prompt_covered", id = &covering.id),
-        ));
-    }
-    report
 }
 
 /// What a table of `item` may hold: every key `item` has and the tag of `owner`, the enum the table names a variant of — an area's `kind`, a group's `place`, a source's `kind` — and beside them the keys of the variant it names, whose name as written comes third. Read off the model's own tables ([`crate::schema::keys_of`]), so what the reference lists and what this accepts are one list.
@@ -448,20 +468,54 @@ fn report_strays(
         if common.contains(&key) || allowed.contains(&key) {
             continue;
         }
-        let mut finding = Finding::new(
-            file,
-            format!("{at}.{key}"),
-            util::message!(
+        let retired = retired(key).filter(|_| matches!(holding, Holding::Group));
+        let message = match retired {
+            Some(now) => util::message!("finding.retired_key", key = key, now = now),
+            None => util::message!(
                 "finding.unknown_key",
                 key = key,
                 holder = holding.named(kind)
             ),
-        );
-        finding.span = value
-            .span()
+        };
+        let mut finding = Finding::new(file, format!("{at}.{key}"), message);
+        let written = match retired {
+            Some(_) => table.key(key).and_then(toml_edit::Key::span),
+            None => None,
+        };
+        finding.span = written
+            .or_else(|| value.span())
             .map(|bytes| util::report::Span::locate(text, bytes));
         report.error(finding);
     }
+}
+
+/// Keys a group or a komponent held before 0.1.0, each with what is written in its place now: a file still writing one is told where it went rather than that nothing has heard of it.
+const RETIRED: &[(&str, &str)] = &[("stacked", "arrange = \"pages\"")];
+
+/// What is written in place of `key`, where it is a key a group or a komponent no longer holds.
+fn retired(key: &str) -> Option<&'static str> {
+    RETIRED
+        .iter()
+        .find(|(old, _)| *old == key)
+        .map(|(_, now)| *now)
+}
+
+/// The key a komponent's file `text` writes that it no longer holds, located and naming what is written in its place, for a caller whose read of the file failed: the parser's own refusal says only that the key is unknown.
+pub fn retired_in_komponent(text: &str, file: impl Into<std::path::PathBuf>) -> Option<Finding> {
+    let parsed = toml_edit::Document::parse(text).ok()?;
+    let (key, now) = parsed
+        .iter()
+        .find_map(|(key, _)| Some((key, retired(key)?)))?;
+    let mut finding = Finding::new(
+        file,
+        key,
+        util::message!("finding.retired_key", key = key, now = now),
+    );
+    finding.span = parsed
+        .key(key)
+        .and_then(toml_edit::Key::span)
+        .map(|bytes| util::report::Span::locate(text, bytes));
+    Some(finding)
 }
 
 /// How many colour stops a gradient may have. The renderer holds them in a fixed array of this length, so a ninth is not a subtlety that gets lost — it is a stop the user wrote and will never see.
@@ -493,17 +547,542 @@ fn check_gradients(layers: &Layers, at: &str, file: &str, report: &mut Report) {
     }
 }
 
-/// A bar is rounded by its `shape.radius`, which its chips nest their own corners inside; a `style.radius` beside it would be a second answer for the same pixels, so it is reported rather than drawn.
-fn check_bar_corners(layers: &Layers, at: &str, file: &str, report: &mut Report) {
+/// A bar is rounded by its `shape.radius`, which its chips nest their own corners inside; a `style.radius` beside it would be a second answer for the same pixels, so it is reported rather than drawn. Its `shape.fillet` curves the usable area out of the bar's one strip, so it is reported on a bar in `sections` or `chips` mode, judged on the bar as this level and the broader ones of the same file merge it, and where it is negative.
+fn check_bar_corners(layers: &Layers, scope: &Layers, at: &str, file: &str, report: &mut Report) {
     for (kind, layer) in layers.each() {
+        let merged = scope.get(kind);
         for area in &layer.areas {
+            let path = format!("{at}.layers.{kind}.areas.{}", area.id);
             if matches!(area.kind, Some(AreaKind::Bar { .. })) && area.style.radius.is_some() {
                 report.warn(Finding::new(
                     file,
-                    format!("{at}.layers.{kind}.areas.{}.style.radius", area.id),
+                    format!("{path}.style.radius"),
                     util::message!("finding.bar_radius"),
                 ));
             }
+            let Some(AreaKind::Bar { shape: written, .. }) = &area.kind else {
+                continue;
+            };
+            if let Some(fillet) = written.fillet
+                && negative(fillet)
+            {
+                report.error(Finding::new(
+                    file,
+                    format!("{path}.fillet"),
+                    util::message!("finding.fillet_negative", fillet = fillet),
+                ));
+            }
+            let Some(AreaKind::Bar { shape: held, .. }) = merged
+                .areas
+                .iter()
+                .find(|held| held.id == area.id)
+                .and_then(|held| held.kind.as_ref())
+            else {
+                continue;
+            };
+            let stripless = matches!(
+                held.mode,
+                Some(config::Shape::Sections | config::Shape::Chips)
+            );
+            if held.fillet.is_some()
+                && stripless
+                && (written.fillet.is_some() || written.mode.is_some())
+            {
+                report.warn(Finding::new(
+                    file,
+                    format!("{path}.fillet"),
+                    util::message!("finding.fillet_mode"),
+                ));
+            }
+        }
+    }
+}
+
+/// What a grid or a panel says about its cells that cannot be drawn: a cell not above 0, a negative gap, and for a panel no columns or rows.
+fn check_cell_areas(layers: &Layers, at: &str, file: &str, report: &mut Report) {
+    for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            let (tracks, cell) = match &area.kind {
+                Some(AreaKind::Grid { cell, gap, .. }) => ((None, None, *gap), *cell),
+                Some(AreaKind::Panel {
+                    cols,
+                    rows,
+                    gap,
+                    cell,
+                    ..
+                }) => ((*cols, *rows, *gap), *cell),
+                _ => continue,
+            };
+            let under = |key: &str| format!("{at}.layers.{kind}.areas.{}.{key}", area.id);
+            check_tracks(tracks, under, file, report);
+            check_cell(cell, under, file, report);
+        }
+    }
+}
+
+/// Whether `x` is below `least`, or no number at all: a NaN compares false against everything, so a plain `<` would let it through.
+fn below(x: f32, least: f32) -> bool {
+    x.is_nan() || x < least
+}
+
+/// Whether `x` is below 0 or NaN, which no width, gap or fillet can be.
+fn negative(x: f32) -> bool {
+    below(x, 0.0)
+}
+
+/// Whether `x` is 0, below it or NaN, which no cell or weight can be.
+fn not_positive(x: f32) -> bool {
+    x.is_nan() || x <= 0.0
+}
+
+/// What holds a [`Style`], which decides the keys that mean something on it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Styled {
+    Area,
+    Group,
+    Instance,
+}
+
+fn check_styles(layers: &Layers, at: &str, file: &str, report: &mut Report) {
+    for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            let path = format!("{at}.layers.{kind}.areas.{}", area.id);
+            check_style(&area.style, Styled::Area, &path, file, report);
+            for group in &area.groups {
+                let path = format!("{path}.groups.{}", group.id);
+                check_style(&group.style, Styled::Group, &path, file, report);
+                for instance in &group.children {
+                    let path = format!("{path}.children.{}", instance.id);
+                    check_style(&instance.style, Styled::Instance, &path, file, report);
+                }
+            }
+        }
+    }
+}
+
+/// What a style written at `at` says that its holder cannot draw: a backdrop off an area, padding on an instance, a shadow past the deepest step, a negative width, or an opacity outside 0 to 1.
+fn check_style(style: &Style, holder: Styled, at: &str, file: &str, report: &mut Report) {
+    if style.backdrop.is_some() && holder != Styled::Area {
+        report.error(Finding::new(
+            file,
+            format!("{at}.style.backdrop"),
+            util::message!("finding.style_backdrop"),
+        ));
+    }
+    if let Some(padding) = style.padding {
+        let sides = [
+            padding.top(),
+            padding.right(),
+            padding.bottom(),
+            padding.left(),
+        ];
+        if holder == Styled::Instance {
+            report.error(Finding::new(
+                file,
+                format!("{at}.style.padding"),
+                util::message!("finding.style_padding"),
+            ));
+        } else if let Some(width) = sides.into_iter().find(|side| negative(*side)) {
+            report.error(Finding::new(
+                file,
+                format!("{at}.style.padding"),
+                util::message!("finding.style_negative", width = width),
+            ));
+        }
+    }
+    if let Some(opacity) = style.opacity
+        && !(0.0..=1.0).contains(&opacity)
+    {
+        report.error(Finding::new(
+            file,
+            format!("{at}.style.opacity"),
+            util::message!("finding.style_opacity", opacity = opacity),
+        ));
+    }
+    if let Some(width) = style.border.as_ref().and_then(|border| border.width)
+        && negative(width)
+    {
+        report.error(Finding::new(
+            file,
+            format!("{at}.style.border.width"),
+            util::message!("finding.style_negative", width = width),
+        ));
+    }
+    if let Some(shadow) = style.shadow
+        && shadow > Style::DEEPEST_SHADOW
+    {
+        report.error(Finding::new(
+            file,
+            format!("{at}.style.shadow"),
+            util::message!(
+                "finding.style_shadow",
+                shadow = shadow,
+                deepest = Style::DEEPEST_SHADOW
+            ),
+        ));
+    }
+}
+
+/// A bar in `chips` mode paints no strip, so a border or a shadow on the bar would have no box to go around: each chip carries its own. Judged on the bar as this level and the broader ones of the same file merge it, and reported at the level that writes either half.
+fn check_chip_bars(layers: &Layers, scope: &Layers, at: &str, file: &str, report: &mut Report) {
+    for (kind, layer) in layers.each() {
+        let merged = scope.get(kind);
+        for area in &layer.areas {
+            let Some(held) = merged.areas.iter().find(|held| held.id == area.id) else {
+                continue;
+            };
+            let chips = matches!(
+                &held.kind,
+                Some(AreaKind::Bar { shape, .. }) if shape.mode == Some(config::Shape::Chips)
+            );
+            if !chips {
+                continue;
+            }
+            let writes_mode = matches!(
+                &area.kind,
+                Some(AreaKind::Bar { shape, .. }) if shape.mode.is_some()
+            );
+            let path = format!("{at}.layers.{kind}.areas.{}.style", area.id);
+            for (key, merged_has, written) in [
+                (
+                    "border",
+                    held.style.border.is_some(),
+                    area.style.border.is_some(),
+                ),
+                (
+                    "shadow",
+                    held.style.shadow.is_some(),
+                    area.style.shadow.is_some(),
+                ),
+            ] {
+                if merged_has && (written || writes_mode) {
+                    report.warn(Finding::new(
+                        file,
+                        format!("{path}.{key}"),
+                        util::message!("finding.chips_edge", key = key),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// What a group's `arrange` and its children's places say that cannot be drawn: an arrangement a zone does not take, children repeated where each has a place of its own, an inner grid with no tracks, a negative gap, `cols`, `rows` or `gap` its arrangement does not read, and a child's `weight`, `cell` or `rect` where its group does not arrange children that way. Judged on the group as this level and the broader ones of the same file merge it, and reported at the level that writes either half. A group drawing a komponent is the komponent's to judge, and one this file never places, in a layout that extends another, may be arranged there.
+fn check_containers(level: Level<'_>, report: &mut Report) {
+    let Level {
+        layers,
+        scope,
+        inherits,
+        at,
+        file,
+    } = level;
+    for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            for group in &area.groups {
+                let at = format!("{at}.layers.{kind}.areas.{}.groups.{}", area.id, group.id);
+                let merged = merged_group(scope, kind, &area.id, &group.id).unwrap_or(group);
+                if merged.komponent.is_some() {
+                    continue;
+                }
+                let takes_back = group.unset.contains(&Unset::Arrange);
+                let unknown =
+                    merged.arrange.is_none() && merged.kind.is_none() && inherits && !takes_back;
+                let writes_arrange = group.arrange.is_some() || takes_back;
+                let key = |written: bool, key: &str, otherwise: &str| match written {
+                    true => format!("{at}.{key}"),
+                    false => format!("{at}.{otherwise}"),
+                };
+                if let (Some(arrange), Some(GroupKind::Zone { .. })) = (merged.arrange, merged.kind)
+                    && arrange != Arrange::Pages
+                    && (writes_arrange || group.kind.is_some())
+                {
+                    report.error(Finding::new(
+                        file,
+                        key(writes_arrange, "arrange", "place"),
+                        util::message!("finding.zone_arrange", arrange = arrange.as_str()),
+                    ));
+                }
+                let on_cell = matches!(merged.kind, Some(GroupKind::Cell { .. }));
+                if let Some(arrange) = merged.arrange.filter(|arrange| places_each(*arrange))
+                    && merged.repeat.is_some()
+                    && !on_cell
+                    && (writes_arrange || group.repeat.is_some())
+                {
+                    report.error(Finding::new(
+                        file,
+                        key(group.repeat.is_some(), "repeat", "arrange"),
+                        util::message!("finding.arranged_repeats", arrange = arrange.as_str()),
+                    ));
+                }
+                let under = |key: &str| format!("{at}.{key}");
+                check_tracks((group.cols, group.rows, group.gap), under, file, report);
+                let inherited = inherits && merged.arrange.is_none();
+                if !takes_back && !inherited {
+                    check_unarranged(
+                        [
+                            (merged.cols.is_some(), group.cols.is_some()),
+                            (merged.rows.is_some(), group.rows.is_some()),
+                            (merged.gap.is_some(), group.gap.is_some()),
+                        ],
+                        (merged.arrange, writes_arrange),
+                        under,
+                        file,
+                        report,
+                    );
+                }
+                for child in merged.children.iter().filter(|_| !unknown) {
+                    let written = group.children.iter().find(|held| held.id == child.id);
+                    if written.is_none() && !writes_arrange {
+                        continue;
+                    }
+                    let at = format!("{at}.children.{}", child.id);
+                    check_child_place(
+                        (child, written),
+                        (merged.arrange, writes_arrange),
+                        &at,
+                        file,
+                        report,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// What a panel says about its owner that cannot be drawn: an owner that is not an instance on the panel's layer, one that sits in a panel itself, `along = true` for an owner outside a bar, and a second panel for one owner. Judged on the panel and its owner as this level and the broader ones of the same file merge them, and reported where this level writes the panel's geometry. An owner this file never places, in a layout that extends another, may be placed there. No komponent file is read here, so an owner under a komponent's use is taken as written and [`validate_komponents`] checks it against the komponent. The lock layer has no panels at all ([`check_lock_layer`]).
+fn check_panels(level: Level<'_>, report: &mut Report) {
+    let Level {
+        layers,
+        scope,
+        inherits,
+        at,
+        file,
+    } = level;
+    for (kind, layer) in layers.each() {
+        if kind == LayerKind::Lock {
+            continue;
+        }
+        let merged = scope.get(kind);
+        for area in &layer.areas {
+            let Some(AreaKind::Panel {
+                owner: writes_owner,
+                along: writes_along,
+                ..
+            }) = &area.kind
+            else {
+                continue;
+            };
+            let held = merged
+                .areas
+                .iter()
+                .find(|held| held.id == area.id)
+                .unwrap_or(area);
+            let Some(AreaKind::Panel {
+                owner: Some(owner),
+                along,
+                ..
+            }) = &held.kind
+            else {
+                continue;
+            };
+            let path = format!("{at}.layers.{kind}.areas.{}", area.id);
+            let key = |written: bool, key: &str| match written {
+                true => format!("{path}.{key}"),
+                false => format!("{path}.kind"),
+            };
+            let owner_key = key(writes_owner.is_some(), "owner");
+            match merged.areas.iter().find(|holder| holder.places(owner)) {
+                None if inherits => {}
+                None => report.error(Finding::new(
+                    file,
+                    owner_key.clone(),
+                    util::message!("finding.panel_owner_missing", owner = owner, layer = kind),
+                )),
+                Some(holder) if matches!(holder.kind, Some(AreaKind::Panel { .. })) => report
+                    .error(Finding::new(
+                        file,
+                        owner_key.clone(),
+                        util::message!(
+                            "finding.panel_owner_in_panel",
+                            owner = owner,
+                            panel = &holder.id
+                        ),
+                    )),
+                Some(holder) => {
+                    if *along == Some(true) && !matches!(holder.kind, Some(AreaKind::Bar { .. })) {
+                        report.error(Finding::new(
+                            file,
+                            key(writes_along.is_some(), "along"),
+                            util::message!("finding.panel_along", owner = owner),
+                        ));
+                    }
+                }
+            }
+            let first = merged
+                .areas
+                .iter()
+                .find(|other| other.kind.as_ref().and_then(AreaKind::owner) == Some(owner));
+            if let Some(first) = first.filter(|first| first.id != area.id) {
+                report.error(Finding::new(
+                    file,
+                    owner_key,
+                    util::message!(
+                        "finding.panel_owner_taken",
+                        owner = owner,
+                        panel = &first.id
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// A panel opens over what is there, so one that reserves its edge is reported where this level writes its `reserve`, or makes a reserving area a panel.
+fn check_panel_reserve(layers: &Layers, scope: &Layers, at: &str, file: &str, report: &mut Report) {
+    for (kind, layer) in layers.each() {
+        for area in &layer.areas {
+            let Some(held) = scope.get(kind).areas.iter().find(|held| held.id == area.id) else {
+                continue;
+            };
+            let writes =
+                area.reserve == Some(true) || matches!(area.kind, Some(AreaKind::Panel { .. }));
+            if matches!(held.kind, Some(AreaKind::Panel { .. }))
+                && held.reserve == Some(true)
+                && writes
+            {
+                let key = match area.reserve {
+                    Some(_) => "reserve",
+                    None => "kind",
+                };
+                report.error(Finding::new(
+                    file,
+                    format!("{at}.layers.{kind}.areas.{}.{key}", area.id),
+                    util::message!("finding.panel_reserve"),
+                ));
+            }
+        }
+    }
+}
+
+/// Whether each child of a group arranged as `arrange` has a place of its own, which a copy of a repeated child could not.
+fn places_each(arrange: Arrange) -> bool {
+    matches!(arrange, Arrange::Grid | Arrange::Free)
+}
+
+/// What a group, a komponent or a panel says about its cells and their gap that cannot be drawn: no columns or rows, or a negative gap. `at` names each key by where it is written: under the group or the area, or alone at the top of a komponent's file.
+fn check_tracks(
+    (cols, rows, gap): (Option<u32>, Option<u32>, Option<f32>),
+    at: impl Fn(&str) -> String,
+    file: &str,
+    report: &mut Report,
+) {
+    for (key, tracks) in [("cols", cols), ("rows", rows)] {
+        if tracks == Some(0) {
+            report.error(Finding::new(
+                file,
+                at(key),
+                util::message!("finding.no_tracks", key = key),
+            ));
+        }
+    }
+    check_gap(gap, at, file, report);
+}
+
+fn check_cell(cell: Option<f32>, at: impl Fn(&str) -> String, file: &str, report: &mut Report) {
+    if let Some(cell) = cell
+        && not_positive(cell)
+    {
+        report.error(Finding::new(
+            file,
+            at("cell"),
+            util::message!("finding.cell_not_positive", cell = cell),
+        ));
+    }
+}
+
+fn check_gap(gap: Option<f32>, at: impl Fn(&str) -> String, file: &str, report: &mut Report) {
+    if let Some(gap) = gap
+        && negative(gap)
+    {
+        report.error(Finding::new(
+            file,
+            at("gap"),
+            util::message!("finding.gap_negative", gap = gap),
+        ));
+    }
+}
+
+/// What a group or a komponent writes of an arrangement it does not have: `cols` or `rows` off a `grid`, and `gap` where nothing is spaced, in a loose run or one page at a time. Each key is `(held, written)`: whether the merged group has it and whether the level being checked writes it, in the order `cols`, `rows`, `gap`. As in [`check_child_place`], a key its arrangement ignores is reported at a level that writes either half.
+fn check_unarranged(
+    [cols, rows, gap]: [(bool, bool); 3],
+    (arrange, writes_arrange): (Option<Arrange>, bool),
+    at: impl Fn(&str) -> String,
+    file: &str,
+    report: &mut Report,
+) {
+    let grid = arrange == Some(Arrange::Grid);
+    let spaced = arrange.is_some_and(|arrange| arrange != Arrange::Pages);
+    for (key, (held, written), read, message) in [
+        (
+            "cols",
+            cols,
+            grid,
+            util::message!("finding.tracks_off_grid", key = "cols"),
+        ),
+        (
+            "rows",
+            rows,
+            grid,
+            util::message!("finding.tracks_off_grid", key = "rows"),
+        ),
+        ("gap", gap, spaced, util::message!("finding.gap_unspaced")),
+    ] {
+        if held && !read && (writes_arrange || written) {
+            report.error(Finding::new(file, at(key), message));
+        }
+    }
+}
+
+/// What `child`, in a group arranged as `arrange`, says about its place that cannot be drawn: a weight not above 0, or a `weight`, `cell` or `rect` its group does not place children by. `written` is the child as the level being checked writes it, if it does, and `writes_arrange` whether that level writes the group's `arrange`: a place its group does not take is reported at a level that writes either half.
+fn check_child_place(
+    (child, written): (&Instance, Option<&Instance>),
+    (arrange, writes_arrange): (Option<Arrange>, bool),
+    at: &str,
+    file: &str,
+    report: &mut Report,
+) {
+    if let Some(weight) = written.and_then(|written| written.weight)
+        && not_positive(weight)
+    {
+        report.error(Finding::new(
+            file,
+            format!("{at}.weight"),
+            util::message!("finding.weight_not_positive", weight = weight),
+        ));
+    }
+    let flows = matches!(arrange, Some(Arrange::Row | Arrange::Column));
+    let misplaced = |has: fn(&Instance) -> bool, takes: bool| {
+        has(child) && !takes && (writes_arrange || written.is_some_and(has))
+    };
+    for (key, misplaced, message) in [
+        (
+            "weight",
+            misplaced(|it| it.weight.is_some(), flows),
+            util::message!("finding.child_weight"),
+        ),
+        (
+            "cell",
+            misplaced(|it| it.cell.is_some(), arrange == Some(Arrange::Grid)),
+            util::message!("finding.child_cell"),
+        ),
+        (
+            "rect",
+            misplaced(|it| it.rect.is_some(), arrange == Some(Arrange::Free)),
+            util::message!("finding.child_rect"),
+        ),
+    ] {
+        if misplaced {
+            report.error(Finding::new(file, format!("{at}.{key}"), message));
         }
     }
 }
@@ -537,7 +1116,7 @@ fn check_layer_ids(
                 }
                 if group.komponent.is_some() {
                     let address =
-                        InstanceId::new(format!("{}.{}{KOMPONENT_MARK}", area.id, group.id));
+                        InstanceId::new(InstanceId::komponent_prefix(&area.id, &group.id));
                     let place = (kind, area.id.clone(), group.id.clone());
                     if *instances.entry(address).or_insert_with(|| place.clone()) != place {
                         report.error(Finding::new(
@@ -1113,7 +1692,10 @@ impl Holder {
         matches!(
             (self, unset),
             (Holder::Area, Unset::Visible)
-                | (Holder::Group, Unset::Repeat | Unset::Parameter(_))
+                | (
+                    Holder::Group,
+                    Unset::Repeat | Unset::Arrange | Unset::Parameter(_)
+                )
                 | (Holder::Instance, Unset::Binding(_))
         )
     }
@@ -1159,6 +1741,7 @@ fn check_unsets(
                     let key = format!("{at}.unset[{index}]");
                     let written = match unset {
                         Unset::Parameter(name) => group.parameters.contains_key(name),
+                        Unset::Arrange => group.writes_arrangement(),
                         _ => group.repeat.is_some(),
                     };
                     if !Holder::Group.takes(unset) {
@@ -1288,6 +1871,9 @@ fn written_in<'a>(
                 let held = Some(group.id.clone());
                 if group.repeat.is_some() {
                     into.insert((kind, area.id.clone(), held.clone(), None, Unset::Repeat));
+                }
+                if group.writes_arrangement() {
+                    into.insert((kind, area.id.clone(), held.clone(), None, Unset::Arrange));
                 }
                 for name in group.parameters.keys() {
                     into.insert((
@@ -1593,6 +2179,32 @@ pub fn validate_komponent(
             Severity::Error,
         );
     }
+    if let Some(arrange) = komponent.arrange.filter(|arrange| places_each(*arrange))
+        && komponent.repeat.is_some()
+    {
+        report.error(Finding::new(
+            &file,
+            "repeat",
+            util::message!("finding.arranged_repeats", arrange = arrange.as_str()),
+        ));
+    }
+    check_tracks(
+        (komponent.cols, komponent.rows, komponent.gap),
+        str::to_string,
+        &file,
+        &mut report,
+    );
+    check_unarranged(
+        [
+            (komponent.cols.is_some(), true),
+            (komponent.rows.is_some(), true),
+            (komponent.gap.is_some(), true),
+        ],
+        (komponent.arrange, true),
+        str::to_string,
+        &file,
+        &mut report,
+    );
     let parameters = Locals::of_parameters(komponent);
     let locals = match &komponent.repeat {
         Some(repeat) => {
@@ -1639,6 +2251,14 @@ pub fn validate_komponent(
             ));
         }
         check_instance(child, &at, &file, catalogue, &mut report);
+        check_child_place(
+            (child, Some(child)),
+            (komponent.arrange, true),
+            &at,
+            &file,
+            &mut report,
+        );
+        check_style(&child.style, Styled::Instance, &at, &file, &mut report);
         check_chains(&child.actions, &at, &file, catalogue, &mut report);
         for (path, expr) in &child.bindings {
             let problems = binding_problems(
@@ -1701,13 +2321,82 @@ fn check_instance(
     }
 }
 
-/// Everything wrong with how `layout` uses komponents that only the komponents in `library` can say: a parameter a use sets, checked as the type the komponent declares; and on the lock layer, a komponent holding a control or an action, or an expression the lock screen cannot read (TA-8). A komponent the library does not hold, and a parameter it does not declare, are resolution's to report, where they are drawn as placeholders.
+/// Everything wrong with how `layout` uses komponents that only the komponents in `library` can say: a parameter a use sets, checked as the type the komponent declares; a panel owned by a child of a use that the komponent does not hold; and on the lock layer, a komponent holding a control or an action, or an expression the lock screen cannot read (TA-8). A komponent the library does not hold, and a parameter it does not declare, are resolution's to report, where they are drawn as placeholders.
 pub fn validate_komponents(
     layout: &Layout,
     library: &Library,
     catalogue: &dyn Catalogue,
 ) -> Report {
-    komponent_uses(layout, library, catalogue, LayerKind::ALL.as_slice())
+    let mut report = komponent_uses(layout, library, catalogue, LayerKind::ALL.as_slice());
+    check_komponent_owners(layout, library, &mut report);
+    report
+}
+
+/// A panel whose owner is addressed as a child of a komponent's use (`bar-top.end/battery`) that the komponent `library` holds under that name does not have: resolution drops such a panel as it drops one whose owner is nowhere. [`check_panels`] reads no komponent file, so it takes any child under a use. Judged on the panel and its owner as each level and the broader ones of the same file merge them.
+fn check_komponent_owners(layout: &Layout, library: &Library, report: &mut Report) {
+    let file = format!("layouts/{}.toml", layout.id);
+    for rule in &layout.outputs {
+        let at = format!("outputs.{}", rule.matches.0);
+        let scope = output_level(layout, &rule.matches);
+        let workspaces = rule.workspaces.iter().map(|workspace| {
+            let mut scope = scope.clone();
+            merge_session_layers(&mut scope, &workspace.layers);
+            (
+                format!("{at}.workspaces.{}", workspace.matches.0),
+                workspace.layers.each().to_vec(),
+                scope,
+            )
+        });
+        let levels = std::iter::once((at.clone(), rule.layers.each().to_vec(), scope.clone()))
+            .chain(workspaces);
+        for (at, written, scope) in levels {
+            for (kind, layer) in written
+                .into_iter()
+                .filter(|(kind, _)| *kind != LayerKind::Lock)
+            {
+                let merged = scope.get(kind);
+                for area in &layer.areas {
+                    let Some(AreaKind::Panel {
+                        owner: writes_owner,
+                        ..
+                    }) = &area.kind
+                    else {
+                        continue;
+                    };
+                    let held = merged
+                        .areas
+                        .iter()
+                        .find(|held| held.id == area.id)
+                        .unwrap_or(area);
+                    let Some(owner) = held.kind.as_ref().and_then(AreaKind::owner) else {
+                        continue;
+                    };
+                    let Some((komponent, child)) = merged
+                        .areas
+                        .iter()
+                        .find_map(|holder| holder.komponent_child(owner))
+                    else {
+                        continue;
+                    };
+                    let Some(used) = library.komponent(komponent) else {
+                        continue;
+                    };
+                    if used.children.iter().any(|held| held.id.as_str() == child) {
+                        continue;
+                    }
+                    let key = match writes_owner {
+                        Some(_) => "owner",
+                        None => "kind",
+                    };
+                    report.error(Finding::new(
+                        &file,
+                        format!("{at}.layers.{kind}.areas.{}.{key}", area.id),
+                        util::message!("finding.panel_owner_missing", owner = owner, layer = kind),
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// [`validate_komponents`] for the lock layer alone, for the session opener, which decides between the layout's lock screen and the minimal one: a control or an action is still an error, while an expression the lock screen cannot read is a warning, since it is left out where it is drawn.
@@ -1775,6 +2464,23 @@ fn komponent_uses(
                                     &file,
                                     format!("{at}.komponent"),
                                     util::message!("finding.cell_repeats"),
+                                ),
+                            );
+                        }
+                        if group.komponent.is_some()
+                            && let Some(arrange) = komponent.arrange
+                            && arrange != Arrange::Pages
+                            && matches!(placed, Some(GroupKind::Zone { .. }))
+                        {
+                            severity.say(
+                                &mut report,
+                                Finding::new(
+                                    &file,
+                                    format!("{at}.komponent"),
+                                    util::message!(
+                                        "finding.zone_arrange",
+                                        arrange = arrange.as_str()
+                                    ),
                                 ),
                             );
                         }
@@ -1980,6 +2686,15 @@ fn check_lock_layer(
     for area in lock.areas.iter().filter(|area| !area.actions.is_empty()) {
         refuse(format!("{at}.layers.lock.areas.{}", area.id), report);
     }
+    for area in &lock.areas {
+        if matches!(area.kind, Some(AreaKind::Panel { .. })) {
+            report.error(Finding::new(
+                file,
+                format!("{at}.layers.lock.areas.{}.kind", area.id),
+                util::message!("finding.panel_on_lock"),
+            ));
+        }
+    }
     for (area, group, instance) in instances_of(lock) {
         let path = format!(
             "{at}.layers.lock.areas.{}.groups.{}.children.{}",
@@ -2057,6 +2772,7 @@ fn check_workspace_rules(
 
         check_actions(&layers, &at, file, catalogue, report);
         check_modules(&layers, &at, file, catalogue, report);
+        check_styles(&layers, &at, file, report);
         let mut scope = output_level(layout, &rule.matches);
         merge_session_layers(&mut scope, &workspace.layers);
         let level = Level {
@@ -2068,6 +2784,8 @@ fn check_workspace_rules(
         };
         check_expressions(level, catalogue, Severity::Error, report);
         check_unsets(level, catalogue, Severity::Error, report);
+        check_containers(level, report);
+        check_panels(level, report);
     }
 }
 

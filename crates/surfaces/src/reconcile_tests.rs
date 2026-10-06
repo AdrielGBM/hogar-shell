@@ -162,9 +162,9 @@ mod tests {
                 fit: None,
                 transition: None,
             }),
-            style: layout::AreaStyle {
+            style: layout::Style {
                 backdrop: Some(layout::Backdrop::Blur),
-                ..layout::AreaStyle::default()
+                ..layout::Style::default()
             },
             ..Area::default()
         });

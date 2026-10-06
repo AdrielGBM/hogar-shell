@@ -75,10 +75,18 @@ fn merge_group(base: &mut Group, over: &Group) {
             id: base.id.clone(),
             kind: base.kind,
             komponent: over.komponent.clone(),
+            style: std::mem::take(&mut base.style),
             ..Group::default()
         };
     }
-    replace_if_set(&mut base.stacked, &over.stacked);
+    if over.unset.contains(&Unset::Arrange) {
+        base.clear_arrangement();
+    }
+    replace_if_set(&mut base.arrange, &over.arrange);
+    replace_if_set(&mut base.cols, &over.cols);
+    replace_if_set(&mut base.rows, &over.rows);
+    replace_if_set(&mut base.gap, &over.gap);
+    merge_style(&mut base.style, &over.style);
     if over.unset.contains(&Unset::Repeat) {
         base.repeat = None;
     }
@@ -91,8 +99,10 @@ fn merge_group(base: &mut Group, over: &Group) {
     for (name, expr) in &over.parameters {
         base.parameters.insert(name.clone(), expr.clone());
     }
+    let arranged = base.writes_arrangement();
     carry_unset(&mut base.unset, &over.unset, |unset| match unset {
         Unset::Repeat => base.repeat.is_some(),
+        Unset::Arrange => arranged,
         Unset::Parameter(name) => base.parameters.contains_key(name),
         _ => false,
     });
@@ -111,6 +121,10 @@ fn merge_instance(base: &mut Instance, over: &Instance) {
     replace_if_set(&mut base.module, &over.module);
     replace_if_set(&mut base.representation, &over.representation);
     merge_table(&mut base.options, &over.options);
+    merge_style(&mut base.style, &over.style);
+    replace_if_set(&mut base.weight, &over.weight);
+    replace_if_set(&mut base.cell, &over.cell);
+    replace_if_set(&mut base.rect, &over.rect);
     for unset in &over.unset {
         if let Unset::Binding(path) = unset {
             base.bindings.remove(path);
@@ -272,6 +286,7 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
             replace_if_set(&mut shape.gap, &over_shape.gap);
             replace_if_set(&mut shape.spacing, &over_shape.spacing);
             replace_if_set(&mut shape.radius, &over_shape.radius);
+            replace_if_set(&mut shape.fillet, &over_shape.fillet);
             replace_if_set(autohide, over_autohide);
         }
         (
@@ -389,6 +404,31 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
             replace_if_set(rect, over_rect);
             replace_if_set(anchor, over_anchor);
         }
+        (
+            AreaKind::Panel {
+                owner,
+                along,
+                cols,
+                rows,
+                cell,
+                gap,
+            },
+            AreaKind::Panel {
+                owner: over_owner,
+                along: over_along,
+                cols: over_cols,
+                rows: over_rows,
+                cell: over_cell,
+                gap: over_gap,
+            },
+        ) => {
+            replace_if_set(owner, over_owner);
+            replace_if_set(along, over_along);
+            replace_if_set(cols, over_cols);
+            replace_if_set(rows, over_rows);
+            replace_if_set(cell, over_cell);
+            replace_if_set(gap, over_gap);
+        }
         (AreaKind::Prompt { rect }, AreaKind::Prompt { rect: over_rect }) => {
             replace_if_set(rect, over_rect);
         }
@@ -396,11 +436,17 @@ fn merge_kind(base: &mut Option<AreaKind>, over: &Option<AreaKind>) {
     }
 }
 
-fn merge_style(base: &mut AreaStyle, over: &AreaStyle) {
+fn merge_style(base: &mut Style, over: &Style) {
     replace_if_set(&mut base.fill, &over.fill);
     replace_if_set(&mut base.radius, &over.radius);
     replace_if_set(&mut base.opacity, &over.opacity);
     replace_if_set(&mut base.padding, &over.padding);
+    if let Some(over) = &over.border {
+        let border = base.border.get_or_insert_with(Border::default);
+        replace_if_set(&mut border.width, &over.width);
+        replace_if_set(&mut border.color, &over.color);
+    }
+    replace_if_set(&mut base.shadow, &over.shadow);
     replace_if_set(&mut base.backdrop, &over.backdrop);
 }
 
@@ -480,6 +526,12 @@ impl Origins {
                         (kind, id.clone(), held.clone(), None, Unset::Repeat),
                         &group.unset,
                         group.repeat.is_some(),
+                        level,
+                    );
+                    self.write(
+                        (kind, id.clone(), held.clone(), None, Unset::Arrange),
+                        &group.unset,
+                        group.writes_arrangement(),
                         level,
                     );
                     let parameters = group
