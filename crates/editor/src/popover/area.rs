@@ -20,9 +20,8 @@ use ui::descriptor::Built;
 
 use crate::expr_field::{self, Field, Wanted};
 
-use super::draft::{AreaDraft, kind_field};
+use super::draft::{AreaDraft, kind_field, kind_read};
 use super::handles;
-use super::origin::Provenance;
 use super::rows::{self, Range, Rows, label};
 use super::{Inspector, add_area_tool};
 
@@ -117,9 +116,10 @@ pub(crate) fn chosen_as<T: Serialize + DeserializeOwned + 'static>(
             }
         },
     );
-    Ok(vec![
-        draft.marked(key, rows::choice(label, help, value, options)?)?,
-    ])
+    Ok(vec![draft.marked(
+        &[key],
+        rows::choice(label, help, value, options)?,
+    )?])
 }
 
 fn dock(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
@@ -139,14 +139,11 @@ fn dock(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     let thickness = draft.setting(
         "thickness",
         "thickness",
-        move |area| match area.kind {
-            ResolvedAreaKind::Dock { thickness, .. } => thickness,
-            _ => thickness,
-        },
+        kind_read!(Dock { thickness }, thickness),
         move |area, value: &f32| kind_field!(area, kind, Dock { thickness }, *value),
     );
     list.push(draft.marked(
-        "thickness",
+        &["thickness"],
         rows::number(
             label!("editor.area.thickness"),
             help("AreaKind::Dock", "thickness"),
@@ -171,10 +168,7 @@ fn free(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         label!("editor.area.anchor"),
         help("AreaKind::Free", "anchor"),
         variants("Anchor"),
-        move |area| match area.kind {
-            ResolvedAreaKind::Free { anchor, .. } => anchor,
-            _ => anchor,
-        },
+        kind_read!(Free { anchor }, anchor),
         |area, anchor: layout::Anchor| kind_field!(area, "free", Free { anchor }, anchor),
     )?;
     rows.extend(rect_rows(draft, rect)?);
@@ -231,7 +225,7 @@ pub(crate) fn rect_rows(draft: &AreaDraft, seed: Rect) -> Rows {
         rows::number(label!("editor.area.w"), help("Rect", "w"), w, fraction)?,
         rows::number(label!("editor.area.h"), help("Rect", "h"), h, fraction)?,
     ];
-    Ok(vec![draft.marked("rect", rows::together(sides)?)?])
+    Ok(vec![draft.marked(&["rect"], rows::together(sides)?)?])
 }
 
 /// What every area has, after its own kind's rows: how it is painted, and what it asks of the compositor — each row saying where its value comes from, with a Reset while the popover's level writes it.
@@ -251,7 +245,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         |area, token: &String| area.style.fill = (!token.is_empty()).then(|| token.clone()),
     );
     list.push(draft.marked(
-        "style.fill",
+        &["style.fill"],
         rows::colour(
             label!("editor.area.fill"),
             help("Style", "fill"),
@@ -271,7 +265,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         |area, value: &f32| area.style.opacity = Some(*value),
     );
     list.push(draft.marked(
-        "style.opacity",
+        &["style.opacity"],
         rows::number(
             label!("editor.area.opacity"),
             help("Style", "opacity"),
@@ -289,7 +283,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         |area, value: &f32| area.style.padding = Some(Sides::all(*value)),
     );
     list.push(draft.marked(
-        "style.padding",
+        &["style.padding"],
         rows::number(
             label!("editor.area.padding"),
             help("Style", "padding"),
@@ -305,7 +299,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
             |area, value: &f32| area.style.radius = Some(Corners::all(*value)),
         );
         list.push(draft.marked(
-            "style.radius",
+            &["style.radius"],
             rows::number(
                 label!("editor.area.radius"),
                 help("Style", "radius"),
@@ -328,7 +322,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
             |area, on: &bool| area.reserve = Some(*on),
         );
         list.push(draft.marked(
-            "reserve",
+            &["reserve"],
             rows::toggle(
                 label!("editor.area.reserve"),
                 help("Area", "reserve"),
@@ -343,7 +337,7 @@ pub(crate) fn common(draft: &AreaDraft) -> Rows {
         |area, on: &bool| area.above_fullscreen = Some(*on),
     );
     list.push(draft.marked(
-        "above_fullscreen",
+        &["above_fullscreen"],
         rows::toggle(
             label!("editor.area.above_fullscreen"),
             help("Area", "above_fullscreen"),
@@ -512,16 +506,15 @@ fn expr_row(row: ExprRow) -> Built {
             let now = held();
             let inheriting =
                 inherited && !now.taken_back && (now.text.is_empty() || now.text == started);
-            match (inheriting, now.text.is_empty() || now.taken_back) {
-                (true, _) => super::origin::inherited_said(writer.as_ref(), takes_back().is_err()),
-                (false, true) => Provenance::Default.said(),
-                (false, false) => Provenance::Here.said(),
-            }
+            let here = !inheriting && !now.text.is_empty() && !now.taken_back;
+            super::origin::expression_said(here, writer.as_ref().filter(|_| inheriting), || {
+                takes_back().is_err()
+            })
         }
     };
     let offered = move || inherited && !held().taken_back;
     let removing = write;
-    super::origin::captioned(
+    super::origin::noted(
         field,
         said,
         label!("editor.popover.remove"),

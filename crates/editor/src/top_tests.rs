@@ -6,8 +6,7 @@ mod tests {
     use std::rc::Rc;
 
     use telar::{
-        DismissRegistration, Event, Key, LayoutItem, LayoutStyle, ModifiersState, NamedKey,
-        RectStyle, StyledContainer,
+        Event, Key, LayoutItem, LayoutStyle, ModifiersState, NamedKey, RectStyle, StyledContainer,
     };
 
     use config::{Edge, Shape};
@@ -25,12 +24,12 @@ mod tests {
     use ui::host::{Host, WidgetSize};
 
     use crate::keys::{self, Direction, Press};
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::modes::bars::{Seen, measured, nearest_edge};
     use crate::modes::top::{self, ChipLanding, Drawn};
-    use crate::rig::{Rig, SCREEN, rig_on, rig_prepared, rig_screens, rig_with};
+    use crate::rig::{Rig, SCREEN, enter, rig_on, rig_prepared, rig_screens, rig_with};
     use crate::session::{self, Edit, EditError, Selection};
-    use crate::{context, host, popover, variant};
+    use crate::{context, popover, variant};
 
     fn face(_: &Host) -> Built {
         Ok(Box::new(StyledContainer::new(
@@ -90,33 +89,6 @@ mod tests {
             transient::close_all();
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn enter() -> DismissRegistration {
-        enter_on(SCREEN)
-    }
-
-    fn enter_on(output: &str) -> DismissRegistration {
-        enter_as(LayerKind::Top, output)
-    }
-
-    fn enter_layer(layer: LayerKind) -> DismissRegistration {
-        enter_as(layer, SCREEN)
-    }
-
-    fn enter_as(layer: LayerKind, output: &str) -> DismissRegistration {
-        mode::enter_as(
-            layer,
-            Some(output),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the mode opens");
-        let id = host::transient_id(output);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
     }
 
     fn stored(rig: &Rig) -> Layout {
@@ -241,7 +213,7 @@ mod tests {
     fn a_bar_is_made_on_every_edge_running_what_the_edge_leaves_free() {
         let _owner = Owner::new();
         let rig = rig_with("top-create", without_bars);
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         for edge in Edge::ALL {
             let (ops, id) = top::created(
                 &session::draft().peek(),
@@ -310,7 +282,7 @@ mod tests {
     fn a_bar_moves_to_every_edge_and_fits_beside_the_bars_already_there() {
         let _owner = Owner::new();
         let _rig = rig_with("top-move", |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         for edge in [Edge::Left, Edge::Bottom, Edge::Right, Edge::Top] {
             let ops = top::moved_to_edge(
                 &session::draft().peek(),
@@ -373,7 +345,7 @@ mod tests {
         for edge in Edge::ALL {
             let _owner = Owner::new();
             let _rig = rig_with("top-resize", without_bars);
-            let _mode = enter();
+            let _mode = enter(LayerKind::Top);
             let (ops, id) = top::created(
                 &session::draft().peek(),
                 &screen(),
@@ -437,7 +409,7 @@ mod tests {
     fn a_bar_dragged_from_top_to_left_relays_its_chips_and_reserves_again_only_on_release() {
         let _owner = Owner::new();
         let rig = rig_with("top-drag", |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let before = screen().reserved;
         let reconciled = rig.reconciles.get();
         let edit = Edit::new("drag the bar");
@@ -496,7 +468,7 @@ mod tests {
                 }
             }
         });
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let reserved =
             |desktop: &reconcile::Desktop| Edge::ALL.map(|edge| desktop.resolved.reserved(edge));
         let planned_before = reserved(&reconcile::planned()[0]);
@@ -573,7 +545,7 @@ mod tests {
                 store.set_trust(trust);
             },
         );
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         draw();
         let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
         let (ops, second) = top::split(
@@ -612,7 +584,7 @@ mod tests {
     fn a_split_bar_joined_again_is_the_bar_it_was() {
         let _owner = Owner::new();
         let rig = rig_with("top-split-join", |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let original = stored(&rig);
         draw();
         let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
@@ -676,7 +648,7 @@ mod tests {
                 layout::Action(vec!["panel toggle clock".to_string()]),
             );
         });
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         draw();
         let drawn = Drawn::of(Some(SCREEN), LayerKind::Top, &bar_top(), Edge::Top);
         let (ops, second) = top::split(
@@ -757,7 +729,7 @@ mod tests {
     fn a_chip_lands_at_its_insertion_index_in_any_zone_of_any_bar() {
         let _owner = Owner::new();
         let _rig = rig_with("top-chips", |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let land = |node: &Node, area: &AreaId, zone: Zone, index: usize| {
             let ops = top::chip_moved(
                 &session::draft().peek(),
@@ -824,7 +796,7 @@ mod tests {
             rule.layers.top.areas.push(own);
             layout.outputs.push(rule);
         });
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let placed_on = |output: &str, id: &AreaId| {
             reconcile::planned()
                 .iter()
@@ -935,7 +907,7 @@ mod tests {
             for edge in Edge::ALL {
                 let _owner = Owner::new();
                 let _rig = rig_with("top-builds", shaped(shape));
-                let _mode = enter();
+                let _mode = enter(LayerKind::Top);
                 if edge != Edge::Top {
                     commit(
                         top::moved_to_edge(
@@ -979,7 +951,7 @@ mod tests {
     fn a_bars_popover_keeps_it_clear_of_the_bar_beside_it() {
         let _owner = Owner::new();
         let rig = rig_with("top-popover", |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let (ops, second) = top::split(
             &session::draft().peek(),
             &screen(),
@@ -1023,7 +995,7 @@ mod tests {
     fn the_keys_make_split_and_join_bars() {
         let _owner = Owner::new();
         let rig = rig_with("top-keys", |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let original = stored(&rig);
         draw();
         assert!(session::select(Selection::Area(Node::area(
@@ -1079,7 +1051,7 @@ mod tests {
             bar.groups.retain(|group| group.id.as_str() != "end");
             bar.remove.push(layout::GroupId::new("end"));
         });
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         let ops = top::chip_moved(
             &session::draft().peek(),
             &screen(),
@@ -1112,7 +1084,7 @@ mod tests {
     fn bars_are_never_edited_for_one_workspace() {
         let _owner = Owner::new();
         let rig = rig_on("top-variant", Some("2"), |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         assert!(!variant::allowed(LayerKind::Top));
         assert_eq!(
             variant::set(true),
@@ -1123,7 +1095,7 @@ mod tests {
         assert_eq!(variant::active(), None, "so no popover offers it");
         mode::leave();
 
-        let _desktop = enter_layer(LayerKind::Desktop);
+        let _desktop = enter(LayerKind::Desktop);
         variant::set(true).expect("the desktop has variants");
         let before = stored(&rig);
         let edge = edge_of(&bar_top()).expect("the bar's edge");
@@ -1144,7 +1116,7 @@ mod tests {
     fn a_bar_carried_by_the_pointer_previews_on_the_edge_it_is_carried_to() {
         let _owner = Owner::new();
         let _rig = rig_with("top-pointer-drag", |_| {});
-        let _mode = enter();
+        let _mode = enter(LayerKind::Top);
         draw();
         let mode = mode::current().expect("the mode is up");
         let page = LayoutStyle::new().width(1920.0).height(1080.0);

@@ -1347,4 +1347,11 @@ accent = "orange"
         assert_eq!(clock.variant, Variant::Default);
         assert_eq!(cfg.accent_name(&clock), "cyan");
     }
+
+    #[test]
+    fn an_edge_indexes_where_it_stands_in_all_of_them() {
+        for (at, edge) in Edge::ALL.into_iter().enumerate() {
+            assert_eq!(edge.index(), at, "{edge:?}");
+        }
+    }
 }

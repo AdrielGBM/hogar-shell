@@ -247,9 +247,9 @@ fn resettable(draft: &InstanceDraft, path: Path, build: impl Fn() -> Built + 'st
     super::origin::marked(
         Box::new(row),
         move || standing.provenance(&watched),
-        move || showing.sets(&shown),
+        move || showing.writes(&shown),
         move || {
-            resetting.unset(&reset);
+            resetting.reset(&reset);
             generation.update(|built| *built += 1);
         },
     )

@@ -30,7 +30,7 @@ mod tests {
 
     use crate::context;
     use crate::keys::{self, Press};
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::popover;
     use crate::popover::handles::Corner;
     use crate::rig::{Rig, SCREEN, rig, rig_prepared, rig_with};
@@ -696,16 +696,7 @@ mod tests {
         let _rig = rig("menu-key");
         let _scope = Scope::new();
         let window = Window::new();
-        mode::enter_as(
-            LayerKind::Top,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("top mode");
+        crate::rig::open_mode(LayerKind::Top);
         assert!(session::select(Selection::Instance(clock())));
 
         assert!(keys::press_as(
@@ -783,16 +774,7 @@ mod tests {
         for (layer, id, always, in_mode) in cases {
             for editing in [false, true] {
                 if editing {
-                    mode::enter_as(
-                        layer,
-                        Some(SCREEN),
-                        &Compositor {
-                            restack: true,
-                            locked: false,
-                            lockable: Ok(()),
-                        },
-                    )
-                    .expect("the mode opens");
+                    crate::rig::open_mode(layer);
                 }
                 opened(area(layer, id), (10.0, 10.0));
                 let rows = context::rows();
@@ -1055,16 +1037,7 @@ mod tests {
     }
 
     fn top_mode() {
-        mode::enter_as(
-            LayerKind::Top,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("top mode");
+        crate::rig::open_mode(LayerKind::Top);
     }
 
     /// Through the pointer: the bar's menu has "Add komponent", whose submenu names the bar's zones, each naming the komponents a bar takes; picking one puts it in a new group at the end of that zone, selected, as one undo entry.

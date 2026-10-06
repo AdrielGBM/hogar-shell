@@ -12,10 +12,10 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use telar::{
-    AlignItems, BlendMode, BorderRadius, ChildSlot, Clip, ClippedItem, Color, ConsumedKeys,
-    Container, Gradient, Image, ImageData, ImageSlice, Insets, Key, LayoutError, LayoutItem,
-    LayoutStyle, ObjectFit, Paint, Point, Raster, ReactiveList, RectStyle, Role, RwSignal,
-    SizeDimension, StyledContainer, TemplateTrack, box_item, motion::Animated, signal,
+    AlignItems, BlendMode, ChildSlot, Clip, ClippedItem, Color, ConsumedKeys, Container, Gradient,
+    Image, ImageData, ImageSlice, Insets, Key, LayoutError, LayoutItem, LayoutStyle, ObjectFit,
+    Paint, Point, Raster, ReactiveList, RectStyle, Role, RwSignal, SizeDimension, StyledContainer,
+    TemplateTrack, box_item, motion::Animated, signal,
 };
 
 use crate::actions::{Bound, EmptySpace, NOTCH};
@@ -929,7 +929,7 @@ pub fn padded(layout: LayoutStyle, padding: Option<Sides>) -> LayoutStyle {
         .padding_left(sides.left())
 }
 
-/// A picture claims the pointer only where the layout binds a gesture to its empty space ([`empty_space`]): otherwise it is behind the shell, not a part of it to press.
+/// A picture claims the pointer only where the layout binds a gesture to its empty space ([`empty_space`]): otherwise it is behind the shell, not a part of it to press. It is the area's own box without the shadow and border [`framed`] draws around it, and its fill before `opacity`, which its callers apply to the whole picture.
 fn picture(
     style: &Style,
     under: Option<Color>,
@@ -937,21 +937,18 @@ fn picture(
     layout: LayoutStyle,
     children: Vec<Box<dyn LayoutItem>>,
 ) -> Result<StyledContainer, LayoutError> {
-    let fill = style
-        .fill
-        .as_deref()
-        .map(|fill| layout::color_of(fill, theme))
-        .or(under);
-    let radius = style
-        .radius
-        .map_or(BorderRadius::zero(), BorderRadius::from);
+    let look = Look {
+        fill: style
+            .fill_color(theme)
+            .or(under)
+            .unwrap_or(Color::TRANSPARENT),
+        border: None,
+        shadow: None,
+        ..Look::area(style, theme)
+    };
     StyledContainer::new(
         padded(layout, style.padding),
-        move |rect| RectStyle {
-            fill: fill.map(Paint::Solid),
-            radius: look::within(radius, rect),
-            ..RectStyle::default()
-        },
+        move |rect| look.paint(rect),
         children,
     )
 }
@@ -1878,8 +1875,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use telar::{
-        AvailableSpace, RwSignal, compute_layout, new_container, reset_layout_runtime, set_theme,
-        track_layout,
+        AvailableSpace, BorderRadius, RwSignal, compute_layout, new_container,
+        reset_layout_runtime, set_theme, track_layout,
     };
 
     use layout::{AreaId, Arrange, GroupId, InstanceId as PlacedId, Style};

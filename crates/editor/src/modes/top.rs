@@ -1356,7 +1356,7 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         move |area, value: &f32| kind_field!(area, kind, Bar { thickness }, *value),
     );
     list.push(draft.marked(
-        "thickness",
+        &["thickness"],
         rows::number(
             label!("editor.area.thickness"),
             help("AreaKind::Bar", "thickness"),
@@ -1402,15 +1402,15 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         },
     );
     let seeded = std::cell::Cell::new(false);
-    let resetting = draft.resetting();
+    let resetting = draft.clone();
     telar::effect(move || {
         length.with(|_| ());
-        if seeded.replace(true) && !resetting.get() && fills.peek() {
+        if seeded.replace(true) && !resetting.is_resetting() && fills.peek() {
             fills.set(false);
         }
     });
     list.push(draft.marked(
-        "length",
+        &["length"],
         rows::together(vec![
             rows::toggle(
                 label!("editor.area.fill_edge"),
@@ -1432,7 +1432,7 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         move |area, value: &f32| kind_field!(area, kind, Bar { offset }, *value),
     );
     list.push(draft.marked(
-        "offset",
+        &["offset"],
         rows::number(
             label!("editor.area.offset"),
             help("AreaKind::Bar", "offset"),
@@ -1474,7 +1474,7 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         move |area, value: &f32| set_shape(area, kind, |shape| shape.gap = Some(*value)),
     );
     list.push(draft.marked(
-        "shape.gap",
+        &["shape.gap"],
         rows::number(
             label!("editor.area.gap"),
             help("BarShape", "gap"),
@@ -1503,7 +1503,7 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         move |area, value: &f32| set_shape(area, kind, |shape| shape.spacing = Some(*value)),
     );
     list.push(draft.marked(
-        "shape.spacing",
+        &["shape.spacing"],
         rows::number(
             label!("editor.area.spacing"),
             help("BarShape", "spacing"),
@@ -1537,7 +1537,7 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
     for (corner, label) in corners.into_iter().zip(corner_labels) {
         radius.push(rows::number(label, None, corner, Range::whole(0.0, most))?);
     }
-    list.push(draft.marked("shape.radius", rows::together(radius)?)?);
+    list.push(draft.marked(&["shape.radius"], rows::together(radius)?)?);
 
     let peek = draft.setting(
         "peek",
@@ -1558,7 +1558,7 @@ fn bar_tool(draft: &AreaDraft) -> Result<Inspector, telar::LayoutError> {
         move |area, on: &bool| set_autohide(area, kind, |hide| hide.on_hover = *on),
     );
     list.push(draft.marked(
-        "autohide",
+        &["autohide"],
         rows::together(vec![
             rows::toggle(
                 label!("editor.area.autohide"),

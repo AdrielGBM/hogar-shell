@@ -19,7 +19,7 @@ use layout::{
 
 use crate::popover::area::{chosen_as, variants};
 use crate::popover::rows::{self, Range, label};
-use crate::popover::{AreaDraft, Inspector, help, kind_field};
+use crate::popover::{AreaDraft, Inspector, help, kind_field, kind_read};
 use crate::session::{EditError, Selection};
 use crate::written::Written;
 
@@ -310,20 +310,14 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         "image",
         {
             let paint = paint.clone();
-            move |area| match &area.kind {
-                ResolvedAreaKind::Texture { paint, .. } => paint.clone(),
-                _ => paint.clone(),
-            }
+            kind_read!(Texture { paint }, paint)
         },
         write_paint,
     );
     let tiled = draft.setting(
         "texture.tile",
         "tile",
-        move |area| match area.kind {
-            ResolvedAreaKind::Texture { tile: now, .. } => now,
-            _ => tile,
-        },
+        kind_read!(Texture { tile }, tile),
         write_tile,
     );
 
@@ -474,7 +468,7 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         )?,
         parts.painting_rows()?,
     ])?;
-    let mut list = vec![draft.marked_any(&["image", "gradient"], paint_row)?];
+    let mut list = vec![draft.marked(&["image", "gradient"], paint_row)?];
     list.push(parts.tiling_rows()?);
     list.extend(chosen_as(
         draft,
@@ -482,23 +476,17 @@ pub(crate) fn tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         label!("editor.area.blend"),
         help("AreaKind::Texture", "blend"),
         variants("Blend"),
-        move |area| match area.kind {
-            ResolvedAreaKind::Texture { blend: now, .. } => now,
-            _ => blend,
-        },
+        kind_read!(Texture { blend }, blend),
         |area, blend: Blend| kind_field!(area, "texture", Texture { blend }, blend),
     )?);
     let strength = draft.setting(
         "texture.opacity",
         "opacity",
-        move |area| match area.kind {
-            ResolvedAreaKind::Texture { opacity: now, .. } => now,
-            _ => opacity,
-        },
+        kind_read!(Texture { opacity }, opacity),
         |area, value: &f32| kind_field!(area, "texture", Texture { opacity }, *value),
     );
     list.push(draft.marked(
-        "opacity",
+        &["opacity"],
         rows::number(
             label!("editor.texture.opacity"),
             help("AreaKind::Texture", "opacity"),
@@ -580,7 +568,7 @@ impl Parts {
                     )?,
                     parts.slice_rows()?,
                 ])?;
-                parts.draft.marked("tile", tile)
+                parts.draft.marked(&["tile"], tile)
             },
         )?))
     }

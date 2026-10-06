@@ -36,6 +36,15 @@ pub enum Edge {
 impl Edge {
     pub const ALL: [Edge; 4] = [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right];
 
+    pub fn index(self) -> usize {
+        match self {
+            Edge::Top => 0,
+            Edge::Bottom => 1,
+            Edge::Left => 2,
+            Edge::Right => 3,
+        }
+    }
+
     pub fn is_horizontal(self) -> bool {
         matches!(self, Edge::Top | Edge::Bottom)
     }

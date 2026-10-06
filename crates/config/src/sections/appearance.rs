@@ -24,6 +24,13 @@ pub enum Shape {
     Chips,
 }
 
+impl Shape {
+    /// Whether a bar in this mode is drawn as one strip: the only mode with a background of its own to edge, lift or curve a fillet out of.
+    pub fn draws_strip(self) -> bool {
+        matches!(self, Shape::Bar)
+    }
+}
+
 /// What every bar shares about its shape. A bar's own mode, gap, spacing and radius are its `shape` in the layout; what it leaves unset follows the theme.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]

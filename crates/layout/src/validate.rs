@@ -20,7 +20,7 @@ use telar_expression::{Compiled, ErrorCode, ErrorKind, Errors, HostError, Type, 
 use util::report::{Finding, Message, Report, Span};
 
 use crate::library::{Library, komponent_path};
-use crate::merge::{At, merge_layers, merge_session_layers};
+use crate::merge::{KeyAt, merge_layers, merge_session_layers};
 use crate::model::*;
 use crate::resolve::{Resolved, ResolvedArea, ResolvedAreaKind};
 
@@ -1847,7 +1847,7 @@ pub fn validate_unsets(layout: &Layout, known: &Library) -> Report {
         let at = format!("outputs.{}", rule.matches.0);
         unset_nothing(rule.layers.each(), &under, &at, &file, &mut report);
     }
-    let mut ruled: BTreeSet<At> = BTreeSet::new();
+    let mut ruled: BTreeSet<KeyAt> = BTreeSet::new();
     for rule in &order {
         let mut under = inherited(rule);
         for other in order
@@ -1880,20 +1880,38 @@ fn may_share_an_output(one: &OutputMatch, other: &OutputMatch) -> bool {
 
 fn written_in<'a>(
     layers: impl IntoIterator<Item = (LayerKind, &'a Layer)>,
-    into: &mut BTreeSet<At>,
+    into: &mut BTreeSet<KeyAt>,
 ) {
     for (kind, layer) in layers {
         for area in &layer.areas {
             if area.visible.is_some() {
-                into.insert((kind, area.id.clone(), None, None, Unset::Visible));
+                into.insert((
+                    kind,
+                    area.id.clone(),
+                    None,
+                    None,
+                    Unset::Visible.to_string(),
+                ));
             }
             for group in &area.groups {
                 let held = Some(group.id.clone());
                 if group.repeat.is_some() {
-                    into.insert((kind, area.id.clone(), held.clone(), None, Unset::Repeat));
+                    into.insert((
+                        kind,
+                        area.id.clone(),
+                        held.clone(),
+                        None,
+                        Unset::Repeat.to_string(),
+                    ));
                 }
                 if group.writes_arrangement() {
-                    into.insert((kind, area.id.clone(), held.clone(), None, Unset::Arrange));
+                    into.insert((
+                        kind,
+                        area.id.clone(),
+                        held.clone(),
+                        None,
+                        Unset::Arrange.to_string(),
+                    ));
                 }
                 for name in group.parameters.keys() {
                     into.insert((
@@ -1901,7 +1919,7 @@ fn written_in<'a>(
                         area.id.clone(),
                         held.clone(),
                         None,
-                        Unset::parameter(name),
+                        Unset::parameter(name).to_string(),
                     ));
                 }
                 for instance in &group.children {
@@ -1911,7 +1929,7 @@ fn written_in<'a>(
                             area.id.clone(),
                             held.clone(),
                             Some(instance.id.clone()),
-                            Unset::binding(path),
+                            Unset::binding(path).to_string(),
                         ));
                     }
                 }
@@ -1922,7 +1940,7 @@ fn written_in<'a>(
 
 fn unset_nothing<'a>(
     layers: impl IntoIterator<Item = (LayerKind, &'a Layer)>,
-    under: &BTreeSet<At>,
+    under: &BTreeSet<KeyAt>,
     at: &str,
     file: &str,
     report: &mut Report,
@@ -1938,7 +1956,7 @@ fn unset_nothing<'a>(
         for area in &layer.areas {
             let at = format!("{at}.layers.{kind}.areas.{}", area.id);
             for (index, unset) in area.unset.iter().enumerate() {
-                let found = (kind, area.id.clone(), None, None, unset.clone());
+                let found = (kind, area.id.clone(), None, None, unset.to_string());
                 if Holder::Area.takes(unset) && !under.contains(&found) {
                     warn(format!("{at}.unset[{index}]"), unset);
                 }
@@ -1947,7 +1965,7 @@ fn unset_nothing<'a>(
                 let at = format!("{at}.groups.{}", group.id);
                 let held = Some(group.id.clone());
                 for (index, unset) in group.unset.iter().enumerate() {
-                    let found = (kind, area.id.clone(), held.clone(), None, unset.clone());
+                    let found = (kind, area.id.clone(), held.clone(), None, unset.to_string());
                     if Holder::Group.takes(unset) && !under.contains(&found) {
                         warn(format!("{at}.unset[{index}]"), unset);
                     }
@@ -1960,7 +1978,7 @@ fn unset_nothing<'a>(
                             area.id.clone(),
                             held.clone(),
                             Some(instance.id.clone()),
-                            unset.clone(),
+                            unset.to_string(),
                         );
                         if Holder::Instance.takes(unset) && !under.contains(&found) {
                             warn(format!("{at}.unset[{index}]"), unset);

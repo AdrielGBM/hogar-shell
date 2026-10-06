@@ -26,12 +26,12 @@ use crate::keys::{self, Chord, KeyOp, Run};
 use crate::mode::{Mode, said};
 use crate::popover::area::{chosen, rect_rows, variants};
 use crate::popover::rows::{self, label};
-use crate::popover::{AreaDraft, Inspector, help, kind_field};
+use crate::popover::{AreaDraft, Inspector, help, kind_field, kind_read};
 use crate::session::{self, Edit, EditError, Selection};
 use crate::snap;
 use crate::written::Work;
 
-use super::gesture::{self, Hint};
+use super::gesture;
 use super::regions::{self, Cut, Plan, Tile};
 use super::texture;
 
@@ -319,7 +319,7 @@ fn split_button(region: Node, cut: Cut) -> Result<Box<dyn LayoutItem>, LayoutErr
             let point = (origin.0 + x, origin.1 + y);
             let planned = Plan::for_node(&before, &dragged).and_then(|plan| {
                 let lines = plan.cut_lines(&dragged.area, cut)?;
-                show_lines(point, cut, &lines, bounds);
+                gesture::show_guides(point, &snap::guides(cut.into(), &lines), bounds);
                 let at = snap::region_line(
                     fraction(cut, bounds, point),
                     &lines,
@@ -334,15 +334,6 @@ fn split_button(region: Node, cut: Cut) -> Result<Box<dyn LayoutItem>, LayoutErr
         },
         |_, _| {},
     )))
-}
-
-/// The cell lines a region edge or cut dragged along `cut` snaps to, drawn across `bounds` while the pointer at `point` drags it.
-fn show_lines(point: (f32, f32), cut: Cut, lines: &[f32], bounds: Rect) {
-    gesture::hint().set(Some(Hint {
-        pointer: point,
-        guides: snap::lines(&snap::guides(cut.into(), lines), bounds),
-        ..Hint::default()
-    }));
 }
 
 /// The button on the edge the region `first` names shares with `second`, which joins them.
@@ -405,23 +396,6 @@ fn edge_now(
         line.span,
         desktop.reserved.box_of(within, desktop.size),
     ))
-}
-
-/// The cell lines of the main grid an edge of `cut` measured in `bounds` snaps to: those it can reach, in `range`.
-fn edge_lines(
-    output: &str,
-    layer: LayerKind,
-    cut: Cut,
-    bounds: Rect,
-    (low, high): (f32, f32),
-) -> Vec<f32> {
-    let Some((desktop, _)) = drawn(output, layer) else {
-        return Vec::new();
-    };
-    snap::grid_lines(&desktop, layer, cut.into(), bounds)
-        .into_iter()
-        .filter(|at| (low..=high).contains(at))
-        .collect()
 }
 
 /// The grip on an edge that moves it, every region on either side following; a focused grip moves with the arrows, one undo entry a press.
@@ -519,8 +493,10 @@ fn edge_grip(
                 let Some((_, _, bounds)) = edge_now(output, layer, key) else {
                     return 0.0;
                 };
-                let lines = edge_lines(output, layer, cut, bounds, range);
-                show_lines((x, y), cut, &lines, bounds);
+                let lines = drawn(output, layer).map_or_else(Vec::new, |(desktop, _)| {
+                    snap::grid_lines_in(&desktop, layer, cut.into(), bounds, range, 0.0)
+                });
+                gesture::show_guides((x, y), &snap::guides(cut.into(), &lines), bounds);
                 snap::region_line(
                     fraction(cut, bounds, (x, y)),
                     &lines,
@@ -574,10 +550,7 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         "source",
         {
             let source = source.clone();
-            move |area| match &area.kind {
-                ResolvedAreaKind::WallpaperRegion { source, .. } => source.clone(),
-                _ => source.clone(),
-            }
+            kind_read!(WallpaperRegion { source }, source)
         },
         |area, path: &String| {
             kind_field!(
@@ -589,7 +562,7 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         },
     );
     let mut list = vec![draft.marked(
-        "source",
+        &["source"],
         rows::together(vec![
             rows::listed(
                 label!("editor.area.source"),
@@ -610,10 +583,7 @@ fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         label!("editor.area.fit"),
         help("AreaKind::WallpaperRegion", "fit"),
         variants("Fit"),
-        move |area| match area.kind {
-            ResolvedAreaKind::WallpaperRegion { fit: now, .. } => now,
-            _ => fit,
-        },
+        kind_read!(WallpaperRegion { fit }, fit),
         |area, fit: Fit| kind_field!(area, "wallpaper_region", WallpaperRegion { fit }, fit),
     )?);
     list.extend(chosen(

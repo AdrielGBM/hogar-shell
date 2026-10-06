@@ -2,12 +2,11 @@
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, Color, ComponentList, Container, DismissRegistration, DrawCommand, Event,
-        LayoutItem, LayoutStyle, Paint, PointerButton, PointerSource, Rect, RectStyle,
-        StyledContainer, compute_layout, signal, use_theme,
+        AvailableSpace, Color, ComponentList, Container, DrawCommand, Event, LayoutItem,
+        LayoutStyle, Paint, PointerButton, PointerSource, Rect, RectStyle, StyledContainer,
+        compute_layout, signal, use_theme,
     };
 
     use config::theme::NordTheme;
@@ -18,10 +17,10 @@ mod tests {
     use ui::descriptor::{Built, Category, Input, ModuleDescriptor, Representations, WidgetDef};
     use ui::host::{Host, WidgetSize};
 
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::modes::widgets::{self, Geometry};
     use crate::modes::{gesture, grid};
-    use crate::rig::{Rig, SCREEN};
+    use crate::rig::{Rig, SCREEN, enter};
     use crate::session::{self, Selection};
     use crate::{host, popover};
 
@@ -116,25 +115,6 @@ mod tests {
             });
             areas[0].groups.extend([clock, shelf, spare]);
         })
-    }
-
-    fn enter() -> DismissRegistration {
-        enter_on(LayerKind::Desktop)
-    }
-
-    fn enter_on(layer: LayerKind) -> DismissRegistration {
-        mode::enter_as(
-            layer,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the mode opens");
-        let id = host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
     }
 
     /// The grid as drawn, every group and instance on it recorded where its cells are, as the desktop window records them.
@@ -337,7 +317,7 @@ mod tests {
     fn the_pointer_outlines_what_a_click_would_select_but_not_the_selection_or_during_a_drag() {
         let _rig = rig("pointer-hover");
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Desktop);
         let geometry = placed();
         let mut screen = Screen::new();
         let clock = drawn(&clock_node());
@@ -387,7 +367,7 @@ mod tests {
     fn a_double_click_opens_the_popover_of_what_it_selects() {
         let _rig = rig("pointer-double-click");
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Desktop);
         placed();
         let mut screen = Screen::new();
         let at = middle(drawn(&clock_node()));
@@ -410,7 +390,7 @@ mod tests {
     fn the_size_tag_says_cells_and_pixels_under_the_selection() {
         let _rig = rig("pointer-size-tag");
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Desktop);
         placed();
         let mut screen = Screen::new();
         let rect = drawn(&clock_node());
@@ -469,7 +449,7 @@ mod tests {
     fn a_drag_tags_where_it_lands_beside_the_pointer_and_carries_a_ghost() {
         let _rig = rig("pointer-drag-tag");
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Desktop);
         let geometry = placed();
         let mut screen = Screen::new();
         let clock = drawn(&clock_node());
@@ -563,7 +543,7 @@ mod tests {
     fn a_drag_holds_the_widget_where_it_was_pressed() {
         let _rig = rig("pointer-drag-press");
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Desktop);
         let geometry = placed();
         let mut screen = Screen::new();
         let clock = drawn(&clock_node());
@@ -660,7 +640,7 @@ mod tests {
     fn the_dragging_signal_is_set_during_a_region_edge_drag() {
         let _rig = two_columns("pointer-edge-drag-signal");
         let _owner = Owner::new();
-        let _host = enter_on(LayerKind::Background);
+        let _host = enter(LayerKind::Background);
         let current = mode::current().expect("the mode is up");
         let mut screen = Screen::of(vec![
             crate::modes::background::tool(&current).expect("the region tools build"),
@@ -675,7 +655,7 @@ mod tests {
     fn a_stack_width_handle_signals_dragging_on_every_drag() {
         let _rig = crate::rig::rig_with("pointer-width-drag-signal", |_| {});
         let _owner = Owner::new();
-        let _host = enter_on(LayerKind::Overlay);
+        let _host = enter(LayerKind::Overlay);
         let (mut screen, handle) = stack_width_handle();
 
         assert!(!gesture::dragging(), "not dragging before the press");

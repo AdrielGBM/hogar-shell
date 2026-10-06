@@ -26,7 +26,7 @@ use crate::keys::{self, Chord, Direction, KeyOp, Run};
 use crate::mode::said;
 use crate::popover::area::{chosen, rect_rows, variants};
 use crate::popover::rows::{self, Range, Rows, label};
-use crate::popover::{AreaDraft, Inspector, InstanceDraft, help, kind_field};
+use crate::popover::{AreaDraft, Inspector, InstanceDraft, help, kind_field, kind_read};
 use crate::session::{self, EditError, Selection};
 use crate::written::Work;
 
@@ -755,24 +755,18 @@ fn grid_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     let cell = draft.setting(
         "cell",
         "cell",
-        move |area| match area.kind {
-            ResolvedAreaKind::Grid { cell, .. } => cell,
-            _ => cell,
-        },
+        kind_read!(Grid { cell }, cell),
         |area, value: &f32| kind_field!(area, "grid", Grid { cell }, *value),
     );
     let gap = draft.setting(
         "gap",
         "gap",
-        move |area| match area.kind {
-            ResolvedAreaKind::Grid { gap, .. } => gap,
-            _ => gap,
-        },
+        kind_read!(Grid { gap }, gap),
         |area, value: &f32| kind_field!(area, "grid", Grid { gap }, *value),
     );
     let mut list = vec![
         draft.marked(
-            "cell",
+            &["cell"],
             rows::number(
                 label!("editor.area.cell"),
                 help("AreaKind::Grid", "cell"),
@@ -781,7 +775,7 @@ fn grid_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
             )?,
         )?,
         draft.marked(
-            "gap",
+            &["gap"],
             rows::number(
                 label!("editor.area.gap"),
                 help("AreaKind::Grid", "gap"),
@@ -796,10 +790,7 @@ fn grid_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         label!("editor.area.anchor"),
         help("AreaKind::Grid", "anchor"),
         variants("Anchor"),
-        move |area| match area.kind {
-            ResolvedAreaKind::Grid { anchor, .. } => anchor,
-            _ => anchor,
-        },
+        kind_read!(Grid { anchor }, anchor),
         |area, anchor: Anchor| kind_field!(area, "grid", Grid { anchor }, anchor),
     )?);
     list.extend(rect_rows(draft, rect)?);

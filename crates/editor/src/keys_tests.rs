@@ -5,9 +5,8 @@
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
-    use std::rc::Rc;
 
-    use telar::{DismissRegistration, Event, Key, LayoutStyle, ModifiersState, NamedKey, Rect};
+    use telar::{Event, Key, LayoutStyle, ModifiersState, NamedKey, Rect};
     use telar::{RectStyle, StyledContainer, signal};
 
     use config::Edge;
@@ -22,10 +21,10 @@ mod tests {
     use ui::host::{Host, WidgetSize};
 
     use crate::keys::{self, Chord, Direction, KeyOp, Press, Run, Scope};
-    use crate::mode::{self, Compositor};
-    use crate::rig::{Rig, SCREEN, rig_with};
+    use crate::mode::{self};
+    use crate::rig::{Rig, SCREEN, enter, rig_with};
     use crate::session::{self, Selection};
-    use crate::{context, host, pie, popover};
+    use crate::{context, pie, popover};
 
     fn face(_: &Host) -> Built {
         Ok(Box::new(StyledContainer::new(
@@ -122,21 +121,6 @@ mod tests {
         let taken = down(&key, modifiers, Press::First);
         let_go(&key, modifiers);
         taken
-    }
-
-    fn enter(layer: LayerKind) -> DismissRegistration {
-        mode::enter_as(
-            layer,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the mode opens");
-        let id = host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
     }
 
     fn area(layer: LayerKind, id: &str) -> Node {

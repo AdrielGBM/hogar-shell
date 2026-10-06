@@ -1290,17 +1290,24 @@ fn a_hiding_bar_starts_after_a_reserving_bar_at_its_side_on_every_edge_and_monit
                     );
                     match side {
                         Edge::Left => {
-                            assert_eq!(hidden.x, reserved.left, "{at}: starts after the strip");
-                            assert!(owner.x < reserved.left, "{at}: the owner keeps the corner");
+                            assert_eq!(
+                                hidden.x,
+                                reserved.on(Edge::Left),
+                                "{at}: starts after the strip"
+                            );
+                            assert!(
+                                owner.x < reserved.on(Edge::Left),
+                                "{at}: the owner keeps the corner"
+                            );
                         }
                         _ => {
                             assert_eq!(
                                 hidden.x + hidden.width,
-                                size.0 - reserved.right,
+                                size.0 - reserved.on(Edge::Right),
                                 "{at}: ends before the strip"
                             );
                             assert!(
-                                owner.x + owner.width > size.0 - reserved.right,
+                                owner.x + owner.width > size.0 - reserved.on(Edge::Right),
                                 "{at}: the owner keeps the corner"
                             );
                         }

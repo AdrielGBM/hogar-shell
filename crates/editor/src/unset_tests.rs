@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use telar::{
-        AvailableSpace, ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle,
-        ModifiersState, NamedKey, NodeId, PointerButton, PointerSource, Rect, compute_layout,
+        ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle, ModifiersState,
+        NamedKey, NodeId, Rect,
     };
 
     use layout::{
@@ -56,15 +56,7 @@ mod tests {
         }
 
         fn lay_out(&self) {
-            compute_layout(
-                self.node,
-                AvailableSpace::Definite(1920.0),
-                AvailableSpace::Definite(1080.0),
-            )
-            .expect("the popover lays out");
-            for _ in 0..2 {
-                telar::relayout_if_dirty();
-            }
+            crate::rig::lay_out(self.node, (1920.0, 1080.0));
         }
 
         fn route(&mut self, event: &Event) {
@@ -75,22 +67,8 @@ mod tests {
             self.lay_out();
         }
 
-        fn click(&mut self, (x, y): (f32, f32)) {
-            let (x, y) = (f64::from(x), f64::from(y));
-            for event in [
-                Event::PointerPressed {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-                Event::PointerReleased {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-            ] {
+        fn click(&mut self, at: (f32, f32)) {
+            for event in crate::rig::click_at(at) {
                 self.route(&event);
             }
         }

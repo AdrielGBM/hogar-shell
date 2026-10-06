@@ -42,8 +42,8 @@ use crate::written::Written;
 use rows::label;
 
 pub use area::{help, parsed, spelled};
-pub(crate) use draft::kind_field;
 pub use draft::{AreaDraft, InstanceDraft, Settle};
+pub(crate) use draft::{kind_field, kind_read};
 pub use instance::{option, shown};
 pub use origin::Provenance;
 pub use value::{Path, Step, path_of};

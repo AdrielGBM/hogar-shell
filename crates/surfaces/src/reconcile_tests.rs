@@ -200,15 +200,15 @@ mod tests {
             .gap_of(&crate::bar::bar_shape(&only.config, BarShape::default()))
             as f32;
         assert_eq!(
-            only.reserved.top,
+            only.reserved.on(Edge::Top),
             34.0 + gap,
             "a window must clear the bar and the air it floats in, or it tiles underneath it"
         );
         assert_eq!(
             (
-                only.reserved.left,
-                only.reserved.right,
-                only.reserved.bottom
+                only.reserved.on(Edge::Left),
+                only.reserved.on(Edge::Right),
+                only.reserved.on(Edge::Bottom)
             ),
             (0.0, 0.0, 0.0),
             "and no other edge is taken"
@@ -233,7 +233,7 @@ mod tests {
             &desktops[0].config,
             BarShape::default(),
         )) as f32;
-        assert_eq!(desktops[0].reserved.top, 2.0 + gap);
+        assert_eq!(desktops[0].reserved.on(Edge::Top), 2.0 + gap);
     }
 
     /// **A workspace switch may never re-tile the user's windows.** A workspace rule can add and remove areas; the strip each edge commits is still the one the output's own rules asked for (F-6.7).
@@ -276,9 +276,91 @@ mod tests {
             "the rule's bar is on screen while that workspace is active"
         );
         assert_eq!(
-            (ruled[0].reserved.top, ruled[0].reserved.bottom),
-            (plain[0].reserved.top, plain[0].reserved.bottom),
+            (
+                ruled[0].reserved.on(Edge::Top),
+                ruled[0].reserved.on(Edge::Bottom)
+            ),
+            (
+                plain[0].reserved.on(Edge::Top),
+                plain[0].reserved.on(Edge::Bottom)
+            ),
             "and it takes nothing off the screen, whichever workspace is active"
+        );
+    }
+
+    /// What stays reserved on an edge and the fillet its corners take come from the output's own rules too, so a workspace rule that makes a reserving bar hide itself moves no corner and changes no run along the edge.
+    #[test]
+    fn no_workspace_rule_changes_what_an_edge_holds_or_how_its_corners_round() {
+        let rounded = |id: &str, edge: Edge| {
+            let mut side = bar(id, edge, 34.0, &["clock"]);
+            if let Some(AreaKind::Bar { shape, .. }) = side.kind.as_mut() {
+                shape.mode = Some(config::Shape::Bar);
+                shape.fillet = Some(12.0);
+            }
+            side
+        };
+        let hidden = Area {
+            id: AreaId::new("bar-left"),
+            kind: Some(AreaKind::Bar {
+                edge: None,
+                thickness: None,
+                length: None,
+                offset: None,
+                shape: BarShape::default(),
+                autohide: Some(AutoHide {
+                    peek: 2.0,
+                    on_hover: true,
+                }),
+            }),
+            ..Area::default()
+        };
+        let sides = || {
+            vec![
+                rounded("bar-top", Edge::Top),
+                rounded("bar-left", Edge::Left),
+            ]
+        };
+        let plain = planned(&layout_of(sides(), Vec::new()));
+        let (ruled, _) = on(
+            &layout_of(
+                sides(),
+                vec![WorkspaceRule {
+                    matches: WorkspaceMatch("web".into()),
+                    layers: SessionLayers {
+                        top: Layer {
+                            areas: vec![hidden],
+                            remove: Vec::new(),
+                        },
+                        ..SessionLayers::default()
+                    },
+                }],
+            ),
+            &outputs(),
+            Some(ActiveWorkspace {
+                name: "web".into(),
+                id: None,
+                special: None,
+            }),
+        );
+
+        let left = ruled[0]
+            .resolved
+            .area(LayerKind::Top, &AreaId::new("bar-left"))
+            .expect("the left bar is drawn");
+        assert!(
+            matches!(
+                left.kind,
+                layout::ResolvedAreaKind::Bar {
+                    autohide: Some(_),
+                    ..
+                }
+            ),
+            "the rule's autohide is what the workspace draws"
+        );
+        assert_eq!(plain[0].reserved.fillet_on(Edge::Left), Some(12.0));
+        assert_eq!(
+            ruled[0].reserved, plain[0].reserved,
+            "and the edges, what stays on them and their corners are the output's own"
         );
     }
 
@@ -315,7 +397,8 @@ mod tests {
         assert_eq!(desktops[0].size, (1920.0, 1080.0));
         assert_eq!(desktops[1].size, (2560.0, 1440.0));
         assert_eq!(
-            desktops[0].reserved.top, desktops[1].reserved.top,
+            desktops[0].reserved.on(Edge::Top),
+            desktops[1].reserved.on(Edge::Top),
             "a `*` rule reaches both screens"
         );
     }

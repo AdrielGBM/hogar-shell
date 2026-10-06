@@ -12,8 +12,8 @@ use telar::{
     SizeDimension, box_item,
 };
 
-use layout::{Holder, Layout, Level, Origin, Resolved, Site};
-use surfaces::reconcile;
+use layout::{Holder, Layout, LayoutOp, Level, Origin, Resolved, Site};
+use surfaces::reconcile::{self, Desktop};
 use surfaces::rects::Node;
 use ui::descriptor::Built;
 
@@ -100,21 +100,16 @@ impl Measure {
         }
     }
 
-    /// The level a popover writing into `site` writes.
-    pub(crate) fn level(&self, site: &Site) -> Level {
-        Level {
-            layout: self.layout().id.clone(),
-            output: site.output.clone(),
-            workspace: site.workspace.clone(),
-        }
-    }
-
     /// Whether what the level `site` names writes is laid over `writer` on the popover's screen ([`layout::lays_over`]).
     pub(crate) fn lays_over(&self, site: &Site, writer: &Origin) -> bool {
+        self.lays_over_in(&self.layout(), site, writer)
+    }
+
+    fn lays_over_in(&self, before: &Layout, site: &Site, writer: &Origin) -> bool {
         layout::lays_over(
-            &self.layout(),
+            before,
             self.node.output.as_deref().unwrap_or_default(),
-            &self.level(site),
+            &level_in(before, site),
             writer,
         )
     }
@@ -124,19 +119,37 @@ impl Measure {
         let writer = self.screen.with(|screen| {
             screen
                 .as_ref()?
-                .origin(self.node.layer, holder, key)
+                .level_of(self.node.layer, holder, key)
                 .cloned()
         });
         let Some(writer) = writer else {
             return Provenance::Default;
         };
-        if writer == self.level(site) {
+        let before = self.layout();
+        if writer == level_in(&before, site) {
             return Provenance::Here;
         }
-        match self.lays_over(site, &Origin::Level(writer.clone())) {
+        match self.lays_over_in(&before, site, &Origin::Level(writer.clone())) {
             true => Provenance::Inherited(writer),
             false => Provenance::Overridden(writer),
         }
+    }
+
+    /// The popover's screen as it draws `ops` laid over the layout its edit began on, resolved here rather than read from the preview, which may not have caught up yet.
+    pub(crate) fn drawn_with(&self, ops: &[LayoutOp]) -> Option<Desktop> {
+        let mut after = self.edit.transaction().before()?;
+        layout::ops::apply_all(&mut after, ops).ok()?;
+        let screen = reconcile::desktop_now(self.node.output.as_deref())?;
+        Some(screen.resolving(&after, &crate::written::known()))
+    }
+}
+
+/// The level a popover writing into `site` of `before` writes.
+fn level_in(before: &Layout, site: &Site) -> Level {
+    Level {
+        layout: before.id.clone(),
+        output: site.output.clone(),
+        workspace: site.workspace.clone(),
     }
 }
 
@@ -148,7 +161,7 @@ pub(crate) fn marked(
     reset: impl Fn() + 'static,
 ) -> Built {
     let standing = telar::memo(provenance);
-    captioned(
+    noted(
         row,
         move || standing.get().said(),
         label!("editor.popover.reset"),
@@ -158,7 +171,7 @@ pub(crate) fn marked(
 }
 
 /// `row` with `said` under it, and a button called `action` beside that while `offered`, which does `press`.
-pub(crate) fn captioned(
+pub(crate) fn noted(
     row: Box<dyn LayoutItem>,
     said: impl Fn() -> String + 'static,
     action: Reactive<String>,
@@ -208,10 +221,17 @@ pub(crate) fn captioned(
     )?))
 }
 
-/// What the line under an expression's row says where `writer` gives the one it inherits, `beyond` when a level laid over the popover's gives it: the same words as every other row's.
-pub(crate) fn inherited_said(writer: Option<&Origin>, beyond: bool) -> String {
-    match writer {
-        Some(Origin::Level(level)) => match beyond {
+/// What the line under an expression's row says, in the same words as every other row's: set here, else given by `inherited` — a level laid over the popover's where `beyond` says so — else the default.
+pub(crate) fn expression_said(
+    here: bool,
+    inherited: Option<&Origin>,
+    beyond: impl FnOnce() -> bool,
+) -> String {
+    if here {
+        return Provenance::Here.said();
+    }
+    match inherited {
+        Some(Origin::Level(level)) => match beyond() {
             true => Provenance::Overridden(level.clone()),
             false => Provenance::Inherited(level.clone()),
         }

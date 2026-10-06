@@ -43,6 +43,15 @@ pub(crate) fn hint() -> RwSignal<Option<Hint>> {
     HINT.with(|hint| *hint)
 }
 
+/// Says at `pointer` what the drag under way snaps to: each of `guides` drawn across `bounds`.
+pub(crate) fn show_guides(pointer: (f32, f32), guides: &[crate::snap::Guide], bounds: Rect) {
+    hint().set(Some(Hint {
+        pointer,
+        guides: crate::snap::lines(guides, bounds),
+        ..Hint::default()
+    }));
+}
+
 fn started() {
     DRAGGING.with(|dragging| {
         if !dragging.peek() {

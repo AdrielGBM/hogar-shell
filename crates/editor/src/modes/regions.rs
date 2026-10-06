@@ -352,7 +352,7 @@ impl<'a> Plan<'a> {
     }
 
     /// The box the region `id` is measured in, in pixels.
-    pub fn bounds(&self, id: &AreaId) -> Result<telar::Rect, EditError> {
+    fn bounds(&self, id: &AreaId) -> Result<telar::Rect, EditError> {
         let within = tile(&self.tiles(id)?, id)?.within;
         Ok(self.desktop.reserved.box_of(within, self.desktop.size))
     }
@@ -362,12 +362,14 @@ impl<'a> Plan<'a> {
         let (start, extent) = cut.along(tile(&self.tiles(id)?, id)?.rect);
         let stop = end(start, extent);
         let bounds = self.bounds(id)?;
-        Ok(
-            snap::grid_lines(&self.desktop, self.layer, cut.into(), bounds)
-                .into_iter()
-                .filter(|at| *at - start >= SMALLEST && stop - *at >= SMALLEST)
-                .collect(),
-        )
+        Ok(snap::grid_lines_in(
+            &self.desktop,
+            self.layer,
+            cut.into(),
+            bounds,
+            (start, stop),
+            SMALLEST,
+        ))
     }
 
     /// `a` and `b` made one region, which is the one of them first in the layer's z-order, showing its picture; the other is taken out.

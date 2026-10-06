@@ -22,7 +22,7 @@ mod tests {
     use surfaces::transient;
     use toml::{Table, Value};
 
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::popover::area::{edges, help, parsed, spelled, variants};
     use crate::popover::handles::{CORNERS, Corner, clamp_name};
     use crate::popover::place::{GAP, card_at};
@@ -291,16 +291,7 @@ mod tests {
         );
         popover::close();
 
-        mode::enter_as(
-            LayerKind::Top,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("top mode");
+        crate::rig::open_mode(LayerKind::Top);
         popover::open_for(&session::Selection::Area(bar())).expect("it opens in the mode");
         assert_eq!(
             transient::drawn_in(popover::ID).map(|window| window.layer),
@@ -473,15 +464,7 @@ mod tests {
         }
 
         fn lay_out(&self) {
-            compute_layout(
-                self.node,
-                AvailableSpace::Definite(1920.0),
-                AvailableSpace::Definite(1080.0),
-            )
-            .expect("the popover lays out");
-            for _ in 0..2 {
-                telar::relayout_if_dirty();
-            }
+            crate::rig::lay_out(self.node, (1920.0, 1080.0));
         }
 
         fn route(&mut self, event: &Event) {
@@ -522,18 +505,26 @@ mod tests {
         card.route(&release(at));
     }
 
-    /// The built-in layout with `fill` on the `*` rule's bar, and a rule for the rig's screen that writes the bar as `here` says — the narrowest level writing it, so the one the bar's popover writes into.
+    /// The built-in layout with `fill` on the `*` rule's bar, and a rule for the rig's screen that writes the bar as `here` says.
     fn filled(fill: &'static str, here: impl FnOnce(&mut Area)) -> impl FnOnce(&mut Layout) {
+        layered(move |bar| bar.style.fill = Some(fill.to_string()), here)
+    }
+
+    /// The built-in layout with its `*` rule's bar as `under` makes it, and a rule for the rig's screen that writes the bar as `here` says — the narrowest level writing it, so the one the bar's popover writes into.
+    fn layered(
+        under: impl FnOnce(&mut Area),
+        here: impl FnOnce(&mut Area),
+    ) -> impl FnOnce(&mut Layout) {
         move |mine| {
-            mine.outputs[0]
-                .layers
-                .top
-                .areas
-                .iter_mut()
-                .find(|area| area.id.as_str() == "bar-top")
-                .expect("the built-in layout has a top bar")
-                .style
-                .fill = Some(fill.to_string());
+            under(
+                mine.outputs[0]
+                    .layers
+                    .top
+                    .areas
+                    .iter_mut()
+                    .find(|area| area.id.as_str() == "bar-top")
+                    .expect("the built-in layout has a top bar"),
+            );
             let mut area = Area {
                 id: AreaId::new("bar-top"),
                 ..Area::default()
@@ -547,7 +538,6 @@ mod tests {
             mine.outputs.push(screen);
         }
     }
-
     fn rule(rig: &Rig, output: &str, workspace: Option<&str>) -> Level {
         Level {
             layout: rig.store.borrow().active_id().clone(),
@@ -574,15 +564,15 @@ mod tests {
         let draft = popover::area_draft().expect("an area's popover");
         let every = rule(&rig, "*", None);
         assert_eq!(
-            draft.provenance("style.fill"),
+            draft.provenance(&["style.fill"]),
             Provenance::Inherited(every.clone())
         );
-        assert!(!draft.writes("style.fill"), "nothing to reset here");
+        assert!(!draft.writes(&["style.fill"]), "nothing to reset here");
         assert!(
             shows(&tree, &format!("From outputs.* in {}", every.file())),
             "the row says it"
         );
-        assert_eq!(draft.provenance("style.opacity"), Provenance::Default);
+        assert_eq!(draft.provenance(&["style.opacity"]), Provenance::Default);
         assert!(shows(&tree, "Default"));
         popover::close();
         assert_eq!(
@@ -604,8 +594,8 @@ mod tests {
         popover::open_area(bar()).expect("the bar's popover opens");
         let mut card = Card::open();
         let draft = popover::area_draft().expect("an area's popover");
-        assert_eq!(draft.provenance("style.fill"), Provenance::Here);
-        assert!(draft.writes("style.fill"));
+        assert_eq!(draft.provenance(&["style.fill"]), Provenance::Here);
+        assert!(draft.writes(&["style.fill"]));
         assert!(shows(&card.tree, "Set here"));
 
         press_below(&mut card, "Fill", "Reset");
@@ -616,9 +606,9 @@ mod tests {
             Some("surface"),
             "and so does the bar"
         );
-        assert!(!draft.writes("style.fill"));
+        assert!(!draft.writes(&["style.fill"]));
         assert_eq!(
-            draft.provenance("style.fill"),
+            draft.provenance(&["style.fill"]),
             Provenance::Inherited(rule(&rig, "*", None))
         );
 
@@ -659,7 +649,7 @@ mod tests {
         let draft = popover::area_draft().expect("an area's popover");
         let later = rule(&rig, "*", Some("2"));
         assert_eq!(
-            draft.provenance("style.fill"),
+            draft.provenance(&["style.fill"]),
             Provenance::Overridden(later.clone())
         );
         assert!(shows(
@@ -738,7 +728,7 @@ mod tests {
         );
 
         assert_eq!(draft.shown_at(&twelve), Some(Value::Boolean(true)));
-        draft.unset(&twelve);
+        draft.reset(&twelve);
         assert_eq!(
             draft.provenance(&twelve),
             Provenance::Inherited(rule(&rig, "*", None))
@@ -796,29 +786,14 @@ mod tests {
 
     /// The built-in layout with `thickness` on the `*` rule's bar, and a rule for the rig's screen that writes the bar as `here` says.
     fn thick(thickness: f32, here: impl FnOnce(&mut Area)) -> impl FnOnce(&mut Layout) {
-        move |mine| {
-            let area = mine.outputs[0]
-                .layers
-                .top
-                .areas
-                .iter_mut()
-                .find(|area| area.id.as_str() == "bar-top")
-                .expect("the built-in layout has a top bar");
-            if let Some(layout::AreaKind::Bar { thickness: own, .. }) = &mut area.kind {
-                *own = Some(thickness);
-            }
-            let mut area = Area {
-                id: AreaId::new("bar-top"),
-                ..Area::default()
-            };
-            here(&mut area);
-            let mut screen = OutputRule {
-                matches: OutputMatch(SCREEN.to_string()),
-                ..OutputRule::default()
-            };
-            screen.layers.top.areas.push(area);
-            mine.outputs.push(screen);
-        }
+        layered(
+            move |bar| {
+                if let Some(layout::AreaKind::Bar { thickness: own, .. }) = &mut bar.kind {
+                    *own = Some(thickness);
+                }
+            },
+            here,
+        )
     }
 
     fn thickness_on_screen() -> Option<f32> {
@@ -843,7 +818,7 @@ mod tests {
         let draft = popover::area_draft().expect("an area's popover");
         let every = rule(&rig, "*", None);
         assert_eq!(
-            draft.provenance("thickness"),
+            draft.provenance(&["thickness"]),
             Provenance::Inherited(every.clone())
         );
         assert!(shows(&tree, &format!("From outputs.* in {}", every.file())));
@@ -864,17 +839,17 @@ mod tests {
         popover::open_area(bar()).expect("the bar's popover opens");
         let mut card = Card::open();
         let draft = popover::area_draft().expect("an area's popover");
-        assert_eq!(draft.provenance("thickness"), Provenance::Here);
-        assert!(draft.writes("thickness"));
+        assert_eq!(draft.provenance(&["thickness"]), Provenance::Here);
+        assert!(draft.writes(&["thickness"]));
         assert_eq!(thickness_on_screen(), Some(48.0));
 
         press_below(&mut card, "Thickness", "Reset");
         let thickness = popover::shared::<f32>("thickness").expect("the thickness row");
         assert_eq!(thickness.peek(), 40.0, "the row shows what it inherits now");
         assert_eq!(thickness_on_screen(), Some(40.0), "and so does the bar");
-        assert!(!draft.writes("thickness"));
+        assert!(!draft.writes(&["thickness"]));
         assert_eq!(
-            draft.provenance("thickness"),
+            draft.provenance(&["thickness"]),
             Provenance::Inherited(rule(&rig, "*", None))
         );
 
@@ -883,6 +858,39 @@ mod tests {
         assert_eq!(session::undo().as_deref(), Ok("Customize bar-top"));
         assert_eq!(rig.undo_label(), None, "it was one entry");
         assert_eq!(thickness_on_screen(), Some(48.0));
+    }
+
+    /// A Reset made inside an event's batch, as a pressed button makes it, puts a bar that inherits the whole edge back to running it: what keeps the switch in step with the length does not take the length Reset puts back for one the user chose.
+    #[test]
+    fn a_reset_inside_an_event_batch_keeps_the_bar_running_the_whole_edge() {
+        let _rig = rig_with(
+            "reset-batched",
+            layered(
+                |_| {},
+                |area| {
+                    if let Some(layout::AreaKind::Bar { length, .. }) =
+                        popover::AreaDraft::kind_mut(area, "bar")
+                    {
+                        *length = Some(layout::Extent::Px(800.0));
+                    }
+                },
+            ),
+        );
+        let _scope = Scope::new();
+        place_bar();
+        popover::open_area(bar()).expect("the bar's popover opens");
+        let _card = Card::open();
+        let draft = popover::area_draft().expect("an area's popover");
+        let fills = popover::shared::<bool>("length_fill").expect("the full length switch");
+        assert!(!fills.peek(), "the screen's rule runs it 800 px");
+        assert!(draft.writes(&["length"]));
+
+        telar::batch(|| draft.reset(&["length"]));
+
+        assert!(fills.peek(), "the switch shows the whole edge it inherits");
+        assert!(!draft.writes(&["length"]), "and no length is pinned here");
+        assert!(!draft.is_resetting(), "the Reset is over once its batch is");
+        popover::close();
     }
 
     /// An expression row says where its expression comes from in the same words as every other row, and Remove, which takes the inherited one back, takes the line away with it.

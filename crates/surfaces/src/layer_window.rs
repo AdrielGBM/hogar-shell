@@ -18,7 +18,7 @@ use telar::{
 };
 
 use config::theme::NordTheme;
-use config::{Config, Edge, LiveConfig, Shape};
+use config::{Config, Edge, LiveConfig};
 use layout::{
     AreaId, Backdrop, LayerKind, Resolved, ResolvedArea, ResolvedAreaKind, ResolvedLayer, Within,
 };
@@ -54,13 +54,10 @@ pub struct LayerPlan<'a> {
 /// It is gathered across *every* layer, because reservation is an output-level fact: a bar in the top window and a reserving dock on the desktop both take space from the same screen, and neither can see the other. That is exactly why an area cannot work this out for itself and the host hands it down.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Reserved {
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
-    pub left: f32,
-    /// What only the areas that stay on screen take off each edge, in `Edge::ALL` order: `on` also counts the peek strip a hiding bar leaves, which is nothing a bar that stays has to yield to.
+    on: [f32; 4],
+    /// What only the areas that stay on screen take off each edge: `on` also counts the peek strip a hiding bar leaves, which is nothing a bar that stays has to yield to.
     held: [f32; 4],
-    /// The fillet the largest steady bar drawn as one strip on each edge asks for, in `Edge::ALL` order: what a horizontal bar crossing that edge rounds its corner with when it has none of its own.
+    /// The fillet the largest steady bar drawn as one strip on each edge asks for: what a horizontal bar crossing that edge rounds its corner with when it has none of its own.
     fillets: [Option<f32>; 4],
 }
 
@@ -69,104 +66,76 @@ impl Reserved {
     ///
     /// The config is here for the one part of the answer the model cannot give: a bar floats at its gap from its edge, and a bar that floats reserves that air too, or a window would tile under it. The gap is the bar's own, except that `[shape] frame` takes it away, so it is resolved where the config is.
     ///
-    /// Only an output-level area may reserve, so the bars read here are the ones every workspace on the screen shares.
+    /// Every edge, its steady part and its corners are read from [`Resolved::reserving`], the output-level arrangement every workspace on the screen shares, so a workspace rule can no more move a corner than re-tile a window.
     pub fn of(resolved: &Resolved, config: &Config) -> Self {
         let air = |edge: Edge, steady_only: bool| {
             resolved
-                .areas()
-                .filter_map(|(_, area)| match area.kind {
+                .reserving()
+                .filter_map(|kind| match *kind {
                     ResolvedAreaKind::Bar {
                         edge: on,
                         shape,
                         autohide,
                         ..
-                    } if on == edge && area.reserve && (!steady_only || autohide.is_none()) => {
+                    } if on == edge && (!steady_only || autohide.is_none()) => {
                         Some(config.gap_of(&crate::bar::bar_shape(config, shape)) as f32)
                     }
                     _ => None,
                 })
                 .fold(0.0, f32::max)
         };
-        let on = |edge: Edge| {
-            let depth = resolved.reserved(edge);
-            match depth > 0.0 {
-                true => depth + air(edge, false),
-                false => 0.0,
-            }
+        let with_air = |depth: f32, edge: Edge, steady_only: bool| match depth > 0.0 {
+            true => depth + air(edge, steady_only),
+            false => 0.0,
         };
+        let on = Edge::ALL.map(|edge| with_air(resolved.reserved(edge), edge, false));
         let held = Edge::ALL.map(|edge| {
             let depth = resolved
-                .areas()
-                .filter(|(_, area)| area.reserve)
-                .filter_map(|(_, area)| match area.kind {
-                    ResolvedAreaKind::Bar {
-                        edge: on,
-                        thickness,
-                        autohide: None,
-                        ..
-                    }
-                    | ResolvedAreaKind::Dock {
-                        edge: on,
-                        thickness,
-                    } if on == edge => Some(thickness),
-                    _ => None,
-                })
+                .reserving()
+                .filter_map(|kind| kind.steady_thickness(edge))
                 .fold(0.0, f32::max);
-            match depth > 0.0 {
-                true => depth + air(edge, true),
-                false => 0.0,
-            }
+            with_air(depth, edge, true)
         });
         let fillets = Edge::ALL.map(|edge| {
             resolved
-                .areas()
-                .filter_map(|(_, area)| match area.kind {
+                .reserving()
+                .filter_map(|kind| match *kind {
                     ResolvedAreaKind::Bar {
                         edge: on,
                         shape,
                         autohide: None,
                         ..
-                    } if on == edge && area.reserve => crate::bar::fillet_of(config, shape),
+                    } if on == edge => crate::bar::fillet_of(config, shape),
                     _ => None,
                 })
                 .reduce(f32::max)
         });
-        Self {
-            top: on(Edge::Top),
-            right: on(Edge::Right),
-            bottom: on(Edge::Bottom),
-            left: on(Edge::Left),
-            held,
-            fillets,
-        }
+        Self { on, held, fillets }
     }
 
     pub fn fillet_on(&self, edge: Edge) -> Option<f32> {
-        self.fillets[Edge::ALL.iter().position(|it| *it == edge).unwrap_or(0)]
+        self.fillets[edge.index()]
     }
 
     pub fn held_on(&self, edge: Edge) -> f32 {
-        self.held[Edge::ALL.iter().position(|it| *it == edge).unwrap_or(0)]
+        self.held[edge.index()]
     }
 
     pub fn on(&self, edge: Edge) -> f32 {
-        match edge {
-            Edge::Top => self.top,
-            Edge::Right => self.right,
-            Edge::Bottom => self.bottom,
-            Edge::Left => self.left,
-        }
+        self.on[edge.index()]
     }
 
     /// The box an area measures against: the whole output, or what the reserving areas left of it.
     pub fn box_of(&self, within: Within, size: (f32, f32)) -> Rect {
+        let [top, right, bottom, left] =
+            [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left].map(|edge| self.on(edge));
         match within {
             Within::Output => Rect::new(0.0, 0.0, size.0, size.1),
             Within::Usable => Rect::new(
-                self.left,
-                self.top,
-                (size.0 - self.left - self.right).max(0.0),
-                (size.1 - self.top - self.bottom).max(0.0),
+                left,
+                top,
+                (size.0 - left - right).max(0.0),
+                (size.1 - top - bottom).max(0.0),
             ),
         }
     }
@@ -964,7 +933,7 @@ fn window_layer(kind: LayerKind) -> Option<(Layer, &'static str)> {
 pub fn area_draws(area: &ResolvedArea, config: &Config) -> bool {
     let edged = match area.kind {
         ResolvedAreaKind::Bar { shape, .. } => {
-            matches!(crate::bar::bar_shape(config, shape).mode, Shape::Bar)
+            crate::bar::bar_shape(config, shape).mode.draws_strip()
         }
         _ => true,
     };
@@ -1444,7 +1413,7 @@ mod tests {
         run_with_platform,
     };
 
-    use config::Edge;
+    use config::{Edge, Shape};
     use layout::{
         AreaId, BarShape, Expr, Extent, GroupId, GroupKind, InstanceId, Representation,
         ResolvedAreaKind, ResolvedGroup, ResolvedInstance, Style, Zone,
@@ -2035,9 +2004,17 @@ mod tests {
     #[test]
     fn the_host_insets_the_usable_box_by_what_the_reserving_areas_took() {
         let reserved = Reserved::of(&only_bars(), &config());
-        assert_eq!(reserved.top, 34.0, "the top bar reserves its thickness");
         assert_eq!(
-            (reserved.left, reserved.right, reserved.bottom),
+            reserved.on(Edge::Top),
+            34.0,
+            "the top bar reserves its thickness"
+        );
+        assert_eq!(
+            (
+                reserved.on(Edge::Left),
+                reserved.on(Edge::Right),
+                reserved.on(Edge::Bottom)
+            ),
             (0.0, 0.0, 0.0),
             "and nothing reserves any other edge"
         );
@@ -2067,9 +2044,10 @@ mod tests {
         ]);
 
         let reserved = Reserved::of(&both, &config());
-        assert_eq!(reserved.top, 34.0);
+        assert_eq!(reserved.on(Edge::Top), 34.0);
         assert_eq!(
-            reserved.left, 60.0,
+            reserved.on(Edge::Left),
+            60.0,
             "the desktop layer's dock takes its edge from the same screen the top bar is on"
         );
     }
@@ -3004,7 +2982,7 @@ mod tests {
         );
         let alone = resolved(&[(LayerKind::Top, layer(vec![flagged.clone()]))]);
         assert_eq!(
-            plan(&config, &alone).reserved.top,
+            plan(&config, &alone).reserved.on(Edge::Top),
             34.0,
             "it reserves what the model says"
         );

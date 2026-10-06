@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DismissRegistration, DrawCommand, Event, Key,
-        LayoutItem, LayoutStyle, ModifiersState, NamedKey, NodeId, PointerButton, PointerSource,
-        Rect, compute_layout,
+        ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle, ModifiersState,
+        NamedKey, NodeId, Rect,
     };
 
     use config::Config;
@@ -14,9 +12,9 @@ mod tests {
     use surfaces::{reconcile, transient};
 
     use crate::keys::{self, Press};
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::modes::lock as lock_mode;
-    use crate::rig::{SCREEN, rig, rig_with};
+    use crate::rig::{SCREEN, enter, rig, rig_with};
     use crate::theme::{self, Controls, Look};
 
     const SIZE: (f32, f32) = (1920.0, 1080.0);
@@ -48,21 +46,6 @@ mod tests {
             theme::pending().set(None);
             mode::leave();
         }
-    }
-
-    fn enter() -> DismissRegistration {
-        mode::enter_as(
-            LayerKind::Top,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the top mode opens");
-        let id = crate::host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
     }
 
     fn tap(key: Key) -> bool {
@@ -108,15 +91,7 @@ mod tests {
         }
 
         fn settle(&self) {
-            compute_layout(
-                self.root,
-                AvailableSpace::Definite(SIZE.0),
-                AvailableSpace::Definite(SIZE.1),
-            )
-            .expect("the card lays out");
-            for _ in 0..3 {
-                telar::relayout_if_dirty();
-            }
+            crate::rig::lay_out(self.root, (SIZE.0, SIZE.1));
         }
 
         fn texts(&self) -> Vec<(String, Rect)> {
@@ -147,29 +122,8 @@ mod tests {
                 .find(|(text, _)| text == wanted)
                 .map(|(_, rect)| rect)
                 .unwrap_or_else(|| panic!("{wanted:?} is drawn: {:?}", self.said()));
-            let (x, y) = (
-                f64::from(rect.x + rect.width / 2.0),
-                f64::from(rect.y + rect.height / 2.0),
-            );
-            for event in [
-                Event::PointerMoved {
-                    x,
-                    y,
-                    source: PointerSource::Mouse,
-                },
-                Event::PointerPressed {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-                Event::PointerReleased {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-            ] {
+            let at = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+            for event in crate::rig::move_and_click(at) {
                 if !telar::dispatch_overlays(&event) {
                     self.tree.on_event(&event);
                 }
@@ -198,7 +152,7 @@ mod tests {
         let _rig = rig("theme-strip");
         let _owner = Owner::new();
         assert!(theme::open().is_err(), "no mode, no theme popover");
-        let _host = enter();
+        let _host = enter(LayerKind::Top);
         let (_, press) = crate::host::strip_actions()
             .into_iter()
             .find(|(label, _)| label() == "Theme…")
@@ -213,7 +167,7 @@ mod tests {
         let _rig = rig("theme-radius");
         let _owner = Owner::new();
         let before = running_file();
-        let _host = enter();
+        let _host = enter(LayerKind::Top);
         let was = shown_radius();
         let card = Card::open();
 
@@ -243,7 +197,7 @@ mod tests {
         let _rig = rig("theme-esc");
         let _owner = Owner::new();
         let before = running_file();
-        let _host = enter();
+        let _host = enter(LayerKind::Top);
         let was = shown_radius();
 
         let card = Card::open();
@@ -334,7 +288,7 @@ mod tests {
         assert_eq!(lock_mode::falls_back_with(&config, &config), None);
         assert!(lock_mode::falls_back_with(&config, &dawn.on(&config)).is_some());
 
-        let _host = enter();
+        let _host = enter(LayerKind::Top);
         let card = Card::open();
         let warned = |said: Vec<String>| said.iter().any(|line| line.contains("would fall back"));
         assert!(!warned(card.said()), "{:?}", card.said());

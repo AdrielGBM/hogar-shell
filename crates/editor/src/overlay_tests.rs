@@ -2,11 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DismissRegistration, DrawCommand, Event, Key,
-        LayoutItem, LayoutStyle, ModifiersState, compute_layout,
+        AvailableSpace, ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle,
+        ModifiersState, compute_layout,
     };
 
     use layout::{Anchor, AreaId, CardKind, LayerKind, Offset, Route, RoutedCard, Urgency};
@@ -16,9 +15,9 @@ mod tests {
     use surfaces::transient::{self, Place};
 
     use crate::keys::{self, Direction, Press};
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::modes::overlay::{self, Placed, stacks_of};
-    use crate::rig::{Rig, SCREEN, rig_with};
+    use crate::rig::{Rig, SCREEN, enter, rig_with};
     use crate::session::{self, Edit, Selection};
     use crate::{context, popover};
 
@@ -36,21 +35,6 @@ mod tests {
             transient::close_all();
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn enter() -> DismissRegistration {
-        mode::enter_as(
-            LayerKind::Overlay,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the overlay mode opens");
-        let id = crate::host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
     }
 
     fn screen() -> reconcile::Desktop {
@@ -170,7 +154,7 @@ mod tests {
     fn a_stack_is_made_pinned_moved_and_widened_each_as_one_undo_entry() {
         let rig = rig_with("overlay-stack", |_| {});
         let _owner = Owner::new();
-        let _mode = enter();
+        let _mode = enter(LayerKind::Overlay);
         assert!(tap(Key::Char('N'), SHIFT), "Shift+N makes a stack");
         let made = stack("stack-2").expect("a new stack");
         assert_eq!((made.anchor, made.offset), (Anchor::Center, Offset::ZERO));
@@ -248,7 +232,7 @@ mod tests {
     fn a_critical_notification_goes_to_a_centred_stack_while_toasts_stay_in_the_corner() {
         let rig = rig_with("overlay-routes", |_| {});
         let _owner = Owner::new();
-        let _mode = enter();
+        let _mode = enter(LayerKind::Overlay);
         overlay::add_stack().expect("a stack in the middle");
         popover::open_area(node("stack-2")).expect("its popover opens");
         let tree = laid();
@@ -299,7 +283,7 @@ mod tests {
     fn volume_and_brightness_and_the_launcher_are_placed_at_a_stack() {
         let rig = rig_with("overlay-placement", |_| {});
         let _owner = Owner::new();
-        let _mode = enter();
+        let _mode = enter(LayerKind::Overlay);
         overlay::add_stack().expect("a stack in the middle");
         assert!(matches!(
             modules::launcher::placement(Some(SCREEN)),
@@ -367,7 +351,7 @@ mod tests {
     fn a_stacks_popover_and_menu_offer_what_the_overlay_mode_places() {
         let rig = rig_with("overlay-popover", |_| {});
         let _owner = Owner::new();
-        let _mode = enter();
+        let _mode = enter(LayerKind::Overlay);
         popover::open_area(node("stack")).expect("its popover opens");
         let shown = texts(&laid());
         for wanted in [
@@ -415,7 +399,7 @@ mod tests {
     fn a_dragged_stack_follows_its_first_card_and_is_kept_or_put_back_whole() {
         let rig = rig_with("overlay-drag", |_| {});
         let _owner = Owner::new();
-        let _mode = enter();
+        let _mode = enter(LayerKind::Overlay);
         let id = AreaId::new("stack");
         let before = stack("stack").expect("the corner stack");
         let card = before.ghost();
@@ -467,7 +451,7 @@ mod tests {
     fn a_stack_carried_by_the_pointer_previews_where_it_is_carried() {
         let _rig = rig_with("overlay-pointer-drag", |_| {});
         let _owner = Owner::new();
-        let _mode = enter();
+        let _mode = enter(LayerKind::Overlay);
         let card = stack("stack").expect("the corner stack").ghost();
         let mode = mode::current().expect("the mode is up");
         let page = LayoutStyle::new().width(1920.0).height(1080.0);

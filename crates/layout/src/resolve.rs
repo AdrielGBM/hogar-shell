@@ -15,7 +15,7 @@ use util::report::{Finding, Message, Report};
 
 use crate::container::Placement;
 use crate::library::{Library, komponent_path};
-use crate::merge::{At, Origins, merge_layers, merge_session_layers, merge_sources};
+use crate::merge::{KeyAt, Origins, merge_layers, merge_session_layers, merge_sources};
 use crate::model::*;
 
 /// The workspace a resolution is for, as much of it as the compositor could say.
@@ -122,9 +122,9 @@ pub struct Resolved {
     pub workspace: Option<ActiveWorkspace>,
     /// Keyed by layer, and a `BTreeMap` so iteration is bottom-up, which is the order the windows stack in.
     pub layers: BTreeMap<LayerKind, ResolvedLayer>,
-    /// What each edge takes off the screen, in `Edge::ALL` order, settled before any workspace rule ran. Read through [`Resolved::reserved`].
-    reserved: [f32; 4],
-    /// Which level wrote each key resolution kept. Read through [`Resolved::origin`].
+    /// The bars and docks that reserve their edge, settled before any workspace rule ran. Read through [`Resolved::reserving`].
+    reserving: Vec<ResolvedAreaKind>,
+    /// Which level wrote each key resolution kept. Read through [`Resolved::level_of`].
     origins: Arc<Origins>,
 }
 
@@ -134,7 +134,7 @@ impl PartialEq for Resolved {
         self.output == other.output
             && self.workspace == other.workspace
             && self.layers == other.layers
-            && self.reserved == other.reserved
+            && self.reserving == other.reserving
     }
 }
 
@@ -153,12 +153,12 @@ impl Resolved {
         layers: impl IntoIterator<Item = (LayerKind, ResolvedLayer)>,
     ) -> Self {
         let layers: BTreeMap<LayerKind, ResolvedLayer> = layers.into_iter().collect();
-        let reserved = reserved_edges(&layers);
+        let reserving = reserving_of(&layers);
         Self {
             output: output.into(),
             workspace: None,
             layers,
-            reserved,
+            reserving,
             origins: Arc::default(),
         }
     }
@@ -166,7 +166,7 @@ impl Resolved {
     /// The level that wrote `key` of what `holder` names on `layer`, where resolution kept it — the key spelled as the file spells it under its holder: `thickness`, `shape.radius`, `style.fill`, `style.border.width`, `reserve`, `actions.press`, `options.face.scale`, a group's `arrange`, `cols` or `gap`, a child's `weight`, `cell` or `rect`, or an expression's `visible`, `repeat`, `parameters.<name>` or `bindings.<path>`. An option inside a list or a table a level wrote whole is that level's. `None` where no level writes it, so what is drawn there is a default — and for every key of an arrangement assembled directly ([`Resolved::of`]).
     ///
     /// A group's `arrange` is written by the last level that writes any key its arrangement is made of (`arrange`, `cols`, `rows`, `gap`), which is the level `unset = ["arrange"]` has to come after to take the arrangement back.
-    pub fn origin(&self, layer: LayerKind, holder: Holder<'_>, key: &str) -> Option<&Level> {
+    pub fn level_of(&self, layer: LayerKind, holder: Holder<'_>, key: &str) -> Option<&Level> {
         let (area, group, instance) = match holder {
             Holder::Area(area) => (area, None, None),
             Holder::Group(area, group) => (area, Some(group), None),
@@ -203,11 +203,16 @@ impl Resolved {
             .flat_map(|group| group.children.iter())
     }
 
-    /// How deep `edge`'s reserving areas are, which is what its reservation strip commits.
-    ///
-    /// Derived from the output-level arrangement alone — the one every workspace on that screen shares — so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7). It is the areas' own depth; the air a floating bar sits in is its shape's `gap`, which the config can still take away (`[shape] frame`).
+    /// The bars and docks that reserve their edge, as the output-level arrangement alone draws them — the one every workspace on that screen shares — so switching workspaces can add and remove areas but can never re-tile the user's windows (F-6.7). What is derived from reservation reads these rather than [`Resolved::areas`].
+    pub fn reserving(&self) -> impl Iterator<Item = &ResolvedAreaKind> {
+        self.reserving.iter()
+    }
+
+    /// How deep `edge`'s deepest reserving area is, which is what its reservation strip commits: the areas beside each other along one edge share one band rather than stacking. It is the areas' own depth; the air a floating bar sits in is its shape's `gap`, which the config can still take away (`[shape] frame`).
     pub fn reserved(&self, edge: Edge) -> f32 {
-        self.reserved[Edge::ALL.iter().position(|it| *it == edge).unwrap_or(0)]
+        self.reserving()
+            .filter_map(|kind| kind.reserving_thickness(edge))
+            .fold(0.0, f32::max)
     }
 }
 
@@ -357,13 +362,23 @@ impl ResolvedAreaKind {
             _ => None,
         }
     }
+
+    /// What this area would take off `edge` if it reserves and stays on screen: nothing for a bar that hides itself, whose peek strip a bar that stays has no need to yield to.
+    pub fn steady_thickness(&self, edge: Edge) -> Option<f32> {
+        match self {
+            ResolvedAreaKind::Bar {
+                autohide: Some(_), ..
+            } => None,
+            _ => self.reserving_thickness(edge),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedGroup {
     pub id: GroupId,
     pub kind: GroupKind,
-    /// How the group lays out its children. Never anything but `pages` in a zone: validation refuses it there, and a file edited past that draws a loose run. The level that wrote it is [`Resolved::origin`] of `arrange` on the group.
+    /// How the group lays out its children. Never anything but `pages` in a zone: validation refuses it there, and a file edited past that draws a loose run. The level that wrote it is [`Resolved::level_of`] of `arrange` on the group.
     pub arrange: Option<Arrange>,
     /// How many columns the inner grid a `grid` group's children are placed on has.
     pub cols: u32,
@@ -479,9 +494,9 @@ pub fn resolve(
 
     let answered = answer_layers(&layers, &origins, layout, known, &mut report);
     // A workspace rule may only add, remove and restyle; what each edge takes off the screen is settled before any of them runs. Answering the rule-free arrangement a second time is the cost of that, and only where a rule actually matched — its own findings are the ones already reported, so they go to a report nobody reads.
-    let reserved = match ruled {
-        false => reserved_edges(&answered),
-        true => reserved_edges(&answer_layers(
+    let reserving = match ruled {
+        false => reserving_of(&answered),
+        true => reserving_of(&answer_layers(
             &without_rules,
             &origins_without_rules,
             layout,
@@ -493,7 +508,7 @@ pub fn resolve(
     let resolved = Resolved {
         output: output.to_string(),
         workspace: workspace.cloned(),
-        reserved,
+        reserving,
         layers: answered
             .into_iter()
             .filter(|(_, layer)| !layer.areas.is_empty())
@@ -535,10 +550,10 @@ struct Answering<'a> {
 
 impl Answering<'_> {
     /// `expr`, which the merge kept at `at`, with the level that wrote it.
-    fn sourced(&self, expr: &Expr, (layer, area, group, instance, path): At) -> ResolvedExpr {
+    fn sourced(&self, expr: &Expr, at: KeyAt) -> ResolvedExpr {
         let origin = self
             .origins
-            .of(&(layer, area, group, instance, path.to_string()))
+            .of(&at)
             .expect("the merge records the level of every expression it keeps")
             .clone();
         ResolvedExpr {
@@ -549,16 +564,13 @@ impl Answering<'_> {
     }
 }
 
-/// What each edge of the output is taken by, in `Edge::ALL` order: its deepest reserving area, since every area on one edge hugs that edge and the ones beside each other along it share one band rather than stacking.
-fn reserved_edges(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> [f32; 4] {
-    Edge::ALL.map(|edge| {
-        layers
-            .values()
-            .flat_map(|layer| layer.areas.iter())
-            .filter(|area| area.reserve)
-            .filter_map(|area| area.kind.reserving_thickness(edge))
-            .fold(0.0, f32::max)
-    })
+fn reserving_of(layers: &BTreeMap<LayerKind, ResolvedLayer>) -> Vec<ResolvedAreaKind> {
+    layers
+        .values()
+        .flat_map(|layer| layer.areas.iter())
+        .filter(|area| area.reserve && area.kind.edge().is_some())
+        .map(|area| area.kind.clone())
+        .collect()
 }
 
 /// The sources `layout` declares, each laid over what the layouts it extends declare under the same name.
@@ -815,7 +827,13 @@ fn answer_area(area: &Area, answering: Answering<'_>, report: &mut Report) -> Op
         visible: area.visible.as_ref().map(|visible| {
             answering.sourced(
                 visible,
-                (layer, area.id.clone(), None, None, Unset::Visible),
+                (
+                    layer,
+                    area.id.clone(),
+                    None,
+                    None,
+                    Unset::Visible.to_string(),
+                ),
             )
         }),
         groups,
@@ -1004,13 +1022,13 @@ fn answer_group(
     let children = placed((arrange, cols, rows), drawn, report, |child| {
         (file.clone(), format!("{at}.children.{}.cell", child.id))
     });
-    let at = |slot| {
+    let at = |slot: Unset| {
         (
             answering.layer,
             area.clone(),
             Some(group.id.clone()),
             None,
-            slot,
+            slot.to_string(),
         )
     };
     Some(ResolvedGroup {
@@ -1104,7 +1122,7 @@ fn answer_use(
                 area.clone(),
                 Some(group.id.clone()),
                 None,
-                Unset::parameter(name),
+                Unset::parameter(name).to_string(),
             );
             answering.sourced(expr, slot)
         });
@@ -1297,7 +1315,7 @@ fn answer_instance(
                 area.clone(),
                 Some(group.clone()),
                 Some(instance.id.clone()),
-                Unset::binding(path),
+                Unset::binding(path).to_string(),
             );
             (path.clone(), answering.sourced(expr, at))
         })

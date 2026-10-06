@@ -2,12 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DismissRegistration, DrawCommand, Event,
-        LayoutItem, LayoutStyle, ModifiersState, Paint, PointerButton, PointerSource,
-        compute_layout, signal, use_theme,
+        AvailableSpace, ComponentList, Container, DrawCommand, Event, LayoutItem, LayoutStyle,
+        ModifiersState, Paint, PointerButton, PointerSource, compute_layout, signal, use_theme,
     };
 
     use config::theme::NordTheme;
@@ -19,12 +17,12 @@ mod tests {
     use surfaces::rects::{self, Node};
     use surfaces::transient;
 
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::modes::grid::Room;
     use crate::modes::regions::{self, Cut, Plan};
     use crate::modes::widgets::{self, Geometry};
     use crate::modes::{background, lock as lock_mode};
-    use crate::rig::{Rig, SCREEN, rig_with};
+    use crate::rig::{Rig, SCREEN, enter, rig_with};
     use crate::session;
     use crate::snap::{self, Axis, Guide, Motion, Moving, Snapped};
     use crate::{host, select};
@@ -160,8 +158,8 @@ mod tests {
     #[test]
     fn a_region_line_snaps_to_the_nearest_cell_line_and_onto_the_region_grid() {
         let lines = [0.1, 1.0 / 3.0, 0.345];
-        assert_eq!(snap::nearest_line(0.34, &lines, 0.012), Some(0.345));
-        assert_eq!(snap::nearest_line(0.2, &lines, 0.012), None);
+        assert_eq!(snap::nearest(0.34, &lines, 0.012), Some(0.345));
+        assert_eq!(snap::nearest(0.2, &lines, 0.012), None);
         let snapped = snap::region_line(0.325, &lines, snap::EDGE_TOLERANCE, false);
         assert_eq!(snapped, regions::snap(1.0 / 3.0));
         assert_eq!(snapped % regions::GRID, 0.0, "on the region grid");
@@ -350,21 +348,6 @@ mod tests {
             transient::close_all();
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn enter(layer: LayerKind) -> DismissRegistration {
-        mode::enter_as(
-            layer,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the mode opens");
-        let id = host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
     }
 
     fn hold_alt(held: bool) {

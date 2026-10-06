@@ -7,9 +7,8 @@ mod tests {
     use std::sync::Arc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle,
-        ModifiersState, NamedKey, NodeId, Paint, PointerButton, PointerSource, Rect, TextStyle,
-        compute_layout, use_theme,
+        ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle, ModifiersState,
+        NamedKey, NodeId, Paint, Rect, TextStyle, use_theme,
     };
     use telar_expression::{Reference, Span, Type, Value};
 
@@ -28,7 +27,7 @@ mod tests {
         self, Candidate, Checked, Kind, Wanted, Word, complete, ranked, word_at,
     };
     use crate::keys::{self, Press};
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::popover;
     use crate::popover::bindings::{Step, plan, removal};
     use crate::rig::{Rig, SCREEN, rig, rig_with};
@@ -137,15 +136,7 @@ mod tests {
 
         /// Lays the popover out as the runner does each frame, until it settles: its card takes the height its rows were laid out at, which is known only once they are.
         fn lay_out(&self) {
-            compute_layout(
-                self.node,
-                AvailableSpace::Definite(1920.0),
-                AvailableSpace::Definite(1080.0),
-            )
-            .expect("the popover lays out");
-            for _ in 0..2 {
-                telar::relayout_if_dirty();
-            }
+            crate::rig::lay_out(self.node, (1920.0, 1080.0));
         }
 
         /// As the runner does: the keyboard's state first, then the overlays and the dismiss stack, then the tree.
@@ -157,20 +148,10 @@ mod tests {
             self.lay_out();
         }
 
-        fn click(&mut self, (x, y): (f32, f32)) {
-            let (x, y) = (f64::from(x), f64::from(y));
-            self.route(&Event::PointerPressed {
-                x,
-                y,
-                button: PointerButton::Primary,
-                source: PointerSource::Mouse,
-            });
-            self.route(&Event::PointerReleased {
-                x,
-                y,
-                button: PointerButton::Primary,
-                source: PointerSource::Mouse,
-            });
+        fn click(&mut self, at: (f32, f32)) {
+            for event in crate::rig::click_at(at) {
+                self.route(&event);
+            }
         }
 
         fn key(&mut self, key: Key) {
@@ -386,16 +367,7 @@ mod tests {
     fn enter_keeps_the_expression_as_one_entry_and_ctrl_z_takes_it_back() {
         let rig = rig("expr-enter");
         let _scope = Scope::new();
-        let _host = mode::enter_as(
-            LayerKind::Desktop,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("desktop mode");
+        let _host = crate::rig::open_mode(LayerKind::Desktop);
         let mut screen = opened_on_widgets();
         screen.type_in("$battery.level < 20");
         screen.named(NamedKey::Enter);

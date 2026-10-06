@@ -2,12 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DismissRegistration, DrawCommand, Event, Key,
-        LayoutItem, LayoutStyle, ModifiersState, NodeId, PointerButton, PointerSource, Rect,
-        compute_layout,
+        ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle, ModifiersState,
+        NodeId, PointerButton, PointerSource, Rect,
     };
 
     use config::Edge;
@@ -20,8 +18,8 @@ mod tests {
 
     use crate::host::{self, BOTTOM_EDGE_CLEARANCE, Under};
     use crate::keys::{self, Press};
-    use crate::mode::{self, Compositor};
-    use crate::rig::{Rig, SCREEN, rig};
+    use crate::mode::{self};
+    use crate::rig::{Rig, SCREEN, enter, rig};
     use crate::{context, history, session};
 
     const WIDTH: f32 = 1920.0;
@@ -47,21 +45,6 @@ mod tests {
         }
     }
 
-    fn enter(layer: LayerKind) -> DismissRegistration {
-        mode::enter_as(
-            layer,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the mode opens");
-        let id = host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
-    }
-
     /// The host of the mode that is up, laid out over the whole screen as its window lays it out, the pointer followed as the window follows it.
     struct Screen {
         tree: ComponentList,
@@ -83,15 +66,7 @@ mod tests {
         }
 
         fn settle(&self) {
-            compute_layout(
-                self.node,
-                AvailableSpace::Definite(WIDTH),
-                AvailableSpace::Definite(HEIGHT),
-            )
-            .expect("the host lays out");
-            for _ in 0..3 {
-                telar::relayout_if_dirty();
-            }
+            crate::rig::lay_out(self.node, (WIDTH, HEIGHT));
         }
 
         fn route(&mut self, event: &Event) {
@@ -136,27 +111,8 @@ mod tests {
             self.click(at);
         }
 
-        fn click(&mut self, (x, y): (f32, f32)) {
-            let (x, y) = (f64::from(x), f64::from(y));
-            for event in [
-                Event::PointerMoved {
-                    x,
-                    y,
-                    source: PointerSource::Mouse,
-                },
-                Event::PointerPressed {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-                Event::PointerReleased {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-            ] {
+        fn click(&mut self, at: (f32, f32)) {
+            for event in crate::rig::move_and_click(at) {
                 self.route(&event);
             }
         }

@@ -41,7 +41,7 @@ use crate::session::{self, Edit, EditError, Selection};
 use crate::snap;
 use crate::written::{Written, known};
 
-use super::gesture::{self, Hint, pressable};
+use super::gesture::{self, pressable};
 use super::{background, desktop, widgets};
 
 /// The transient the privacy popover is.
@@ -333,11 +333,7 @@ fn prompt_handle(output: &str, node: Node) -> Built {
                 return;
             };
             let snapped = taken.to(point, snap::free());
-            gesture::hint().set(Some(Hint {
-                pointer: point,
-                guides: snap::lines(&snapped.guides, taken.bounds),
-                ..Hint::default()
-            }));
+            gesture::show_guides(point, &snapped.guides, taken.bounds);
             let moved =
                 moved_to(&before, &node, snapped.rect).and_then(|ops| previewing.preview(ops));
             if let Err(why) = moved {

@@ -5,8 +5,8 @@ mod tests {
     use std::sync::Arc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DrawCommand, Event, LayoutItem, LayoutStyle,
-        PointerButton, PointerSource, Rect, compute_layout,
+        AvailableSpace, ComponentList, Container, DrawCommand, LayoutItem, LayoutStyle, Rect,
+        compute_layout,
     };
 
     use layout::{AreaId, Expr, LayerKind, Layout};
@@ -17,7 +17,7 @@ mod tests {
     use surfaces::rects::{self, Node};
     use surfaces::transient;
 
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::rig::{SCREEN, rig_with};
     use crate::select;
     use crate::session;
@@ -50,16 +50,7 @@ mod tests {
     }
 
     fn enter() {
-        mode::enter_as(
-            LayerKind::Top,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the top layer's mode opens");
+        crate::rig::open_mode(LayerKind::Top);
     }
 
     fn lay_out(root: telar::NodeId) {
@@ -77,27 +68,8 @@ mod tests {
         })
     }
 
-    fn press(tree: &mut ComponentList, (x, y): (f32, f32)) {
-        let (x, y) = (f64::from(x), f64::from(y));
-        for event in [
-            Event::PointerMoved {
-                x,
-                y,
-                source: PointerSource::Mouse,
-            },
-            Event::PointerPressed {
-                x,
-                y,
-                button: PointerButton::Primary,
-                source: PointerSource::Mouse,
-            },
-            Event::PointerReleased {
-                x,
-                y,
-                button: PointerButton::Primary,
-                source: PointerSource::Mouse,
-            },
-        ] {
+    fn press(tree: &mut ComponentList, at: (f32, f32)) {
+        for event in crate::rig::move_and_click(at) {
             tree.on_event(&event);
         }
     }

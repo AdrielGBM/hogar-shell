@@ -143,16 +143,7 @@ mod tests {
             rects::track_spanning(node, vec![signal(rect)]);
         }
         for (layer, id, _, at) in areas {
-            crate::mode::enter_as(
-                layer,
-                Some(crate::rig::SCREEN),
-                &crate::mode::Compositor {
-                    restack: true,
-                    locked: false,
-                    lockable: Ok(()),
-                },
-            )
-            .expect("the mode opens");
+            crate::rig::open_mode(layer);
             let mode = crate::mode::current().expect("the mode is up");
             let page = || LayoutStyle::new().width(SCREEN.0).height(SCREEN.1);
             let built = tools(&mode).expect("the tools build");

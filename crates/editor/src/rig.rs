@@ -6,11 +6,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use config::Config;
-use layout::{ActiveWorkspace, Layout, LayoutId, LayoutStore};
+use layout::{ActiveWorkspace, LayerKind, Layout, LayoutId, LayoutStore};
 use platform_wayland::OutputDescriptor;
 use surfaces::layer_window::Content;
 use surfaces::reconcile::{Shell, plan};
 use surfaces::transient;
+use telar::DismissRegistration;
+
+use crate::mode::{self, Compositor, Mode};
 
 /// The one screen a rig draws on.
 pub(crate) const SCREEN: &str = "DP-1";
@@ -177,4 +180,71 @@ pub(crate) fn wheel_toward(card: telar::Rect, row: telar::Rect) -> Option<f32> {
     } else {
         None
     }
+}
+
+pub(crate) fn compositor() -> Compositor {
+    Compositor {
+        restack: true,
+        locked: false,
+        lockable: Ok(()),
+    }
+}
+
+pub(crate) fn open_mode(layer: LayerKind) -> Mode {
+    mode::enter_as(layer, Some(SCREEN), &compositor()).expect("the mode opens")
+}
+
+/// The edit mode of `layer` entered on the rig's screen, whatever it draws over the screen closed as the registration is dropped.
+pub(crate) fn enter(layer: LayerKind) -> DismissRegistration {
+    enter_on(layer, SCREEN)
+}
+
+pub(crate) fn enter_on(layer: LayerKind, output: &str) -> DismissRegistration {
+    mode::enter_as(layer, Some(output), &compositor()).expect("the mode opens");
+    let id = crate::host::transient_id(output);
+    DismissRegistration::new(Rc::new(move || transient::close(&id)))
+}
+
+/// Lays `node` out over a window of `size` as the runner does each frame, until it settles: a card takes the height its rows were laid out at, which is known only once they are.
+pub(crate) fn lay_out(node: telar::NodeId, (width, height): (f32, f32)) {
+    telar::compute_layout(
+        node,
+        telar::AvailableSpace::Definite(width),
+        telar::AvailableSpace::Definite(height),
+    )
+    .expect("it lays out");
+    for _ in 0..3 {
+        telar::relayout_if_dirty();
+    }
+}
+
+pub(crate) fn pointer_at((x, y): (f32, f32)) -> telar::Event {
+    telar::Event::PointerMoved {
+        x: x.into(),
+        y: y.into(),
+        source: telar::PointerSource::Mouse,
+    }
+}
+
+pub(crate) fn click_at((x, y): (f32, f32)) -> [telar::Event; 2] {
+    let (x, y) = (f64::from(x), f64::from(y));
+    [
+        telar::Event::PointerPressed {
+            x,
+            y,
+            button: telar::PointerButton::Primary,
+            source: telar::PointerSource::Mouse,
+        },
+        telar::Event::PointerReleased {
+            x,
+            y,
+            button: telar::PointerButton::Primary,
+            source: telar::PointerSource::Mouse,
+        },
+    ]
+}
+
+pub(crate) fn move_and_click(at: (f32, f32)) -> [telar::Event; 3] {
+    let [press, release] = click_at(at);
+    [pointer_at(at), press, release]
 }

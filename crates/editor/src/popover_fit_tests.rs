@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use telar::{
-        AvailableSpace, ComponentList, Container, DrawCommand, Event, LayoutItem, LayoutStyle,
-        NodeId, Paint, PointerButton, PointerSource, Rect, ScrollDelta, compute_layout, use_theme,
+        ComponentList, Container, DrawCommand, Event, LayoutItem, LayoutStyle, NodeId, Paint, Rect,
+        ScrollDelta, use_theme,
     };
 
     use config::theme::NordTheme;
@@ -55,15 +55,7 @@ mod tests {
         }
 
         fn lay_out(&self) {
-            compute_layout(
-                self.node,
-                AvailableSpace::Definite(SCREEN_WIDTH),
-                AvailableSpace::Definite(SCREEN_HEIGHT),
-            )
-            .expect("the popover lays out");
-            for _ in 0..3 {
-                telar::relayout_if_dirty();
-            }
+            crate::rig::lay_out(self.node, (SCREEN_WIDTH, SCREEN_HEIGHT));
         }
 
         fn route(&mut self, event: &Event) {
@@ -74,22 +66,8 @@ mod tests {
             self.lay_out();
         }
 
-        fn click(&mut self, (x, y): (f32, f32)) {
-            let (x, y) = (f64::from(x), f64::from(y));
-            for event in [
-                Event::PointerPressed {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-                Event::PointerReleased {
-                    x,
-                    y,
-                    button: PointerButton::Primary,
-                    source: PointerSource::Mouse,
-                },
-            ] {
+        fn click(&mut self, at: (f32, f32)) {
+            for event in crate::rig::click_at(at) {
                 self.route(&event);
             }
         }

@@ -1129,9 +1129,14 @@ impl Style {
             && self.backdrop.is_none()
     }
 
+    /// The colour `fill` names, before any `opacity`: what a box whose opacity is applied to it whole paints.
+    pub fn fill_color(&self, theme: &NordTheme) -> Option<Color> {
+        self.fill.as_deref().map(|fill| color_of(fill, theme))
+    }
+
     /// The colour `fill` paints, at `opacity` where it names one. `None` when it names no fill.
     pub fn paint(&self, theme: &NordTheme) -> Option<Color> {
-        let fill = color_of(self.fill.as_deref()?, theme);
+        let fill = self.fill_color(theme)?;
         Some(match self.opacity {
             Some(opacity) => fill.with_alpha(opacity.clamp(0.0, 1.0)),
             None => fill,
@@ -1361,20 +1366,31 @@ pub struct Group {
     pub unset: Vec<Unset>,
 }
 
-impl Group {
-    /// Whether the group writes any key an arrangement is made of, which `unset = ["arrange"]` takes back together.
-    pub fn writes_arrangement(&self) -> bool {
-        self.arrange.is_some() || self.cols.is_some() || self.rows.is_some() || self.gap.is_some()
-    }
+macro_rules! arrangement {
+    ($($key:ident),+) => {
+        /// The keys a group's arrangement is made of, which `unset = ["arrange"]` takes back together.
+        pub(crate) const ARRANGEMENT: &[&str] = &[$(stringify!($key)),+];
 
-    /// Takes away the group's arrangement with every key it is made of, leaving a loose run.
-    pub fn clear_arrangement(&mut self) {
-        self.arrange = None;
-        self.cols = None;
-        self.rows = None;
-        self.gap = None;
-    }
+        impl Group {
+            pub fn writes_arrangement(&self) -> bool {
+                $(self.$key.is_some())||+
+            }
+
+            /// Takes away the group's arrangement with every key it is made of, leaving a loose run.
+            pub fn clear_arrangement(&mut self) {
+                $(self.$key = None;)+
+            }
+        }
+
+        impl Komponent {
+            pub fn writes_arrangement(&self) -> bool {
+                $(self.$key.is_some())||+
+            }
+        }
+    };
 }
+
+arrangement!(arrange, cols, rows, gap);
 
 /// Where in its area a group sits.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
@@ -1852,13 +1868,6 @@ pub struct Komponent {
     /// The instances it holds, written as a group's are. What each one may do is what the layer it is used on allows: on the lock layer only readings, and no actions.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Instance>,
-}
-
-impl Komponent {
-    /// Whether the komponent writes any key an arrangement is made of, as [`Group::writes_arrangement`] asks of a group.
-    pub fn writes_arrangement(&self) -> bool {
-        self.arrange.is_some() || self.cols.is_some() || self.rows.is_some() || self.gap.is_some()
-    }
 }
 
 /// One value a komponent's use can set.

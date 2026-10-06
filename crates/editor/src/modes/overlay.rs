@@ -31,7 +31,7 @@ use crate::keys::{self, Chord, Direction, KeyOp, Run};
 use crate::mode::{Mode, said};
 use crate::popover::area::{chosen, variants};
 use crate::popover::rows::{self, Range, label};
-use crate::popover::{AreaDraft, Inspector, help, kind_field, parsed, spelled};
+use crate::popover::{AreaDraft, Inspector, help, kind_field, kind_read, parsed, spelled};
 use crate::session::{self, Edit, EditError, Selection};
 use crate::written::Work;
 
@@ -845,23 +845,17 @@ fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         label!("editor.area.anchor"),
         help("AreaKind::Stack", "anchor"),
         variants("Anchor"),
-        move |area| match area.kind {
-            ResolvedAreaKind::Stack { anchor: now, .. } => now,
-            _ => anchor,
-        },
+        kind_read!(Stack { anchor }, anchor),
         |area, anchor: Anchor| kind_field!(area, "stack", Stack { anchor }, anchor),
     )?;
     let wide = draft.setting(
         "width",
         "width",
-        move |area| match area.kind {
-            ResolvedAreaKind::Stack { width: now, .. } => now,
-            _ => width,
-        },
+        kind_read!(Stack { width }, width),
         |area, value: &f32| kind_field!(area, "stack", Stack { width }, *value),
     );
     list.push(draft.marked(
-        "width",
+        &["width"],
         rows::number(
             label!("editor.area.width"),
             help("AreaKind::Stack", "width"),
@@ -886,10 +880,7 @@ fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         },
     )?);
     let reach = Range::whole(-3840.0, 3840.0);
-    let offset_of = move |area: &ResolvedArea| match area.kind {
-        ResolvedAreaKind::Stack { offset: now, .. } => now,
-        _ => offset,
-    };
+    let offset_of = kind_read!(Stack { offset }, offset);
     let across = draft.setting(
         "offset.x",
         "offset",
@@ -911,7 +902,7 @@ fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         },
     );
     list.push(draft.marked(
-        "offset",
+        &["offset"],
         rows::together(vec![
             rows::number(
                 label!("editor.overlay.offset_x"),
@@ -931,10 +922,7 @@ fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     let opens = draft.setting(
         "launcher",
         "launcher",
-        move |area| match area.kind {
-            ResolvedAreaKind::Stack { launcher: now, .. } => now,
-            _ => launcher,
-        },
+        kind_read!(Stack { launcher }, launcher),
         |area, on: &bool| {
             if let Some(stack) = stack_mut(area) {
                 *stack.launcher = Some(*on);
@@ -942,7 +930,7 @@ fn stack_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
         },
     );
     list.push(draft.marked(
-        "launcher",
+        &["launcher"],
         rows::toggle(
             label!("editor.overlay.launcher_here"),
             help("AreaKind::Stack", "launcher"),
@@ -979,10 +967,7 @@ fn route_rows(
     let routes: RwSignal<Vec<Route>> = draft.setting(
         "routes",
         "routes",
-        move |area| match &area.kind {
-            ResolvedAreaKind::Stack { routes, .. } => routes.clone(),
-            _ => seed.clone(),
-        },
+        kind_read!(Stack { routes }, seed),
         |area, routes: &Vec<Route>| {
             if let Some(stack) = stack_mut(area) {
                 *stack.routes = routes.clone();
@@ -1023,7 +1008,13 @@ fn route_rows(
         })?,
     ];
     let shape = signal(0u64);
-    let resets = draft.resets();
+    let resetting = draft.clone();
+    effect(move || {
+        routes.with(|_| ());
+        if resetting.is_resetting() {
+            shape.update(|generation| *generation += 1);
+        }
+    });
     let mut block: Vec<Box<dyn telar::LayoutItem>> = Vec::new();
     let apps: Rc<[(String, String)]> =
         std::iter::once((String::new(), telar::t!("editor.overlay.any_app")))
@@ -1032,7 +1023,7 @@ fn route_rows(
     let blocks = ReactiveList::with_style(
         LayoutStyle::new().flex_column().gap(ui::scale::space::sm()),
         move || {
-            let generation = shape.get().wrapping_add(resets.get());
+            let generation = shape.get();
             let count = routes.with(Vec::len);
             (0..count).map(|at| (generation, count, at)).collect()
         },
@@ -1071,7 +1062,7 @@ fn route_rows(
         help("Route", "kind"),
         osd,
     )?);
-    list.push(draft.marked("routes", rows::together(block)?)?);
+    list.push(draft.marked(&["routes"], rows::together(block)?)?);
     Ok(list)
 }
 

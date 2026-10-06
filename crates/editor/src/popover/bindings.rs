@@ -307,17 +307,14 @@ fn binding_row(
         let own = standing
             .instance()
             .with(|held| held.bindings.contains_key(&path));
-        let inheriting = inherits_at.as_ref() == Some(&path) && writer.is_some();
-        match (own, inheriting && standing.bindings().contains_key(&path)) {
-            (true, _) => super::origin::Provenance::Here.said(),
-            (false, true) => super::origin::inherited_said(
-                writer.as_ref(),
-                writer
-                    .as_ref()
-                    .is_some_and(|writer| !standing.lays_over(writer)),
-            ),
-            (false, false) => super::origin::Provenance::Default.said(),
-        }
+        let inheriting = inherits_at.as_ref() == Some(&path)
+            && writer.is_some()
+            && standing.bindings().contains_key(&path);
+        super::origin::expression_said(own, writer.as_ref().filter(|_| inheriting), || {
+            writer
+                .as_ref()
+                .is_some_and(|writer| !standing.lays_over(writer))
+        })
     };
     column.push(rows::note(said)?);
     Ok(box_item(Container::new(

@@ -84,7 +84,7 @@ pub fn build_bar(
         shape,
         corners: bar_corners(config, own_corners, shape),
         fillet: fillet_in(shape.mode, fillet),
-        dress: Dress::of(config, &area.style, &surround.theme),
+        paint: StripPaint::of(config, &area.style, &surround.theme),
         abut: ends_abut(length, offset, run),
         theme: surround.theme,
         output: surround.output,
@@ -356,7 +356,7 @@ struct BarFrame<'a> {
     corners: BorderRadius,
     /// The concave radius at the strip's inner ends, set only on a bar drawn as one strip; see [`notches`].
     fillet: Option<f32>,
-    dress: Dress,
+    paint: StripPaint,
     /// Whether the leading and trailing ends meet something; see [`ends_abut`].
     abut: (bool, bool),
     theme: NordTheme,
@@ -394,46 +394,43 @@ enum Granularity {
 
 /// One owner per pixel: a bar is never [`crate::area::dressed`], because its strip already paints the whole box; the style is read into that paint instead, and its corners stay `shape.radius`, which its chips nest inside.
 #[derive(Clone, Copy)]
-struct Dress {
+struct StripPaint {
     fill: Option<Color>,
     alpha: f32,
     padding: Option<Sides>,
     /// The line and the lift of the strip, which only a bar in `bar` mode has.
-    edge: Look,
+    outline: Look,
 }
 
-impl Dress {
+impl StripPaint {
     fn of(config: &Config, style: &Style, theme: &NordTheme) -> Self {
         Self {
-            fill: style
-                .fill
-                .as_deref()
-                .map(|fill| layout::color_of(fill, theme)),
+            fill: style.fill_color(theme),
             alpha: style
                 .opacity
                 .unwrap_or_else(|| config.opacity())
                 .clamp(0.0, 1.0),
             padding: style.padding,
-            edge: Look::area(style, theme),
+            outline: Look::area(style, theme),
         }
     }
 }
 
 /// A `fill` of the area's own paints the strip in any mode; under `[shape] frame` every bar fills its strip flat to make the ring; otherwise only `bar` mode has a background, so in `sections` and `chips` a press between chips belongs to the window underneath ([`painted_chrome`]).
-fn strip_fill(config: &Config, mode: Shape, dress: Dress, token: Color) -> Color {
-    match dress.fill {
-        Some(own) => own.with_alpha(dress.alpha),
-        None if config.shape.frame || matches!(mode, Shape::Bar) => token.with_alpha(dress.alpha),
+fn strip_fill(config: &Config, mode: Shape, paint: StripPaint, token: Color) -> Color {
+    match paint.fill {
+        Some(own) => own.with_alpha(paint.alpha),
+        None if config.shape.frame || mode.draws_strip() => token.with_alpha(paint.alpha),
         None => Color::TRANSPARENT,
     }
 }
 
 /// What a section's panel or a resting chip paints. Nothing while a frame is up: the bar has already filled its strip flat, and a second fill over those pixels is a darker band along every edge the two share.
-fn inner_fill(config: &Config, dress: Dress, token: Color) -> Color {
+fn inner_fill(config: &Config, paint: StripPaint, token: Color) -> Color {
     if config.shape.frame {
         return Color::TRANSPARENT;
     }
-    token.with_alpha(dress.alpha)
+    token.with_alpha(paint.alpha)
 }
 
 /// How an autohiding bar is away: how far it is moved off its edge, and how far on screen it is (0 away, 1 shown).
@@ -559,7 +556,7 @@ pub(crate) fn fillet_of(config: &Config, shape: BarShape) -> Option<f32> {
 
 /// The fillet a bar in `mode` draws: only one drawn as a single strip has a strip to curve out of.
 fn fillet_in(mode: Shape, fillet: Option<f32>) -> Option<f32> {
-    fillet.filter(|_| matches!(mode, Shape::Bar))
+    fillet.filter(|_| mode.draws_strip())
 }
 
 /// One concave piece of a fillet: the square it fills, in the window's coordinates, and where in that square the curve of the free space is centred.
@@ -639,14 +636,17 @@ fn corner_notches(
         return Vec::new();
     }
     let mut pieces = Vec::new();
-    if reserved.left > 0.0 && r_left > 0.0 && strip.x <= left + 0.5 && strip_right >= left + r_left
+    if reserved.on(Edge::Left) > 0.0
+        && r_left > 0.0
+        && strip.x <= left + 0.5
+        && strip_right >= left + r_left
     {
         pieces.push(match edge {
             Edge::Top => Notch::new(left, top, r_left, (1.0, 1.0)),
             _ => Notch::new(left, bottom - r_left, r_left, (1.0, 0.0)),
         });
     }
-    if reserved.right > 0.0
+    if reserved.on(Edge::Right) > 0.0
         && r_right > 0.0
         && strip_right >= right - 0.5
         && strip.x <= right - r_right
@@ -661,7 +661,7 @@ fn corner_notches(
 
 /// Every piece of the bar's fillet: at its inner ends while it hides itself, at the usable rect's corners it owns while it reserves them. Nothing on a bar that is not one strip.
 fn notches(chrome: &BarFrame) -> Vec<Notch> {
-    if !matches!(chrome.shape.mode, Shape::Bar) {
+    if !chrome.shape.mode.draws_strip() {
         return Vec::new();
     }
     let own = chrome.fillet.filter(|radius| *radius > 0.0);
@@ -731,16 +731,17 @@ fn strip_clipped(chrome: &BarFrame, bar: StyledContainer) -> Built {
     if let Some(hiding) = hiding.filter(|hiding| !hiding.on_hover) {
         children.push(hiding.puller(size)?);
     }
-    let colour = strip_fill(chrome.config, Shape::Bar, chrome.dress, chrome.theme.base);
+    let colour = strip_fill(chrome.config, Shape::Bar, chrome.paint, chrome.theme.base);
     if colour.a > 0.0 {
         for notch in notches(chrome) {
             children.push(notch_item(notch, chrome.strip, colour, hiding)?);
         }
     }
-    let shadow = match chrome.shape.mode {
-        Shape::Bar => chrome.dress.edge.shadow,
-        Shape::Sections | Shape::Chips => None,
-    };
+    let shadow = chrome
+        .paint
+        .outline
+        .shadow
+        .filter(|_| chrome.shape.mode.draws_strip());
     let corners = chrome.corners;
     let placed = StyledContainer::new(
         crate::area::at(chrome.strip),
@@ -788,9 +789,9 @@ fn build_whole_bar(
         theme,
         ..
     } = *chrome;
-    let base = strip_fill(config, Shape::Bar, chrome.dress, theme.base);
+    let base = strip_fill(config, Shape::Bar, chrome.paint, theme.base);
     let spacing = shape.spacing;
-    let padding = chrome.dress.padding.unwrap_or(Sides::all(shape.padding()));
+    let padding = chrome.paint.padding.unwrap_or(Sides::all(shape.padding()));
     // The whole bar already pads each end by its padding there, so an end that meets another bar is only owed the rest of a chip's worth of air.
     let (start, end) = match edge.is_horizontal() {
         true => (padding.left(), padding.right()),
@@ -817,7 +818,7 @@ fn build_whole_bar(
         )?);
     }
     let corners = chrome.corners;
-    let border = chrome.dress.edge.border;
+    let border = chrome.paint.outline.border;
     let style = axis(
         crate::area::padded(fill().align_items(AlignItems::CENTER), Some(padding)),
         edge,
@@ -859,7 +860,7 @@ fn build_units(
     } = *chrome;
     let spacing = shape.spacing;
     // Section: modules share a per-zone surface panel (wrapped in `unit`); Chip: each module is its own free-standing pill, no `unit`.
-    let surface = inner_fill(config, chrome.dress, theme.surface);
+    let surface = inner_fill(config, chrome.paint, theme.surface);
     let (rest, shell_radius) = match granularity {
         Granularity::Section => (Color::TRANSPARENT, shape.chip_radius()),
         Granularity::Chip => (surface, shape.chip_radius()),
@@ -898,11 +899,11 @@ fn build_units(
     let style = axis(
         crate::area::padded(
             fill().align_items(AlignItems::STRETCH),
-            chrome.dress.padding,
+            chrome.paint.padding,
         ),
         edge,
     );
-    let base = strip_fill(config, shape.mode, chrome.dress, theme.base);
+    let base = strip_fill(config, shape.mode, chrome.paint, theme.base);
     let corners = chrome.corners;
     strip_clipped(
         chrome,
@@ -1047,7 +1048,7 @@ fn chip_wrapper(
     content: Box<dyn LayoutItem>,
     on_scroll: Option<Wheel>,
     popout: Option<(Instance, Site)>,
-    dress: Wrapper,
+    wrapper: Wrapper,
     presses: &Bound,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let Wrapper {
@@ -1056,7 +1057,7 @@ fn chip_wrapper(
         elastic,
         fill,
         radius,
-    } = dress;
+    } = wrapper;
     let style = LayoutStyle::new().align_items(cross);
     let style = if elastic {
         style.flex_shrink(1.0).min_width(0.0).min_height(0.0)
@@ -1184,7 +1185,7 @@ impl ChipKit {
             modules: modules.into(),
             rest,
             radius,
-            alpha: chrome.dress.alpha,
+            alpha: chrome.paint.alpha,
             at: rects::Node::area(chrome.output, chrome.surround.layer, &chrome.area.id),
             audience: chrome.surround.audience,
         }
@@ -2346,7 +2347,7 @@ mod tests {
             let area = bar_in(shape, Edge::Top, 32.0, [&[], &["probe"], &[]]);
             let surface = telar::Paint::Solid(inner_fill(
                 &cfg,
-                Dress::of(&cfg, &Style::default(), &NordTheme::new()),
+                StripPaint::of(&cfg, &Style::default(), &NordTheme::new()),
                 NordTheme::new().surface,
             ));
             let bar = built(&cfg, &area, &registry, (400.0, 32.0)).expect("the bar builds");
@@ -3615,8 +3616,8 @@ mod tests {
                 let placed = strip(&Config::default(), &hidden, &neighbours, SCREEN);
                 let owned = strip(&Config::default(), &reserving(edge), &neighbours, SCREEN);
                 let (from, to) = match side {
-                    Edge::Left => (reserved.left, SCREEN.0 - owned.x),
-                    _ => (owned.x, SCREEN.0 - reserved.right),
+                    Edge::Left => (reserved.on(Edge::Left), SCREEN.0 - owned.x),
+                    _ => (owned.x, SCREEN.0 - reserved.on(Edge::Right)),
                 };
                 assert_eq!(
                     (placed.x, placed.x + placed.width),
@@ -3665,7 +3666,7 @@ mod tests {
         let (start, length) = run_along(Edge::Top, bounds, steady, 8.0, false);
         assert_eq!((start, length), (8.0, SCREEN.0 - 16.0));
         let (start, _) = run_along(Edge::Top, bounds, steady, 8.0, true);
-        assert_eq!(start, steady.left);
+        assert_eq!(start, steady.on(Edge::Left));
         let peeking = Reserved::of(
             &resolved_of(
                 &shaped_bar_area(
@@ -3712,13 +3713,13 @@ mod tests {
         );
         let alone = Reserved::of(&resolved_of(&steady_left, &[]), &config);
         assert!(
-            both.left > alone.left,
+            both.on(Edge::Left) > alone.on(Edge::Left),
             "the compositor still reserves the deepest peek"
         );
-        assert_eq!(both.held_on(Edge::Left), alone.left);
+        assert_eq!(both.held_on(Edge::Left), alone.on(Edge::Left));
         assert_eq!(
             run_along(Edge::Top, bounds, both, 8.0, true).0,
-            alone.left,
+            alone.on(Edge::Left),
             "a hiding bar yields to the steady bar only"
         );
 

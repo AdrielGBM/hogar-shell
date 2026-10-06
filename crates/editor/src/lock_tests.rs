@@ -6,8 +6,8 @@ mod tests {
     use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DismissRegistration, DrawCommand, Event, Key,
-        LayoutItem, LayoutStyle, ModifiersState, NamedKey, Text, compute_layout,
+        AvailableSpace, ComponentList, Container, DrawCommand, Event, Key, LayoutItem, LayoutStyle,
+        ModifiersState, NamedKey, Text, compute_layout,
     };
 
     use config::theme::{FontRole, NordTheme};
@@ -27,10 +27,10 @@ mod tests {
     use ui::host::{Host, WidgetSize};
 
     use crate::keys::{self, Press};
-    use crate::mode::{self, Compositor, Mode};
+    use crate::mode::{self, Mode};
     use crate::modes::lock::{self as lock_mode, Privacy};
     use crate::modes::{background, desktop, palette, widgets};
-    use crate::rig::{Rig, SCREEN, rig_with};
+    use crate::rig::{Rig, SCREEN, enter, rig_with};
     use crate::session::{self, Selection};
     use crate::{context, select};
 
@@ -117,21 +117,6 @@ mod tests {
             transient::close_all();
             telar::dispose_owner(self.0.id());
         }
-    }
-
-    fn enter() -> DismissRegistration {
-        mode::enter_as(
-            LayerKind::Lock,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("lock mode opens");
-        let id = crate::host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
     }
 
     fn the_mode() -> Mode {
@@ -270,7 +255,7 @@ mod tests {
     fn lock_mode_borrows_the_background_and_desktop_tools_over_its_preview() {
         let _rig = rig_with("lock-tools", |_| {});
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         let said = draw();
         assert!(said.iter().any(|text| text == "Preview"), "{said:?}");
         assert!(
@@ -328,7 +313,7 @@ mod tests {
     fn the_prompt_cannot_be_deleted_by_the_keyboard_or_the_pointer() {
         let rig = rig_with("lock-prompt-kept", |_| {});
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         draw();
         let before = stored(&rig);
 
@@ -371,7 +356,7 @@ mod tests {
             }
         });
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
 
         let ops = lock_mode::moved_to(
             &session::draft().peek(),
@@ -417,7 +402,7 @@ mod tests {
     fn an_edit_the_lock_would_fall_back_from_is_flagged_and_not_kept() {
         let rig = rig_with("lock-contrast", |_| {});
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         let theme = Config::default().resolve_theme();
         let styled = |fill: &str| Style {
             fill: Some(fill.to_string()),
@@ -489,7 +474,7 @@ mod tests {
             prompt.style.opacity = Some(0.2);
         });
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         let said = draw();
         assert!(
             said.iter()
@@ -522,7 +507,7 @@ mod tests {
             );
         });
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         let under_the_prompt = |layout: &Layout| {
             let ids = lock_ids(layout);
             assert_eq!(ids.last().map(String::as_str), Some("prompt"), "{ids:?}");
@@ -598,7 +583,7 @@ mod tests {
     fn the_privacy_switch_redacts_the_preview_live() {
         let _rig = rig_with("lock-privacy-live", |_| {});
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         let shows_apps = |said: Vec<String>| said.iter().any(|text| text.contains(FROM));
         assert!(!shows_apps(draw()), "the count alone is the default");
 
@@ -625,7 +610,7 @@ mod tests {
             lock_mode::open_privacy().is_err(),
             "no lock mode, no privacy popover"
         );
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         lock_mode::open_privacy().expect("it opens in lock mode");
         assert!(transient::is_open(lock_mode::PRIVACY));
         let _card = lock_mode::privacy_card(SCREEN).expect("the card builds");
@@ -672,7 +657,7 @@ mod tests {
             }
         });
 
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         draw();
         let mode = the_mode();
         select::tool(&mode).expect("the selection builds");
@@ -719,7 +704,7 @@ mod tests {
             );
         });
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         let picture = Node::area(Some(SCREEN), LayerKind::Lock, &AreaId::new("lock-picture"));
         assert!(session::select(Selection::Area(picture)));
 
@@ -773,7 +758,7 @@ mod tests {
             media.representation = Some(layout::Representation::WidgetS);
         });
         let _owner = Owner::new();
-        let _host = enter();
+        let _host = enter(LayerKind::Lock);
         assert!(desktop::sizes_of("mixer", LayerKind::Lock).is_empty());
         assert_eq!(
             desktop::sizes_of("mixer", LayerKind::Desktop).len(),

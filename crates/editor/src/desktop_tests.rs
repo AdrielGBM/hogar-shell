@@ -3,11 +3,10 @@
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DismissRegistration, Event, Key, LayoutItem,
-        LayoutStyle, ModifiersState, NamedKey, PointerButton, PointerSource, compute_layout,
+        AvailableSpace, ComponentList, Container, Event, Key, LayoutItem, LayoutStyle,
+        ModifiersState, NamedKey, PointerButton, PointerSource, compute_layout,
     };
     use telar::{RectStyle, StyledContainer};
 
@@ -25,14 +24,14 @@ mod tests {
     use ui::host::{Host, WidgetSize};
 
     use crate::keys::{self, Press};
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::modes::desktop::{self, Landing};
     use crate::modes::grid::{self, Cells, Room};
     use crate::modes::palette::{self, Line, Pick};
     use crate::modes::widgets;
-    use crate::rig::{Rig, SCREEN};
+    use crate::rig::{Rig, SCREEN, enter};
     use crate::session::{self, Selection};
-    use crate::{context, host, popover, variant};
+    use crate::{context, popover, variant};
 
     fn face(_: &Host) -> Built {
         Ok(Box::new(StyledContainer::new(
@@ -124,21 +123,6 @@ mod tests {
         is_alt: false,
         is_meta: false,
     };
-
-    fn enter(layer: LayerKind) -> DismissRegistration {
-        mode::enter_as(
-            layer,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the mode opens");
-        let id = host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
-    }
 
     fn tap(key: Key, modifiers: ModifiersState) -> bool {
         telar::observe_keyboard(&Event::KeyPressed {

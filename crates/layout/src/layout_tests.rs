@@ -7909,7 +7909,7 @@ stacked = true
         );
         let area = |key: &str| {
             resolved
-                .origin(LayerKind::Top, Holder::Area(&bar), key)
+                .level_of(LayerKind::Top, Holder::Area(&bar), key)
                 .cloned()
         };
         let (every, screen) = (Some(level("*", None)), Some(level("DP-1", None)));
@@ -7932,7 +7932,7 @@ stacked = true
 
         let group = |key: &str| {
             resolved
-                .origin(LayerKind::Top, Holder::Group(&bar, &start), key)
+                .level_of(LayerKind::Top, Holder::Group(&bar, &start), key)
                 .cloned()
         };
         assert_eq!(group("arrange"), every);
@@ -7941,7 +7941,7 @@ stacked = true
 
         let child = |key: &str| {
             resolved
-                .origin(LayerKind::Top, Holder::Instance(&bar, &start, &clock), key)
+                .level_of(LayerKind::Top, Holder::Instance(&bar, &start, &clock), key)
                 .cloned()
         };
         assert_eq!(child("module"), every);
@@ -7963,7 +7963,7 @@ stacked = true
         let on_two = keyed("DP-1", Some("2"));
         assert_eq!(
             on_two
-                .origin(LayerKind::Top, Holder::Area(&bar), "style.fill")
+                .level_of(LayerKind::Top, Holder::Area(&bar), "style.fill")
                 .cloned(),
             Some(level("DP-1", Some("2"))),
             "the workspace rule up on the screen comes last"
@@ -7975,8 +7975,9 @@ stacked = true
     fn what_a_level_replaces_keeps_no_origin() {
         let resolved = keyed("DP-1", None);
         let grid = AreaId::new("grid");
-        let at =
-            |id: &AreaId, layer, key: &str| resolved.origin(layer, Holder::Area(id), key).cloned();
+        let at = |id: &AreaId, layer, key: &str| {
+            resolved.level_of(layer, Holder::Area(id), key).cloned()
+        };
         assert_eq!(
             at(&grid, LayerKind::Desktop, "cell"),
             None,
@@ -7997,7 +7998,7 @@ stacked = true
         let (bar, start) = (AreaId::new("bar"), GroupId::new("start"));
         let group = |key: &str| {
             resolved
-                .origin(LayerKind::Top, Holder::Group(&bar, &start), key)
+                .level_of(LayerKind::Top, Holder::Group(&bar, &start), key)
                 .cloned()
         };
         assert_eq!(group("arrange"), None, "taken back");
@@ -8005,7 +8006,7 @@ stacked = true
         let clock = InstanceId::new("clock");
         assert_eq!(
             resolved
-                .origin(
+                .level_of(
                     LayerKind::Top,
                     Holder::Instance(&bar, &start, &clock),
                     "module"
@@ -8017,7 +8018,7 @@ stacked = true
         let battery = InstanceId::new("battery");
         let child = |key: &str| {
             resolved
-                .origin(
+                .level_of(
                     LayerKind::Top,
                     Holder::Instance(&bar, &start, &battery),
                     key,
@@ -8034,7 +8035,7 @@ stacked = true
         let resolved = keyed("DP-1", None);
         let assembled = Resolved::of("DP-1", resolved.layers.clone());
         assert_eq!(
-            assembled.origin(
+            assembled.level_of(
                 LayerKind::Top,
                 Holder::Area(&AreaId::new("bar")),
                 "thickness"

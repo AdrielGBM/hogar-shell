@@ -176,7 +176,8 @@ pub fn snap(
             continue;
         };
         let tolerance = SNAP_PX / axis.of_size(size).max(1.0);
-        let Some((by, line)) = nearest(snapped.rect, axis, siblings, motion.edges(), tolerance)
+        let Some((by, line)) =
+            nearest_move(snapped.rect, axis, siblings, motion.edges(), tolerance)
         else {
             continue;
         };
@@ -193,7 +194,7 @@ pub fn snap(
 }
 
 /// How far `rect` moves along `axis` for the nearest of its `edges` (0 its start, ½ its centre, 1 its end) to land on a line within `tolerance`, and that line.
-fn nearest(
+fn nearest_move(
     rect: Rect,
     axis: Axis,
     siblings: &[Rect],
@@ -201,25 +202,24 @@ fn nearest(
     tolerance: f32,
 ) -> Option<(f32, f32)> {
     let (start, extent) = axis.along(rect);
-    let lines = [0.0, 0.5, 1.0]
+    let lines: Vec<f32> = [0.0, 0.5, 1.0]
         .into_iter()
         .chain(siblings.iter().flat_map(|sibling| {
             let (from, across) = axis.along(*sibling);
             [from, from + across / 2.0, from + across]
-        }));
-    let lines: Vec<f32> = lines.collect();
+        }))
+        .collect();
     edges
         .iter()
-        .flat_map(|edge| {
+        .filter_map(|edge| {
             let at = start + extent * edge;
-            lines.iter().map(move |line| (line - at, *line))
+            nearest(at, &lines, tolerance).map(|line| (line - at, line))
         })
-        .filter(|(by, _)| by.abs() < tolerance)
         .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()))
 }
 
 /// The line of `lines` nearest `value`, where one is within `tolerance` of it.
-pub fn nearest_line(value: f32, lines: &[f32], tolerance: f32) -> Option<f32> {
+pub fn nearest(value: f32, lines: &[f32], tolerance: f32) -> Option<f32> {
     lines
         .iter()
         .copied()
@@ -231,7 +231,7 @@ pub fn nearest_line(value: f32, lines: &[f32], tolerance: f32) -> Option<f32> {
 pub fn region_line(value: f32, lines: &[f32], tolerance: f32, free: bool) -> f32 {
     let snapped = match free {
         true => None,
-        false => nearest_line(value, lines, tolerance),
+        false => nearest(value, lines, tolerance),
     };
     regions::snap(snapped.unwrap_or(value))
 }
@@ -263,6 +263,21 @@ pub fn grid_lines(
         return Vec::new();
     };
     cell_lines(&geometry, axis, bounds)
+}
+
+/// [`grid_lines`] that lie between `low` and `high` and at least `margin` from either.
+pub fn grid_lines_in(
+    desktop: &Desktop,
+    layer: LayerKind,
+    axis: Axis,
+    bounds: telar::Rect,
+    (low, high): (f32, f32),
+    margin: f32,
+) -> Vec<f32> {
+    grid_lines(desktop, layer, axis, bounds)
+        .into_iter()
+        .filter(|at| at - low >= margin && high - at >= margin)
+        .collect()
 }
 
 /// The cell lines of the grid `geometry` along `axis`, as [`grid_lines`] gives them.

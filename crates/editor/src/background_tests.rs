@@ -6,9 +6,8 @@ mod tests {
     use std::rc::Rc;
 
     use telar::{
-        AvailableSpace, ComponentList, Container, DismissRegistration, Event, Key, LayoutItem,
-        LayoutStyle, ModifiersState, NamedKey, PointerButton, PointerSource, compute_layout,
-        effect,
+        AvailableSpace, ComponentList, Container, Event, Key, LayoutItem, LayoutStyle,
+        ModifiersState, NamedKey, PointerButton, PointerSource, compute_layout, effect,
     };
 
     use layout::{
@@ -16,13 +15,12 @@ mod tests {
         Layout, Rect, ResolvedAreaKind, Tile, Transition, Within, WorkspaceMatch,
     };
     use surfaces::rects::Node;
-    use surfaces::transient;
 
     use crate::keys::{self, Direction, Press};
-    use crate::mode::{self, Compositor};
+    use crate::mode::{self};
     use crate::modes::regions::{self, Cut, Plan, SMALLEST, Tile as Region};
     use crate::modes::texture::{self, MOST_STOPS, Refusal};
-    use crate::rig::{Rig, SCREEN, rig_on, rig_with};
+    use crate::rig::{Rig, SCREEN, enter, rig_on, rig_with};
     use crate::session::{self, Selection};
     use crate::{host, popover, variant};
 
@@ -275,21 +273,6 @@ mod tests {
         });
     }
 
-    fn enter() -> DismissRegistration {
-        mode::enter_as(
-            LayerKind::Background,
-            Some(SCREEN),
-            &Compositor {
-                restack: true,
-                locked: false,
-                lockable: Ok(()),
-            },
-        )
-        .expect("the mode opens");
-        let id = host::transient_id(SCREEN);
-        DismissRegistration::new(Rc::new(move || transient::close(&id)))
-    }
-
     fn region(id: &str) -> Node {
         Node::area(Some(SCREEN), LayerKind::Background, &AreaId::new(id))
     }
@@ -342,7 +325,7 @@ mod tests {
     #[test]
     fn a_split_and_a_join_are_one_undo_entry_each_and_the_join_restores_the_layout() {
         let rig = rig_with("background-split-join", columns);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         let before = stored(&rig);
 
         assert!(session::select(Selection::Area(region("middle"))));
@@ -397,7 +380,7 @@ mod tests {
     #[test]
     fn a_moved_edge_takes_its_neighbours_along_in_one_entry() {
         let rig = rig_with("background-edge", columns);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         let before = stored(&rig);
         let layout = session::draft().peek();
         let desktop = surfaces::reconcile::desktops()[0].clone();
@@ -443,7 +426,7 @@ mod tests {
     #[test]
     fn an_edit_for_one_workspace_lands_in_its_rule_and_resolves_only_there() {
         let rig = rig_on("background-variant", Some("2"), columns);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         variant::set(true).expect("the screen says which workspace is up");
         assert_eq!(variant::editing(), Some(WorkspaceMatch("2".to_string())));
         assert!(session::select(Selection::Area(region("right"))));
@@ -507,7 +490,7 @@ mod tests {
     #[test]
     fn a_popover_switched_to_one_workspace_writes_its_change_there() {
         let rig = rig_on("background-variant-popover", Some("2"), columns);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         popover::open_area(region("right")).expect("the region's popover opens");
         let _tree = popover::tree()
             .expect("a popover is open")
@@ -573,14 +556,14 @@ mod tests {
             });
             outputs.workspaces.push(ruled);
         });
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         popover::open_area(region("right")).expect("the region's popover opens");
         let _tree = popover::tree()
             .expect("a popover is open")
             .expect("and it builds");
         popover::area_draft()
             .expect("an area's popover")
-            .reset("source");
+            .reset(&["source"]);
         variant::set(true).expect("the screen says which workspace is up");
         popover::close();
 
@@ -611,7 +594,7 @@ mod tests {
     #[test]
     fn a_texture_over_a_region_is_added_turned_and_taken_away() {
         let rig = rig_with("background-texture", columns);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         let before = stored(&rig);
         crate::modes::background::add_texture(&region("middle")).expect("the texture goes on");
         let added = stored(&rig);
@@ -686,7 +669,7 @@ mod tests {
                 ..Area::default()
             });
         });
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         let tile = || {
             stored(&rig).outputs[0]
                 .layers
@@ -731,7 +714,7 @@ mod tests {
                 ..Area::default()
             });
         });
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         for id in ["middle", "wash"] {
             popover::open_area(region(id)).expect("the popover opens");
             popover::tree()
@@ -766,7 +749,7 @@ mod tests {
     #[test]
     fn a_textures_popover_sets_its_blend_and_its_own_opacity() {
         let rig = rig_with("background-texture-blend", wash);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         popover::open_area(region("wash")).expect("the texture's popover opens");
         let _tree = popover::tree()
             .expect("a popover is open")
@@ -806,7 +789,7 @@ mod tests {
     #[test]
     fn t_and_the_toolbar_lay_a_texture_over_the_selected_region() {
         let rig = rig_with("background-texture-key", columns);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         let textures = |layout: &Layout| {
             layout.outputs[0]
                 .layers
@@ -842,7 +825,7 @@ mod tests {
     #[test]
     fn an_edge_drag_previews_each_move_once() {
         let rig = rig_with("background-edge-drag", columns);
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         let mode = mode::current().expect("the mode is up");
         let page = LayoutStyle::new().width(1920.0).height(1080.0);
         let root = Container::new(
@@ -930,7 +913,7 @@ mod tests {
                 });
             }
         });
-        let _host = enter();
+        let _host = enter(LayerKind::Background);
         let drawn = telar::signal(telar::Rect::new(480.0, 0.0, 960.0, 1080.0));
         surfaces::rects::track_spanning(region("wash"), vec![drawn]);
         popover::open_area(region("wash")).expect("the texture's popover opens");

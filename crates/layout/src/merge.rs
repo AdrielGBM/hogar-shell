@@ -478,15 +478,6 @@ fn replace_if_set<T: Clone>(base: &mut Option<T>, over: &Option<T>) {
     }
 }
 
-/// An expression a level writes, by where it is: its layer, the ids down to what holds it, and the path a level would take it back by.
-pub(crate) type At = (
-    LayerKind,
-    AreaId,
-    Option<GroupId>,
-    Option<InstanceId>,
-    Unset,
-);
-
 /// A key a level writes, by where it is: its layer, the ids down to what holds it, and its path there as the file spells it — `thickness`, `shape.radius`, `style.border.width`, `actions.press`, `options.face.scale`, `weight`, or an expression's `visible`, `repeat`, `parameters.<name>` or `bindings.<path>`, which is also the path a level takes it back by.
 pub(crate) type KeyAt = (
     LayerKind,
@@ -498,9 +489,6 @@ pub(crate) type KeyAt = (
 
 /// Where an instance's options are written: the one place a key is merged table by table rather than replaced whole.
 const OPTIONS: &str = "options.";
-
-/// The keys a group's arrangement is made of, which `unset = ["arrange"]` takes back together.
-const ARRANGEMENT: [&str; 4] = ["arrange", "cols", "rows", "gap"];
 
 /// Whether the dotted key `inner` is inside the table `outer` names.
 fn is_inside(inner: &str, outer: &str) -> bool {
@@ -690,7 +678,7 @@ impl Origins {
             match taken {
                 Unset::Unknown(_) => {}
                 Unset::Arrange => {
-                    for key in ARRANGEMENT {
+                    for key in ARRANGEMENT.iter().copied() {
                         self.0.remove(&holder.at(key));
                     }
                 }
