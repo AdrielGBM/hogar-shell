@@ -14,10 +14,10 @@ pub(super) fn value_tag(
     at: impl Fn(Rect) -> (f32, f32) + 'static,
 ) -> Built {
     let theme = use_theme::<NordTheme>();
-    let text = box_item(Text::new(
+    let text = box_item(Text::declaring(
         move || format!("{}", value().round()),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.text),
     )?);
     Ok(Box::new(
         StyledContainer::new(

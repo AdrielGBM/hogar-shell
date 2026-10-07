@@ -16,7 +16,7 @@ use ui::host::Audience;
 use ui::layout::{fill, painted_chrome};
 use ui::scale::elevation;
 
-use crate::area::{BACKDROP_BLUR, Surround, empty_space, padded, panel_cells};
+use crate::area::{BACKDROP_BLUR, OnScreen, Surround, empty_space, padded, panel_cells};
 use crate::expressions::{self, Expressions};
 use crate::layer_window::{Blur, LayerWindowContext, Reserved, blur_of};
 use crate::look::{self, Look};
@@ -332,16 +332,19 @@ fn content(owner: &Owner, layer: LayerKind) -> Built {
 }
 
 fn panel_box(owner: &Owner, found: &Found, screen: &Screen) -> Built {
-    let theme = screen.config.resolve_theme();
-    let surround = Surround {
-        config: &screen.config,
-        theme,
-        output: screen.output.as_deref(),
-        layer: found.layer,
-        bounds: screen.reserved.box_of(found.panel.within, screen.size),
-        reserved: screen.reserved,
-        audience: Audience::Owner,
-    };
+    let surround = Surround::placed(
+        found.panel.within,
+        found.layer,
+        OnScreen {
+            config: &screen.config,
+            theme: screen.config.resolve_theme(),
+            output: screen.output.as_deref(),
+            size: screen.size,
+            reserved: screen.reserved,
+        },
+        Audience::Owner,
+    );
+    let theme = surround.theme;
     let panel = &found.panel;
     let node = Node::area(screen.output.as_deref(), found.layer, &panel.id);
     let presence = panel.visible.as_ref().map(|visible| {

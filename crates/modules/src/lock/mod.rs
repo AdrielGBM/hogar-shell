@@ -120,6 +120,7 @@ impl App for LockApp {
             .clone()
             .unwrap_or_else(|| Arc::new(Config::default()));
         set_theme(config.resolve_theme());
+        telar::set_font_family(config.theme.family());
         services::locale::attach(config.language());
         let Some(lock) = self
             .lock
@@ -211,10 +212,10 @@ fn fallen_back(theme: NordTheme, why: String) -> Result<Box<dyn LayoutItem>, Lay
             .padding_horizontal(space::lg())
             .padding_vertical(space::sm()),
         move |_| RectStyle::filled(theme.surface, 0.0).with_radius(space::md().into()),
-        vec![box_item(Text::new(
+        vec![box_item(Text::declaring(
             move || said.clone(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Caption, theme.warning),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.warning),
         )?)],
     )?;
     Ok(Box::new(Container::new(
@@ -431,10 +432,10 @@ fn biometric_hint(
         return Ok(Vec::new());
     }
     let line = telar::t!("lock.also_unlocks_with", methods = methods.join(", "));
-    Ok(vec![centred(box_item(Text::new(
+    Ok(vec![centred(box_item(Text::declaring(
         move || line.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?))?])
 }
 
@@ -515,12 +516,12 @@ fn field(
         }
     };
 
-    let input = Input::new(
+    let input = Input::declaring(
         password,
         LayoutStyle::new()
             .flex_grow(1.0)
             .height(theme.font(FontRole::Body) * 1.8),
-        move || theme.text_style(FontRole::Body, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
     )?
     .secret()
     // The one surface where focus-on-tap is not good enough: a lock screen that needs a click before it takes a password reads as a frozen machine.
@@ -552,12 +553,12 @@ fn field(
 
 /// The password field as the preview draws it: the same box and the same placeholder, with nothing in it that takes a key or reaches `lock::submit`.
 fn preview_field(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let placeholder = box_item(Text::new(
+    let placeholder = box_item(Text::declaring(
         || telar::t!("lock.password"),
         LayoutStyle::new()
             .flex_grow(1.0)
             .height(theme.font(FontRole::Body) * 1.8),
-        move || theme.text_style(FontRole::Body, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.muted),
     )?);
     let rounded = rounding();
     Ok(Box::new(StyledContainer::new(
@@ -579,10 +580,10 @@ fn preview_badge(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
             .padding_horizontal(space::md())
             .padding_vertical(space::xs()),
         move |_| RectStyle::filled(theme.accent, 0.0).with_radius(space::md().into()),
-        vec![box_item(Text::new(
+        vec![box_item(Text::declaring(
             || telar::t!("lock.preview"),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Caption, theme.base),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.base),
         )?)],
     )?;
     centred(box_item(pill))
@@ -598,7 +599,7 @@ fn status_line(
     let text = state;
     let tint = state;
     // The line is drawn even when it says nothing, so a wrong password does not resize the card under the hand that is about to retype the password.
-    centred(box_item(Text::new(
+    centred(box_item(Text::declaring(
         move || {
             let state = text.get();
             if state.is_locked_out() {
@@ -616,14 +617,14 @@ fn status_line(
             }
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             let state = tint.get();
             let colour = if state.message.is_some() || state.is_locked_out() {
                 theme.red
             } else {
                 theme.muted
             };
-            theme.text_style(FontRole::Caption, colour)
+            theme.text_over(inherited, FontRole::Caption, colour)
         },
     )?))
 }
@@ -796,10 +797,10 @@ mod tests {
         let items = lines
             .into_iter()
             .map(|line| {
-                Text::new(
+                Text::declaring(
                     move || line.clone(),
                     LayoutStyle::new(),
-                    move || theme.text_style(FontRole::Body, theme.text),
+                    move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
                 )
                 .map(box_item)
             })
@@ -1137,6 +1138,40 @@ mod tests {
                 "{screen:?} mounted no field: {shown:?}"
             );
         }
+    }
+
+    /// A lock surface is set in the family the config names, so the screen between the desktop and the room reads like the rest of the shell.
+    #[test]
+    fn a_lock_surface_draws_its_text_in_the_configured_family() {
+        let mut config = (*config_with(LockConfig::default())).clone();
+        config.theme.font_family = Some("Lock Face".to_string());
+        let app = LockApp {
+            config: Some(Arc::new(config)),
+            output: None,
+            screen: Screen::Minimal,
+            lock: None,
+        };
+        telar::reset_layout_runtime();
+        telar::set_locale("en");
+        let tree = ComponentList::new(app.root());
+        let password = telar::t!("lock.password");
+        let family = tree
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                telar::DrawCommand::Text { text, style, .. } if **text == *password => {
+                    Some(style.font_family.clone())
+                }
+                _ => None,
+            })
+            .expect("the minimal lock draws its prompt");
+        assert_eq!(
+            family,
+            telar::FontFamily::stack([
+                telar::FontFamily::Named("Lock Face".into()),
+                telar::FontFamily::SansSerif,
+            ])
+        );
     }
 
     #[test]

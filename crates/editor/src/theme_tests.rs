@@ -318,7 +318,11 @@ mod tests {
         assert_eq!(now.theme.fonts.body.weight, Some(600));
         assert_eq!(
             now.resolve_theme()
-                .text_style(FontRole::Title, telar::Color::WHITE)
+                .text_over(
+                    telar::TextStyle::new(0.0, telar::Color::WHITE),
+                    FontRole::Title,
+                    telar::Color::WHITE,
+                )
                 .font_weight,
             800
         );
@@ -340,6 +344,32 @@ mod tests {
         assert_eq!(running_file(), before);
     }
 
+    /// The family row previews the family it is set to on every window as it is chosen, and Esc puts back the one the popover opened with without writing anything.
+    #[test]
+    fn the_family_row_previews_live_and_esc_puts_it_back() {
+        let _rig = rig("theme-family");
+        let _owner = Owner::new();
+        let before = running_file();
+        let _host = enter(LayerKind::Top);
+        let (card, controls) = opened();
+        assert!(card.shows("Font family"), "{:?}", card.said());
+
+        controls.family.set("DejaVu Sans".to_string());
+        assert_eq!(
+            shown().theme.family(),
+            Some(telar::FontFamily::from("DejaVu Sans"))
+        );
+        assert_eq!(
+            running_file(),
+            before,
+            "nothing is written while it is open"
+        );
+
+        assert!(tap(Key::Named(NamedKey::Escape), NONE));
+        assert_eq!(shown().theme.font_family, None);
+        assert_eq!(running_file(), before);
+    }
+
     /// A preset picked in the popover previews the whole `[theme]` it keeps — keys the popover has no row for included — and Esc puts back the theme the popover opened with.
     #[test]
     fn a_preset_picked_previews_its_whole_theme_and_esc_puts_it_back() {
@@ -350,6 +380,7 @@ mod tests {
         let mut dusk = ThemeConfig {
             name: "rose-pine".to_string(),
             radius: Some(19),
+            font_family: Some("Inter".to_string()),
             ..ThemeConfig::default()
         };
         dusk.fonts.title.weight = Some(600);
@@ -372,6 +403,8 @@ mod tests {
         );
         assert_eq!(controls.name.peek(), "rose-pine");
         assert_eq!(controls.radius.peek(), 19.0);
+        assert_eq!(now.theme.font_family.as_deref(), Some("Inter"));
+        assert_eq!(controls.family.peek(), "Inter");
 
         assert!(tap(Key::Named(NamedKey::Escape), NONE));
         assert_eq!(shown_radius(), was);

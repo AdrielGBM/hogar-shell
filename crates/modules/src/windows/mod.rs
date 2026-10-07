@@ -24,7 +24,7 @@ use ui::scale::space;
 pub use dock::dot_fills;
 pub use order::{Arrangement, arrangement};
 
-use targets::Targets;
+use targets::Holding;
 
 const ROW: f32 = 30.0;
 const ROW_ICON: f32 = 18.0;
@@ -35,10 +35,6 @@ const REST_ALPHA: f32 = 0.07;
 const HOVER_ALPHA: f32 = 0.14;
 const ACTIVE_ALPHA: f32 = 0.26;
 const GLYPH: &str = "app-window";
-
-thread_local! {
-    static TARGETS: RefCell<Targets<(SurfaceRef, ManagedToplevelId)>> = RefCell::new(Targets::new());
-}
 
 pub fn fills(theme: NordTheme) -> (Color, Color) {
     (
@@ -380,12 +376,12 @@ fn entry(
         None => icon_view(|| GLYPH.to_string(), move || theme.text, shape.icon)?,
     });
     if titles {
-        let title = Text::new(
+        let title = Text::declaring(
             move || live.get().as_ref().map(label).unwrap_or_default(),
             LayoutStyle::new().min_width(0.0).flex_shrink(1.0),
-            move || {
+            move |inherited| {
                 theme
-                    .text_style(FontRole::Caption, theme.text)
+                    .text_over(inherited, FontRole::Caption, theme.text)
                     .with_clamp(1, true)
             },
         )?;
@@ -481,25 +477,18 @@ fn track(
     let Some(surface) = strip.surface.clone() else {
         return;
     };
-    let target = (surface, id);
-    let holder = TARGETS.with(|targets| targets.borrow_mut().claim(target.clone()));
+    let holding = Rc::new(Holding::claim(surface, id));
     let here = Rc::clone(strip);
-    let sending = target.clone();
+    let sending = Rc::clone(&holding);
     effect(move || {
         let laid = rect.get();
         let area = live
             .get()
             .filter(|window| here.here(window))
             .and_then(|_| ToplevelArea::covering(laid));
-        if TARGETS.with(|targets| targets.borrow_mut().send(&sending, holder, area)) {
-            services::windows::set_rectangle(id, &sending.0, area);
-        }
+        sending.send(area);
     });
-    on_cleanup(move || {
-        if TARGETS.with(|targets| targets.borrow_mut().release(&target, holder)) {
-            services::windows::set_rectangle(id, &target.0, None);
-        }
-    });
+    on_cleanup(move || holding.release());
 }
 
 fn empty(strip: &Rc<Strip>, look: Look) -> Result<Box<dyn LayoutItem>, LayoutError> {
@@ -523,15 +512,15 @@ fn empty(strip: &Rc<Strip>, look: Look) -> Result<Box<dyn LayoutItem>, LayoutErr
         None => {
             let glyph = icon_view(|| GLYPH.to_string(), move || muted, ROW_ICON)?;
             let unsupported = look.unsupported;
-            let reason = Text::new(
+            let reason = Text::declaring(
                 move || match unsupported {
                     true => telar::t!("windows.unsupported"),
                     false => telar::t!("windows.none"),
                 },
                 LayoutStyle::new(),
-                move || {
+                move |inherited| {
                     theme
-                        .text_style(FontRole::Caption, muted)
+                        .text_over(inherited, FontRole::Caption, muted)
                         .with_clamp(2, true)
                 },
             )?;

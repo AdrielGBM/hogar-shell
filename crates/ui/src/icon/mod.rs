@@ -33,9 +33,7 @@ pub fn app_icon_view(
     app_icon_view_tinted(reference, size, None)
 }
 
-/// [`app_icon_view`] with an optional flat tint, for a surface that wants the application's artwork to take the bar's own colour instead of its own — the tray's `recolour`.
-///
-/// Only vector artwork can be tinted; a raster icon is drawn as it is, since repainting decoded pixels would mean either discarding them or guessing which of them are "the shape". A tinted icon is a silhouette of its own and is never cut to the mask.
+/// [`app_icon_view`] with an optional flat tint (the tray's `recolour`): only vector artwork takes one, since decoded pixels have no "shape" to repaint, and a tinted icon is a silhouette of its own that is never cut to the mask.
 pub fn app_icon_view_tinted(
     reference: &str,
     size: f32,

@@ -6,6 +6,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use util::report::Message;
 
 use crate::config::{Config, Saved};
 use crate::load::SaveError;
@@ -29,19 +30,28 @@ pub enum PresetError {
     Save(SaveError),
 }
 
+impl PresetError {
+    pub fn message(&self) -> Message {
+        match self {
+            PresetError::Name(name) => util::message!("preset.bad_name", name = name),
+            PresetError::Missing(name) => util::message!("preset.missing", name = name),
+            PresetError::Io(e) => {
+                util::message!("preset.unreadable", why = Message::verbatim(e.to_string()))
+            }
+            PresetError::Parse(e) => {
+                util::message!("preset.broken", why = Message::verbatim(e.to_string()))
+            }
+            PresetError::Serialize(e) => {
+                util::message!("preset.unwritable", why = Message::verbatim(e.to_string()))
+            }
+            PresetError::Save(e) => e.message(),
+        }
+    }
+}
+
 impl fmt::Display for PresetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PresetError::Name(name) => write!(
-                f,
-                "'{name}' is not a preset name: use lowercase letters, digits, '-' and '_'"
-            ),
-            PresetError::Missing(name) => write!(f, "there is no preset named '{name}'"),
-            PresetError::Io(e) => write!(f, "{e}"),
-            PresetError::Parse(e) => write!(f, "reading the preset: {e}"),
-            PresetError::Serialize(e) => write!(f, "writing the preset: {e}"),
-            PresetError::Save(e) => write!(f, "{e}"),
-        }
+        f.write_str(&self.message().english())
     }
 }
 

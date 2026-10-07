@@ -13,7 +13,6 @@ mod tests {
     };
     use surfaces::menu::Pointed;
     use surfaces::rects::Node;
-    use surfaces::transient;
 
     use crate::keys::{self, Press};
     use crate::mode;
@@ -21,7 +20,7 @@ mod tests {
     use crate::modes::rect_handles;
     use crate::modes::{background, lock as lock_mode, widgets};
     use crate::popover::handles::{CORNERS, Corner};
-    use crate::rig::{Rig, SCREEN, close, enter, hold_alt, rig_with, stored};
+    use crate::rig::{CTRL, Owner, Rig, SCREEN, close, enter, hold_alt, rig_with, stored};
     use crate::select;
     use crate::session::{self, Selection};
 
@@ -37,21 +36,10 @@ mod tests {
         close(a.x, b.x) && close(a.y, b.y) && close(a.w, b.w) && close(a.h, b.h)
     }
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        Owner::new().tearing_down(|| {
             hold_alt(false);
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     /// The selection tool, then the mode's `tools` in the order the host stacks them, over the whole screen inside the root every window has.
@@ -295,7 +283,7 @@ mod tests {
         let rig = rig_with(&format!("rect-texture-{corner:?}-{alt}"), |layout| {
             textured(layout, wash)
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         let node = area(LayerKind::Background, "wash");
         select(&node);
@@ -351,7 +339,7 @@ mod tests {
         let rig = rig_with(&format!("rect-texture-body-{alt}"), |layout| {
             textured(layout, wash)
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         let mut screen = background_screen();
         let from = (0.4 * SIZE.0, 0.4 * SIZE.1);
@@ -405,7 +393,7 @@ mod tests {
     #[test]
     fn a_free_area_pins_by_ninths_and_by_its_dots() {
         let rig = rig_with("rect-free-anchor", quartered);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let node = area(LayerKind::Desktop, "centre");
         let mut screen = desktop_screen();
@@ -447,7 +435,7 @@ mod tests {
     #[test]
     fn a_free_area_resizes_from_its_corner() {
         let rig = rig_with("rect-free-corner", quartered);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let node = area(LayerKind::Desktop, "centre");
         select(&node);
@@ -466,7 +454,7 @@ mod tests {
     #[test]
     fn a_grid_resizes_from_its_corners() {
         let rig = rig_with("rect-grid-corner", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let node = area(LayerKind::Desktop, "widgets");
         select(&node);
@@ -517,7 +505,7 @@ mod tests {
     #[test]
     fn the_prompt_keeps_its_least_size_and_its_screen() {
         let rig = rig_with("rect-prompt", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let node = prompt();
         select(&node);
@@ -570,13 +558,6 @@ mod tests {
         is_meta: false,
     };
 
-    const CTRL: ModifiersState = ModifiersState {
-        is_shift: false,
-        is_ctrl: true,
-        is_alt: false,
-        is_meta: false,
-    };
-
     /// Shift+arrows move a texture and a free area a step, and Ctrl+arrows make them a step wider, as the corners and bodies do by pointer.
     #[test]
     fn the_keys_still_move_and_resize_rectangles() {
@@ -584,7 +565,7 @@ mod tests {
             textured(layout, rect(0.3, 0.3, 0.2, 0.2));
             quartered(layout);
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         {
             let _host = enter(LayerKind::Background);
             select(&area(LayerKind::Background, "wash"));
@@ -606,7 +587,7 @@ mod tests {
     #[test]
     fn the_corners_give_way_to_the_radius_and_padding_tools() {
         let rig = rig_with("rect-corners-tool", quartered);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let node = area(LayerKind::Desktop, "centre");
         select(&node);
@@ -636,7 +617,7 @@ mod tests {
     fn escape_mid_drag_puts_a_rectangle_back_from_a_corner_and_from_a_body() {
         let wash = rect(0.3, 0.3, 0.2, 0.2);
         let rig = rig_with("rect-escape", |layout| textured(layout, wash));
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         let node = area(LayerKind::Background, "wash");
         select(&node);

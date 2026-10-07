@@ -422,7 +422,10 @@ pub(crate) fn theme_presets_section() -> Result<Box<dyn LayoutItem>, LayoutError
     };
     let said = move |result: Result<String, presets::PresetError>| match result {
         Ok(done) => status.set(done),
-        Err(why) => status.set(telar::t!("settings.presets.failed", why = why.to_string())),
+        Err(why) => status.set(telar::t!(
+            "settings.presets.failed",
+            why = why.message().render()
+        )),
     };
 
     let actions = NamedActions {
@@ -462,10 +465,10 @@ pub(crate) fn theme_presets_section() -> Result<Box<dyn LayoutItem>, LayoutError
                 .build(),
             Children::default(),
         )?,
-        Box::new(telar::Text::new(
+        Box::new(telar::Text::declaring(
             move || status.get(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Caption, theme.subtle),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
         )?) as Box<dyn LayoutItem>,
     ];
     let save = telar::button(

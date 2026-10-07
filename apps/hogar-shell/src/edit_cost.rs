@@ -47,11 +47,7 @@ fn build(desktop: &Desktop, window: LayerKind) {
         &WindowAreas::of(&desktop.resolved, window),
         &Building {
             window,
-            output: desktop.output.as_deref(),
-            config: &desktop.config,
-            theme: desktop.config.resolve_theme(),
-            size: desktop.size,
-            reserved: desktop.reserved,
+            on: desktop.on_screen(),
             demands: &demands,
         },
     );

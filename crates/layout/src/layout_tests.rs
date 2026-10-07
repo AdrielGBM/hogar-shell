@@ -2100,7 +2100,9 @@ mod tests {
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("hogar-layout-tests-{name}"));
+        let dir = util::paths::isolated_root()
+            .expect("a test resolves under its scratch root")
+            .join(format!("layout-tests-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -2664,6 +2666,47 @@ mod tests {
             "{}",
             report.render()
         );
+    }
+
+    #[test]
+    fn a_parallax_on_a_picture_that_is_not_cropped_is_reported() {
+        let parsed = layout(
+            r#"
+            id = "test"
+            [[outputs]]
+            match = "*"
+            [[outputs.layers.background.areas]]
+            id = "contained"
+            kind = "wallpaper_region"
+            fit = "contain"
+            parallax = 0.2
+            [[outputs.layers.background.areas]]
+            id = "still"
+            kind = "wallpaper_region"
+            fit = "tile"
+            parallax = 0.0
+            [[outputs.layers.background.areas]]
+            id = "covered"
+            kind = "wallpaper_region"
+            parallax = 0.2
+            "#,
+        );
+        let report = validate(&parsed, &Modules);
+        let reported: Vec<(String, String)> = report
+            .findings()
+            .filter(|f| f.message.key() == Some("finding.parallax_fit"))
+            .map(|f| (f.key.clone(), f.message.english()))
+            .collect();
+        assert_eq!(
+            reported,
+            [(
+                "outputs.*.layers.background.areas.contained.parallax".to_string(),
+                "only a picture `fit = \"cover\"` crops has any of it to spare, so with `fit = \"contain\"` the parallax is not drawn".to_string()
+            )],
+            "{}",
+            report.render()
+        );
+        assert!(report.findings().all(|f| f.message.is_translated_in("es")));
     }
 
     #[test]

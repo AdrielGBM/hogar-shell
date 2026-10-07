@@ -51,12 +51,14 @@ itself slides away and back on the same easing, over `autohide_duration_ms`.
 
 While motion is reduced, whatever would slide in fades in its place — a panel, drawer or popout opened from a
 bar, a notification card, a wallpaper region set to `slide` — a hiding bar and a rearranged grid move at once,
-and no transition runs longer than 100 ms.
+the workspace indicator and the dock's magnification land where they are going without travelling there, and
+no transition runs longer than 100 ms. `enabled = false` stills the indicator and the dock the same way.
 
 `reduced = "auto"`, the default, follows the desktop: the portal's `org.freedesktop.appearance`
 `reduced-motion` setting, or, from a portal without it, GNOME's `enable-animations` or KDE's
-`AnimationDurationFactor` at 0. The shell follows a change as it happens. `"on"` and `"off"` decide regardless of
-the desktop.
+`AnimationDurationFactor` at 0. The shell follows a change as it happens, quietly: the surfaces are drawn again
+with the new motion and nothing is reloaded, and a panel you are typing into is left as it is. `"on"` and
+`"off"` decide regardless of the desktop.
 
 ```toml
 [animation]

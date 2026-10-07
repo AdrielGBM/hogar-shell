@@ -8,7 +8,7 @@ use std::sync::Arc;
 use telar::{
     AlignItems, Canvas, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
     LineCap, LineJoin, PathData, PathStyle, Point, Rect, RectStyle, RenderNode, ShapeStyle,
-    SizeDimension, Stroke, StyledContainer, Text, TextStyle, Transform, box_item,
+    SizeDimension, Stroke, StyledContainer, Text, Transform, box_item,
 };
 
 use util::reactive::Live;
@@ -96,15 +96,15 @@ pub fn label_value(
     label_color: Color,
     value_color: Color,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let label = Text::new(
+    let label = Text::declaring(
         move || label.get(),
         LayoutStyle::new().flex_shrink(0.0),
-        move || TextStyle::new(size, label_color),
+        move |inherited| inherited.with_font_size(size).with_color(label_color),
     )?;
-    let value = Text::new(
+    let value = Text::declaring(
         move || value.get(),
         LayoutStyle::new(),
-        move || TextStyle::new(size, value_color),
+        move |inherited| inherited.with_font_size(size).with_color(value_color),
     )?;
     Ok(Box::new(Container::new(
         LayoutStyle::new()

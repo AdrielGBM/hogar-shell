@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use platform_wayland::{timeout, watch};
 use telar::{
-    Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, ReadSignal, RwSignal,
-    Transition, detached, memo, signal, use_theme,
+    Container, LayoutError, LayoutItem, LayoutStyle, ReactiveList, ReadSignal, RwSignal, detached,
+    memo, signal, use_theme,
 };
 
 use config::policy::Urgency;
@@ -480,10 +480,7 @@ pub fn area(area: &ResolvedArea, surround: Surround) -> Built {
         (StackFlow::Row, _) => telar::Edge::Bottom,
     };
     let tween = config.animation.tween_ms(200, 2_000);
-    let arrival = match config.animation.is_reduced() {
-        true => Transition::fade(tween),
-        false => Transition::slide(slide_from, TRAVEL, tween),
-    };
+    let arrival = config.animation.slide_or_fade(slide_from, TRAVEL, tween);
     let travel = config.animation.travel_tween_ms(200, 2_000);
     // The transition is set once the list has built, so what it holds then appears settled, and only a card arriving after that slides in.
     let drawn = ReactiveList::with_style(

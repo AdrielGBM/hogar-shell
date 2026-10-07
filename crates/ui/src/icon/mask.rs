@@ -12,7 +12,6 @@ use telar::{
 const SQUIRCLE_EXPONENT: f32 = 5.0;
 const SQUIRCLE_STEPS: usize = 96;
 
-/// `icon`, `size` across, shown only inside `mask`.
 pub(super) fn masked(
     icon: Box<dyn LayoutItem>,
     size: f32,

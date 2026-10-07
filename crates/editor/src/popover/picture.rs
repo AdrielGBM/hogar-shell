@@ -1,4 +1,4 @@
-//! What a wallpaper region's popover sets about its picture beyond its fit and transition (T-7.5): the picture itself, picked from the wallpaper library as the launcher and the settings browse it; the point `cover` keeps in view, also dragged as a dot on the region; how the picture dims and blurs under windows; and how far it slides across the workspaces.
+//! What a wallpaper region's popover sets about its picture beyond its fit and transition: the picture itself, picked from the wallpaper library as the launcher and the settings browse it; the point `cover` keeps in view, also dragged as a dot on the region; how the picture dims and blurs under windows; and how far it slides across the workspaces.
 
 use telar::{
     AlignItems, Border, Color, Cursor, Key, LayoutError, LayoutItem, LayoutStyle, NamedKey,
@@ -14,18 +14,13 @@ use ui::descriptor::Built;
 use crate::popover::rows::{self, Range, Rows, label};
 use crate::popover::{AreaDraft, help, kind_field};
 
-use super::gesture;
+use crate::modes::gesture;
 
-/// How wide one picture of the library is in the picker.
 const TILE: f32 = 96.0;
-/// How many pictures the picker draws at once; the search reaches the rest.
 const TILES: usize = 24;
-/// How big the focus dot is across.
 const DOT: f32 = 18.0;
-/// How far one arrow moves the focus, as a fraction of the picture.
 pub(crate) const FOCUS_STEP: f32 = 0.05;
 
-/// The region's picture: the library as thumbnails narrowed by a search, a press on one picking it; any path typed; or none of its own, following `[background]`.
 pub(crate) fn picture_rows(draft: &AreaDraft, picture: RwSignal<String>) -> Built {
     let query = signal(String::new());
     let library = signal(services::wallpaper::all());
@@ -82,7 +77,6 @@ pub(crate) fn picture_rows(draft: &AreaDraft, picture: RwSignal<String>) -> Buil
     )
 }
 
-/// The library's pictures whose name or folder holds `query`, at most [`TILES`] of them.
 pub(crate) fn narrowed(entries: &[Entry], query: &str) -> Vec<Entry> {
     let needle = query.trim().to_lowercase();
     entries
@@ -97,7 +91,6 @@ pub(crate) fn narrowed(entries: &[Entry], query: &str) -> Vec<Entry> {
         .collect()
 }
 
-/// One picture of the library: its thumbnail over its name, ringed while it is the region's, and picked by a press or by Enter while it has the focus.
 fn tile(entry: Entry, picture: RwSignal<String>, theme: NordTheme) -> Built {
     let thumbnail = ui::thumbnail::view(
         entry.path.clone(),
@@ -108,12 +101,12 @@ fn tile(entry: Entry, picture: RwSignal<String>, theme: NordTheme) -> Built {
         theme,
     )?;
     let name = entry.name.clone();
-    let caption = Text::new(
+    let caption = Text::declaring(
         move || name.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, theme.subtle)
+                .text_over(inherited, FontRole::Caption, theme.subtle)
                 .with_clamp(1, true)
         },
     )?;
@@ -148,7 +141,6 @@ fn tile(entry: Entry, picture: RwSignal<String>, theme: NordTheme) -> Built {
     ))
 }
 
-/// The point `cover` keeps in view, as two rows and the dot on the region they share ([`focus_handle`]).
 pub(crate) fn focus_rows(draft: &AreaDraft, focus: RwSignal<Focus>) -> Built {
     let across = signal(focus.peek().x);
     let down = signal(focus.peek().y);
@@ -269,7 +261,6 @@ pub(crate) fn under_windows_rows(draft: &AreaDraft) -> Rows {
     ])
 }
 
-/// Where the dot for `focus` sits on a region drawn at `rect`: as far across and down the region as the focus is across and down the picture.
 pub(crate) fn dot_at(rect: Rect, focus: Focus) -> (f32, f32) {
     let focus = focus.clamped();
     (
@@ -278,7 +269,6 @@ pub(crate) fn dot_at(rect: Rect, focus: Focus) -> (f32, f32) {
     )
 }
 
-/// The focus a dot dragged to `point` over a region drawn at `rect` sets.
 pub(crate) fn focus_at(rect: Rect, (x, y): (f32, f32)) -> Focus {
     Focus {
         x: (x - rect.x) / rect.width.max(1.0),
@@ -306,7 +296,7 @@ pub(crate) fn stepped(focus: Focus, key: &Key) -> Option<Focus> {
     )
 }
 
-/// The dot on the region that sets the focus, laid over it while the picture is cropped by `cover`: dragged, it follows the pointer, and focused, the arrows move it a step. A drag let go keeps where it is and Esc puts it back.
+/// The dot on the region that sets the focus, shown while the picture is cropped by `cover`; a drag let go keeps it and Esc puts it back.
 pub(crate) fn focus_handle(
     draft: &AreaDraft,
     focus: RwSignal<Focus>,
@@ -334,10 +324,8 @@ fn dot(draft: &AreaDraft, focus: RwSignal<Focus>) -> Built {
     let (placing, dragging) = (draft.clone(), draft.clone());
     let where_now = move || placing.rect().map(|rect| dot_at(rect, focus.get()));
     let grip = draft.grip();
-    let (keeping, dropping, holding) = (grip.clone(), grip.clone(), grip);
-    let transaction = Transaction::new(focus)
-        .on_commit(move |_, _| keeping.release())
-        .on_revert(move |_| dropping.put_back());
+    let holding = grip.clone();
+    let transaction = Transaction::new(focus);
     let face = StyledContainer::new(
         LayoutStyle::new()
             .absolute()
@@ -367,9 +355,11 @@ fn dot(draft: &AreaDraft, focus: RwSignal<Focus>) -> Built {
     Ok(Box::new(gesture::drag(
         handle,
         transaction,
-        move |_| where_now().map(|(x, y)| (x - DOT / 2.0, y - DOT / 2.0)),
-        move |origin: &(f32, f32), (x, y)| {
+        move |_| {
             holding.hold();
+            where_now().map(|(x, y)| (x - DOT / 2.0, y - DOT / 2.0))
+        },
+        move |origin: &(f32, f32), (x, y)| {
             let Some(rect) = dragging.rect() else {
                 return;
             };
@@ -378,7 +368,10 @@ fn dot(draft: &AreaDraft, focus: RwSignal<Focus>) -> Built {
                 let _ = transaction.preview(|now| *now = moved);
             }
         },
-        |_, _| {},
+        move |_, let_go| match let_go {
+            true => grip.release(),
+            false => grip.put_back(),
+        },
     )))
 }
 

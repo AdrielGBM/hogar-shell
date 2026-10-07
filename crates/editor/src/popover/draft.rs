@@ -485,7 +485,7 @@ impl AreaDraft {
     }
 }
 
-/// The copy and every value of an area's popover as a handle's drag found them, from its first move until it is kept or cancelled. Putting each value back where it was would write it into the copy, pinning a key the layout left unset, so a cancelled drag puts the copy back whole instead.
+/// The copy and every value of an area's popover as a handle's drag found them, from its start until it is kept or cancelled. Putting each value back where it was would write it into the copy, pinning a key the layout left unset, so a cancelled drag puts the copy back whole instead.
 #[derive(Clone)]
 pub struct Grip {
     draft: AreaDraft,
@@ -498,7 +498,7 @@ struct Found {
 }
 
 impl Grip {
-    /// Takes hold of the copy and the values as they are now, unless the drag already has: called on each move, before the move writes anything.
+    /// Takes hold of the copy and the values as they are now, unless the drag already has: called as a drag starts, before it writes anything.
     pub fn hold(&self) {
         let mut found = self.found.borrow_mut();
         if found.is_none() {

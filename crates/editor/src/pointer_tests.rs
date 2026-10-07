@@ -13,14 +13,13 @@ mod tests {
     use layout::{Area, AreaId, AreaKind, Arrange, GroupId, GroupKind, InstanceId, LayerKind};
     use surfaces::menu::Pointed;
     use surfaces::rects::{self, Node};
-    use surfaces::transient;
     use ui::descriptor::{Category, Input, ModuleDescriptor, Representations, WidgetDef};
     use ui::host::WidgetSize;
 
     use crate::mode::{self};
     use crate::modes::widgets::{self, Geometry};
     use crate::modes::{gesture, grid};
-    use crate::rig::{Rig, SCREEN, enter, face};
+    use crate::rig::{Owner, Rig, SCREEN, enter, face};
     use crate::session::{self, Selection};
     use crate::{host, popover};
 
@@ -44,21 +43,8 @@ mod tests {
         sources: &[],
     }];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+    fn owner() -> Owner {
+        Owner::installing(PROBES)
     }
 
     fn widgets_area() -> Node {
@@ -308,7 +294,7 @@ mod tests {
     #[test]
     fn the_pointer_outlines_what_a_click_would_select_but_not_the_selection_or_during_a_drag() {
         let _rig = rig("pointer-hover");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let geometry = placed();
         let mut screen = Screen::new();
@@ -358,7 +344,7 @@ mod tests {
     #[test]
     fn a_double_click_opens_the_popover_of_what_it_selects() {
         let _rig = rig("pointer-double-click");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         placed();
         let mut screen = Screen::new();
@@ -381,7 +367,7 @@ mod tests {
     #[test]
     fn the_size_tag_says_cells_and_pixels_under_the_selection() {
         let _rig = rig("pointer-size-tag");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         placed();
         let mut screen = Screen::new();
@@ -440,7 +426,7 @@ mod tests {
     #[test]
     fn a_drag_tags_where_it_lands_beside_the_pointer_and_carries_a_ghost() {
         let _rig = rig("pointer-drag-tag");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let geometry = placed();
         let mut screen = Screen::new();
@@ -534,7 +520,7 @@ mod tests {
     #[test]
     fn a_drag_holds_the_widget_where_it_was_pressed() {
         let _rig = rig("pointer-drag-press");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let geometry = placed();
         let mut screen = Screen::new();
@@ -635,7 +621,7 @@ mod tests {
     #[test]
     fn the_dragging_signal_is_set_during_a_region_edge_drag() {
         let _rig = two_columns("pointer-edge-drag-signal");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         let current = mode::current().expect("the mode is up");
         let mut screen = Screen::of(vec![
@@ -650,7 +636,7 @@ mod tests {
     #[test]
     fn a_stack_width_handle_signals_dragging_on_every_drag() {
         let _rig = crate::rig::rig_with("pointer-width-drag-signal", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Overlay);
         let (mut screen, handle) = stack_width_handle();
 

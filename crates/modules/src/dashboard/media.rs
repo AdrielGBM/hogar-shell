@@ -5,8 +5,8 @@ use ui::scale::{paint, space};
 
 use telar::{
     AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
-    ReactiveList, RectStyle, RwSignal, SizeDimension, StyledContainer, Text, TextStyle, box_item,
-    signal, track_layout,
+    ReactiveList, RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal,
+    track_layout,
 };
 
 use super::{PageCard, cards_page, shared};
@@ -167,10 +167,12 @@ fn lyrics_viewport(
                         } else {
                             telar::t!("dashboard.lyrics_none")
                         };
-                        Ok(box_item(Text::new(
+                        Ok(box_item(Text::declaring(
                             move || message.clone(),
                             LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-                            move || theme.text_style(FontRole::Caption, theme.muted),
+                            move |inherited| {
+                                theme.text_over(inherited, FontRole::Caption, theme.muted)
+                            },
                         )?))
                     }
                     LyricLine::Sung {
@@ -224,14 +226,14 @@ fn lyric_row(
     }
     let shown = text;
     let styled = is_current.clone();
-    Ok(box_item(Text::new(
+    Ok(box_item(Text::declaring(
         move || shown.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || {
+        move |inherited| {
             if styled() {
-                theme.text_style(FontRole::Body, theme.accent)
+                theme.text_over(inherited, FontRole::Body, theme.accent)
             } else {
-                theme.text_style(FontRole::Caption, theme.subtle)
+                theme.text_over(inherited, FontRole::Caption, theme.subtle)
             }
         },
     )?))
@@ -579,11 +581,11 @@ fn text(
     color: Color,
     bold: bool,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    Ok(box_item(Text::new(
+    Ok(box_item(Text::declaring(
         move || value.get(),
         LayoutStyle::new(),
-        move || {
-            let style = TextStyle::new(size, color);
+        move |inherited| {
+            let style = inherited.with_font_size(size).with_color(color);
             if bold {
                 style.with_font_weight(700)
             } else {

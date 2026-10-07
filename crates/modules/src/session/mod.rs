@@ -25,12 +25,12 @@ pub fn session_panel() -> Result<Box<dyn LayoutItem>, LayoutError> {
     let armed = signal(String::new());
     let actions = session::available();
 
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("session.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -166,7 +166,7 @@ fn tile(
         24.0,
     )?;
 
-    let caption = Text::new(
+    let caption = Text::declaring(
         move || {
             if !offered {
                 // Says *why* rather than greying a tile out silently: a Lock that does nothing on press is indistinguishable from a broken shell.
@@ -178,9 +178,9 @@ fn tile(
             }
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             let colour = if offered { theme.text } else { theme.muted };
-            theme.text_style(FontRole::Caption, colour)
+            theme.text_over(inherited, FontRole::Caption, colour)
         },
     )?;
 

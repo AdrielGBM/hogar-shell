@@ -34,7 +34,7 @@ use config::{Align, Config, Edge};
 use layout::{
     Anchor, AreaId, Blend, Fit, Focus, GroupId, GroupKind, InstanceId as PlacedId, LayerKind,
     Paint as AreaPaint, Rect, Representation as Placed, ResolvedArea, ResolvedAreaKind,
-    ResolvedGroup, ResolvedInstance, Sides, Style, Tile, Transition, Zone,
+    ResolvedGroup, ResolvedInstance, Sides, Style, Tile, Transition, Within, Zone,
 };
 use services::wallpaper::{self, Desk};
 use ui::descriptor::{Built, ChipDef};
@@ -63,18 +63,28 @@ pub struct Surround<'a> {
 }
 
 impl<'a> Surround<'a> {
-    pub fn of(context: &'a AreaContext<'a>) -> Self {
+    /// The one place an area's `bounds` is derived: what `on` leaves an area measured `within`.
+    pub fn placed(within: Within, layer: LayerKind, on: OnScreen<'a>, audience: Audience) -> Self {
         Self {
-            config: context.config,
-            theme: context.theme,
-            output: context.output,
-            layer: context.home,
-            bounds: context.bounds,
-            reserved: context.reserved,
-            // A session layer is the signed-in user's by construction: the compositor draws it only while the screen is not locked.
-            audience: Audience::Owner,
+            config: on.config,
+            theme: on.theme,
+            output: on.output,
+            layer,
+            bounds: on.reserved.box_of(within, on.size),
+            reserved: on.reserved,
+            audience,
         }
     }
+}
+
+/// The output an area is placed on, before anything about the area itself is known.
+#[derive(Clone, Copy)]
+pub struct OnScreen<'a> {
+    pub config: &'a Arc<Config>,
+    pub theme: NordTheme,
+    pub output: Option<&'a str>,
+    pub size: (f32, f32),
+    pub reserved: Reserved,
 }
 
 /// Every area of a session layer, built the way the shell draws them.
@@ -82,7 +92,7 @@ pub struct ShellAreas;
 
 impl Areas for ShellAreas {
     fn build(&self, context: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
-        match build(context.area, Surround::of(context)) {
+        match build(context.area, context.surround) {
             Some(built) => built,
             None => Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?)),
         }
@@ -101,11 +111,7 @@ pub fn stand_in(desktop: &Desktop, layer: LayerKind) -> Built {
         &WindowAreas::of(&desktop.resolved, layer),
         &Building {
             window: window.layer,
-            output: desktop.output.as_deref(),
-            config: &desktop.config,
-            theme: desktop.config.resolve_theme(),
-            size: desktop.size,
-            reserved: desktop.reserved,
+            on: desktop.on_screen(),
             demands: &window.demands,
         },
     );
@@ -605,7 +611,7 @@ pub fn wallpaper_region(area: &ResolvedArea, surround: Surround) -> Built {
     let (rect, fit, transition, dim, blur) = (*rect, *fit, *transition, *dim, *blur);
     let reduced = surround.config.animation.is_reduced();
     let transition = match transition {
-        Transition::Slide if reduced => Transition::Fade,
+        Transition::Slide if !surround.config.animation.travels() => Transition::Fade,
         transition => transition,
     };
     let laying = Laying {
@@ -739,9 +745,7 @@ fn fade_control(config: &Config, transition: Transition) -> FadeControl {
     eased(0.0, (!instant).then_some(tween))
 }
 
-/// A value read and moved through a pair of closures, starting at `from`: tweened by `tween`, or set at once without one.
-///
-/// An `Animated` is retargeted, never built at its destination, which would leave it inert; and no tween at all drives a plain signal rather than an `Animated` with a zero-length tween, which has no duration to divide by.
+/// A value starting at `from` and retargeted along `tween`, or set at once without one: an `Animated` built at its destination would be inert, and one with a zero-length tween has no duration to divide by.
 fn eased(from: f32, tween: Option<telar::motion::Tween>) -> FadeControl {
     let Some(tween) = tween else {
         let at = signal(from);
@@ -913,9 +917,7 @@ fn veil(surround: Surround, dim: f32, blur: f32) -> Result<Vec<Box<dyn LayoutIte
     Ok(vec![Box::new(blurred), Box::new(dimmed)])
 }
 
-/// One image slot, shown in proportion to how close `fade` is to `visible_at` (0 or 1) and laid as `laying` says, its picture slid by `along` where it has parallax.
-///
-/// The image takes its data as a closure, so the layer is one node for the life of the surface and swapping the picture is a signal write, not a rebuild.
+/// One image slot, shown as near as `fade` is to `visible_at` (0 or 1), laid as `laying` says and slid by `along`; its data is a closure, so swapping the picture is a signal write rather than a rebuild.
 fn image_layer(
     slot: telar::ReadSignal<Option<Arc<ImageData>>>,
     (fade, visible_at): (Rc<dyn Fn() -> f32>, f32),
@@ -1820,10 +1822,10 @@ fn empty_hint_slot(surround: Surround, empty: impl Fn() -> bool + 'static) -> Ch
 }
 
 fn empty_hint(theme: NordTheme) -> Built {
-    let text = Text::new(
+    let text = Text::declaring(
         || telar::t!("container.empty"),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     Ok(Box::new(Container::new(
         LayoutStyle::new()

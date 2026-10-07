@@ -81,17 +81,17 @@ fn header(
     let scan_active = state.read_only();
 
     // Read out, then translate: `adapter_line` calls `t!`, and a `with` here would still hold the reactive runtime's borrow when it read the locale signal.
-    let subtitle = Text::new(
+    let subtitle = Text::declaring(
         move || adapter_line(&subtitle_state.get()),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("bluetooth.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -184,10 +184,10 @@ fn list(
         6.0,
     )?;
 
-    let empty = Text::new(
+    let empty = Text::declaring(
         move || empty_line(&empty_state.get(), config),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
 
     Ok(Box::new(Container::new(
@@ -253,12 +253,12 @@ fn row(
         ROW_ICON,
     )?;
 
-    let name = Text::new(
+    let name = Text::declaring(
         move || label.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Body, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
     )?;
-    let status = Text::new(
+    let status = Text::declaring(
         {
             let device = device.clone();
             let is_armed = is_armed.clone();
@@ -273,13 +273,13 @@ fn row(
         LayoutStyle::new(),
         {
             let is_armed = is_armed.clone();
-            move || {
+            move |inherited| {
                 let tint = if is_armed(&armed_tint) {
                     theme.red
                 } else {
                     theme.subtle
                 };
-                theme.text_style(FontRole::Caption, tint)
+                theme.text_over(inherited, FontRole::Caption, tint)
             }
         },
     )?;
@@ -291,13 +291,13 @@ fn row(
         vec![box_item(name), box_item(status)],
     )?;
 
-    let trailing = Text::new(
+    let trailing = Text::declaring(
         {
             let device = device.clone();
             move || trailing_line(&device)
         },
         LayoutStyle::new().flex_shrink(0.0),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
 
     let paired = device.paired;
@@ -390,13 +390,13 @@ fn pill(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let active = std::rc::Rc::new(active);
     let (fill_active, hover_active, text_active) = (active.clone(), active.clone(), active.clone());
-    let text = Text::new(label, LayoutStyle::new(), move || {
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
         let tint = if text_active() {
             theme.accent.most_readable(&[theme.text, theme.base])
         } else {
             theme.text
         };
-        theme.text_style(FontRole::Caption, tint)
+        theme.text_over(inherited, FontRole::Caption, tint)
     })?;
     Ok(Box::new(
         StyledContainer::new(

@@ -119,6 +119,14 @@ fn factor(value: &OwnedValue) -> Option<f64> {
         .or_else(|| <&str>::try_from(value).ok()?.trim().parse().ok())
 }
 
+/// The desktop's setting as the shell starts, read on a thread of its own so the driver comes up while the portal answers — or is started to answer, at login.
+pub fn read_in_background() -> Option<std::thread::JoinHandle<bool>> {
+    std::thread::Builder::new()
+        .name("hogar-shell-motion-seed".to_string())
+        .spawn(read)
+        .ok()
+}
+
 pub fn subscribe(tx: EventSender<bool>) {
     REDUCED.subscribe(tx);
 }

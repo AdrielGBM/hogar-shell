@@ -6,8 +6,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use telar::{
-    Children, Container, JustifyContent, LayoutItem, LayoutStyle, RwSignal, Text, box_item,
-    detached, effect, memo, signal, use_theme,
+    Children, Container, JustifyContent, LayoutItem, LayoutStyle, ReactiveList, RwSignal, Text,
+    box_item, detached, effect, memo, signal, use_theme,
 };
 
 use config::presets;
@@ -43,6 +43,7 @@ pub struct Look {
     pub radius: Option<u32>,
     pub opacity: f32,
     pub font: f32,
+    pub font_family: Option<String>,
     /// One per [`FontRole::ALL`], in its order.
     pub weights: [Option<u16>; 4],
     pub app_icon_theme: String,
@@ -58,6 +59,7 @@ impl Look {
             radius: config.theme.radius,
             opacity: config.theme.opacity,
             font: config.theme.scale.font,
+            font_family: config.theme.font_family.clone(),
             weights: FontRole::ALL.map(|role| config.theme.fonts.spec(role).weight),
             app_icon_theme: config.icons.app_icon_theme.clone(),
             mask: config.icons.mask,
@@ -81,6 +83,7 @@ impl Look {
         theme.radius = self.radius;
         theme.opacity = self.opacity;
         theme.scale.font = self.font;
+        theme.font_family = self.font_family.clone();
         for (role, weight) in FontRole::ALL.into_iter().zip(self.weights) {
             theme.fonts.spec_mut(role).weight = weight;
         }
@@ -103,6 +106,7 @@ pub(crate) struct Controls {
     pub(crate) radius: RwSignal<f32>,
     pub(crate) opacity: RwSignal<f32>,
     pub(crate) font: RwSignal<f32>,
+    pub(crate) family: RwSignal<String>,
     /// One per [`FontRole::ALL`], each a weight or empty for the role's own.
     pub(crate) weights: [RwSignal<String>; 4],
     pub(crate) app_icon_theme: RwSignal<String>,
@@ -122,6 +126,7 @@ impl Controls {
             radius: signal(look.radius.map_or(unset, |r| r as f32)),
             opacity: signal(look.opacity),
             font: signal(look.font),
+            family: signal(look.font_family.clone().unwrap_or_default()),
             weights: look.weights.map(|weight| signal(spelled_weight(weight))),
             app_icon_theme: signal(look.app_icon_theme.clone()),
             mask: signal(look.mask.id().to_string()),
@@ -149,6 +154,8 @@ impl Controls {
                 .font
                 .get()
                 .clamp(*FONT_SCALE_RANGE.start(), *FONT_SCALE_RANGE.end()),
+            font_family: Some(self.family.get().trim().to_string())
+                .filter(|family| !family.is_empty()),
             weights: self.weights.map(|weight| parsed_weight(&weight.get())),
             app_icon_theme: self.app_icon_theme.get(),
             mask: IconMask::from_id(&self.mask.get()).unwrap_or_default(),
@@ -170,6 +177,8 @@ impl Controls {
             self.radius.set(theme.radius.map_or(unset, |r| r as f32));
             self.opacity.set(theme.opacity);
             self.font.set(theme.scale.font);
+            self.family
+                .set(theme.font_family.clone().unwrap_or_default());
             for (weight, role) in self.weights.iter().zip(FontRole::ALL) {
                 weight.set(spelled_weight(theme.fonts.spec(role).weight));
             }
@@ -306,26 +315,26 @@ pub(crate) fn card(output: &str, controls: Controls) -> Built {
             .get()
             .and_then(|look| crate::modes::lock::falls_back_with(&judged, &look.on(&judged)))
     });
-    let said = Text::new(
+    let said = Text::declaring(
         move || match verdict.get() {
             Some(why) => telar::t!("editor.theme.lock_falls_back", why = why),
             None => telar::t!("editor.theme.note"),
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             let tint = match verdict.get() {
                 Some(_) => theme.warning,
                 None => theme.subtle,
             };
-            theme.text_style(FontRole::Caption, tint)
+            theme.text_over(inherited, FontRole::Caption, tint)
         },
     )?;
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("editor.theme.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -373,6 +382,7 @@ pub(crate) fn card(output: &str, controls: Controls) -> Built {
             controls.font,
             Range::new(*FONT_SCALE_RANGE.start(), *FONT_SCALE_RANGE.end(), 0.05),
         )?,
+        family_row(controls.family)?,
     ];
     for (weight, role) in controls.weights.into_iter().zip(FontRole::ALL) {
         rows.push(rows::listed(
@@ -425,6 +435,39 @@ fn weight_options(current: &str) -> Rc<[(String, String)]> {
     keeping_current(options, current)
 }
 
+/// The family row, built again as the installed families change, so a popover opened before a face lands shows it when it does.
+fn family_row(family: RwSignal<String>) -> Built {
+    let installed = memo(|| {
+        telar::use_text_metrics_generation();
+        telar::font_families()
+    });
+    let row = ReactiveList::with_style(
+        LayoutStyle::new().flex_column(),
+        move || vec![installed.get()],
+        |families| families.len(),
+        move |families| {
+            rows::listed(
+                label!("editor.theme.family"),
+                documented("theme", "font_family"),
+                family,
+                family_options(&family.peek(), &families),
+            )
+        },
+    )?;
+    Ok(box_item(row))
+}
+
+/// The platform's own family, every one installed, and `current` where it is not installed here.
+fn family_options(current: &str, installed: &[String]) -> Rc<[(String, String)]> {
+    let mut options = vec![(String::new(), telar::t!("editor.theme.family_default"))];
+    options.extend(
+        installed
+            .iter()
+            .map(|family| (family.clone(), family.clone())),
+    );
+    keeping_current(options, current)
+}
+
 /// The desktop's own icon theme, every one installed, and `current` where it is not installed here.
 fn icon_theme_options(current: &str) -> Rc<[(String, String)]> {
     let mut options = vec![(String::new(), telar::t!("editor.theme.icon_theme_auto"))];
@@ -473,7 +516,7 @@ fn preset_rows(controls: Controls, running: &Arc<Config>) -> rows::Rows {
                 }
                 Err(why) => status.set(telar::t!(
                     "editor.theme.preset_failed",
-                    why = why.to_string()
+                    why = why.message().render()
                 )),
             },
         ),
@@ -483,7 +526,7 @@ fn preset_rows(controls: Controls, running: &Arc<Config>) -> rows::Rows {
                 Ok(()) => status.set(telar::t!("editor.theme.preset_deleted", name = name)),
                 Err(why) => status.set(telar::t!(
                     "editor.theme.preset_failed",
-                    why = why.to_string()
+                    why = why.message().render()
                 )),
             }
             refresh();
@@ -501,7 +544,7 @@ fn preset_rows(controls: Controls, running: &Arc<Config>) -> rows::Rows {
             Ok(()) => status.set(telar::t!("editor.theme.preset_saved", name = name)),
             Err(why) => status.set(telar::t!(
                 "editor.theme.preset_failed",
-                why = why.to_string()
+                why = why.message().render()
             )),
         }
         refresh();
@@ -575,13 +618,14 @@ fn saved(kept: Option<Look>) {
 pub(crate) fn write(path: &Path, look: &Look) -> Result<(), String> {
     let config = Config::load_or_default(path);
     let mut edits = vec![
-        SectionEdit::new("theme", &look.theme_on(&config.theme)).map_err(|why| why.to_string())?,
+        SectionEdit::new("theme", &look.theme_on(&config.theme))
+            .map_err(|why| why.message().render())?,
     ];
     let icons = look.icons_on(&config.icons);
     if icons != config.icons {
-        edits.push(SectionEdit::new("icons", &icons).map_err(|why| why.to_string())?);
+        edits.push(SectionEdit::new("icons", &icons).map_err(|why| why.message().render())?);
     }
     Config::save_sections(path, &edits)
         .map(|_| ())
-        .map_err(|why| why.to_string())
+        .map_err(|why| why.message().render())
 }

@@ -32,15 +32,23 @@ pub struct App {
 }
 
 impl App {
-    /// Whether a window whose application id is `app_id` is one of this entry's: the id itself, the entry's `StartupWMClass`, or the two agreeing on the last part of a reverse-DNS name (`org.mozilla.firefox` and `firefox`), all without regard to case.
+    /// Whether a window whose application id is `app_id` is one of this entry's, without regard to case: the entry's id or its `StartupWMClass` exactly, or a bare name against the last part of a reverse-DNS one (`org.mozilla.firefox` and `firefox`, either way round). Two reverse-DNS ids never match by their last parts alone — `org.gnome.Settings` is not `com.example.Settings` — and a name of two parts is not reverse-DNS enough to count.
     pub fn owns_window(&self, app_id: &str) -> bool {
         fn same(a: &str, b: &str) -> bool {
             !a.is_empty() && a.eq_ignore_ascii_case(b)
         }
-        fn last(id: &str) -> &str {
-            id.rsplit('.').next().unwrap_or(id)
+        fn named_for(reverse_dns: &str, bare: &str) -> bool {
+            !bare.contains('.')
+                && reverse_dns.split('.').count() >= 3
+                && reverse_dns
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|last| same(last, bare))
         }
-        same(&self.id, app_id) || same(&self.wm_class, app_id) || same(last(&self.id), last(app_id))
+        same(&self.id, app_id)
+            || same(&self.wm_class, app_id)
+            || named_for(&self.id, app_id)
+            || named_for(app_id, &self.id)
     }
 
     /// Everything a search should match against, not just the name: `keywords` is where an entry lists the words users actually type (`www`, `browser`) and `description` catches the rest.
@@ -321,6 +329,14 @@ Exec=firefox --new-window
         assert!(entry("code", "Code-OSS").owns_window("code-oss"));
         assert!(!entry("code", "").owns_window("kitty"));
         assert!(!entry("", "").owns_window(""), "an empty id owns nothing");
+        assert!(!entry("org.gnome.Settings", "").owns_window("x.y.Settings"));
+        assert!(!entry("com.example.Terminal", "").owns_window("org.other.terminal"));
+        assert!(
+            !entry("vendor.Settings", "").owns_window("settings"),
+            "two parts are not reverse-DNS"
+        );
+        assert!(!entry("settings", "").owns_window("vendor.Settings"));
+        assert!(entry("org.gnome.Settings", "").owns_window("org.gnome.settings"));
 
         let parsed = parse_entry(
             "code",

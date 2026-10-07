@@ -52,12 +52,12 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let reading = now.read_only();
     let time_size = size.clone();
-    let time = Text::new(
+    let time = Text::declaring(
         move || reading.get(),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             let style = theme
-                .text_style_at(FontRole::Display, ink, time_size.get())
+                .text_over_at(inherited, FontRole::Display, ink, time_size.get())
                 .with_font_weight(600);
             match shadow {
                 Some(shadow) => style.with_text_shadow(shadow),
@@ -70,12 +70,12 @@ pub fn widget(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
     if show_date {
         let reading = today.read_only();
         let date_size = size.clone();
-        let date = Text::new(
+        let date = Text::declaring(
             move || reading.get(),
             LayoutStyle::new(),
-            move || {
+            move |inherited| {
                 let date_size = (date_size.get() * DATE_SCALE).max(theme.font(FontRole::Body));
-                let style = theme.text_style_at(FontRole::Title, ink, date_size);
+                let style = theme.text_over_at(inherited, FontRole::Title, ink, date_size);
                 match shadow {
                     Some(shadow) => style.with_text_shadow(shadow),
                     None => style,

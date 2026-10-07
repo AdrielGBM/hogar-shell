@@ -50,19 +50,19 @@ fn clock_face(config: ClockConfig, theme: NordTheme) -> Result<Box<dyn LayoutIte
     let time = derive(now, move |t| t.format(for_tick.time_format()).to_string());
     let date = derive(now, move |t| t.format(&config.date_format).to_string());
 
-    let time_text = Text::new(
+    let time_text = Text::declaring(
         move || time.get(),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Display, theme.text)
+                .text_over(inherited, FontRole::Display, theme.text)
                 .with_font_weight(700)
         },
     )?;
-    let date_text = Text::new(
+    let date_text = Text::declaring(
         move || date.get(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Body, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.subtle),
     )?;
 
     let stack = Container::new(
@@ -113,14 +113,14 @@ fn month_heading(
             .width(SizeDimension::Percent(1.0)),
         vec![
             step_button("chevron-left", anchor, -1, theme)?,
-            box_item(Text::new(
+            box_item(Text::declaring(
                 move || title.get(),
                 LayoutStyle::new()
                     .flex_grow(1.0)
                     .justify_content(JustifyContent::CENTER),
-                move || {
+                move |inherited| {
                     theme
-                        .text_style(FontRole::Title, theme.text)
+                        .text_over(inherited, FontRole::Title, theme.text)
                         .with_font_weight(700)
                 },
             )?),
@@ -155,15 +155,15 @@ fn weekday_header(first: Weekday, theme: NordTheme) -> Result<Box<dyn LayoutItem
     let mut cells: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(7);
     for offset in 0..7 {
         let weekday = shift_weekday(first, offset);
-        cells.push(box_item(Text::new(
+        cells.push(box_item(Text::declaring(
             move || weekday_label(weekday),
             LayoutStyle::new()
                 .flex_grow(1.0)
                 .flex_basis(0.0)
                 .justify_content(JustifyContent::CENTER),
-            move || {
+            move |inherited| {
                 theme
-                    .text_style(FontRole::Caption, theme.muted)
+                    .text_over(inherited, FontRole::Caption, theme.muted)
                     .with_font_weight(700)
             },
         )?));
@@ -225,10 +225,10 @@ fn day_cell(
         theme.muted
     };
     let label = date.day().to_string();
-    let text = Text::new(
+    let text = Text::declaring(
         move || label.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, ink),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, ink),
     )?;
     let fill = if is_today {
         theme.accent
@@ -283,10 +283,10 @@ fn identity(
         .on_press(move || open.set(!open.peek())),
     );
 
-    let host_text = Text::new(
+    let host_text = Text::declaring(
         move || host.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
 
     // Uptime rides the shared clock rather than arming a ticker of its own; it changes once a minute, and the second boundary is already being published to every surface.
@@ -297,10 +297,10 @@ fn identity(
         Some(seconds) => telar::t!("dashboard.uptime", time = duration_label(seconds)),
         None => telar::t!("sysinfo.no_reading"),
     });
-    let uptime_text = Text::new(
+    let uptime_text = Text::declaring(
         move || uptime.get(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
 
     let labels = Container::new(
@@ -363,12 +363,12 @@ fn browser(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source_folder = folder.read_only();
 
-    let path_label = Text::new(
+    let path_label = Text::declaring(
         move || source_folder.get().display().to_string(),
         LayoutStyle::new().flex_grow(1.0),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, theme.muted)
+                .text_over(inherited, FontRole::Caption, theme.muted)
                 .with_clamp(1, true)
         },
     )?;
@@ -487,12 +487,12 @@ fn choice_tile(
         )?
     };
     let name = choice.name.clone();
-    let label = Text::new(
+    let label = Text::declaring(
         move || name.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, theme.subtle)
+                .text_over(inherited, FontRole::Caption, theme.subtle)
                 .with_clamp(1, true)
         },
     )?;

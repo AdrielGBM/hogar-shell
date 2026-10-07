@@ -22,7 +22,7 @@ use layout::{
 };
 use util::report::Report;
 
-use crate::area::ShellAreas;
+use crate::area::{OnScreen, ShellAreas};
 use crate::layer_window::{Content, LayerPlan, LayerWindows, Reconciled, Reserved};
 
 /// One output's arrangement: the config it resolves module behaviour against, what the layout said about it, what its edges reserve and how big it is.
@@ -43,6 +43,16 @@ impl Desktop {
             resolved: &self.resolved,
             reserved: self.reserved,
             size: self.size,
+        }
+    }
+
+    pub fn on_screen(&self) -> OnScreen<'_> {
+        OnScreen {
+            config: &self.config,
+            theme: self.config.resolve_theme(),
+            output: self.output.as_deref(),
+            size: self.size,
+            reserved: self.reserved,
         }
     }
 

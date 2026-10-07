@@ -17,8 +17,10 @@ pub(crate) mod instance;
 pub(crate) mod look;
 pub(crate) mod origin;
 pub(crate) mod panel;
+pub(crate) mod picture;
 pub(crate) mod place;
 pub mod rows;
+mod search_card;
 pub(crate) mod value;
 
 use std::cell::{Cell, RefCell};
@@ -52,6 +54,7 @@ pub use draft::{AreaDraft, Grip, GroupDraft, InstanceDraft, Settle};
 pub(crate) use draft::{kind_field, kind_read};
 pub use instance::{option, shown};
 pub use origin::Provenance;
+pub(crate) use search_card::{Inset, Search, answer, listing, search_card};
 pub use value::{Path, Step, path_of};
 
 /// The transient every popover is, one at a time.
@@ -521,12 +524,12 @@ fn card(
     let pad = ui::scale::space::lg();
     let radius = ui::scale::corner::xl();
     let name = name.to_string();
-    let title = Text::new(
+    let title = Text::declaring(
         move || telar::t!("editor.popover.customize", name = name.clone()),
         LayoutStyle::new().flex_grow(1.0),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -548,8 +551,7 @@ fn card(
     let output = node.output.clone();
     let inner = WIDTH - 2.0 * pad;
     let gap = ui::scale::space::md();
-    let header_height = telar::track_layout(header.layout_node())
-        .ok_or_else(|| LayoutError::Engine("a popover's header has no layout node".to_string()))?;
+    let header_height = tracked_height(&header, "header")?;
     let column = Container::new(
         LayoutStyle::new()
             .flex_column()
@@ -557,15 +559,13 @@ fn card(
             .width(inner),
         rows,
     )?;
-    let rows_room = {
-        let output = output.clone();
-        move || {
-            let usable = crate::host::usable(output.as_deref());
-            let card = (usable.height * TALLEST).min(usable.height - 2.0 * place::GAP);
-            (card - header_height.get().height - gap - 2.0 * pad).max(0.0)
-        }
-    };
-    let (rows_box, viewport) = capped_rows(box_item(column), inner, rows_room)?;
+    let (rows_box, viewport) = capped_card_rows(
+        box_item(column),
+        inner,
+        output.clone(),
+        |usable| (usable.height * TALLEST).min(usable.height - 2.0 * place::GAP),
+        move || header_height.get().height + gap + 2.0 * pad,
+    )?;
     keep_focus_in_view(viewport);
     let body = StyledContainer::new(
         LayoutStyle::new()
@@ -591,6 +591,29 @@ fn card(
         Some([1.0, 0.0, 0.0, 1.0, x - laid.x, y - laid.y])
     });
     Ok(Box::new(body))
+}
+
+/// The height of `item` as it is laid out, for a card to leave room for.
+pub(crate) fn tracked_height(
+    item: &dyn LayoutItem,
+    what: &str,
+) -> Result<RwSignal<telar::Rect>, LayoutError> {
+    telar::track_layout(item.layout_node())
+        .ok_or_else(|| LayoutError::Engine(format!("a card's {what} has no layout node")))
+}
+
+/// [`capped_rows`] in a card whose height is at most `cap` of the usable screen `output`, `fixed` of it taken by what the card holds besides the rows.
+pub(crate) fn capped_card_rows(
+    content: Box<dyn LayoutItem>,
+    width: f32,
+    output: Option<String>,
+    cap: impl Fn(telar::Rect) -> f32 + 'static,
+    fixed: impl Fn() -> f32 + 'static,
+) -> Result<(Box<dyn LayoutItem>, telar::ScrollViewport), LayoutError> {
+    capped_rows(content, width, move || {
+        let usable = crate::host::usable(output.as_deref());
+        (cap(usable) - fixed()).max(0.0)
+    })
 }
 
 /// `content` in a scroll area `width` wide, in a box as tall as `content` up to what `room` answers: the rows of a card whose height is capped, filling what the cap leaves them and scrolling past it. A scroll area has no height of its own to give a column, so a card that left its rows to flex inside an auto-height column would lay them out below itself, out of reach of the pointer.

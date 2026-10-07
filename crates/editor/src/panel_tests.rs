@@ -6,32 +6,15 @@ mod tests {
     use surfaces::menu::Asked;
     use surfaces::rects::{self, Node};
     use surfaces::transient;
-    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::descriptor::ModuleDescriptor;
     use ui::host::WidgetSize;
 
     use crate::popover::panel::{Grows, growing, grows, handle_at};
-    use crate::rig::{Page, Rig, SCREEN, Scope, bar, enter, face, rig, rig_with, stored, tap};
+    use crate::rig::{Page, Rig, SCREEN, Scope, bar, enter, module, rig, rig_with, stored, tap};
     use crate::session::{self, Selection};
     use crate::{context, mode, popover};
 
-    static PROBES: &[ModuleDescriptor] = &[ModuleDescriptor {
-        id: "clock",
-        name: "Clock",
-        icon: "clock",
-        category: Category::Info,
-        options: &[],
-        representations: Representations {
-            chip: Some(ChipDef::new(face, Input::ReadOnly)),
-            widget: Some(WidgetDef {
-                sizes: &[WidgetSize::M],
-                build: face,
-                input: Input::ReadOnly,
-            }),
-            ..Representations::NONE
-        },
-        actions: &[],
-        sources: &[],
-    }];
+    static PROBES: &[ModuleDescriptor] = &[module("clock", "Clock", &[WidgetSize::M])];
 
     fn scope() -> Scope {
         ui::descriptor::install(PROBES);

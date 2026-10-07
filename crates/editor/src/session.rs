@@ -4,7 +4,7 @@
 //!
 //! **The selection** is what the tools act on: an area, a group or an instance on the layer and screen being edited. It follows what it names through an edit and clears when that is gone, or when the mode changes.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::{Rc, Weak};
 
@@ -52,7 +52,8 @@ thread_local! {
     static SELECTION: RwSignal<Selection> = detached(|| signal(Selection::None));
     static DRAFT: RwSignal<Layout> = detached(|| signal(stored().unwrap_or_else(layout::built_in)));
     static EDITS: RefCell<Vec<Weak<Pending>>> = const { RefCell::new(Vec::new()) };
-    static ENTRY: RefCell<Option<Layout>> = const { RefCell::new(None) };
+    static ENTRY: RefCell<Option<(layout::LayoutId, Layout)>> = const { RefCell::new(None) };
+    static COMMITTING: Cell<bool> = const { Cell::new(false) };
     static PEEKING: RwSignal<bool> = detached(|| signal(false));
 }
 
@@ -183,6 +184,7 @@ fn follow_the_store() {
         return;
     };
     end_peek();
+    restart_the_entry(&stored);
     if let Some(edit) = open() {
         if edit.0.transaction.before().as_ref() == Some(&stored) {
             return;
@@ -196,6 +198,37 @@ fn follow_the_store() {
     });
 }
 
+/// Takes the active layout as the entry layout when another layout became active under the mode, which an edit forking the built-in one does not count as.
+fn restart_the_entry(stored: &Layout) {
+    if COMMITTING.with(Cell::get) {
+        return;
+    }
+    let Some(active) = layouts::read(|store| store.active_id().clone()) else {
+        return;
+    };
+    ENTRY.with(|entry| {
+        if let Some(held) = entry.borrow_mut().as_mut()
+            && held.0 != active
+        {
+            *held = (active, stored.clone());
+        }
+    });
+}
+
+/// Names the layout the entry layout belongs to by what is active now, after an edit committed to `was` and perhaps forked it.
+fn rebase_the_entry(was: &layout::LayoutId) {
+    let Some(now) = layouts::read(|store| store.active_id().clone()) else {
+        return;
+    };
+    ENTRY.with(|entry| {
+        if let Some(held) = entry.borrow_mut().as_mut()
+            && held.0 == *was
+        {
+            held.0 = now;
+        }
+    });
+}
+
 /// Keeps the layout as it was when the mode opened for as long as a mode is up; switching layers keeps it, since it is the whole layout.
 fn keep_the_entry() {
     let in_mode = mode::active().with(Option::is_some);
@@ -205,14 +238,15 @@ fn keep_the_entry() {
     ENTRY.with(|entry| {
         let mut entry = entry.borrow_mut();
         match (in_mode, entry.is_some()) {
-            (true, false) => *entry = stored(),
+            (true, false) => {
+                *entry = layouts::read(|store| store.active_id().clone()).zip(stored());
+            }
             (false, true) => *entry = None,
             _ => {}
         }
     });
 }
 
-/// Whether the draft is showing the layout as it was when the mode opened, as a signal the strip says so from.
 pub fn peeking() -> ReadSignal<bool> {
     PEEKING.with(|peeking| peeking.read_only())
 }
@@ -225,7 +259,7 @@ pub fn begin_peek() -> Result<(), EditError> {
     if open().is_some() {
         return Err(EditError::Nested);
     }
-    let entry = ENTRY
+    let (_, entry) = ENTRY
         .with(|entry| entry.borrow().clone())
         .ok_or(EditError::NotOpen)?;
     PEEKING.with(|peeking| peeking.set(true));
@@ -233,13 +267,10 @@ pub fn begin_peek() -> Result<(), EditError> {
     Ok(())
 }
 
-/// Puts the draft back to what the store holds, taking back an edit begun while peeking, which was planned against the entry layout.
+/// Puts the draft back to what the store holds.
 pub fn end_peek() {
     if !PEEKING.with(RwSignal::peek) {
         return;
-    }
-    if let Some(edit) = open() {
-        let _ = edit.revert();
     }
     PEEKING.with(|peeking| peeking.set(false));
     if let Some(stored) = stored() {
@@ -452,12 +483,17 @@ impl Pending {
             return;
         }
         let committed = match layouts::read(|store| store.active_id().clone()) {
-            Some(active) => layouts::commit(layout::Transaction::new(
-                self.label.borrow().clone(),
-                active.clone(),
-                ops,
-            ))
-            .map(|()| say_if_forked(&active)),
+            Some(active) => {
+                COMMITTING.with(|committing| committing.set(true));
+                let result = layouts::commit(layout::Transaction::new(
+                    self.label.borrow().clone(),
+                    active.clone(),
+                    ops,
+                ));
+                COMMITTING.with(|committing| committing.set(false));
+                rebase_the_entry(&active);
+                result.map(|()| say_if_forked(&active))
+            }
             None => Err(layouts::no_store()),
         };
         if let Err(why) = committed {

@@ -1,10 +1,10 @@
-//! The command palette: one list of everything an edit mode can do — every row of its key table, each way a row can go its own entry with its chord, every module and komponent the add palette offers, the strip's actions, the history, the other modes and Done — narrowed by what is typed. The arrows walk it, Enter or a press runs the entry against the selection, and Esc closes it. An entry the selection would refuse stays listed, dimmed, saying why.
+//! The command palette: one list of everything an edit mode can do — every row of its key table that can run from a list, each way a row can go its own entry with its chord, every module and komponent the add palette offers, the strip's actions, the history, the other modes and Done — narrowed by what is typed. The arrows walk it, Enter or a press runs the entry against the selection, and Esc closes it. An entry the selection would refuse stays listed, dimmed, saying why.
 
 use std::rc::Rc;
 
 use telar::{
-    Key, LayoutError, LayoutItem, LayoutStyle, NamedKey, NodeId, ReactiveList, RectStyle, RwSignal,
-    SizeDimension, StyledContainer, Text, box_item, effect, signal, use_theme,
+    Key, LayoutItem, LayoutStyle, NamedKey, NodeId, RectStyle, RwSignal, SizeDimension,
+    StyledContainer, Text, box_item, signal, use_theme,
 };
 
 use config::theme::{FontRole, NordTheme};
@@ -15,11 +15,10 @@ use ui::chrome::Chrome;
 use ui::descriptor::Built;
 use util::search;
 
-use crate::host::{passthrough, whole};
 use crate::keys::{self, Chord, Row};
 use crate::mode;
 use crate::modes::palette::{self, Line, Pick};
-use crate::popover::rows::{self, label};
+use crate::popover::{self, Inset, Search, search_card};
 use crate::session::{self, EditError};
 
 pub const ID: &str = "editor:command-palette";
@@ -74,7 +73,7 @@ pub fn commands(layer: LayerKind) -> Vec<Entry> {
     let rows = keys::listed(layer);
     let palette_offered = rows.iter().any(|row| row.name == "widget-add");
     let mut all = Vec::new();
-    for row in rows {
+    for row in rows.into_iter().filter(Row::runnable_from_palette) {
         let name = (row.label)();
         let ways = row.ways();
         let alone = ways.len() == 1;
@@ -203,115 +202,37 @@ fn choose(command: &Entry, layer: LayerKind) {
 
 /// The palette's card: a title, the search field and the entries `query` finds, centred at the top of what the reserving areas leave, the entry the arrows point at kept in view.
 pub(crate) fn tree(output: &str, layer: LayerKind) -> Built {
-    let theme = use_theme::<NordTheme>();
-    let pad = ui::scale::space::lg();
-    let gap = ui::scale::space::md();
     let listed = Rc::new(commands(layer));
     let query = signal(String::new());
     let pointed = signal(0usize);
-    let pointed_row: RwSignal<Option<NodeId>> = signal(None);
     let shown = {
         let listed = Rc::clone(&listed);
         Rc::new(move || found(&listed, &query.peek()))
     };
-    let list = ReactiveList::with_style(
-        LayoutStyle::new()
-            .flex_column()
-            .gap(ui::scale::space::xs())
-            .width(SizeDimension::Percent(1.0)),
+    search_card(
+        Search {
+            output,
+            width: WIDTH,
+            inset: Inset::Centre,
+            title: Box::new(|| telar::t!("editor.command.title")),
+            query,
+        },
         move || vec![(query.get(), pointed.get())],
-        |held: &(String, usize)| held.clone(),
-        move |(typed, at): (String, usize)| {
+        move |(typed, at): (String, usize), pointed_row| {
             entries(found(&listed, &typed), (at, pointed_row), layer)
         },
-    )?;
-    let title = Text::new(
-        || telar::t!("editor.command.title"),
-        LayoutStyle::new(),
-        move || {
-            theme
-                .text_style(FontRole::Body, theme.text)
-                .with_font_weight(700)
+        move |key: &Key| {
+            popover::answer(key, (query, pointed), &|| shown().len(), &|key| match key {
+                Key::Named(NamedKey::Enter) => {
+                    if let Some(command) = shown().get(pointed.peek()) {
+                        choose(command, layer);
+                    }
+                    true
+                }
+                _ => false,
+            })
         },
-    )?;
-    let search = rows::text(label!("editor.palette.search"), None, query)?;
-    let tracked = |item: &dyn LayoutItem, what: &str| {
-        telar::track_layout(item.layout_node()).ok_or_else(|| {
-            LayoutError::Engine(format!("the command palette's {what} has no layout node"))
-        })
-    };
-    let (title_height, search_height) = (tracked(&title, "title")?, tracked(&*search, "search")?);
-    let capped = output.to_string();
-    let room = move || {
-        let usable = crate::host::usable(Some(&capped));
-        let card = (usable.height - 8.0 * pad).max(120.0);
-        (card - title_height.get().height - search_height.get().height - 2.0 * gap - 2.0 * pad)
-            .max(0.0)
-    };
-    let (lines, viewport) = crate::popover::capped_rows(box_item(list), WIDTH - 2.0 * pad, room)?;
-    effect(move || {
-        if let Some(row) = pointed_row.get() {
-            viewport.reveal(row, gap);
-        }
-    });
-    let placed = output.to_string();
-    let style = move || {
-        let usable = crate::host::usable(Some(&placed));
-        LayoutStyle::new()
-            .absolute()
-            .inset_start(usable.x + ((usable.width - WIDTH) / 2.0).max(0.0))
-            .inset_top(usable.y + 4.0 * pad)
-            .width(WIDTH)
-            .flex_column()
-            .gap(gap)
-            .padding_all(pad)
-    };
-    let card = StyledContainer::new(
-        style(),
-        move |_| RectStyle::filled(theme.surface, ui::scale::corner::xl()),
-        vec![box_item(title), search, lines],
-    )?
-    .styled_by(style)
-    .input_opaque()
-    .on_key(move |key: &Key| answer(key, (query, pointed), &*shown, layer));
-    Ok(Box::new(passthrough(whole(), vec![Box::new(card)])?))
-}
-
-/// What a key does on the open palette: ↑/↓ walk the entries, Enter runs the one pointed at, and typing narrows them.
-fn answer(
-    key: &Key,
-    (query, pointed): (RwSignal<String>, RwSignal<usize>),
-    shown: &dyn Fn() -> Vec<Entry>,
-    layer: LayerKind,
-) -> bool {
-    let modifiers = telar::modifiers();
-    if modifiers.is_ctrl || modifiers.is_alt || modifiers.is_meta {
-        return false;
-    }
-    match key {
-        Key::Named(NamedKey::ArrowDown) => {
-            let count = shown().len();
-            pointed.update(|at| *at = (*at + 1).min(count.saturating_sub(1)));
-        }
-        Key::Named(NamedKey::ArrowUp) => pointed.update(|at| *at = at.saturating_sub(1)),
-        Key::Named(NamedKey::Enter) => {
-            if let Some(command) = shown().get(pointed.peek()) {
-                choose(command, layer);
-            }
-        }
-        Key::Named(NamedKey::Backspace) => {
-            query.update(|text| {
-                text.pop();
-            });
-            pointed.set(0);
-        }
-        Key::Char(ch) if !ch.is_control() => {
-            query.update(|text| text.push(*ch));
-            pointed.set(0);
-        }
-        _ => return false,
-    }
-    true
+    )
 }
 
 /// The entries as rows, the one `at` counts to highlighted and its node told to `pointed_row`, which keeps it in view.
@@ -329,19 +250,7 @@ fn entries(
         }
         built.push(row);
     }
-    if built.is_empty() {
-        built.push(rows::note(|| telar::t!("editor.palette.nothing"))?);
-    }
-    if pointed_row.peek() != pointed {
-        pointed_row.set(pointed);
-    }
-    Ok(box_item(telar::Container::new(
-        LayoutStyle::new()
-            .flex_column()
-            .gap(ui::scale::space::xs())
-            .width(SizeDimension::Percent(1.0)),
-        built,
-    )?))
+    popover::listing(built, pointed, pointed_row)
 }
 
 fn row_of(command: Entry, pointed: bool, layer: LayerKind) -> Built {
@@ -352,16 +261,16 @@ fn row_of(command: Entry, pointed: bool, layer: LayerKind) -> Built {
         false => theme.text,
     };
     let said = command.name.clone();
-    let name = Text::new(
+    let name = Text::declaring(
         move || said.clone(),
         LayoutStyle::new().flex_grow(1.0).flex_shrink(1.0),
-        move || theme.text_style(FontRole::Body, ink),
+        move |inherited| theme.text_over(inherited, FontRole::Body, ink),
     )?;
     let hinted = command.hint.clone();
-    let hint = Text::new(
+    let hint = Text::declaring(
         move || hinted.clone(),
         LayoutStyle::new().flex_shrink(0.0),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     let line = telar::Container::new(
         LayoutStyle::new()
@@ -373,10 +282,10 @@ fn row_of(command: Entry, pointed: bool, layer: LayerKind) -> Built {
     )?;
     let mut children: Vec<Box<dyn LayoutItem>> = vec![box_item(line)];
     if let Some(why) = command.refused.clone() {
-        children.push(box_item(Text::new(
+        children.push(box_item(Text::declaring(
             move || why.clone(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Caption, theme.muted),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
         )?));
     }
     let fill = match pointed {

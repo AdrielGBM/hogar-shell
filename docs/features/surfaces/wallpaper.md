@@ -82,7 +82,8 @@ parallax = 0.1                 # how far it slides across the workspaces, up to 
   it by the workspace up: the screen's first workspace shows its left edge, its last its right. It needs
   `fit = "cover"`, and reduced motion (`[animation] reduced`) holds the picture still.
 
-Values past what a key runs to are drawn at its end and reported by `hogar-shell layout check`.
+Values past what a key runs to are drawn at its end and reported by `hogar-shell layout check`, as is a
+`parallax` on a region whose `fit` is not `cover`, which has no picture to spare and is not drawn.
 
 ## The transition
 

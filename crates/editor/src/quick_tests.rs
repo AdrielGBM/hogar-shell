@@ -14,7 +14,7 @@ mod tests {
     use crate::host::Under;
     use crate::quick::{self, Button, Placing, place};
     use crate::rig::{
-        self, NONE, Page, Rig, SCREEN, bar, draw, enter, face, rig, rig_with, stored, undraw,
+        self, NONE, Owner, Page, Rig, SCREEN, bar, draw, enter, face, rig, rig_with, stored, undraw,
     };
     use crate::session::{self, Selection};
     use crate::tools::{self, Tool};
@@ -49,17 +49,8 @@ mod tests {
         module("notes", "Notes"),
     ];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        Owner::installing(PROBES).tearing_down(|| {
             quick::release();
             tools::put_away();
             if !tools::linked_now() {
@@ -67,10 +58,7 @@ mod tests {
             }
             popover::close();
             undraw();
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     struct Screen(Page);
@@ -238,7 +226,7 @@ mod tests {
     #[test]
     fn on_screen_the_bar_hangs_under_a_chip_clear_of_it_and_stands_beside_a_side_bar() {
         let _rig = rig_with("quick-placed", with_left_bar);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let _screen = selecting(LayerKind::Top, clock());
         let chip = rects::rect(&clock()).expect("the clock is drawn");
@@ -263,7 +251,7 @@ mod tests {
     #[test]
     fn the_desktop_grid_filling_the_screen_holds_the_bar_inside_it() {
         let _rig = rig("quick-inside");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let grid = Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("widgets"));
         let _screen = selecting(LayerKind::Desktop, grid.clone());
@@ -297,7 +285,7 @@ mod tests {
     #[test]
     fn customize_opens_the_selections_popover_and_the_bar_steps_aside_under_it() {
         let _rig = rig("quick-customize");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, clock());
         assert_eq!(shown().first(), Some(&Button::Customize));
@@ -321,7 +309,7 @@ mod tests {
     #[test]
     fn the_tool_buttons_take_their_tool_up_and_away_and_the_link_shows_while_one_is_up() {
         let _rig = rig("quick-tools");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, bar());
         assert!(!shown().contains(&Button::Link));
@@ -346,7 +334,7 @@ mod tests {
     #[test]
     fn the_arrows_walk_the_buttons_and_enter_presses_them_by_the_keyboard() {
         let _rig = rig("quick-keys");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, bar());
         let buttons = shown();
@@ -407,7 +395,7 @@ mod tests {
     #[test]
     fn remove_takes_the_selection_away_as_one_undo_entry_and_is_absent_where_refused() {
         let rig = rig("quick-remove");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, clock());
         screen.press(Button::Remove);
@@ -428,7 +416,7 @@ mod tests {
     #[test]
     fn the_panel_button_gives_a_panel_as_one_undo_entry_selects_it_and_is_lit_after() {
         let rig = rig("quick-panel");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, clock());
         screen.press(Button::Panel);
@@ -489,7 +477,7 @@ mod tests {
     #[test]
     fn the_grip_moves_the_bar_for_its_own_selection_alone() {
         let _rig = rig("quick-grip");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, clock());
         let before = quick::drawn_box().expect("shown");
@@ -512,7 +500,7 @@ mod tests {
     #[test]
     fn the_keyboard_presses_remove_as_one_undo_entry_and_hands_the_keyboard_back() {
         let rig = rig("quick-remove-keys");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, clock());
         let before = stored(&rig);
@@ -534,7 +522,7 @@ mod tests {
     #[test]
     fn dot_again_hands_the_keyboard_back_and_with_nothing_selected_it_takes_none() {
         let _rig = rig("quick-dot");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         session::clear_selection();
@@ -559,7 +547,7 @@ mod tests {
     #[test]
     fn each_kind_of_selection_is_offered_the_buttons_it_takes() {
         let _rig = rig("quick-offered");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         let offered = |node: Node| {
@@ -597,7 +585,7 @@ mod tests {
     #[test]
     fn the_grip_moves_the_bar_until_the_mode_changes() {
         let _rig = rig("quick-grip-mode");
-        let _owner = Owner::new();
+        let _owner = owner();
         let first = enter(LayerKind::Top);
         let mut screen = selecting(LayerKind::Top, clock());
         let before = quick::drawn_box().expect("shown");
@@ -618,7 +606,7 @@ mod tests {
     fn the_buttons_name_their_keys_from_the_key_table() {
         telar::set_locale("en");
         let _rig = rig("quick-hints");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         assert_eq!(quick::label_of(Button::Customize), "Customize (Enter)");
         assert_eq!(quick::label_of(Button::Radius), "Round the corners (R)");

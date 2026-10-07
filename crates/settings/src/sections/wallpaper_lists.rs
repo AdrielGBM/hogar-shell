@@ -80,7 +80,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
 
     let empty_library = library.read_only();
     let empty_query = query.read_only();
-    let empty = Text::new(
+    let empty = Text::declaring(
         move || {
             let entries = empty_library.get();
             let query = empty_query.get();
@@ -93,7 +93,7 @@ pub(crate) fn wallpaper_browser_section() -> Result<Box<dyn LayoutItem>, LayoutE
             }
         },
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
 
     let clear = telar::button(
@@ -223,12 +223,12 @@ fn wallpaper_tile(
     )?;
 
     let name = entry.name.clone();
-    let label = Text::new(
+    let label = Text::declaring(
         move || name.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, theme.subtle)
+                .text_over(inherited, FontRole::Caption, theme.subtle)
                 .with_clamp(1, true)
         },
     )?;

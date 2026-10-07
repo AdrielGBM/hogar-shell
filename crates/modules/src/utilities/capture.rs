@@ -21,12 +21,12 @@ const ROW_ICON: f32 = 20.0;
 
 /// The screenshot buttons, the recorder's own control, and a line about the last capture.
 pub fn capture_card(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let heading = Text::new(
+    let heading = Text::declaring(
         || telar::t!("capture.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -138,7 +138,7 @@ fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let elapsed_state = live.read_only();
     let elapsed_tick = tick.read_only();
-    let elapsed = Text::new(
+    let elapsed = Text::declaring(
         move || {
             // Both signals are read, and both matter: the recorder says whether anything is running, the tick is what brings the closure back a second later. Reading only the state would freeze the readout.
             elapsed_tick.get();
@@ -152,7 +152,7 @@ fn recorder_row(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
             }
         },
         LayoutStyle::new().flex_grow(1.0),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     children.push(box_item(elapsed));
 
@@ -176,18 +176,18 @@ fn last_capture(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     );
     let text_state = last.read_only();
     let tint_state = last.read_only();
-    let line = Text::new(
+    let line = Text::declaring(
         move || match text_state.get() {
             Some(Ok(shot)) => shot_line(&shot),
             Some(Err(reason)) => reason,
             None => String::new(),
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             let failed = matches!(tint_state.get(), Some(Err(_)));
             let tint = if failed { theme.red } else { theme.subtle };
             theme
-                .text_style(FontRole::Caption, tint)
+                .text_over(inherited, FontRole::Caption, tint)
                 .with_clamp(1, true)
         },
     )?;
@@ -221,12 +221,12 @@ pub fn recordings_card(
         refresh.set(recorder::recordings(&refresh_dir, limit));
     });
 
-    let heading = Text::new(
+    let heading = Text::declaring(
         || telar::t!("capture.recordings"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -243,7 +243,7 @@ pub fn recordings_card(
     )?;
 
     let empty_state = entries.read_only();
-    let empty = Text::new(
+    let empty = Text::declaring(
         move || {
             if empty_state.get().is_empty() {
                 telar::t!("capture.no_recordings")
@@ -252,7 +252,7 @@ pub fn recordings_card(
             }
         },
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
 
     card(
@@ -291,19 +291,19 @@ fn row(
 
     let icon = icon_view(|| "film".to_string(), move || theme.text, ROW_ICON)?;
 
-    let name = Text::new(
+    let name = Text::declaring(
         {
             let label = entry.name();
             move || label.clone()
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_clamp(1, true)
         },
     )?;
-    let subtitle = Text::new(
+    let subtitle = Text::declaring(
         {
             let size = entry.size_label();
             let is_armed = is_armed.clone();
@@ -316,7 +316,7 @@ fn row(
             }
         },
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     let labels = Container::new(
         LayoutStyle::new()
@@ -470,7 +470,7 @@ fn pill_live(
         },
         16.0,
     )?;
-    let text = Text::new(label, LayoutStyle::new(), move || {
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
         let tint = if !enabled {
             theme.muted
         } else if text_active() {
@@ -478,7 +478,7 @@ fn pill_live(
         } else {
             theme.text
         };
-        theme.text_style(FontRole::Caption, tint)
+        theme.text_over(inherited, FontRole::Caption, tint)
     })?;
     let mut pill = StyledContainer::new(
         LayoutStyle::new()

@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use telar::{
     Children, Cursor, LayoutError, LayoutItem, LayoutStyle, Reactive, ReactiveList, Rect, RwSignal,
-    SizeDimension, Transaction,
+    SizeDimension,
 };
 
 use config::Edge;
@@ -15,6 +15,7 @@ use super::area::help;
 use super::draft::{AreaDraft, Grip, kind_field};
 use super::handles;
 use super::rows::{self, Range, label};
+use crate::modes::gesture;
 
 pub(crate) const CELLS: Range = Range::whole(1.0, 24.0);
 const CELL: Range = Range::whole(16.0, 400.0);
@@ -286,21 +287,6 @@ fn handle(
     grip: Grip,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let grab: Rc<Cell<Option<Grab>>> = Rc::default();
-    let transaction = Transaction::new(own)
-        .on_commit({
-            let (grab, grip) = (Rc::clone(&grab), grip.clone());
-            move |_, _| {
-                grab.set(None);
-                grip.release();
-            }
-        })
-        .on_revert({
-            let (grab, grip) = (Rc::clone(&grab), grip.clone());
-            move |_| {
-                grab.set(None);
-                grip.put_back();
-            }
-        });
     let now = growing();
     let cursor = match now.docked {
         Some(edge) if edge.is_vertical() => Cursor::EwResize,
@@ -315,8 +301,15 @@ fn handle(
             handle_at(rects::rect(&node).unwrap_or_default(), grows)
         }
     };
+    let on_start = gesture::holding(grip.clone());
+    let on_end = {
+        let (grab, let_go) = (Rc::clone(&grab), gesture::letting_go(grip));
+        move |kept: bool| {
+            grab.set(None);
+            let_go(kept);
+        }
+    };
     let to_value = move |x: f32, y: f32| {
-        grip.hold();
         let held = grab.get().unwrap_or_else(|| Grab {
             at: (x, y),
             grows: growing(),
@@ -344,12 +337,14 @@ fn handle(
     };
     telar::handle(
         telar::HandleProps::props()
-            .transaction(transaction)
+            .value(own)
             .to_value(Rc::new(to_value))
             .to_point(Rc::new(to_point))
             .min(CELLS.min)
             .max(CELLS.max)
             .cursor(cursor)
+            .on_start(on_start)
+            .on_end(Rc::new(on_end))
             .build(),
         Children::default(),
     )

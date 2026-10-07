@@ -9,7 +9,6 @@ pub(crate) mod grid;
 pub(crate) mod lock;
 pub(crate) mod overlay;
 pub(crate) mod palette;
-pub(crate) mod picture;
 pub(crate) mod rect_handles;
 pub(crate) mod regions;
 pub(crate) mod texture;

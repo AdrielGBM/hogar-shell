@@ -186,10 +186,10 @@ fn row(
     }
 
     let label = item.label.clone();
-    let text = Text::new(
+    let text = Text::declaring(
         move || label.clone(),
         LayoutStyle::new().flex_grow(1.0),
-        move || theme.text_style(FontRole::Body, fg),
+        move |inherited| theme.text_over(inherited, FontRole::Body, fg),
     )?;
     content.push(box_item(text));
 

@@ -90,7 +90,7 @@ fn preview_window() -> telar::AppConfig {
     }
 }
 
-/// What every surface this shell opens shapes its text in. A family belongs to a surface's configuration now rather than to the process, and this is where the shell says which one — the same place, and the same three moments, that used to set the global.
+/// The family every surface this shell opens starts in, before its own tree sets it from the config it is drawn with and follows that config's reloads and previews from then on.
 fn surface_fonts(config: &Config) -> telar::AppConfig {
     telar::AppConfig {
         font_family: config.theme.font_family.clone(),
@@ -144,6 +144,7 @@ pub fn run(layouts: Layouts) {
         );
         std::process::exit(1);
     }
+    let desktop_motion = services::motion::read_in_background();
     let config_path = Config::default_path();
     // Once, and here rather than on the driver thread: the locale, the fonts and the notification daemon start from it before the driver exists, and a second load for the surfaces could read a different file from the one they started with.
     let startup = load_at_startup(&config_path);
@@ -153,7 +154,9 @@ pub fn run(layouts: Layouts) {
     services::notifications::init(notification_policy(&startup.config));
 
     // Non-destructive reload: one persistent driver. Every surface is opened dynamically on the driver thread (via `setup_shell`, deferred with `run_on_start`) and reconciled on config change, so a reload never tears down the connection, the popup, or the shared services — only the surfaces that changed.
-    platform_wayland::run_on_start(move || setup_shell(config_path, startup, layouts));
+    platform_wayland::run_on_start(move || {
+        setup_shell(config_path, startup, layouts, desktop_motion)
+    });
     if let Err(e) = run_multi_with_platform(
         LayerShellPlatform::new(),
         Vec::new(),
@@ -167,7 +170,12 @@ pub fn run(layouts: Layouts) {
 }
 
 /// Runs on the driver thread once its loop is up (deferred via `run_on_start`): brings up the popup host and the shell's own surfaces, then watches the config file and reconciles them on change — in place, without tearing the driver, the connection, the popup, the services or the surfaces themselves down.
-fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
+fn setup_shell(
+    config_path: PathBuf,
+    startup: Startup,
+    layouts: Layouts,
+    desktop_motion: Option<std::thread::JoinHandle<bool>>,
+) {
     install_hooks();
     let Startup {
         config,
@@ -176,6 +184,12 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         failed,
     } = startup;
     let config = Arc::new(config);
+    // Before the first build, so the surfaces start with the desktop's motion and the portal's first delivery, the same answer, changes nothing — at login above all, where it would otherwise flip from the default and draw everything twice.
+    config::motion::set_desktop_reduced(
+        desktop_motion
+            .and_then(|read| read.join().ok())
+            .unwrap_or(false),
+    );
     apply_config(&config);
     let reloader = Rc::new(RefCell::new(Reloader::starting(
         config_path.clone(),
@@ -280,7 +294,12 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
         let reloader = Rc::clone(&reloader);
         let apply = Rc::clone(&apply);
         Rc::new(move |reload| {
-            let Some((config, seen)) = reloader.borrow_mut().reload(reload) else {
+            let Some(Loaded {
+                config,
+                seen,
+                announced,
+            }) = reloader.borrow_mut().reload(reload)
+            else {
                 return;
             };
             apply_config(&config);
@@ -290,9 +309,23 @@ fn setup_shell(config_path: PathBuf, startup: Startup, layouts: Layouts) {
             // What the user opened and the column of cards are not the surface pass's to rebuild, so they take the new config here, in the same pass.
             surfaces::transient::rebuild_all(&seen, reload);
             reloader.borrow_mut().applied(config, seen);
-            modules::toast::config_reloaded();
+            if announced {
+                modules::toast::config_reloaded();
+            }
         })
     };
+
+    // What changes how the running config looks without changing the config — the desktop's reduced-motion setting, a palette derived from a wallpaper — is drawn again from it, as a monitor arriving is: no file is read, no toast says the config was reloaded, and an open transient being typed into keeps its tree.
+    config::set_restyle_hook({
+        let reloader = Rc::clone(&reloader);
+        let apply = Rc::clone(&apply);
+        move || {
+            let config = reloader.borrow().live();
+            apply_look(&config);
+            apply(&config, Content::Rebuild);
+            surfaces::transient::restyle_all();
+        }
+    });
 
     // Asked for rather than noticed, so it runs whatever the files hold: `shell reload` and a moved palette exist to deliver what no fingerprint of them covers.
     config::set_reload_hook({
@@ -394,6 +427,15 @@ fn load_at_startup(config_path: &Path) -> Startup {
     }
 }
 
+/// A config the files hold for the shell to take.
+struct Loaded {
+    config: Arc<Config>,
+    /// The content it was loaded from.
+    seen: Fingerprint,
+    /// Whether the user is told the config was reloaded: for an edit made outside the shell and for a reload somebody asked for, and not for the shell's own write coming back, which is a change the user just made through the shell and is watching apply.
+    announced: bool,
+}
+
 /// What the reload path carries from one reload to the next: the config the shell runs, and what the surfaces and the problems notice were last brought up to date with.
 struct Reloader {
     config_path: PathBuf,
@@ -429,10 +471,10 @@ impl Reloader {
         reloader
     }
 
-    /// Reads the files and answers whether they hold a config for the shell to take: the config, and the content it was loaded from, for the caller to apply and then hand to [`applied`](Self::applied). `None` when there is nothing to take — the files hold what the surfaces already show, or something that does not load, which is logged and put on the problems notice here.
+    /// Reads the files and answers whether they hold a config for the shell to take: the config, the content it was loaded from — for the caller to apply and then hand to [`applied`](Self::applied) — and whether to say so. `None` when there is nothing to take — the files hold what the surfaces already show, or something that does not load, which is logged and put on the problems notice here.
     ///
     /// **Nothing to reload can still be something to report.** After a failed load, putting the file back to what is on screen is the fix, and it is no reload at all: the surfaces never stopped showing that content. The notice is the one thing still describing the failure, so it is redrawn from the running config.
-    fn reload(&mut self, reload: Reload) -> Option<(Arc<Config>, Fingerprint)> {
+    fn reload(&mut self, reload: Reload) -> Option<Loaded> {
         // Before the load, never after: a fingerprint newer than the config it is recorded against names content the shell never applied, and would suppress the reload that applies it.
         let seen = Fingerprint::read(&self.config_path);
         if !self.applied.needs(reload, &seen) {
@@ -441,8 +483,13 @@ impl Reloader {
             }
             return None;
         }
+        let own_write = config::fingerprint::written_by_shell(&seen);
         match Config::load(&self.config_path) {
-            Ok(config) => Some((Arc::new(config), seen)),
+            Ok(config) => Some(Loaded {
+                config: Arc::new(config),
+                seen,
+                announced: reload == Reload::Always || !own_write,
+            }),
             Err(e) => {
                 report_config_error(&e);
                 self.report(Some(&e));
@@ -649,7 +696,7 @@ fn lock_layer() -> Option<modules::lock::LockLayout> {
     }
 }
 
-/// Everything a config change affects outside the surfaces themselves: the UI language, the process-wide font, the icon store, and the context that code reached from outside a surface resolves against.
+/// Everything a config change affects outside the surfaces themselves: the UI language, the family a surface opens in, the icon store, and the context that code reached from outside a surface resolves against.
 ///
 /// Called from the driver thread at app level — deliberately not from inside a surface build, since the icon store's download worker must outlive any single surface (see [`shared::icon::init_store`]).
 ///
@@ -664,13 +711,7 @@ fn apply_config(config: &Arc<Config>) {
     config::scheme::init(config);
     // The surfaces this reload is about to open will carry whatever `init` just resolved, so the watcher must not read the delivery that follows as a change and ask for a second, identical reload.
     config::scheme::mark_painted();
-    announce_theme_mode(config);
-    palette_applied(
-        &PALETTE,
-        config.resolve_theme().colors(),
-        config::scheme::derives_palette(config),
-        announce_colors_changed,
-    );
+    apply_look(config);
     // After `set_config`, so the stages are armed from the config that was just published rather than the one they were armed from last time.
     services::idle::reconcile();
     // The daemon outlives every reload, so an edited `[notifications]` reaches it this way rather than by restarting it — which would drop the bus name and the history with it.
@@ -684,12 +725,23 @@ fn apply_config(config: &Arc<Config>) {
     );
 }
 
+/// Announces what the palette the surfaces are about to carry changed: on every config applied, and on every restyle, which is how a derived palette reaches them.
+fn apply_look(config: &Config) {
+    announce_theme_mode(config);
+    palette_applied(
+        &PALETTE,
+        config.resolve_theme().colors(),
+        config::scheme::derives_palette(config),
+        announce_colors_changed,
+    );
+}
+
 /// The colours the shell last painted with, as far as `colors_changed` has been told.
 static PALETTE: Edge<Vec<telar::Color>> = Edge::new();
 
 /// Announces the shell's palette changing, whatever changed it: another built-in theme, a `[theme]` edit, or a derived palette landing.
 ///
-/// A config that derives its palette from a wallpaper is not judged here: its colours are announced by [`palette_landed`] once the export files are on disk, which is after this reload, so announcing here would fire before whatever reads those files could see them. It only records where the palette stands, so a reload that changes nothing is not a change when the export lands. Every other way the palette moves reaches the shell as a reload through [`apply_config`], so this is the one place that sees them.
+/// A config that derives its palette from a wallpaper is not judged here: its colours are announced by [`palette_landed`] once the export files are on disk, which is after this reload, so announcing here would fire before whatever reads those files could see them. It only records where the palette stands, so a reload that changes nothing is not a change when the export lands. Every other way the palette moves reaches the shell through [`apply_look`], so this is the one place that sees them.
 fn palette_applied(
     seen: &Edge<Vec<telar::Color>>,
     palette: Vec<telar::Color>,
@@ -723,7 +775,7 @@ static THEME_MODE: Edge<config::scheme::Mode> = Edge::new();
 
 /// Announces the shell's palette switching between dark and light.
 ///
-/// Judged from the palette the surfaces are about to carry rather than from `[theme] mode`, which `auto` leaves to the palette: going from a dark theme to a light one is a mode change whatever the key says. Every way the palette moves — an edited `[theme]`, `scheme mode`, a derived palette landing — reaches the shell as a reload through [`apply_config`], so this is the one place that sees them all.
+/// Judged from the palette the surfaces are about to carry rather than from `[theme] mode`, which `auto` leaves to the palette: going from a dark theme to a light one is a mode change whatever the key says. Every way the palette moves — an edited `[theme]`, `scheme mode`, a derived palette landing — reaches the shell through [`apply_look`], on a reload or a restyle, so this is the one place that sees them all.
 fn announce_theme_mode(config: &Config) {
     let painted = config::scheme::Mode::of(&config.resolve_theme());
     if let Some(mode) = THEME_MODE.observe(painted) {
@@ -1045,10 +1097,10 @@ mod reloader_tests {
         std::fs::write(&path, BROKEN).unwrap();
         reloader.reload(Reload::IfChanged);
         std::fs::write(&path, EDITED).unwrap();
-        let (config, seen) = reloader
+        let loaded = reloader
             .reload(Reload::IfChanged)
             .expect("a fix to new content is a config to take");
-        reloader.applied(config, seen);
+        reloader.applied(loaded.config, loaded.seen);
         assert_eq!(
             check::showing(),
             override_problem,
@@ -1077,6 +1129,59 @@ mod reloader_tests {
             check::showing(),
             reported,
             "and the notice is left exactly as the reload that failed left it"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    fn clock(format: &str) -> toml::Table {
+        toml::Table::from_iter([("format".to_string(), toml::Value::from(format))])
+    }
+
+    /// **The shell's own save applies without a toast, and an edit from outside it is announced.** A pin dragged on the dock, a theme picked in a popover, a field saved in settings: the user is watching that change apply, and "config reloaded" about it is noise. A hand edit is something the shell only noticed, and saying so is how the user knows it took.
+    #[test]
+    fn the_shells_own_write_applies_quietly_and_an_edit_from_outside_is_announced() {
+        let (path, mut reloader) = started("own-write");
+
+        Config::save_section(&path, "clock", &clock("%H:%S")).expect("the shell saves");
+        let own = reloader
+            .reload(Reload::IfChanged)
+            .expect("the shell's own write is a config to take");
+        assert!(!own.announced, "the shell's own write comes back quietly");
+        assert_eq!(
+            own.config.clock.format.as_deref(),
+            Some("%H:%S"),
+            "and is applied all the same"
+        );
+        reloader.applied(own.config, own.seen);
+
+        std::fs::write(&path, SAVED).unwrap();
+        let edited = reloader
+            .reload(Reload::IfChanged)
+            .expect("an edit from outside is a config to take");
+        assert!(
+            edited.announced,
+            "an edit from outside the shell is announced"
+        );
+        reloader.applied(edited.config, edited.seen);
+
+        Config::save_section(&path, "clock", &clock("%M")).expect("the shell saves");
+        std::fs::write(&path, EDITED).unwrap();
+        let behind = reloader
+            .reload(Reload::IfChanged)
+            .expect("the edit behind the save is a config to take");
+        assert!(
+            behind.announced,
+            "an edit landing behind the shell's own write is the user's, and is announced"
+        );
+        reloader.applied(behind.config, behind.seen);
+
+        Config::save_section(&path, "clock", &clock("%S")).expect("the shell saves");
+        assert!(
+            reloader
+                .reload(Reload::Always)
+                .expect("a reload somebody asked for always takes the files")
+                .announced,
+            "a reload somebody asked for is announced, whoever wrote the files"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }

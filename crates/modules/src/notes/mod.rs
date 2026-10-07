@@ -60,12 +60,12 @@ pub fn notes_panel(_host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
 }
 
 fn header(state: &PanelState, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("notes.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -139,14 +139,14 @@ fn note_card(
     let trigger_node = icon_button.layout_node();
     let trigger_rect = track_layout(trigger_node).expect("icon button node is registered");
 
-    let title_input = Input::new(
+    let title_input = Input::declaring(
         title,
         LayoutStyle::new()
             .flex_grow(1.0)
             .height(theme.font(FontRole::Body) * 1.4),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?
@@ -175,10 +175,10 @@ fn note_card(
         ],
     )?;
 
-    let body_area = TextArea::new(
+    let body_area = TextArea::declaring(
         body,
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || theme.text_style(FontRole::Body, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.subtle),
     )?
     .placeholder(telar::t!("notes.body_placeholder"));
 
@@ -296,8 +296,8 @@ fn pill_button(
     on_press: impl Fn() + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(label, LayoutStyle::new(), move || {
-        theme.text_style(FontRole::Caption, theme.text)
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
+        theme.text_over(inherited, FontRole::Caption, theme.text)
     })?;
     let rounded = corner::md();
     let pill = StyledContainer::new(

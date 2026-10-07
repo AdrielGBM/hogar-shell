@@ -52,7 +52,7 @@ let said = telar::t!("editor.editing", layer = name_of(layer), output = output.c
 let rad = ::ui::scale::corner::md();
 let variant = memo(move || crate::variant::workspace().map(|workspace| telar::t!("editor.variant.editing", workspace = workspace.0)).unwrap_or_default());
 let peeking = crate::session::peeking();
-let peek_said = signal(telar::t!("editor.peek.said"));
+let peek_said = memo(move || telar::t!("editor.peek.said"));
 let refusal = memo(move || mode::refusal().get().unwrap_or_default());
 let confirmation = memo(move || mode::confirmation().get().unwrap_or_default());
 let add = crate::host::add_of(layer);

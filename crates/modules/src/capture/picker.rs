@@ -317,15 +317,15 @@ fn readout(
     selection: telar::ReadSignal<Option<Area>>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(
+    let text = Text::declaring(
         move || match selection.get().filter(|area| !area.is_empty()) {
             Some(area) => format!("{} × {}", area.width, area.height),
             None => telar::t!("capture.pick_hint"),
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?;

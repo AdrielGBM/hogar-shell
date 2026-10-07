@@ -55,7 +55,7 @@ pub fn window_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
         move |_: hyprland::ActiveWindow| follow.set(current_focus()),
     );
 
-    let title = Text::new(
+    let title = Text::declaring(
         {
             let source = focused.read_only();
             move || match source.get() {
@@ -64,9 +64,9 @@ pub fn window_panel(host: &Host) -> Result<Box<dyn LayoutItem>, LayoutError> {
             }
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
                 .with_clamp(1, true)
         },
@@ -323,10 +323,10 @@ fn workspace_row(
         return Ok(Box::new(Container::new(LayoutStyle::new(), vec![])?));
     }
 
-    let label = Text::new(
+    let label = Text::declaring(
         || telar::t!("window.move_to"),
         LayoutStyle::new().flex_shrink(0.0),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     let mut children: Vec<Box<dyn LayoutItem>> = vec![box_item(label)];
     for workspace in workspaces {
@@ -372,8 +372,8 @@ fn pill(
     press: impl Fn() + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(label, LayoutStyle::new(), move || {
-        theme.text_style(FontRole::Caption, theme.text)
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
+        theme.text_over(inherited, FontRole::Caption, theme.text)
     })?;
     let mut children: Vec<Box<dyn LayoutItem>> = Vec::new();
     if !icon.is_empty() {

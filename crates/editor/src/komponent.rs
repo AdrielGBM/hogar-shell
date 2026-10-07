@@ -318,12 +318,12 @@ fn tree() -> Built {
     let pad = ui::scale::space::lg();
     let inner = WIDTH - 2.0 * pad;
     let group = saving.group.to_string();
-    let mut items = vec![box_item(Text::new(
+    let mut items = vec![box_item(Text::declaring(
         move || telar::t!("editor.komponent.save_title", group = group.clone()),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?)];

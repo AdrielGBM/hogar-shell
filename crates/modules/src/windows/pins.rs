@@ -75,7 +75,10 @@ pub fn slots(pinned: &[String], apps: &[App], windows: &[ManagedToplevel]) -> Ve
     let mut slots: Vec<Slot> = pinned
         .iter()
         .map(|id| {
-            let entry = apps.iter().find(|app| app.id == *id).cloned();
+            let entry = apps
+                .iter()
+                .find(|app| app.id.eq_ignore_ascii_case(id))
+                .cloned();
             let owns = |window: &&ManagedToplevel| match &entry {
                 Some(entry) => entry.owns_window(&window.app_id),
                 None => window.app_id.eq_ignore_ascii_case(id),
@@ -109,16 +112,22 @@ pub fn slots(pinned: &[String], apps: &[App], windows: &[ManagedToplevel]) -> Ve
 }
 
 pub fn toggled(pinned: &[String], id: &str) -> Vec<String> {
-    match pinned.iter().any(|pin| pin == id) {
-        true => pinned.iter().filter(|pin| *pin != id).cloned().collect(),
+    match pinned.iter().any(|pin| pin.eq_ignore_ascii_case(id)) {
+        true => pinned
+            .iter()
+            .filter(|pin| !pin.eq_ignore_ascii_case(id))
+            .cloned()
+            .collect(),
         false => pinned.iter().cloned().chain([id.to_string()]).collect(),
     }
 }
 
 pub fn moved(pinned: &[String], dragged: &str, onto: &str) -> Vec<String> {
     let (Some(from), Some(to)) = (
-        pinned.iter().position(|pin| pin == dragged),
-        pinned.iter().position(|pin| pin == onto),
+        pinned
+            .iter()
+            .position(|pin| pin.eq_ignore_ascii_case(dragged)),
+        pinned.iter().position(|pin| pin.eq_ignore_ascii_case(onto)),
     ) else {
         return pinned.to_vec();
     };
@@ -279,6 +288,30 @@ mod tests {
     }
 
     #[test]
+    fn a_pin_is_found_unpinned_and_moved_whatever_its_case() {
+        let apps = [app("org.gnome.Nautilus", "")];
+        let slots = slots(
+            &pins(&["org.gnome.nautilus"]),
+            &apps,
+            &[window(1, "org.gnome.Nautilus", false)],
+        );
+        assert_eq!(
+            keys(&slots),
+            vec![(true, "org.gnome.nautilus".to_string(), 1)],
+            "the pin holds its entry's window rather than leaving it to a second slot"
+        );
+        assert_eq!(slots[0].entry, Some(apps[0].clone()));
+        assert_eq!(
+            toggled(&pins(&["Firefox", "kitty"]), "firefox"),
+            pins(&["kitty"])
+        );
+        assert_eq!(
+            moved(&pins(&["Firefox", "kitty"]), "KITTY", "firefox"),
+            pins(&["kitty", "Firefox"])
+        );
+    }
+
+    #[test]
     fn a_running_entry_is_pinned_by_its_desktop_entry_where_it_has_one() {
         let apps = [app("org.mozilla.firefox", "")];
         let slots = slots(
@@ -302,6 +335,10 @@ mod tests {
         .unwrap();
         let file = PinFile::at(&path);
         file.save(&pins(&["firefox", "kitty"]));
+        assert!(
+            config::fingerprint::written_by_shell(&config::fingerprint::Fingerprint::read(&path)),
+            "the reload a pin brings back is the shell's own write, applied without a toast"
+        );
         let written = std::fs::read_to_string(&path).unwrap();
         assert!(written.starts_with("# mine"), "{written}");
         let config = Config::load(&path).expect("it parses back");

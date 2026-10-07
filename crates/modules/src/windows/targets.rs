@@ -1,12 +1,44 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use platform_wayland::ToplevelArea;
+use platform_wayland::{ManagedToplevelId, SurfaceRef, ToplevelArea};
+
+thread_local! {
+    static TARGETS: RefCell<Targets<(SurfaceRef, ManagedToplevelId)>> = RefCell::new(Targets::new());
+}
+
+/// An entry's say over one window's minimise target on the surface it is drawn on, for as long as it is the latest entry speaking for that window there.
+pub(crate) struct Holding {
+    key: (SurfaceRef, ManagedToplevelId),
+    holder: u64,
+}
+
+impl Holding {
+    pub(crate) fn claim(surface: SurfaceRef, id: ManagedToplevelId) -> Self {
+        let key = (surface, id);
+        let holder = TARGETS.with(|targets| targets.borrow_mut().claim(key.clone()));
+        Self { key, holder }
+    }
+
+    /// Points the window's target at `area`, or takes it down for `None`, unless that is what the compositor already holds.
+    pub(crate) fn send(&self, area: Option<ToplevelArea>) {
+        if TARGETS.with(|targets| targets.borrow_mut().send(&self.key, self.holder, area)) {
+            services::windows::set_rectangle(self.key.1, &self.key.0, area);
+        }
+    }
+
+    pub(crate) fn release(&self) {
+        if TARGETS.with(|targets| targets.borrow_mut().release(&self.key, self.holder)) {
+            services::windows::set_rectangle(self.key.1, &self.key.0, None);
+        }
+    }
+}
 
 /// The minimise targets the strips have sent, each with the entry that speaks for it now.
 ///
 /// An entry is built again whenever its strip changes shape, and the list may build the new one before it lets the old one go. Both send from the same surface and the compositor keeps one target per window, so the old entry's withdrawal would take down the target the new one had just set. Only the latest entry for a window on a surface sets or withdraws its target.
-pub(crate) struct Targets<K> {
+struct Targets<K> {
     sent: HashMap<K, Sent>,
     next: u64,
 }
@@ -17,7 +49,7 @@ struct Sent {
 }
 
 impl<K: Hash + Eq> Targets<K> {
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self {
             sent: HashMap::new(),
             next: 0,
@@ -25,7 +57,7 @@ impl<K: Hash + Eq> Targets<K> {
     }
 
     /// Makes a new entry the one that speaks for `key`, keeping the target its predecessor sent so the next change is measured against what the compositor holds.
-    pub(crate) fn claim(&mut self, key: K) -> u64 {
+    fn claim(&mut self, key: K) -> u64 {
         self.next += 1;
         let holder = self.next;
         self.sent
@@ -36,7 +68,7 @@ impl<K: Hash + Eq> Targets<K> {
     }
 
     /// Whether `holder` is to send `area` for `key`: only while it is the latest entry, and only when that is not what was last sent.
-    pub(crate) fn send(&mut self, key: &K, holder: u64, area: Option<ToplevelArea>) -> bool {
+    fn send(&mut self, key: &K, holder: u64, area: Option<ToplevelArea>) -> bool {
         match self.sent.get_mut(key) {
             Some(sent) if sent.holder == holder && sent.area != area => {
                 sent.area = area;
@@ -47,7 +79,7 @@ impl<K: Hash + Eq> Targets<K> {
     }
 
     /// Whether `holder`, going, is to withdraw the target for `key`: only while it is still the latest entry and a target is up.
-    pub(crate) fn release(&mut self, key: &K, holder: u64) -> bool {
+    fn release(&mut self, key: &K, holder: u64) -> bool {
         match self.sent.get(key) {
             Some(sent) if sent.holder == holder => self
                 .sent

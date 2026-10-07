@@ -22,6 +22,8 @@ use config::{Config, Edge, Shape};
 use ui::descriptor::{ChipFrame, ModuleDescriptor};
 use ui::host::{Host, Instance, Representation, Size};
 
+use crate::test_support::placed;
+
 /// The page a preview is measured on when it is a tree rather than a surface. Wide enough that a bar-width module is not the thing under test.
 const PAGE: (f32, f32) = (1000.0, 760.0);
 
@@ -1500,21 +1502,9 @@ fn built_area_beside(
             },
         )],
     );
-    surfaces::reconcile::publish(&[crate::test_support::measured(
-        "SWEPT-1",
-        Arc::clone(&config),
-        resolved.clone(),
-        size,
-    )]);
-    let surround = surfaces::area::Surround {
-        config: &config,
-        theme: config.resolve_theme(),
-        output: Some("SWEPT-1"),
-        layer: layout::LayerKind::Desktop,
-        bounds: Rect::new(0.0, 0.0, size.0, size.1),
-        reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
-        audience: ui::host::Audience::Owner,
-    };
+    let desktop = crate::test_support::measured("SWEPT-1", config, resolved, size);
+    surfaces::reconcile::publish(std::slice::from_ref(&desktop));
+    let surround = placed(&desktop, area, layout::LayerKind::Desktop);
     telar::batch(|| surfaces::area::build(area, surround))
         .unwrap_or_else(|| Err(LayoutError::Engine("nothing builds this area".into())))
 }
@@ -2044,18 +2034,21 @@ fn a_hiding_bar_starts_after_a_reserving_bar_at_its_side_on_every_edge_and_monit
                             },
                         )],
                     );
-                    let reserved = surfaces::layer_window::Reserved::of(&resolved, &config);
-                    let surround = surfaces::area::Surround {
-                        config: &config,
-                        theme: config.resolve_theme(),
-                        output: Some("SWEPT-1"),
-                        layer: layout::LayerKind::Top,
-                        bounds: Rect::new(0.0, 0.0, size.0, size.1),
-                        reserved,
-                        audience: ui::host::Audience::Owner,
+                    let desktop = crate::test_support::measured(
+                        "SWEPT-1",
+                        Arc::clone(&config),
+                        resolved,
+                        size,
+                    );
+                    let reserved = desktop.reserved;
+                    let strip = |area: layout::ResolvedArea| {
+                        surfaces::bar::strip_of_area(
+                            &area,
+                            placed(&desktop, &area, layout::LayerKind::Top),
+                        )
                     };
-                    let hidden = surfaces::bar::strip_of_area(&bar_on(edge, hide, None), surround);
-                    let owner = surfaces::bar::strip_of_area(&bar_on(edge, None, None), surround);
+                    let hidden = strip(bar_on(edge, hide, None));
+                    let owner = strip(bar_on(edge, None, None));
                     let at = format!(
                         "{edge:?} beside {side:?} on {}x{} in {mode:?}",
                         size.0, size.1
@@ -2154,16 +2147,17 @@ fn a_hiding_bar_ignores_a_hiding_bar_at_its_side_on_every_corner_and_monitor() {
                                 },
                             )],
                         );
-                        let surround = surfaces::area::Surround {
-                            config: &config,
-                            theme: config.resolve_theme(),
-                            output: Some("SWEPT-1"),
-                            layer: layout::LayerKind::Top,
-                            bounds: Rect::new(0.0, 0.0, size.0, size.1),
-                            reserved: surfaces::layer_window::Reserved::of(&resolved, &config),
-                            audience: ui::host::Audience::Owner,
-                        };
-                        surfaces::bar::strip_of_area(&bar_on(edge, autohide, None), surround)
+                        let desktop = crate::test_support::measured(
+                            "SWEPT-1",
+                            Arc::clone(&config),
+                            resolved,
+                            size,
+                        );
+                        let bar = bar_on(edge, autohide, None);
+                        surfaces::bar::strip_of_area(
+                            &bar,
+                            placed(&desktop, &bar, layout::LayerKind::Top),
+                        )
                     };
                     let at = format!(
                         "{edge:?} beside a hiding {side:?} on {}x{} in {mode:?}",
@@ -2280,16 +2274,16 @@ fn a_styled_bar_draws_its_plates_and_chips_inside_its_strip_on_every_edge_and_sh
                 let area = styled_bar(edge, mode);
                 let measured = measure_area(&area, size);
                 drop(scope);
-                let surround = surfaces::area::Surround {
-                    config: &config,
-                    theme: config.resolve_theme(),
-                    output: Some("SWEPT-1"),
-                    layer: layout::LayerKind::Desktop,
-                    bounds: Rect::new(0.0, 0.0, size.0, size.1),
-                    reserved: surfaces::layer_window::Reserved::default(),
-                    audience: ui::host::Audience::Owner,
-                };
-                let strip = surfaces::bar::strip_of_area(&area, surround);
+                let desktop = crate::test_support::measured(
+                    "SWEPT-1",
+                    config,
+                    layout::Resolved::of("SWEPT-1", std::iter::empty()),
+                    size,
+                );
+                let strip = surfaces::bar::strip_of_area(
+                    &area,
+                    placed(&desktop, &area, layout::LayerKind::Desktop),
+                );
                 let held = Rect::new(
                     strip.x - SLACK,
                     strip.y - SLACK,
@@ -2669,30 +2663,112 @@ fn measure_resolved_area(
     size: (f32, f32),
 ) -> Result<Vec<DrawCommand>, LayoutError> {
     let config = config::config().expect("the sweep published a config");
-    surfaces::reconcile::publish(&[crate::test_support::measured(
-        "SWEPT-1",
-        Arc::clone(&config),
-        resolved.clone(),
-        size,
-    )]);
-    let surround = surfaces::area::Surround {
-        config: &config,
-        theme: config.resolve_theme(),
-        output: Some("SWEPT-1"),
-        layer,
-        bounds: Rect::new(0.0, 0.0, size.0, size.1),
-        reserved: surfaces::layer_window::Reserved::of(resolved, &config),
-        audience: match layer {
-            layout::LayerKind::Lock => ui::host::Audience::Anyone,
-            _ => ui::host::Audience::Owner,
-        },
-    };
+    let desktop = crate::test_support::measured("SWEPT-1", config, resolved.clone(), size);
+    surfaces::reconcile::publish(std::slice::from_ref(&desktop));
+    let surround = placed(&desktop, area, layer);
     let built = telar::batch(|| surfaces::area::build(area, surround))
         .unwrap_or_else(|| Err(LayoutError::Engine("nothing builds this area".into())))?;
     laid_out(built, size)
 }
 
-/// The showcase template, resolved and drawn whole on a laptop, a large monitor and a portrait one: it resolves and validates with no finding, and every area of every layer lays out, draws something and keeps all of it on the screen. The prompt is the lock session's to draw, and validation is what places it.
+/// What of `commands` reaches past `usable`, the box an area measured `within = "usable"` is placed in: ink in the band the bars reserve, or off the screen.
+fn past_usable(commands: &[DrawCommand], usable: Rect) -> Vec<Rect> {
+    let kept = Rect::new(
+        usable.x - SLACK,
+        usable.y - SLACK,
+        usable.width + 2.0 * SLACK,
+        usable.height + 2.0 * SLACK,
+    );
+    visible_ink(commands)
+        .into_iter()
+        .filter(|rect| rect.intersect(kept) != Some(*rect))
+        .collect()
+}
+
+/// Whether `area` is placed in what the reserving bars leave of the screen, on a layer whose window covers the band they hold.
+fn kept_off_the_band(layer: layout::LayerKind, area: &layout::ResolvedArea) -> bool {
+    matches!(
+        layer,
+        layout::LayerKind::Desktop | layout::LayerKind::Overlay
+    ) && area.within == layout::Within::Usable
+        && !matches!(area.kind, layout::ResolvedAreaKind::Bar { .. })
+}
+
+/// Every area kind measured `within = "usable"` on the desktop or the overlay draws nothing in the band the four bars around it reserve, on every monitor and in every mode: its box is what the running shell gives it, not the whole output.
+#[test]
+fn a_usable_area_keeps_out_of_the_reserved_band_on_every_layer_and_monitor() {
+    let _world = WORLD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut faults = Vec::new();
+    for mode in MODES {
+        for size in MONITORS {
+            for layer in [layout::LayerKind::Desktop, layout::LayerKind::Overlay] {
+                for area in every_area(mode) {
+                    let area = layout::ResolvedArea {
+                        within: layout::Within::Usable,
+                        ..area
+                    };
+                    if !kept_off_the_band(layer, &area) {
+                        continue;
+                    }
+                    reset_layout_runtime();
+                    seed_world(Edge::Top, mode, None);
+                    surfaces::area::set_stack_builder(modules::stack::area);
+                    modules::stack::show_osd(modules::osd::OsdKind::Brightness);
+                    let resolved = layout::Resolved::of(
+                        "SWEPT-1",
+                        [
+                            (
+                                layout::LayerKind::Top,
+                                layout::ResolvedLayer {
+                                    areas: Edge::ALL
+                                        .into_iter()
+                                        .map(|edge| bar_on(edge, None, None))
+                                        .collect(),
+                                },
+                            ),
+                            (
+                                layer,
+                                layout::ResolvedLayer {
+                                    areas: vec![area.clone()],
+                                },
+                            ),
+                        ],
+                    );
+                    let config = config::config().expect("the sweep published a config");
+                    let usable = surfaces::layer_window::Reserved::of(&resolved, &config)
+                        .box_of(layout::Within::Usable, size);
+                    let scope = telar::owner_scope();
+                    let owner = scope.id();
+                    let measured = measure_resolved_area(&resolved, layer, &area, size);
+                    drop(scope);
+                    let at = format!("{layer:?} {} on {}x{} in {mode:?}", area.id, size.0, size.1);
+                    match measured {
+                        Err(error) => faults.push(format!("{at}: {error}")),
+                        Ok(commands) => {
+                            for rect in past_usable(&commands, usable) {
+                                faults.push(format!(
+                                    "{at}: {}x{} at {},{} is past the usable {usable:?}",
+                                    rect.width, rect.height, rect.x, rect.y
+                                ));
+                            }
+                        }
+                    }
+                    telar::dispose_owner(owner);
+                }
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} usable area(s) drew in the reserved band:\n  {}",
+        faults.len(),
+        faults.join("\n  ")
+    );
+}
+
+/// The showcase template, resolved and drawn whole on a laptop, a large monitor and a portrait one: it resolves and validates with no finding, and every area of every layer lays out, draws something and keeps all of it on the screen, out of the band its bars reserve where it is placed within the usable box. The prompt is the lock session's to draw, and validation is what places it.
 #[test]
 fn the_showcase_template_draws_on_every_monitor_with_no_finding() {
     let _world = WORLD
@@ -2715,6 +2791,8 @@ fn the_showcase_template_draws_on_every_monitor_with_no_finding() {
             "layouts/showcase.toml",
             &config.resolve_theme(),
         ));
+        let usable = surfaces::layer_window::Reserved::of(&resolved, &config)
+            .box_of(layout::Within::Usable, size);
         let on = format!("{}x{}", size.0, size.1);
         if !report.is_clean() {
             faults.push(format!("{on}: {}", report.render()));
@@ -2741,6 +2819,14 @@ fn the_showcase_template_draws_on_every_monitor_with_no_finding() {
                             "{at}: {}x{} at {},{} is off the screen",
                             rect.width, rect.height, rect.x, rect.y
                         ));
+                    }
+                    if kept_off_the_band(layer, &area) {
+                        for rect in past_usable(&commands, usable) {
+                            faults.push(format!(
+                                "{at}: {}x{} at {},{} is in the reserved band",
+                                rect.width, rect.height, rect.x, rect.y
+                            ));
+                        }
                     }
                 }
             }

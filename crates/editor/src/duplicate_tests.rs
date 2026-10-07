@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use telar::{Key, ModifiersState};
+    use telar::Key;
 
     use config::Edge;
 
@@ -9,67 +9,26 @@ mod tests {
         KomponentId, LayerKind, Layout, Rect,
     };
     use surfaces::rects::Node;
-    use surfaces::transient;
-    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::descriptor::ModuleDescriptor;
     use ui::host::WidgetSize;
 
     use crate::rig::{
-        Rig, SCREEN, bar, cell_group, enter, face, rig_prepared, rig_with, stored, tap, widget,
+        CTRL, Owner, Rig, SCREEN, bar, cell_group, enter, module, rig_prepared, rig_with, stored,
+        tap, widget,
     };
     use crate::session::{self, Selection};
     use crate::{context, mode};
 
-    const fn module(id: &'static str, name: &'static str) -> ModuleDescriptor {
-        ModuleDescriptor {
-            id,
-            name,
-            icon: "circle",
-            category: Category::Time,
-            options: &[],
-            representations: Representations {
-                chip: Some(ChipDef::new(face, Input::ReadOnly)),
-                widget: Some(WidgetDef {
-                    sizes: &WidgetSize::ALL,
-                    build: face,
-                    input: Input::ReadOnly,
-                }),
-                ..Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }
-    }
-
     static PROBES: &[ModuleDescriptor] = &[
-        module("clock", "Clock"),
-        module("weather", "Weather"),
-        module("workspaces", "Workspaces"),
-        module("notes", "Notes"),
+        module("clock", "Clock", &WidgetSize::ALL),
+        module("weather", "Weather", &WidgetSize::ALL),
+        module("workspaces", "Workspaces", &WidgetSize::ALL),
+        module("notes", "Notes", &WidgetSize::ALL),
     ];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
+    fn owner() -> Owner {
+        Owner::installing(PROBES)
     }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
-    }
-
-    const CTRL: ModifiersState = ModifiersState {
-        is_shift: false,
-        is_ctrl: true,
-        is_alt: false,
-        is_meta: false,
-    };
 
     fn ctrl_d() -> bool {
         tap(Key::Char('d'), CTRL)
@@ -169,7 +128,7 @@ mod tests {
     #[test]
     fn a_loose_widget_is_copied_onto_the_nearest_free_cells_of_its_span() {
         let rig = rig_with("duplicate-loose", on_the_grid);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let before = stored(&rig);
         select(grid().instance(&GroupId::new("weather"), &InstanceId::new("weather")));
@@ -195,7 +154,7 @@ mod tests {
     #[test]
     fn a_child_of_a_container_is_copied_right_after_itself() {
         let rig = rig_with("duplicate-child", on_the_grid);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         select(grid().instance(&GroupId::new("shelf"), &InstanceId::new("row-a")));
         assert!(ctrl_d());
@@ -224,7 +183,7 @@ mod tests {
     #[test]
     fn a_container_is_copied_with_its_children() {
         let rig = rig_with("duplicate-group", on_the_grid);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         select(grid().group(&GroupId::new("shelf")));
         assert!(ctrl_d());
@@ -265,7 +224,7 @@ mod tests {
                     .expect("a komponent");
             },
         );
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         select(grid().group(&GroupId::new("pill")));
         assert!(ctrl_d());
@@ -281,7 +240,7 @@ mod tests {
     #[test]
     fn a_chip_is_copied_beside_itself() {
         let rig = rig_with("duplicate-chip", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         select(bar().instance(&GroupId::new("center"), &InstanceId::new("clock")));
         assert!(ctrl_d());
@@ -305,7 +264,7 @@ mod tests {
                 *offset = Some(0.0);
             }
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         select(bar());
         assert!(ctrl_d());
@@ -344,7 +303,7 @@ mod tests {
     #[test]
     fn a_bar_on_a_full_edge_is_refused() {
         let _rig = rig_with("duplicate-bar-full", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         refused_with(Selection::Area(bar()), "no room left for another bar");
     }
@@ -362,7 +321,7 @@ mod tests {
                 ..Area::default()
             });
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let area = |layer: LayerKind, id: &str| {
             Selection::Area(Node::area(Some(SCREEN), layer, &AreaId::new(id)))
         };
@@ -402,7 +361,7 @@ mod tests {
     #[test]
     fn the_menu_row_copies_as_the_key_does() {
         let rig = rig_with("duplicate-menu", on_the_grid);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let weather = grid().instance(&GroupId::new("weather"), &InstanceId::new("weather"));
         context::open(surfaces::menu::Asked {
@@ -430,7 +389,7 @@ mod tests {
                 ..Layout::default()
             };
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         refused_with(
             Selection::Instance(bar().instance(&GroupId::new("center"), &InstanceId::new("clock"))),
@@ -474,7 +433,7 @@ mod tests {
                 *length = Some(Extent::Px(600.0));
             }
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let original = stored(&rig).outputs[0].layers.top.areas[0].clone();
         select(bar());
@@ -495,7 +454,7 @@ mod tests {
     #[test]
     fn a_group_in_a_zone_is_copied_right_after_itself() {
         let rig = rig_with("duplicate-zone", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let before = stored(&rig);
         select(bar().group(&GroupId::new("center")));
@@ -530,7 +489,7 @@ mod tests {
     #[test]
     fn a_group_in_a_free_area_is_copied_right_after_itself() {
         let rig = rig_with("duplicate-free-zone", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let centre = Node::area(Some(SCREEN), LayerKind::Desktop, &AreaId::new("centre"));
         select(centre.group(&GroupId::new("clock")));
@@ -573,7 +532,7 @@ mod tests {
                     .expect("a komponent");
             },
         );
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let child = InstanceId::in_komponent(
             &AreaId::new("widgets"),
@@ -594,7 +553,7 @@ mod tests {
     #[test]
     fn a_copy_of_a_panels_owner_has_no_panel_of_its_own() {
         let rig = rig_with("dup-panel-owner", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let clock = bar().instance(&GroupId::new("center"), &InstanceId::new("clock"));
         crate::panel::give(&clock, crate::panel::Shape::Beside).expect("the panel is given");

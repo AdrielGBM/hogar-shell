@@ -10,8 +10,7 @@ mod tests {
     };
     use surfaces::menu::Asked;
     use surfaces::rects::{self, Node};
-    use surfaces::transient;
-    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::descriptor::ModuleDescriptor;
     use ui::host::WidgetSize;
 
     use crate::modes::container;
@@ -19,59 +18,22 @@ mod tests {
     use crate::modes::palette::{self, Line, Pick};
     use crate::modes::widgets;
     use crate::rig::{
-        NONE, Page, Rig, SCREEN, cell_group, centre, close_within, draw, enter, face, frame,
-        hold_alt, rig_with, stored, tap, undoes_to, undraw, widget, with,
+        NONE, Owner, Page, Rig, SCREEN, cell_group, centre, close_within, draw, enter, frame,
+        hold_alt, module, rig_with, stored, tap, undoes_to, undraw, widget, with,
     };
     use crate::session::{self, Selection};
     use crate::{context, mode, popover, select};
-
-    const fn module(
-        id: &'static str,
-        name: &'static str,
-        sizes: &'static [WidgetSize],
-    ) -> ModuleDescriptor {
-        ModuleDescriptor {
-            id,
-            name,
-            icon: "circle",
-            category: Category::Time,
-            options: &[],
-            representations: Representations {
-                chip: Some(ChipDef::new(face, Input::ReadOnly)),
-                widget: Some(WidgetDef {
-                    sizes,
-                    build: face,
-                    input: Input::ReadOnly,
-                }),
-                ..Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }
-    }
 
     static PROBES: &[ModuleDescriptor] = &[
         module("clock", "Clock", &WidgetSize::ALL),
         module("weather", "Weather", &[WidgetSize::S, WidgetSize::M]),
     ];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        Owner::installing(PROBES).tearing_down(|| {
             hold_alt(false);
             undraw();
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -212,7 +174,7 @@ mod tests {
                 .areas
                 .retain(|area| area.id.as_str() == "widgets");
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
 
@@ -274,7 +236,7 @@ mod tests {
     #[test]
     fn a_full_grid_takes_the_largest_span_that_still_fits_and_a_tall_one_is_a_column() {
         let rig = rig_with("container-span", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let grids = widgets::grids(SCREEN, LayerKind::Desktop);
         let (geometry, area) = &grids[0];
@@ -300,7 +262,7 @@ mod tests {
     #[test]
     fn shift_n_in_the_top_mode_puts_a_plated_group_in_the_bars_zone() {
         let rig = rig_with("container-top", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Top);
         assert!(tap(Key::Char('N'), with(|held| held.is_shift = true)));
         let bar = stored(&rig).outputs[0]
@@ -328,7 +290,7 @@ mod tests {
     #[test]
     fn shift_n_on_the_lock_puts_a_container_on_its_grid() {
         let rig = rig_with("container-lock", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         assert!(tap(Key::Char('N'), with(|held| held.is_shift = true)));
         let lock = &stored(&rig).outputs[0].layers.lock.areas;
@@ -352,7 +314,7 @@ mod tests {
                 .areas
                 .retain(|area| area.id.as_str() == "widgets");
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let first = palette::lines(LayerKind::Desktop, "")
             .into_iter()
@@ -382,7 +344,7 @@ mod tests {
     #[test]
     fn a_widget_dropped_over_a_row_joins_it_at_the_slot_under_the_pointer() {
         let rig = rig_with("container-adopt-row", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let before = stored(&rig);
@@ -410,7 +372,7 @@ mod tests {
     #[test]
     fn a_widget_dropped_over_a_grid_container_takes_the_cell_under_the_pointer() {
         let rig = rig_with("container-adopt-grid", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let board = frame("board");
@@ -428,7 +390,7 @@ mod tests {
     #[test]
     fn a_widget_dropped_over_a_free_container_is_centred_on_the_pointer() {
         let rig = rig_with("container-adopt-free", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let pad = frame("pad");
@@ -453,7 +415,7 @@ mod tests {
     #[test]
     fn a_widget_dropped_over_a_column_joins_it_and_a_loose_widgets_middle_stacks() {
         let rig = rig_with("container-adopt-column", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let grids = widgets::grids(SCREEN, LayerKind::Desktop);
@@ -484,7 +446,7 @@ mod tests {
     #[test]
     fn a_child_dragged_inside_a_row_takes_another_place_in_its_order() {
         let rig = rig_with("container-reorder", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let before = stored(&rig);
@@ -502,7 +464,7 @@ mod tests {
     #[test]
     fn a_child_dragged_inside_a_grid_container_moves_to_the_cell_under_the_pointer() {
         let rig = rig_with("container-cell", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let board = frame("board");
@@ -521,7 +483,7 @@ mod tests {
     #[test]
     fn a_free_child_snaps_to_its_sibling_unless_alt_is_held() {
         let rig = rig_with("container-free-move", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let before = stored(&rig);
@@ -556,7 +518,7 @@ mod tests {
     #[test]
     fn a_child_dragged_out_of_its_container_is_a_widget_of_its_own_at_its_smallest_size() {
         let rig = rig_with("container-drag-out", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mut screen = tools_page();
         let before = stored(&rig);
@@ -588,7 +550,7 @@ mod tests {
     #[test]
     fn the_last_child_out_leaves_the_container_empty_rather_than_gone() {
         let rig = rig_with("container-empty", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         container::take_out(&node_of("board-a")).expect("taken out");
         assert!(written(&rig, "board").children.is_empty());
@@ -598,7 +560,7 @@ mod tests {
     #[test]
     fn a_childs_menu_customizes_its_container_and_takes_it_out() {
         let rig = rig_with("container-menu", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let ask = |id: &str| {
@@ -653,7 +615,7 @@ mod tests {
     #[test]
     fn a_rows_child_handle_sets_its_weight_and_says_its_share() {
         let rig = rig_with("container-weight", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::Instance(node_of("row-a"))));
         let mut screen = tools_page();
@@ -672,7 +634,7 @@ mod tests {
     #[test]
     fn a_grid_childs_corner_sets_its_span_and_a_free_ones_its_box() {
         let rig = rig_with("container-corner", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::Instance(node_of("board-a"))));
         let mut screen = tools_page();
@@ -714,7 +676,7 @@ mod tests {
     #[test]
     fn keys_move_and_resize_a_child_inside_its_container() {
         let rig = rig_with("container-keys", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let shift = with(|held| held.is_shift = true);
         let ctrl = with(|held| held.is_ctrl = true);
@@ -795,7 +757,7 @@ mod tests {
     #[test]
     fn ctrl_shift_arrows_put_a_widget_into_the_container_that_way_and_the_menu_key_takes_it_out() {
         let rig = rig_with("container-keys-adopt", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         draw(LayerKind::Desktop);
         let before = stored(&rig);
@@ -907,7 +869,7 @@ mod tests {
     #[test]
     fn a_container_on_a_panel_answers_every_key() {
         let rig = rig_with("container-panel-keys", shelf_in_a_panel);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Top);
         open_panel();
         let before = stored(&rig);
@@ -967,7 +929,7 @@ mod tests {
     #[test]
     fn a_container_on_an_open_panel_takes_the_pointer() {
         let rig = rig_with("container-panel-pointer", shelf_in_a_panel);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Top);
         let shelf = open_panel();
         let current = mode::current().expect("the mode is up");
@@ -1000,7 +962,7 @@ mod tests {
     #[test]
     fn a_child_selects_its_container_then_the_grid_by_click_and_by_alt_arrow() {
         let rig = rig_with("container-climb", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let shelf = || grid_node().group(&GroupId::new("shelf"));
@@ -1032,7 +994,7 @@ mod tests {
     fn shift_n_is_one_undo_entry_in_the_top_mode_and_on_the_lock() {
         for layer in [LayerKind::Top, LayerKind::Lock] {
             let rig = rig_with("container-layers", |_| {});
-            let _owner = Owner::new();
+            let _owner = owner();
             let _host = enter(layer);
             let before = stored(&rig);
             assert!(tap(Key::Char('N'), with(|held| held.is_shift = true)));
@@ -1086,7 +1048,7 @@ mod tests {
     #[test]
     fn escape_mid_gesture_puts_every_container_gesture_back_with_nothing_recorded() {
         let rig = rig_with("container-escape", four_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         for (what, selected) in [
@@ -1129,7 +1091,7 @@ mod tests {
                     .areas
                     .retain(|area| area.id.as_str() != "lock-readings");
             });
-            let _owner = Owner::new();
+            let _owner = owner();
             let _host = enter(layer);
             let before = stored(&rig);
             assert!(tap(Key::Char('N'), with(|held| held.is_shift = true)));

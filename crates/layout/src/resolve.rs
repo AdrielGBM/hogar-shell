@@ -261,7 +261,7 @@ pub enum ResolvedAreaKind {
         routes: Vec<Route>,
         launcher: bool,
     },
-    /// `dim` held between 0 and 1, `blur` between 0 and [`AreaKind::MOST_BLUR`] and `parallax` between 0 and [`AreaKind::MOST_PARALLAX`].
+    /// `focus`, `dim`, `blur` and `parallax` held to their [`RegionRange`]s.
     WallpaperRegion {
         rect: Rect,
         source: String,
@@ -855,13 +855,6 @@ fn answer_area(area: &Area, answering: Answering<'_>, report: &mut Report) -> Op
     })
 }
 
-/// `value` held between 0 and `most`, and 0 where it is unset or not a number.
-fn up_to(value: Option<f32>, most: f32) -> f32 {
-    value
-        .filter(|value| !value.is_nan())
-        .map_or(0.0, |value| value.clamp(0.0, most))
-}
-
 fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<ResolvedAreaKind> {
     let name = kind.name();
     let mut need = |present: bool, field: &str| {
@@ -934,9 +927,9 @@ fn answer_kind(kind: &AreaKind, miss: &mut impl FnMut(&str, &str)) -> Option<Res
             fit: fit.unwrap_or_default(),
             transition: transition.unwrap_or_default(),
             focus: focus.unwrap_or_default().clamped(),
-            dim: up_to(*dim, 1.0),
-            blur: up_to(*blur, AreaKind::MOST_BLUR),
-            parallax: up_to(*parallax, AreaKind::MOST_PARALLAX),
+            dim: RegionRange::DIM.of(*dim),
+            blur: RegionRange::BLUR.of(*blur),
+            parallax: RegionRange::PARALLAX.of(*parallax),
         }),
         AreaKind::Texture {
             rect,

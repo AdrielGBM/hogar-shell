@@ -121,7 +121,7 @@ pub fn validate(layout: &Layout, catalogue: &dyn Catalogue) -> Report {
         check_panels(level, &mut report);
         check_panel_reserve(&rule.layers, &scope, &at, &file, &mut report);
         check_gradients(&rule.layers, &at, &file, &mut report);
-        check_wallpaper_regions(&rule.layers, &at, &file, &mut report);
+        check_wallpaper_regions(&rule.layers, &scope, &at, &file, &mut report);
         check_bar_corners(&rule.layers, &scope, &at, &file, &mut report);
         check_cell_areas(&rule.layers, &at, &file, &mut report);
         check_styles(&rule.layers, &at, &file, &mut report);
@@ -601,11 +601,19 @@ fn check_gradients(layers: &Layers, at: &str, file: &str, report: &mut Report) {
     }
 }
 
-/// A wallpaper region's focus, dim, blur and parallax past what they run to, each reported with what is drawn instead.
-fn check_wallpaper_regions(layers: &Layers, at: &str, file: &str, report: &mut Report) {
+/// A wallpaper region's focus, dim, blur and parallax past what they run to, each reported with what is drawn instead, and a parallax on a picture that `fit = "cover"` does not crop, which has nothing to slide.
+fn check_wallpaper_regions(
+    layers: &Layers,
+    scope: &Layers,
+    at: &str,
+    file: &str,
+    report: &mut Report,
+) {
     for (kind, layer) in layers.each() {
+        let merged = scope.get(kind);
         for area in &layer.areas {
             let Some(AreaKind::WallpaperRegion {
+                fit,
                 focus,
                 dim,
                 blur,
@@ -615,31 +623,51 @@ fn check_wallpaper_regions(layers: &Layers, at: &str, file: &str, report: &mut R
             else {
                 continue;
             };
+            let path = format!("{at}.layers.{kind}.areas.{}", area.id);
             let written = [
-                ("focus.x", focus.map(|focus| focus.x), 1.0, Focus::MIDDLE.x),
-                ("focus.y", focus.map(|focus| focus.y), 1.0, Focus::MIDDLE.y),
-                ("dim", *dim, 1.0, 0.0),
-                ("blur", *blur, AreaKind::MOST_BLUR, 0.0),
-                ("parallax", *parallax, AreaKind::MOST_PARALLAX, 0.0),
+                ("focus.x", focus.map(|focus| focus.x), RegionRange::FOCUS_X),
+                ("focus.y", focus.map(|focus| focus.y), RegionRange::FOCUS_Y),
+                ("dim", *dim, RegionRange::DIM),
+                ("blur", *blur, RegionRange::BLUR),
+                ("parallax", *parallax, RegionRange::PARALLAX),
             ];
-            for (key, value, most, unset) in written {
-                let Some(value) = value.filter(|value| !(0.0..=most).contains(value)) else {
+            for (key, value, range) in written {
+                let Some(value) = value.filter(|value| !range.holds(*value)) else {
                     continue;
-                };
-                let drawn = match value.is_nan() {
-                    true => unset,
-                    false => value.clamp(0.0, most),
                 };
                 report.warn(Finding::new(
                     file,
-                    format!("{at}.layers.{kind}.areas.{}.{key}", area.id),
+                    format!("{path}.{key}"),
                     util::message!(
                         "finding.region_range",
                         key = key,
-                        most = most,
+                        most = range.most(),
                         value = value,
-                        drawn = drawn
+                        drawn = range.hold(value)
                     ),
+                ));
+            }
+            let Some(AreaKind::WallpaperRegion {
+                fit: held_fit,
+                parallax: held_parallax,
+                ..
+            }) = merged
+                .areas
+                .iter()
+                .find(|held| held.id == area.id)
+                .and_then(|held| held.kind.as_ref())
+            else {
+                continue;
+            };
+            let held_fit = held_fit.unwrap_or_default();
+            if held_fit != Fit::Cover
+                && RegionRange::PARALLAX.of(*held_parallax) > 0.0
+                && (fit.is_some() || parallax.is_some())
+            {
+                report.warn(Finding::new(
+                    file,
+                    format!("{path}.parallax"),
+                    util::message!("finding.parallax_fit", fit = held_fit.id()),
                 ));
             }
         }

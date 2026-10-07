@@ -242,12 +242,12 @@ fn pill(
         move || ink(state.get()),
         TAB_ICON,
     )?;
-    let label = Text::new(
+    let label = Text::declaring(
         move || tab_label(tab),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, ink(state.get()))
+                .text_over(inherited, FontRole::Caption, ink(state.get()))
                 .with_font_weight(700)
         },
     )?;

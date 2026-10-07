@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use telar::{
-    App, Cursor, Event, EventHandler, Key, LocalApp, ModifiersState, MultiSurfacePlatform, NamedKey,
-    PlatformError, PointerButton, PointerSource, ScrollDelta, SurfaceId, Window, WindowConfig,
-    begin_batch, build_surface_handler, end_batch,
+    App, Cursor, Event, EventHandler, Key, KeyPairing, LocalApp, ModifiersState,
+    MultiSurfacePlatform, NamedKey, PlatformError, PointerButton, PointerSource, ScrollDelta,
+    SurfaceId, Window, WindowConfig, begin_batch, build_surface_handler, end_batch,
 };
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::globals::ProvidesBoundGlobal;
@@ -826,6 +826,7 @@ pub(crate) struct Driver {
     modifiers: ModifiersState,
     // The surface currently holding keyboard focus, so key events route to the right handler.
     keyboard_focus: Option<ObjectId>,
+    keys: KeyPairing<u32>,
     // The surface the pointer is currently over. Enter and leave are edges, not levels, so a surface that rebuilds its content between them has to be told where the pointer already is.
     pointer_focus: Option<ObjectId>,
     pub(crate) surfaces: Vec<SurfaceEntry>,
@@ -895,6 +896,14 @@ pub fn layer_restack_supported() -> bool {
 impl Driver {
     fn entry_mut(&mut self, wl_id: &ObjectId) -> Option<&mut SurfaceEntry> {
         self.surfaces.iter_mut().find(|e| &e.wl_id == wl_id)
+    }
+
+    fn send_key(&mut self, event: Event) {
+        if let Some(id) = self.keyboard_focus.clone()
+            && let Some(entry) = self.entry_mut(&id)
+        {
+            entry.events.push(event);
+        }
     }
 
     /// Gives a freshly created surface its scale and viewport objects, where the compositor has them.
@@ -1140,6 +1149,7 @@ where
         pointer: None,
         modifiers: ModifiersState::default(),
         keyboard_focus: None,
+        keys: KeyPairing::default(),
         pointer_focus: None,
         surfaces: Vec::new(),
         lock_manager,
@@ -1673,6 +1683,14 @@ fn map_key(event: &KeyEvent) -> Option<Key> {
     key_of(event.keysym, event.utf8.as_deref())
 }
 
+fn pressed(keys: &mut KeyPairing<u32>, event: &KeyEvent) -> Option<Key> {
+    map_key(event).map(|key| keys.press(event.raw_code, key))
+}
+
+fn released(keys: &mut KeyPairing<u32>, event: &KeyEvent) -> Option<Key> {
+    keys.release(&event.raw_code, map_key(event))
+}
+
 fn key_of(keysym: Keysym, utf8: Option<&str>) -> Option<Key> {
     // Editing keys carry a control-char `utf8` (or none), so they must be resolved from the keysym — the printable `utf8` path below drops them.
     if let Some(named) = named_from_keysym(keysym) {
@@ -1953,7 +1971,11 @@ impl KeyboardHandler for Driver {
         _: &[u32],
         _: &[Keysym],
     ) {
-        self.keyboard_focus = Some(surface.id());
+        let id = surface.id();
+        if let Some(entry) = self.entry_mut(&id) {
+            entry.events.push(Event::FocusChanged { is_focused: true });
+        }
+        self.keyboard_focus = Some(id);
     }
     fn leave(
         &mut self,
@@ -1963,7 +1985,12 @@ impl KeyboardHandler for Driver {
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        if self.keyboard_focus.as_ref() == Some(&surface.id()) {
+        let id = surface.id();
+        self.keys.clear();
+        if let Some(entry) = self.entry_mut(&id) {
+            entry.events.push(Event::FocusChanged { is_focused: false });
+        }
+        if self.keyboard_focus.as_ref() == Some(&id) {
             self.keyboard_focus = None;
         }
     }
@@ -1975,11 +2002,11 @@ impl KeyboardHandler for Driver {
         _: u32,
         event: KeyEvent,
     ) {
-        let modifiers = self.modifiers;
-        if let (Some(key), Some(id)) = (map_key(&event), self.keyboard_focus.clone())
-            && let Some(entry) = self.entry_mut(&id)
-        {
-            entry.events.push(Event::KeyPressed { key, modifiers });
+        if let Some(key) = pressed(&mut self.keys, &event) {
+            self.send_key(Event::KeyPressed {
+                key,
+                modifiers: self.modifiers,
+            });
         }
     }
     fn release_key(
@@ -1990,11 +2017,11 @@ impl KeyboardHandler for Driver {
         _: u32,
         event: KeyEvent,
     ) {
-        let modifiers = self.modifiers;
-        if let (Some(key), Some(id)) = (map_key(&event), self.keyboard_focus.clone())
-            && let Some(entry) = self.entry_mut(&id)
-        {
-            entry.events.push(Event::KeyReleased { key, modifiers });
+        if let Some(key) = released(&mut self.keys, &event) {
+            self.send_key(Event::KeyReleased {
+                key,
+                modifiers: self.modifiers,
+            });
         }
     }
     fn repeat_key(
@@ -2005,11 +2032,11 @@ impl KeyboardHandler for Driver {
         _: u32,
         event: KeyEvent,
     ) {
-        let modifiers = self.modifiers;
-        if let (Some(key), Some(id)) = (map_key(&event), self.keyboard_focus.clone())
-            && let Some(entry) = self.entry_mut(&id)
-        {
-            entry.events.push(Event::KeyPressed { key, modifiers });
+        if let Some(key) = pressed(&mut self.keys, &event) {
+            self.send_key(Event::KeyPressed {
+                key,
+                modifiers: self.modifiers,
+            });
         }
     }
     fn update_modifiers(
@@ -2529,6 +2556,63 @@ mod tests {
         assert_eq!(named_from_keysym(Keysym::Tab), Some(NamedKey::Tab));
         assert_eq!(named_from_keysym(Keysym::Left), Some(NamedKey::ArrowLeft));
         assert_eq!(named_from_keysym(Keysym::Right), Some(NamedKey::ArrowRight));
+    }
+
+    const GRAVE: u32 = 41;
+    const RIGHT_ALT: u32 = 100;
+
+    fn key_event(raw_code: u32, keysym: Keysym, utf8: Option<&str>) -> KeyEvent {
+        KeyEvent {
+            time: 0,
+            raw_code,
+            keysym,
+            utf8: utf8.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_key_made_through_altgr_is_let_go_as_itself_after_altgr_is() {
+        let mut keys = KeyPairing::default();
+        let altgr = key_event(RIGHT_ALT, Keysym::ISO_Level3_Shift, None);
+        assert_eq!(pressed(&mut keys, &altgr), None);
+        let backslash = Some(Key::Char('\\'));
+        assert_eq!(
+            pressed(&mut keys, &key_event(GRAVE, Keysym::backslash, Some("\\"))),
+            backslash
+        );
+        assert_eq!(released(&mut keys, &altgr), None);
+        assert_eq!(
+            pressed(&mut keys, &key_event(GRAVE, Keysym::masculine, Some("º"))),
+            backslash,
+            "a repeat after AltGr is let go is still the key first pressed"
+        );
+        assert_eq!(
+            released(&mut keys, &key_event(GRAVE, Keysym::masculine, None)),
+            backslash
+        );
+        assert_eq!(
+            released(&mut keys, &key_event(GRAVE, Keysym::masculine, None)),
+            None,
+            "one release for one press"
+        );
+    }
+
+    #[test]
+    fn losing_the_keyboard_forgets_what_was_held() {
+        let mut keys = KeyPairing::default();
+        pressed(&mut keys, &key_event(GRAVE, Keysym::backslash, Some("\\")));
+        keys.clear();
+        assert_eq!(
+            released(&mut keys, &key_event(GRAVE, Keysym::masculine, None)),
+            None
+        );
+        pressed(&mut keys, &key_event(1, Keysym::Escape, Some("\u{1b}")));
+        keys.clear();
+        assert_eq!(
+            released(&mut keys, &key_event(1, Keysym::Escape, None)),
+            Some(Key::Named(NamedKey::Escape)),
+            "a release it never saw pressed reads as the layout maps it"
+        );
     }
 
     /// The resize and grab shapes an edit-mode handle needs (T-2.3) map onto the protocol's own names for them, with nothing lost or substituted in translation.

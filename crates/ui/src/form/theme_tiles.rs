@@ -62,10 +62,10 @@ fn tile(
     };
 
     let ink = palette.clone();
-    let label = Text::new(
+    let label = Text::declaring(
         move || option.to_string(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, ink().text),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, ink().text),
     )?;
     let dot_of = palette.clone();
     let dot = StyledContainer::new(

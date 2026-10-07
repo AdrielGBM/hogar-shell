@@ -22,7 +22,7 @@ mod tests {
 
     use crate::keys::{self, Chord, Direction, KeyOp, Press, Run, Scope};
     use crate::mode::{self};
-    use crate::rig::{Rig, SCREEN, enter, face, rig_with};
+    use crate::rig::{Owner, Rig, SCREEN, enter, face, rig_with};
     use crate::session::{self, Selection};
     use crate::{context, pie, popover};
 
@@ -46,20 +46,8 @@ mod tests {
     }];
 
     /// An owner for the places a test registers, disposed when it ends.
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+    fn owner() -> Owner {
+        Owner::installing(PROBES)
     }
 
     const NONE: ModifiersState = ModifiersState {
@@ -184,7 +172,7 @@ mod tests {
 
     fn check(case: Case) {
         let rig: Rig = rig_with(case.test, case.layout);
-        let _scope = Owner::new();
+        let _scope = owner();
         let _host = enter(case.layer);
         place(&(case.placed)());
 
@@ -625,7 +613,7 @@ mod tests {
     #[test]
     fn a_widget_steps_through_its_sizes() {
         let _rig = rig_with("keys-sizes", desktop_layout);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         place(&desktop_placed());
         let clock = instance(LayerKind::Desktop, "widgets", "a", "desk-clock");
@@ -732,7 +720,7 @@ mod tests {
     #[test]
     fn a_chip_moves_on_to_the_next_bar() {
         let _rig = rig_with("keys-across", top_layout);
-        let _scope = Owner::new();
+        let _scope = owner();
         let _host = enter(LayerKind::Top);
         place(&top_placed());
         let clock = instance(LayerKind::Top, "bar-top", "center", "clock");
@@ -767,7 +755,7 @@ mod tests {
     #[test]
     fn holding_backslash_shows_the_layout_from_when_the_mode_opened() {
         let rig = rig_with("keys-peek", top_layout);
-        let _scope = Owner::new();
+        let _scope = owner();
         let _host = enter(LayerKind::Top);
         place(&top_placed());
         let peek = Key::Char('\\');
@@ -816,7 +804,7 @@ mod tests {
     #[test]
     fn delete_never_takes_the_lock_prompt_away() {
         let rig = rig_with("keys-prompt", |_| {});
-        let _scope = Owner::new();
+        let _scope = owner();
         let _host = enter(LayerKind::Lock);
         let prompt = area(LayerKind::Lock, "prompt");
         assert!(session::select(Selection::of(prompt.clone())));
@@ -830,7 +818,7 @@ mod tests {
     #[test]
     fn the_pie_opens_from_the_keyboard_and_an_arrow_picks_a_mode() {
         let _rig = rig_with("keys-pie", |_| {});
-        let _scope = Owner::new();
+        let _scope = owner();
         let _host = enter(LayerKind::Top);
         assert!(tap(Key::Char('m'), NONE));
         assert!(pie::shown().peek());
@@ -849,7 +837,7 @@ mod tests {
     #[test]
     fn the_key_list_shows_and_folds() {
         let _rig = rig_with("keys-help", |_| {});
-        let _scope = Owner::new();
+        let _scope = owner();
         let _host = enter(LayerKind::Top);
         assert!(tap(Key::Char('?'), SHIFT));
         assert!(keys::help().peek());
@@ -874,7 +862,7 @@ mod tests {
     #[test]
     fn a_tools_key_answers_for_its_kind() {
         let _rig = rig_with("keys-tool", top_layout);
-        let _scope = Owner::new();
+        let _scope = owner();
         keys::add_key_op(
             "bar",
             KeyOp {
@@ -1016,7 +1004,7 @@ mod tests {
             ),
         ];
         const PENDING: &[(&str, &str)] = &[];
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("keys-coverage", |_| {});
         for (layer, operations) in TA5 {
             let table = keys::table(*layer);
@@ -1047,7 +1035,7 @@ mod tests {
     /// What the key table says Enter reaches through a popover is a row of that popover: for every operation it counts that way, the popover of an area of that kind on that layer has a control for the value the operation edits.
     #[test]
     fn every_operation_enter_reaches_is_a_row_of_the_popover_it_opens() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("keys-popover-coverage", |layout| {
             layout.outputs[0].layers.background.areas.push(Area {
                 id: AreaId::new("wash"),
@@ -1130,7 +1118,7 @@ mod tests {
     /// No tool's key, for a kind or for a mode, takes a chord that selects, moves or resizes, or goes inside or around, from the generic rows: on every layer, whatever kind is selected, with the vim keys on or off.
     #[test]
     fn no_tool_key_shadows_selecting_moving_or_resizing() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("keys-unshadowed", |_| {});
         let alt = ModifiersState {
             is_alt: true,
@@ -1174,7 +1162,7 @@ mod tests {
     /// Alt+N makes a grid wherever a mode has the grid tools.
     #[test]
     fn alt_n_makes_a_grid() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("keys-alt-n", |_| {});
         let alt = ModifiersState {
             is_alt: true,
@@ -1232,7 +1220,7 @@ mod tests {
         assert_eq!(order('}', ctrl_shift), Some(Order::Front));
         assert_eq!(order('{', ctrl_shift), Some(Order::Back));
         assert_eq!(order(']', SHIFT), None);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("keys-restack-chords", |_| {});
         for (key, modifiers) in [(']', ctrl_shift), ('}', ctrl_shift), ('[', ctrl_shift)] {
             assert_eq!(
@@ -1264,7 +1252,7 @@ mod tests {
     /// Every mode's key list carries the keys that stand in for the new pointer tools — duplicate, order, the quick bar, the radius and padding tools and their link — and the overlay's `t` for trying cards, each with a chord.
     #[test]
     fn every_modes_key_list_carries_the_keys_of_the_new_tools() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("keys-new-tools", |_| {});
         for layer in LayerKind::ALL {
             let _host = enter(layer);

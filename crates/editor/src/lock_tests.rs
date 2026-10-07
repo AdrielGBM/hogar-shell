@@ -30,7 +30,7 @@ mod tests {
     use crate::mode::{self, Mode};
     use crate::modes::lock::{self as lock_mode, Privacy};
     use crate::modes::{background, desktop, palette, widgets};
-    use crate::rig::{SCREEN, close, enter, rig_with, stored, tap};
+    use crate::rig::{Owner, SCREEN, close, enter, rig_with, stored, tap};
     use crate::session::{self, Selection};
     use crate::{context, select};
 
@@ -47,10 +47,10 @@ mod tests {
 
     fn line(said: String) -> Built {
         let theme = telar::use_theme::<NordTheme>();
-        Ok(Box::new(Text::new(
+        Ok(Box::new(Text::declaring(
             move || said.clone(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Body, theme.text),
+            move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
         )?))
     }
 
@@ -98,25 +98,12 @@ mod tests {
         static DRAWN: RefCell<Option<(telar::OwnerId, ComponentList, telar::NodeId)>> = const { RefCell::new(None) };
     }
 
-    /// An owner for what a test builds, disposed when it ends.
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            lock_mode::chosen().set(None);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        lock_mode::chosen().set(None);
+        Owner::installing(PROBES).tearing_down(|| {
             undraw();
             lock_mode::chosen().set(None);
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     fn the_mode() -> Mode {
@@ -229,7 +216,7 @@ mod tests {
     #[test]
     fn lock_mode_borrows_the_background_and_desktop_tools_over_its_preview() {
         let _rig = rig_with("lock-tools", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let said = draw();
         assert!(said.iter().any(|text| text == "Preview"), "{said:?}");
@@ -287,7 +274,7 @@ mod tests {
     #[test]
     fn the_prompt_cannot_be_deleted_by_the_keyboard_or_the_pointer() {
         let rig = rig_with("lock-prompt-kept", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         draw();
         let before = stored(&rig);
@@ -330,7 +317,7 @@ mod tests {
                 });
             }
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
 
         let ops = lock_mode::moved_to(
@@ -376,7 +363,7 @@ mod tests {
     #[test]
     fn an_edit_the_lock_would_fall_back_from_is_flagged_and_not_kept() {
         let rig = rig_with("lock-contrast", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let theme = Config::default().resolve_theme();
         let styled = |fill: &str| Style {
@@ -448,7 +435,7 @@ mod tests {
                 .expect("the prompt");
             prompt.style.opacity = Some(0.2);
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let said = draw();
         assert!(
@@ -485,7 +472,7 @@ mod tests {
                 },
             );
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let under_the_prompt = |layout: &Layout| {
             let ids = lock_ids(layout);
@@ -561,7 +548,7 @@ mod tests {
     #[test]
     fn the_privacy_switch_redacts_the_preview_live() {
         let _rig = rig_with("lock-privacy-live", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let shows_apps = |said: Vec<String>| said.iter().any(|text| text.contains(FROM));
         assert!(!shows_apps(draw()), "the count alone is the default");
@@ -580,7 +567,7 @@ mod tests {
     #[test]
     fn the_privacy_popover_writes_config_and_esc_writes_nothing() {
         let _rig = rig_with("lock-privacy-popover", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let running = Config::default_path();
         let _ = Config::load_or_default(&running);
         let before = std::fs::read_to_string(&running).ok();
@@ -626,7 +613,7 @@ mod tests {
     #[test]
     fn lock_mode_and_its_tools_never_take_a_session_lock() {
         let _rig = rig_with("lock-no-session", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let asked = Rc::new(Cell::new(0));
         services::lock::set_session_opener({
             let asked = Rc::clone(&asked);
@@ -686,7 +673,7 @@ mod tests {
                 },
             );
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let picture = Node::area(Some(SCREEN), LayerKind::Lock, &AreaId::new("lock-picture"));
         assert!(session::select(Selection::Area(picture)));
@@ -740,7 +727,7 @@ mod tests {
             media.module = Some("mixer".to_string());
             media.representation = Some(layout::Representation::WidgetS);
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         assert!(desktop::sizes_of("mixer", LayerKind::Lock).is_empty());
         assert_eq!(
@@ -800,7 +787,7 @@ mod tests {
     #[test]
     fn the_lock_refuses_actions_panels_and_controls() {
         let rig = rig_with("lock-refusals", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let before = stored(&rig);
         assert!(refused(&before).is_empty());
@@ -849,7 +836,7 @@ mod tests {
     #[test]
     fn containers_and_instance_style_are_allowed_on_the_lock() {
         let rig = rig_with("lock-containers", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let before = stored(&rig);
         let after = with_readings(&before, |area| {
@@ -877,7 +864,7 @@ mod tests {
     #[test]
     fn a_shadowed_bordered_prompt_passes_kept() {
         let rig = rig_with("lock-prompt-edge", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let before = stored(&rig);
         let styled = |style: Style| {
@@ -914,7 +901,7 @@ mod tests {
     #[test]
     fn a_full_screen_region_is_added_in_lock_mode() {
         let rig = rig_with("lock-full-region", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         assert!(tap(
             Key::Char('B'),
@@ -992,7 +979,7 @@ mod tests {
     #[test]
     fn the_lock_refuses_a_prompt_that_is_hidden_off_screen_too_small_faint_or_unreadable() {
         let rig = rig_with("lock-prompt-refusals", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let before = stored(&rig);
         let placed = |rect: Rect| {
@@ -1115,7 +1102,7 @@ mod tests {
     #[test]
     fn a_lock_layer_already_refused_can_be_fixed_in_steps_and_is_refused_a_new_fault() {
         let rig = rig_with("lock-fix-in-steps", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let sound = stored(&rig);
         let broken = with_prompt(&sound, |prompt| {
@@ -1160,7 +1147,7 @@ mod tests {
     #[test]
     fn fixing_one_fault_of_a_prompt_with_two_is_not_refused_for_the_message_of_the_other() {
         let rig = rig_with("lock-fix-quoted-ratio", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let broken = with_prompt(&stored(&rig), |prompt| {
             prompt.style.opacity = Some(0.5);
@@ -1174,7 +1161,7 @@ mod tests {
     #[test]
     fn the_shell_menu_is_refused_on_the_lock_preview() {
         let rig = rig_with("lock-shell-menu", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         draw();
         let before = stored(&rig);
@@ -1194,7 +1181,7 @@ mod tests {
     #[test]
     fn a_reading_duplicated_on_the_lock_is_one_entry_and_a_lock_the_check_accepts() {
         let rig = rig_with("lock-duplicate", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let before = stored(&rig);
         let clock = Node::area(Some(SCREEN), LayerKind::Lock, &AreaId::new("lock-readings"))

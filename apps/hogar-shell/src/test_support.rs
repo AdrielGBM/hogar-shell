@@ -2,10 +2,14 @@
 
 #![cfg(test)]
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use layout::Resolved;
+use layout::{LayerKind, Layout, LayoutId, LayoutStore, Resolved, ResolvedArea};
+use surfaces::area::Surround;
 use surfaces::reconcile::{self, Desktop};
+use ui::host::Audience;
 
 pub const SCREEN_SIZE: (f32, f32) = (1920.0, 1080.0);
 
@@ -38,4 +42,48 @@ pub fn measured(
         size,
         ..desktop(output, resolved)
     }
+}
+
+/// `area`, written on `layer`, placed on `desktop` as a running shell places it.
+pub fn placed<'a>(desktop: &'a Desktop, area: &ResolvedArea, layer: LayerKind) -> Surround<'a> {
+    let audience = match layer {
+        LayerKind::Lock => Audience::Anyone,
+        _ => Audience::Owner,
+    };
+    Surround::placed(area.within, layer, desktop.on_screen(), audience)
+}
+
+/// A layouts directory of the test's own holding `mine` as `mine.toml` and each of `parents` under its id, loaded with `active` drawn and installed as the store the shell owns, and a handle on it to read the result back. Its own directory rather than the user's, so these run beside the commands that read the real one without either seeing the other's files.
+pub fn shell_holding(
+    test: &str,
+    active: &str,
+    mine: &Layout,
+    parents: &[&Layout],
+) -> Rc<RefCell<LayoutStore>> {
+    ui::descriptor::install(crate::core::modules::MODULES);
+    let dir = util::paths::isolated_root()
+        .expect("a test process resolves under its scratch root")
+        .join(format!("layout-verbs-{test}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a layouts directory");
+    std::fs::write(
+        dir.join("mine.toml"),
+        toml::to_string_pretty(mine).expect("the layout serializes"),
+    )
+    .expect("a layout to edit");
+    for parent in parents {
+        std::fs::write(
+            dir.join(format!("{}.toml", parent.id)),
+            toml::to_string_pretty(parent).expect("the layout serializes"),
+        )
+        .expect("a layout it extends");
+    }
+    let (mut store, report) = LayoutStore::load(&dir);
+    assert!(report.is_clean(), "{}", report.render());
+    store
+        .use_layout(&LayoutId::new(active))
+        .expect("the store holds it");
+    let store = Rc::new(RefCell::new(store));
+    surfaces::layouts::install(Rc::clone(&store), Rc::new(|| {}));
+    store
 }

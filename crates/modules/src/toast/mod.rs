@@ -77,30 +77,30 @@ pub(crate) fn card_swiped(
         ICON,
     )?;
 
-    let title = Text::new(
+    let title = Text::declaring(
         {
             let title = toast.title.clone();
             move || title.clone()
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
                 .with_clamp(1, true)
         },
     )?;
     let mut column: Vec<Box<dyn LayoutItem>> = vec![box_item(title)];
     if !toast.body.trim().is_empty() {
-        let body = Text::new(
+        let body = Text::declaring(
             {
                 let body = toast.body.clone();
                 move || body.clone()
             },
             LayoutStyle::new(),
-            move || {
+            move |inherited| {
                 theme
-                    .text_style(FontRole::Caption, theme.muted)
+                    .text_over(inherited, FontRole::Caption, theme.muted)
                     .with_clamp(2, true)
             },
         )?;

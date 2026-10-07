@@ -14,7 +14,7 @@ mod tests {
     use surfaces::reconcile;
     use surfaces::rects::{self, Node};
     use surfaces::transient;
-    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::descriptor::ModuleDescriptor;
     use ui::host::WidgetSize;
 
     use crate::keys::Direction;
@@ -22,39 +22,11 @@ mod tests {
     use crate::modes::bars::{Seen, measured, nearest_edge};
     use crate::modes::top::{self, ChipLanding, Drawn};
     use crate::rig::{
-        SCREEN, desktop, draw, enter, face, rig_on, rig_prepared, rig_screens, rig_with, stored,
-        tap, undraw,
+        Owner, SCREEN, desktop, draw, enter, module, rig_on, rig_prepared, rig_screens, rig_with,
+        stored, tap, undraw,
     };
     use crate::session::{self, Edit, EditError, Selection};
     use crate::{context, popover, variant};
-
-    const fn module(
-        id: &'static str,
-        name: &'static str,
-        sizes: &'static [WidgetSize],
-    ) -> ModuleDescriptor {
-        ModuleDescriptor {
-            id,
-            name,
-            icon: "circle",
-            category: Category::Info,
-            options: &[],
-            representations: Representations {
-                chip: Some(ChipDef::new(face, Input::ReadOnly)),
-                widget: match sizes.is_empty() {
-                    true => None,
-                    false => Some(WidgetDef {
-                        sizes,
-                        build: face,
-                        input: Input::ReadOnly,
-                    }),
-                },
-                ..Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }
-    }
 
     static PROBES: &[ModuleDescriptor] = &[
         module("workspaces", "Workspaces", &[]),
@@ -62,22 +34,10 @@ mod tests {
         module("notes", "Notes", &[]),
     ];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        Owner::installing(PROBES).tearing_down(|| {
             undraw();
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     fn commit(ops: Vec<layout::LayoutOp>) {
@@ -151,7 +111,7 @@ mod tests {
     /// Standing rules: a bar is made on every edge of a screen it has to itself, running the whole edge; an edge a bar already fills has no room for another, and the new one there fills what the others leave.
     #[test]
     fn a_bar_is_made_on_every_edge_running_what_the_edge_leaves_free() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-create", without_bars);
         let _mode = enter(LayerKind::Top);
         for edge in Edge::ALL {
@@ -220,7 +180,7 @@ mod tests {
     /// Standing rules: the shipped bar moved to every other edge, and back; on each it runs the whole edge, and a bar on an edge with another on it fits beside it instead of over it.
     #[test]
     fn a_bar_moves_to_every_edge_and_fits_beside_the_bars_already_there() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("top-move", |_| {});
         let _mode = enter(LayerKind::Top);
         for edge in [Edge::Left, Edge::Bottom, Edge::Right, Edge::Top] {
@@ -283,7 +243,7 @@ mod tests {
     #[test]
     fn a_bar_resizes_and_slides_along_every_edge_up_to_its_neighbour() {
         for edge in Edge::ALL {
-            let _owner = Owner::new();
+            let _owner = owner();
             let _rig = rig_with("top-resize", without_bars);
             let _mode = enter(LayerKind::Top);
             let (ops, id) = top::created(
@@ -347,7 +307,7 @@ mod tests {
     /// The top bar dragged to the left edge lays its chips down the edge while the drag previews it, and the edges reserve what they did until it is let go — then the screen is brought in line once.
     #[test]
     fn a_bar_dragged_from_top_to_left_relays_its_chips_and_reserves_again_only_on_release() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-drag", |_| {});
         let _mode = enter(LayerKind::Top);
         let before = desktop().reserved;
@@ -400,7 +360,7 @@ mod tests {
     /// What an edge reserves follows a bar only when the move is committed: during the drag the committed arrangement and the drawn one reserve the same, and on release the edges trade their reservation in one reconcile.
     #[test]
     fn reservation_changes_once_on_commit_and_never_during_the_drag() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-reserve", |layout| {
             for rule in &mut layout.outputs {
                 for area in &mut rule.layers.top.areas {
@@ -465,7 +425,7 @@ mod tests {
     fn a_split_keeps_the_lines_a_bundle_holds_back() {
         const HELD: &str = "shell run date";
         let held = || layout::Action(vec![HELD.to_string()]);
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_prepared(
             "top-split-held",
             |layout| {
@@ -522,7 +482,7 @@ mod tests {
     /// A split and a join are each other's undoing: the bar cut in two, its chips past the cut on the second half in the zones they were in, and joined back it is the layout it was.
     #[test]
     fn a_split_bar_joined_again_is_the_bar_it_was() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-split-join", |_| {});
         let _mode = enter(LayerKind::Top);
         let original = stored(&rig);
@@ -581,7 +541,7 @@ mod tests {
     #[test]
     fn a_join_keeps_both_bars_own_actions_or_names_the_gesture_they_disagree_on() {
         let chain = |line: &str| layout::Action(vec![line.to_string()]);
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-join-actions", |layout| {
             layout.outputs[0].layers.top.areas[0].actions.insert(
                 layout::Trigger::Press,
@@ -667,7 +627,7 @@ mod tests {
     /// Chips go where the insertion line says: into another zone before or after the chips there, onto another bar on another edge — into a zone it had no group for — and a move to where a chip already is changes nothing.
     #[test]
     fn a_chip_lands_at_its_insertion_index_in_any_zone_of_any_bar() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("top-chips", |_| {});
         let _mode = enter(LayerKind::Top);
         let land = |node: &Node, area: &AreaId, zone: Zone, index: usize| {
@@ -725,7 +685,7 @@ mod tests {
     #[test]
     fn a_bar_moves_to_another_screen_by_its_rule_and_leaves_its_own() {
         const OTHER: &str = "HDMI-A-1";
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_screens("top-output", &[SCREEN, OTHER], |layout| {
             let mut own = layout::default_bar(AreaId::new("bar-dp"), Edge::Bottom);
             own.reserve = Some(false);
@@ -828,7 +788,7 @@ mod tests {
     fn the_top_tools_and_a_bars_popover_build_on_every_edge_in_every_shape() {
         for shape in [Shape::Bar, Shape::Sections, Shape::Chips] {
             for edge in Edge::ALL {
-                let _owner = Owner::new();
+                let _owner = owner();
                 let _rig = rig_with("top-builds", shaped(shape));
                 let _mode = enter(LayerKind::Top);
                 if edge != Edge::Top {
@@ -872,7 +832,7 @@ mod tests {
     /// Whichever row or handle moves it, a bar's popover keeps it clear of the bar beside it: slid or stretched towards its neighbour it stops at the seam, and asked to run the whole edge it runs what is free of it.
     #[test]
     fn a_bars_popover_keeps_it_clear_of_the_bar_beside_it() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-popover", |_| {});
         let _mode = enter(LayerKind::Top);
         let (ops, second) = top::split(
@@ -916,7 +876,7 @@ mod tests {
     /// Every drag has a key: Ctrl+Shift+arrows make a bar on that edge, `s` splits the selected bar, Alt+Shift+arrows join it with the bar that way — each one entry in the history.
     #[test]
     fn the_keys_make_split_and_join_bars() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-keys", |_| {});
         let _mode = enter(LayerKind::Top);
         let original = stored(&rig);
@@ -962,7 +922,7 @@ mod tests {
     /// A5: a chip carried into a zone the bar has no group for makes one named after the zone, past every id a level of the layout gives that bar — here one this very entry takes away.
     #[test]
     fn a_new_zone_group_never_revives_an_id_a_level_took_away() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_with("top-group-id", |layout| {
             let bar = layout.outputs[0]
                 .layers
@@ -1005,7 +965,7 @@ mod tests {
     /// A3: the top layer has no workspace variants, since its bars reserve space (TA-2): its mode refuses the switch and its popovers offer none, and a bar edited from another mode with the switch on is refused rather than written into the workspace's rule.
     #[test]
     fn bars_are_never_edited_for_one_workspace() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let rig = rig_on("top-variant", Some("2"), |_| {});
         let _mode = enter(LayerKind::Top);
         assert!(!variant::allowed(LayerKind::Top));
@@ -1035,7 +995,7 @@ mod tests {
     /// The bar's own box takes the pointer through every layer the top tools lay over the screen: pressed between its chips and carried to the foot of the screen, it previews on the bottom edge.
     #[test]
     fn a_bar_carried_by_the_pointer_previews_on_the_edge_it_is_carried_to() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("top-pointer-drag", |_| {});
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
@@ -1170,7 +1130,7 @@ mod tests {
     fn shift_n_puts_a_group_on_a_plate_and_says_so() {
         telar::set_locale("en");
         let rig = rig_with("top-plate", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         assert!(tap(
             Key::Char('N'),

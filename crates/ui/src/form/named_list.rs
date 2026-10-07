@@ -34,17 +34,17 @@ pub fn named_list(
     let build = move |name: Option<String>| -> Built {
         let Some(name) = name else {
             let empty = Rc::clone(&empty);
-            return Ok(box_item(Text::new(
+            return Ok(box_item(Text::declaring(
                 move || empty(),
                 LayoutStyle::new(),
-                move || theme.text_style(FontRole::Caption, theme.subtle),
+                move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
             )?));
         };
         let shown = name.clone();
-        let label = Text::new(
+        let label = Text::declaring(
             move || shown.clone(),
             LayoutStyle::new().flex_grow(1.0).min_width(0.0),
-            move || theme.text_style(FontRole::Body, theme.text),
+            move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
         )?;
         let button = |said: &Rc<dyn Fn() -> String>, act: &Rc<dyn Fn(&str)>| {
             let (said, act, name) = (Rc::clone(said), Rc::clone(act), name.clone());

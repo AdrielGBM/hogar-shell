@@ -36,7 +36,7 @@ let style = PillStyle {
     vertical: host.is_vertical(),
     occupied_background,
     indicator,
-    spring: host.config().animation.spring(),
+    spring: host.config().animation.chase(),
     trail,
 };
 // A stretched horizontal chip can't derive its width from its height, so both sides are sized to make a square, and the pills are drawn again at the thickness the chip is given whenever that changes.

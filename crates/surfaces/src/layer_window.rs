@@ -27,6 +27,9 @@ use platform_wayland::{
     KeyboardInteractivity, KeyboardMode, Layer, LayerWindowHandle, background_effect_supported,
     open_layer_window,
 };
+use ui::host::Audience;
+
+use crate::area::{OnScreen, Surround};
 
 /// A window's identity across a reload: which screen it is on and which layer it is, and nothing else. Two windows with the same key are the same window before and after any edit.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1059,16 +1062,8 @@ pub struct AreaContext<'a> {
     pub area: &'a ResolvedArea,
     /// Which layer's window the area is being built into. An area does not carry its own layer, because which layer it is on is a property of where it was written.
     pub layer: LayerKind,
-    /// The layer the area was written on: `layer` itself, except for an area above fullscreen, which is written on its own layer and drawn in the overlay window.
-    pub home: LayerKind,
-    pub output: Option<&'a str>,
-    /// The global config merged with this monitor's override: behaviour, theme and module defaults, which stay in `config.toml` while placement moves to the layout.
-    pub config: &'a Arc<Config>,
-    pub theme: NordTheme,
-    /// The box this area's geometry is measured in, in the window's coordinate space, with [`layout::Within`] already applied — so a fractional [`layout::Rect`] is a fraction of *this*, and `area.within` is not a builder's to read.
-    pub bounds: Rect,
-    /// What the reserving areas of this output take off each edge. A bar running [`Extent::Fill`](layout::Extent) is as long as its neighbours leave it, and its neighbours are on layers this window cannot see.
-    pub reserved: Reserved,
+    /// What the area is built against, its `layer` being the one it was written on: the window's own, except for an area above fullscreen, which is written on its own layer and drawn in the overlay window.
+    pub surround: Surround<'a>,
     /// Whether the compositor will actually blur behind an area styled `backdrop = "blur"`. Live state rather than a bind check — the capability can be withdrawn and come back — so an area styled to blur where this is false draws translucent and unblurred instead of pretending.
     pub blur_available: bool,
     /// What the area may ask of the window it is in beyond drawing: the keyboard, for as long as it holds the token back.
@@ -1176,11 +1171,13 @@ impl LayerApp {
         move |drawn| {
             let building = Building {
                 window: kind,
-                output: output.as_deref(),
-                config: &drawn.config,
-                theme: drawn.theme,
-                size: drawn.screen.size,
-                reserved: drawn.screen.reserved,
+                on: OnScreen {
+                    config: &drawn.config,
+                    theme: drawn.theme,
+                    output: output.as_deref(),
+                    size: drawn.screen.size,
+                    reserved: drawn.screen.reserved,
+                },
                 demands: &demands,
             };
             let Some(BuiltArea { node, blurred }) =
@@ -1364,11 +1361,7 @@ fn previewed(key: &WindowKey) -> Option<Rc<WindowAreas>> {
 /// The window a set of areas is being built into, and what about its screen they are built against.
 pub struct Building<'a> {
     pub window: LayerKind,
-    pub output: Option<&'a str>,
-    pub config: &'a Arc<Config>,
-    pub theme: NordTheme,
-    pub size: (f32, f32),
-    pub reserved: Reserved,
+    pub on: OnScreen<'a>,
     pub demands: &'a Rc<Demands>,
 }
 
@@ -1398,22 +1391,18 @@ fn build_area(
     // Its own owner, so the chrome an area provides — the global one here, a bar's own shape inside it — reaches only that area.
     let _area = telar::owner_scope();
     ui::chrome::Chrome::global(
-        Arc::clone(building.config),
-        building.output.map(str::to_string),
+        Arc::clone(building.on.config),
+        building.on.output.map(str::to_string),
     )
     .provide();
     let built = areas.build(&AreaContext {
         area,
         layer: building.window,
-        home,
-        output: building.output,
-        config: building.config,
-        theme: building.theme,
-        bounds: building.reserved.box_of(area.within, building.size),
-        reserved: building.reserved,
+        // A session layer is the signed-in user's by construction: the compositor draws it only while the screen is not locked.
+        surround: Surround::placed(area.within, home, building.on, Audience::Owner),
         blur_available: background_effect_supported(),
         demands: building.demands,
-        output_size: building.size,
+        output_size: building.on.size,
     });
     let node = match built {
         Ok(node) => node,
@@ -1455,6 +1444,15 @@ fn watch_blur(demands: Rc<Demands>, blurring: RwSignal<Vec<(u64, RwSignal<Rect>)
     });
 }
 
+/// Keeps the window's text in the family of the config it is drawn with — the reconciled one, or a preview's — so a reload or a theme preview changes it without the window being opened again. Every build reads the window's config afresh, so a build is when it may have changed.
+fn follow_font_family(config: LiveConfig, generation: RwSignal<Builds>) {
+    effect(move || {
+        let _ = generation.get();
+        let (_, shown) = crate::reconcile::shown_config(&config.get());
+        telar::set_font_family(shown.theme.family());
+    });
+}
+
 impl App for LayerApp {
     fn root(&self) -> Box<dyn Component> {
         reset_layout_runtime();
@@ -1470,6 +1468,7 @@ impl App for LayerApp {
 
         let generation = signal(Builds::default());
         self.generation.attach(generation);
+        follow_font_family(self.config.clone(), generation);
         let blurring = signal(Vec::new());
         watch_blur(Rc::clone(&self.demands), blurring);
         let build = self.build_area(blurring);
@@ -2552,8 +2551,11 @@ mod tests {
 
     impl Areas for Radii {
         fn build(&self, area: &AreaContext<'_>) -> Result<Box<dyn LayoutItem>, LayoutError> {
-            assert_eq!(area.theme.radius, area.config.resolve_theme().radius);
-            self.0.borrow_mut().push(area.theme.radius);
+            assert_eq!(
+                area.surround.theme.radius,
+                area.surround.config.resolve_theme().radius
+            );
+            self.0.borrow_mut().push(area.surround.theme.radius);
             Ok(Box::new(Container::new(LayoutStyle::new(), Vec::new())?))
         }
     }
@@ -3219,6 +3221,62 @@ mod tests {
                 telar::dispose_owner(owner);
             }
         }
+    }
+
+    fn with_family(family: &str) -> Arc<Config> {
+        let mut config = Config::default();
+        config.theme.font_family = Some(family.to_string());
+        Arc::new(config)
+    }
+
+    fn set_in(family: &str) -> telar::FontFamily {
+        telar::FontFamily::stack([
+            telar::FontFamily::Named(family.into()),
+            telar::FontFamily::SansSerif,
+        ])
+    }
+
+    /// The window stays open and its areas stay built, and still the text in it is set in the family of the config it is drawn with: a reload names one, a config preview another, and ending the preview puts the reloaded one back.
+    #[test]
+    fn a_reload_and_a_config_preview_set_the_window_s_text_in_their_family_without_reopening_it() {
+        const ID: &str = "no-such-module";
+        telar::reset_layout_runtime();
+        set_theme(Config::default().resolve_theme());
+        let app = LayerApp::standing(
+            LayerKind::Top,
+            drawn(vec![bar("bar-top", &[ID])]),
+            config(),
+            screen(),
+            Rc::new(crate::area::ShellAreas),
+        );
+        let tree = telar::testing::mount(app.root(), 800, 200);
+        let family = || {
+            telar::relayout_if_dirty();
+            tree.commands()
+                .iter()
+                .find_map(|command| match command {
+                    telar::DrawCommand::Text { text, style, .. } if &**text == ID => {
+                        Some(style.font_family.clone())
+                    }
+                    _ => None,
+                })
+                .expect("the placeholder chip draws the id")
+        };
+        assert_eq!(family(), telar::FontFamily::SansSerif);
+
+        app.config.set(with_family("Reloaded Face"));
+        app.generation.look_again();
+        assert_eq!(family(), set_in("Reloaded Face"));
+
+        crate::reconcile::preview_config(|config| {
+            let mut config = config.clone();
+            config.theme.font_family = Some("Previewed Face".to_string());
+            config
+        });
+        assert_eq!(family(), set_in("Previewed Face"));
+
+        crate::reconcile::end_config_preview();
+        assert_eq!(family(), set_in("Reloaded Face"));
     }
 }
 

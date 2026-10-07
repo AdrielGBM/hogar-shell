@@ -8,56 +8,19 @@ mod tests {
     };
     use surfaces::menu::Asked;
     use surfaces::rects::Node;
-    use surfaces::transient;
-    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::descriptor::ModuleDescriptor;
     use ui::host::WidgetSize;
 
-    use crate::rig::{Rig, SCREEN, enter, face, rig_with, stored, tap};
+    use crate::rig::{CTRL, Owner, Rig, SCREEN, enter, module, rig_with, stored, tap};
     use crate::session::{self, Selection};
     use crate::{context, mode};
 
-    static PROBES: &[ModuleDescriptor] = &[ModuleDescriptor {
-        id: "clock",
-        name: "Clock",
-        icon: "clock",
-        category: Category::Time,
-        options: &[],
-        representations: Representations {
-            chip: Some(ChipDef::new(face, Input::ReadOnly)),
-            widget: Some(WidgetDef {
-                sizes: &WidgetSize::ALL,
-                build: face,
-                input: Input::ReadOnly,
-            }),
-            ..Representations::NONE
-        },
-        actions: &[],
-        sources: &[],
-    }];
+    static PROBES: &[ModuleDescriptor] = &[module("clock", "Clock", &WidgetSize::ALL)];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
+    fn owner() -> Owner {
+        Owner::installing(PROBES)
     }
 
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
-    }
-
-    const CTRL: ModifiersState = ModifiersState {
-        is_shift: false,
-        is_ctrl: true,
-        is_alt: false,
-        is_meta: false,
-    };
     const CTRL_SHIFT: ModifiersState = ModifiersState {
         is_shift: true,
         ..CTRL
@@ -170,7 +133,7 @@ mod tests {
     #[test]
     fn the_keys_restack_an_area_among_its_layer() {
         let rig = rig_with("order-areas", overlapping);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         assert_eq!(
             drawn_order(LayerKind::Desktop),
@@ -238,7 +201,7 @@ mod tests {
     #[test]
     fn the_children_of_a_free_container_restack_and_no_other_child_does() {
         let rig = rig_with("order-children", overlapping);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         assert!(session::select(Selection::Instance(pad_child("pad-a"))));
         assert!(tap(Key::Char(']'), CTRL));
@@ -260,7 +223,7 @@ mod tests {
     #[test]
     fn the_order_submenu_restacks_as_the_keys_do() {
         let rig = rig_with("order-menu", overlapping);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         context::open(Asked {
             node: area(LayerKind::Desktop, "note"),
@@ -325,7 +288,7 @@ mod tests {
                 ..Layout::default()
             };
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let before = stored(&rig);
         assert!(session::select(Selection::Area(area(
@@ -363,7 +326,7 @@ mod tests {
             lock.push(texture("wash", rect(0.0, 0.0, 1.0, 1.0)));
             lock.push(texture("tint", rect(0.0, 0.5, 1.0, 0.5)));
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Lock);
         assert!(session::select(Selection::Area(area(
             LayerKind::Lock,
@@ -388,7 +351,7 @@ mod tests {
     #[test]
     fn stacks_restack_on_the_overlay_and_a_container_group_has_no_order() {
         let rig = rig_with("order-stacks", overlapping);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         let before = stored(&rig);
         assert!(tap(

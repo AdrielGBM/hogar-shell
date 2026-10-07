@@ -66,12 +66,12 @@ pub fn identity(
         )?,
     };
     let name = name();
-    let name = box_item(Text::new(
+    let name = box_item(Text::declaring(
         move || name.clone(),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?);

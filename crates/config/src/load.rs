@@ -141,13 +141,20 @@ pub enum SaveError {
     Io(std::io::Error),
 }
 
+impl SaveError {
+    pub fn message(&self) -> util::report::Message {
+        let said = |e: &dyn std::fmt::Display| util::report::Message::verbatim(e.to_string());
+        match self {
+            SaveError::Serialize(e) => util::message!("save.unwritable_section", why = said(e)),
+            SaveError::Parse(e) => util::message!("save.unreadable_config", why = said(e)),
+            SaveError::Io(e) => util::message!("save.unwritable_config", why = said(e)),
+        }
+    }
+}
+
 impl std::fmt::Display for SaveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SaveError::Serialize(e) => write!(f, "serializing config section: {e}"),
-            SaveError::Parse(e) => write!(f, "parsing config file: {e}"),
-            SaveError::Io(e) => write!(f, "writing config file: {e}"),
-        }
+        f.write_str(&self.message().english())
     }
 }
 

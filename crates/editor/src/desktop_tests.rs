@@ -27,7 +27,7 @@ mod tests {
     use crate::modes::grid::{self, Cells, Room};
     use crate::modes::palette::{self, Line, Pick};
     use crate::modes::widgets;
-    use crate::rig::{Rig, SCREEN, enter, face, stored, tap};
+    use crate::rig::{Owner, Rig, SCREEN, enter, face, stored, tap};
     use crate::session::{self, Selection};
     use crate::{context, popover, variant};
 
@@ -89,22 +89,8 @@ mod tests {
         ),
     ];
 
-    /// An owner for what a test builds, disposed when it ends.
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+    fn owner() -> Owner {
+        Owner::installing(PROBES)
     }
 
     const NONE: ModifiersState = ModifiersState {
@@ -307,7 +293,7 @@ mod tests {
     #[test]
     fn a_grids_cells_hold_still_whatever_is_on_it() {
         let _rig = crate::rig::rig_with("desktop-lattice", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let geometry = || {
             let desktop = surfaces::reconcile::desktops()[0].clone();
@@ -336,7 +322,7 @@ mod tests {
     #[test]
     fn a_widget_dropped_on_an_occupied_cell_never_deletes_the_occupant() {
         let rig = rig_with("desktop-drop-occupied", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         assert_eq!(cells_of("clock-2"), Some(at(0, 0, 4, 2)));
@@ -381,7 +367,7 @@ mod tests {
     #[test]
     fn a_widget_added_from_the_keyboard_lands_near_the_selection_with_a_readable_id() {
         let rig = rig_with("desktop-add-near", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::Instance(node_of("clock-2"))));
         let before = stored(&rig);
@@ -406,7 +392,7 @@ mod tests {
     #[test]
     fn the_palette_groups_by_category_narrows_by_what_is_typed_and_offers_readings_on_the_lock() {
         let _rig = rig_with("desktop-palette", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let desktop = surfaces::reconcile::desktops()[0].clone();
         let names = |lines: Vec<Line>| -> Vec<String> {
             lines
@@ -467,7 +453,7 @@ mod tests {
     #[test]
     fn dropping_onto_a_widget_stacks_them_and_dragging_out_detaches() {
         let rig = rig_with("desktop-stack", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let add = |id_of: &str, cell: (u32, u32)| {
@@ -551,7 +537,7 @@ mod tests {
     #[test]
     fn a_size_step_moves_what_the_widget_grows_over() {
         let rig = rig_with("desktop-size", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let (ops, _) = desktop::added(
             &session::draft().peek(),
@@ -637,7 +623,7 @@ mod tests {
     #[test]
     fn a_stack_of_one_written_by_the_edited_level_loses_its_keys() {
         let rig = rig_with("desktop-own-stack", stacked_clock);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(holding("clock-2").is_some_and(|group| group.is_pages()));
         commit(tidy_the_clock());
@@ -655,7 +641,7 @@ mod tests {
     #[test]
     fn a_stack_of_one_a_broader_level_writes_is_taken_back_by_unset() {
         let rig = rig_on("desktop-inherited-stack", Some("2"), stacked_clock);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         variant::set(true).expect("the screen says which workspace is up");
         commit(tidy_the_clock());
@@ -676,7 +662,7 @@ mod tests {
     #[test]
     fn an_instance_edited_for_one_workspace_is_written_there_alone() {
         let rig = rig_on("desktop-variant", Some("2"), |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         popover::open_instance(node_of("clock-2")).expect("its popover opens");
         let _tree = popover::tree().expect("a popover").expect("it builds");
@@ -749,7 +735,7 @@ mod tests {
                 ..Area::default()
             });
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let widgets = Node::area(Some(SCREEN), LayerKind::Desktop, &widgets_area());
@@ -816,7 +802,7 @@ mod tests {
                 ..Area::default()
             });
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         variant::set(true).expect("the screen says which workspace is up");
         assert!(session::select(Selection::Area(Node::area(
@@ -862,7 +848,7 @@ mod tests {
                 anchor: Some(layout::Anchor::TopLeft),
             });
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let grids = widgets::grids(SCREEN, LayerKind::Desktop);
         let (geometry, _) = &grids[0];
         let clock = geometry.rect_of(at(0, 0, 4, 2));
@@ -904,7 +890,7 @@ mod tests {
     #[test]
     fn the_desktop_tools_the_palette_and_a_widgets_popover_build() {
         let _rig = rig_with("desktop-builds", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let mode = mode::current().expect("the mode is up");
         widgets::tool(&mode).expect("the desktop tool builds");
@@ -933,7 +919,7 @@ mod tests {
                 anchor: Some(layout::Anchor::TopLeft),
             });
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let geometry = widgets::grids(SCREEN, LayerKind::Desktop)[0].0.clone();
         let clock = node_of("clock-2");
@@ -1033,7 +1019,7 @@ mod tests {
     #[test]
     fn what_only_a_mode_does_says_so_outside_one() {
         let _rig = rig_with("desktop-no-mode", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let needs = Err(crate::session::EditError::Refused(util::message!(
             "editor.refused.no_mode"
         )));
@@ -1114,7 +1100,7 @@ mod tests {
     #[test]
     fn the_palette_lists_komponents_with_their_parameters_and_the_lock_leaves_out_controls() {
         let _rig = with_komponents("palette-komponents");
-        let _owner = Owner::new();
+        let _owner = owner();
         let on_desktop = listed(LayerKind::Desktop);
         let at = on_desktop
             .iter()
@@ -1162,7 +1148,7 @@ mod tests {
     #[test]
     fn a_komponent_chosen_from_the_keyboard_is_added_as_a_group_of_its_own() {
         let rig = with_komponents("palette-komponent-keys");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::Instance(node_of("clock-2"))));
         let before = stored(&rig);
@@ -1317,7 +1303,7 @@ mod tests {
     #[test]
     fn the_palettes_lines_are_inside_its_card_where_a_press_reaches_them() {
         let _rig = with_komponents("palette-lines-pressed");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let listed = entries(LayerKind::Desktop);
         let (first, first_name) = listed.first().cloned().expect("an entry");
@@ -1352,7 +1338,7 @@ mod tests {
     #[test]
     fn a_komponent_pressed_in_the_palette_is_put_on_the_cells_pressed() {
         let rig = with_komponents("palette-komponent-press");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let (mut palette_tree, entry) = palette_showing("clock-p", "clock-pill · 1 parameter");
@@ -1395,7 +1381,7 @@ mod tests {
     #[test]
     fn a_komponent_dragged_from_the_palette_lands_where_it_is_let_go() {
         let rig = with_komponents("palette-komponent-drag");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let (mut palette_tree, entry) = palette_showing("clock-p", "clock-pill · 1 parameter");
@@ -1432,7 +1418,7 @@ mod tests {
     #[test]
     fn a_komponent_is_put_where_the_layout_would_accept_it_and_nowhere_else() {
         let rig = with_komponents("komponent-plan");
-        let _owner = Owner::new();
+        let _owner = owner();
         let desktop = surfaces::reconcile::desktops()[0].clone();
         let layout = stored(&rig);
         let library = rig.store.borrow().all().clone();

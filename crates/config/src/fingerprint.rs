@@ -13,8 +13,10 @@
 //!
 //! Nothing else a load produces comes from a file: no section deserializes from one or defaults to one, and what the config names — the `[paths]` directories, the palette cache — is read by whatever uses it, after the load. A wallpaper-derived palette is not a config input at all; it reaches the shell as a reload somebody asked for, [`Reload::Always`].
 
+use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::{Config, TokenOverrides};
 
@@ -66,6 +68,10 @@ impl Fingerprint {
             }
         }
         Self(files)
+    }
+
+    fn config_path(&self) -> Option<&Path> {
+        self.0.first().map(|(path, _)| path.as_path())
     }
 
     /// Whether `config.toml` is there at all. Some editors save by removing the old file before the new one lands, and a reload in that moment would load — and write — the starter config in place of the user's.
@@ -196,6 +202,52 @@ impl Stamp {
     /// **Never ahead of the truth.** Take the fingerprint *before* the load or build it describes, or of the very bytes a write has just put on disk — never after a load: a stamp that names content the shell has not shown yet is one that suppresses the very reload that would have shown it. A stamp that lags costs a spare reload and nothing else.
     pub fn record(&mut self, content: Fingerprint) {
         self.0 = Some(content);
+    }
+}
+
+/// What the shell itself has written to each config, newest last: the content its own saves left, by the path of the `config.toml` they were made around.
+///
+/// A static rather than a thread-local because a save can be made from any thread, while the reload that hears of it runs on the driver's.
+static OWN_WRITES: Mutex<BTreeMap<PathBuf, Vec<Fingerprint>>> = Mutex::new(BTreeMap::new());
+
+/// How many of the shell's own writes are remembered per config before the oldest is forgotten. Any write the watcher has not delivered yet is newer than these, and one forgotten only costs a toast.
+const OWN_WRITES_KEPT: usize = 8;
+
+/// Records that the shell itself has just left the files holding `content`, so the reload that brings it is applied quietly rather than announced as an edit.
+///
+/// Take `content` from the bytes the write put on disk ([`Fingerprint::with_config`]), never from a second read, which could take in an edit landing behind the write and pass it off as the shell's own.
+pub fn wrote(content: Fingerprint) {
+    let Some(config_path) = content.config_path().map(Path::to_path_buf) else {
+        return;
+    };
+    let mut writes = OWN_WRITES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let written = writes.entry(config_path).or_default();
+    written.retain(|earlier| *earlier != content);
+    written.push(content);
+    if written.len() > OWN_WRITES_KEPT {
+        written.remove(0);
+    }
+}
+
+/// Whether the files holding `content` is the shell's own write coming back. Answering yes forgets that write and every one before it, since what the files hold now has superseded them all; answering no forgets nothing, since a write still on its way may yet arrive.
+pub fn written_by_shell(content: &Fingerprint) -> bool {
+    let Some(config_path) = content.config_path() else {
+        return false;
+    };
+    let mut writes = OWN_WRITES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(written) = writes.get_mut(config_path) else {
+        return false;
+    };
+    match written.iter().position(|own| own == content) {
+        Some(at) => {
+            written.drain(..=at);
+            true
+        }
+        None => false,
     }
 }
 
@@ -446,6 +498,39 @@ mod tests {
             Fingerprint::with_config(&path, Some(&saved.written)),
             Fingerprint::read(&path),
             "and what it wrote is the file it left"
+        );
+        cleanup(&path);
+    }
+
+    /// **A save is the shell's own write once, and only until the files move past it.** The reload that brings it is told so and forgets it with every save before it; an edit from elsewhere is not one, and leaves a save still on its way to be recognised when it lands.
+    #[test]
+    fn a_save_is_the_shells_own_write_until_the_files_move_past_it() {
+        let path = scratch("own-writes");
+        let clock = |format: &str| {
+            toml::Table::from_iter([("format".to_string(), toml::Value::from(format))])
+        };
+
+        Config::save_section(&path, "clock", &clock("%H")).unwrap();
+        let first = Fingerprint::read(&path);
+        Config::save_section(&path, "clock", &clock("%M")).unwrap();
+        let second = Fingerprint::read(&path);
+
+        std::fs::write(&path, CLOCK).unwrap();
+        assert!(
+            !written_by_shell(&Fingerprint::read(&path)),
+            "an edit from elsewhere is not the shell's write"
+        );
+        assert!(
+            written_by_shell(&second),
+            "the latest save is recognised whenever its content comes back"
+        );
+        assert!(
+            !written_by_shell(&first),
+            "and the saves it superseded are forgotten with it"
+        );
+        assert!(
+            !written_by_shell(&second),
+            "as is the save itself, once its reload has been told"
         );
         cleanup(&path);
     }

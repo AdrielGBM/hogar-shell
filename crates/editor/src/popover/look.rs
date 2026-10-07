@@ -425,10 +425,10 @@ fn contrast_row(holder: &impl Styled, opacity: RwSignal<f32>, backing: Rc<Backin
         |built: &bool| *built,
         move |_| {
             let (said, tinted) = (ratio.clone(), ratio.clone());
-            Ok(box_item(Text::new(
+            Ok(box_item(Text::declaring(
                 move || contrast_said(said().unwrap_or_default()),
                 LayoutStyle::new(),
-                move || {
+                move |inherited| {
                     let theme: NordTheme = use_theme();
                     let tint = match tinted()
                         .is_some_and(|ratio| !config::scheme::readable_ratio(ratio))
@@ -436,7 +436,7 @@ fn contrast_row(holder: &impl Styled, opacity: RwSignal<f32>, backing: Rc<Backin
                         true => theme.warning,
                         false => theme.subtle,
                     };
-                    theme.text_style(FontRole::Caption, tint)
+                    theme.text_over(inherited, FontRole::Caption, tint)
                 },
             )?))
         },

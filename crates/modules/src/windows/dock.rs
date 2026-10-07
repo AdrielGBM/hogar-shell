@@ -10,7 +10,7 @@ use telar::{
 };
 
 use config::theme::NordTheme;
-use config::{Config, Edge, LauncherConfig};
+use config::{Edge, LauncherConfig};
 use platform_wayland::{ManagedToplevel, ManagedToplevelId, SurfaceRef, ToplevelArea};
 use services::apps::App;
 use ui::host::{Host, OwnSecondary};
@@ -19,9 +19,8 @@ use ui::scale::space;
 
 use super::lens::{self, Lens};
 use super::pins::{self, PinFile, Press, Slot, SlotKey};
-use super::{
-    DRAG_SLOP, DRAGGED_OPACITY, GLYPH, TARGETS, fills, hover_fill, on_output, order, remembered,
-};
+use super::targets::Holding;
+use super::{DRAG_SLOP, DRAGGED_OPACITY, GLYPH, fills, hover_fill, on_output, order, remembered};
 
 const REACH: f32 = 3.0;
 const DOT_ALPHA: f32 = 0.7;
@@ -46,11 +45,6 @@ impl Seams {
 
 pub fn dot_fills(theme: NordTheme) -> (Color, Color) {
     (theme.text.with_alpha(DOT_ALPHA), theme.accent)
-}
-
-fn easing(config: &Config) -> Option<Spring> {
-    let animation = &config.animation;
-    (animation.enabled && !animation.is_reduced()).then(|| animation.spring())
 }
 
 #[derive(Clone, Copy)]
@@ -100,7 +94,8 @@ struct Dock {
     spans: Rc<RefCell<HashMap<SlotKey, Rect>>>,
     laid: RwSignal<u64>,
     lenses: Memo<HashMap<SlotKey, Lens>>,
-    hovered: RwSignal<Option<SlotKey>>,
+    aiming: RefCell<Option<SlotKey>>,
+    aimed: RefCell<Option<SlotKey>>,
     dragging: RwSignal<Option<SlotKey>>,
     landed: RefCell<Option<SlotKey>>,
     moved: Cell<bool>,
@@ -133,7 +128,7 @@ pub fn dock(
     let across = (host.thickness() - 2.0 * inset).max(1.0);
     let gap = space::xs();
     let peak = config.dock.magnification();
-    let level = Level::new(easing(config));
+    let level = Level::new(config.animation.chase());
     let pointer = signal(None::<f32>);
     let dragging = signal(None::<SlotKey>);
     let spans: Rc<RefCell<HashMap<SlotKey, Rect>>> = Rc::default();
@@ -185,7 +180,8 @@ pub fn dock(
         spans,
         laid,
         lenses,
-        hovered: signal(None),
+        aiming: RefCell::new(None),
+        aimed: RefCell::new(None),
         dragging,
         landed: RefCell::new(None),
         moved: Cell::new(false),
@@ -194,7 +190,7 @@ pub fn dock(
     });
     if let Some(own) = OwnSecondary::current() {
         let answering = Rc::clone(&dock);
-        own.offer(move || answering.toggle_hovered());
+        own.offer(move || answering.toggle_aimed());
     }
 
     let built = Rc::clone(&dock);
@@ -212,6 +208,8 @@ pub fn dock(
         },
     )?;
     let origin = signal(Rect::new(0.0, 0.0, 0.0, 0.0));
+    let magnifies = peak > 1.0;
+    let (moved, left) = (Rc::clone(&dock), Rc::clone(&dock));
     let wrapper = StyledContainer::new(
         LayoutStyle::new()
             .flex_column()
@@ -219,19 +217,27 @@ pub fn dock(
             .min_height(0.0),
         |_| RectStyle::default(),
         vec![Box::new(list) as Box<dyn LayoutItem>],
-    )?;
-    let wrapper = match peak > 1.0 {
-        true => wrapper
-            .on_pointer_move(move |x, y| {
-                let at = origin.peek();
-                pointer.set(Some(match edge.is_horizontal() {
-                    true => at.x + x,
-                    false => at.y + y,
-                }));
-            })
-            .on_hover(move |inside| level.aim(if inside { 1.0 } else { 0.0 })),
-        false => wrapper,
-    };
+    )?
+    .on_pointer_move(move |x, y| {
+        // The entries hear a move before the box around them, so an entry that did not claim this one leaves the dock aimed at a gap.
+        let aiming = moved.aiming.take();
+        *moved.aimed.borrow_mut() = aiming;
+        if magnifies {
+            let at = origin.peek();
+            pointer.set(Some(match edge.is_horizontal() {
+                true => at.x + x,
+                false => at.y + y,
+            }));
+        }
+    })
+    .on_hover(move |inside| {
+        if !inside {
+            left.aimed.take();
+        }
+        if magnifies {
+            level.aim(if inside { 1.0 } else { 0.0 });
+        }
+    });
     if let Some(rect) = track_layout(wrapper.layout_node()) {
         effect(move || origin.set(rect.get()));
     }
@@ -316,8 +322,9 @@ impl Dock {
         }
     }
 
-    fn toggle_hovered(&self) -> bool {
-        let Some(slot) = self.hovered.peek().and_then(|key| self.slot(&key)) else {
+    fn toggle_aimed(&self) -> bool {
+        let aimed = self.aimed.borrow().clone();
+        let Some(slot) = aimed.and_then(|key| self.slot(&key)) else {
             return false;
         };
         let pinned = pins::toggled(&self.pinned.peek(), &slot.pin_id());
@@ -468,11 +475,10 @@ impl Dock {
         let radius = self.radius;
         let focused = move || live.with(|slot| slot.as_ref().is_some_and(Slot::is_focused));
         let dragging = self.dragging;
-        let hovered = self.hovered;
         let lenses = self.lenses;
-        let (pressing, hovering, dragged, dropped, lensed) = (
+        let (pressing, aiming, dragged, dropped, lensed) = (
             Rc::clone(self),
-            key.clone(),
+            (Rc::clone(self), key.clone()),
             (Rc::clone(self), key.clone()),
             (Rc::clone(self), key.clone()),
             key.clone(),
@@ -500,11 +506,7 @@ impl Dock {
             let key = key.clone();
             move || pressing.press(&key)
         })
-        .on_hover(move |inside| match inside {
-            true => hovered.set(Some(hovering.clone())),
-            false if hovered.peek().as_ref() == Some(&hovering) => hovered.set(None),
-            false => {}
-        })
+        .on_pointer_move(move |_, _| *aiming.0.aiming.borrow_mut() = Some(aiming.1.clone()))
         .drag_threshold(DRAG_SLOP)
         .drag_axis(match edge.is_horizontal() {
             true => DragAxis::Horizontal,
@@ -547,9 +549,9 @@ impl Dock {
         let Some(surface) = self.surface.clone() else {
             return;
         };
-        let held: Rc<RefCell<HashMap<ManagedToplevelId, u64>>> = Rc::default();
+        let held: Rc<RefCell<HashMap<ManagedToplevelId, Holding>>> = Rc::default();
         let here = Rc::clone(self);
-        let (sending, from) = (Rc::clone(&held), surface.clone());
+        let sending = Rc::clone(&held);
         effect(move || {
             let laid = rect.get();
             let windows = live.with(|slot| {
@@ -564,26 +566,22 @@ impl Dock {
                 .copied()
                 .collect();
             for id in gone {
-                if let Some(holder) = held.remove(&id) {
-                    withdraw(&from, id, holder);
+                if let Some(holding) = held.remove(&id) {
+                    holding.release();
                 }
             }
             for window in &windows {
-                let target = (from.clone(), window.id);
-                let holder = *held.entry(window.id).or_insert_with(|| {
-                    TARGETS.with(|targets| targets.borrow_mut().claim(target.clone()))
-                });
                 let area = Some(window)
                     .filter(|window| on_output(here.output.as_deref(), window))
                     .and_then(|_| ToplevelArea::covering(laid));
-                if TARGETS.with(|targets| targets.borrow_mut().send(&target, holder, area)) {
-                    services::windows::set_rectangle(window.id, &from, area);
-                }
+                held.entry(window.id)
+                    .or_insert_with(|| Holding::claim(surface.clone(), window.id))
+                    .send(area);
             }
         });
         on_cleanup(move || {
-            for (id, holder) in held.borrow_mut().drain() {
-                withdraw(&surface, id, holder);
+            for (_, holding) in held.borrow_mut().drain() {
+                holding.release();
             }
         });
     }
@@ -603,13 +601,6 @@ impl Dock {
             |_| RectStyle::default(),
             vec![glyph],
         )?))
-    }
-}
-
-fn withdraw(surface: &SurfaceRef, id: ManagedToplevelId, holder: u64) {
-    let target = (surface.clone(), id);
-    if TARGETS.with(|targets| targets.borrow_mut().release(&target, holder)) {
-        services::windows::set_rectangle(id, surface, None);
     }
 }
 
@@ -1002,6 +993,36 @@ mod tests {
             !rig.own.answer(),
             "over no entry the press goes on to the menu"
         );
+    }
+
+    #[test]
+    fn a_secondary_press_pins_the_entry_under_it_by_touch_and_never_one_left_behind() {
+        let mut rig = rig(
+            &host(Edge::Bottom, "touch", &["firefox"], 1.0),
+            vec![window(1, "kitty", false)],
+            vec![app("firefox"), app("kitty")],
+            pin_path("touch"),
+        );
+        let (pinned, running) = (rig.centre(0), rig.centre(1));
+        let gap = ((pinned.0 + running.0) / 2.0, pinned.1);
+        let touch = |at: (f32, f32)| Event::PointerMoved {
+            x: f64::from(at.0),
+            y: f64::from(at.1),
+            source: PointerSource::Touch { id: 1 },
+        };
+
+        rig.send(touch(running));
+        assert!(rig.own.answer(), "a touch has no hover and still aims");
+        assert_eq!(rig.saved(), ["firefox", "kitty"]);
+        rig.lay_out();
+
+        rig.hover(pinned);
+        rig.hover(gap);
+        assert!(
+            !rig.own.answer(),
+            "between two entries the press is no entry's, whichever was under the pointer before"
+        );
+        assert_eq!(rig.saved(), ["firefox", "kitty"]);
     }
 
     #[test]

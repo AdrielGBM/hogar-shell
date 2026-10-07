@@ -309,12 +309,12 @@ fn search_box(
     query: RwSignal<String>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let input = Input::new(
+    let input = Input::declaring(
         query,
         LayoutStyle::new()
             .width(SizeDimension::Percent(1.0))
             .height(theme.font(FontRole::Body) * 1.4),
-        move || theme.text_style(FontRole::Body, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
     )?
     .placeholder(telar::t!("icon_picker.filter_placeholder"));
     let boxed = StyledContainer::new(
@@ -333,8 +333,8 @@ fn message(
     text: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let label = Text::new(text, LayoutStyle::new(), move || {
-        theme.text_style(FontRole::Caption, theme.muted)
+    let label = Text::declaring(text, LayoutStyle::new(), move |inherited| {
+        theme.text_over(inherited, FontRole::Caption, theme.muted)
     })?;
     let wrap = Container::new(
         LayoutStyle::new().padding_all(space::lg()),

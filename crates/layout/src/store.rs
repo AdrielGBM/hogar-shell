@@ -313,6 +313,20 @@ impl LayoutStore {
         self.library.layouts.get(id)
     }
 
+    /// Whether a layout or a file of the store's directory already has `id`, a file that does not read included: it is still the user's.
+    pub fn is_taken(&self, id: &LayoutId) -> bool {
+        self.get(id).is_some() || self.path_of(id).exists()
+    }
+
+    /// `base`, or else the first of `base-2`, `base-3` and on that [`Self::is_taken`] does not answer for.
+    pub fn free_id(&self, base: &str) -> LayoutId {
+        std::iter::once(base.to_string())
+            .chain((2..).map(|nth| format!("{base}-{nth}")))
+            .map(LayoutId::new)
+            .find(|id| !self.is_taken(id))
+            .expect("the counting runs out long after the names do")
+    }
+
     /// Every layout and komponent the store holds: what a layout is resolved against.
     pub fn all(&self) -> &Library {
         &self.library

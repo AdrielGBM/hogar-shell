@@ -7,6 +7,7 @@ mod tests {
 
     use crate::mode;
     use crate::rig::{enter, rig};
+    use crate::session;
     use crate::templates;
 
     fn picked(entry: &MenuEntry) {
@@ -29,6 +30,25 @@ mod tests {
         press();
         assert!(transient::is_open(crate::context::ID));
         transient::close(crate::context::ID);
+        mode::leave();
+    }
+
+    /// A peek shows the layout the mode opened on, and a template that becomes the active layout under the mode is the one a peek then shows.
+    #[test]
+    fn a_peek_after_a_template_shows_the_template_not_the_layout_before_it() {
+        let rig = rig("templates-peek");
+        let _scope = telar::owner_scope();
+        let _host = enter(LayerKind::Desktop);
+        let before = rig.store.borrow().active().clone();
+
+        picked(&templates::gallery()[0]);
+        let template = rig.store.borrow().active().clone();
+        assert_ne!(template, before);
+
+        session::begin_peek().expect("the peek begins");
+        assert_eq!(session::draft().get(), template);
+        session::end_peek();
+        assert_eq!(session::draft().get(), template);
         mode::leave();
     }
 

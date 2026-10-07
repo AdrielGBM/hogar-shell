@@ -40,10 +40,10 @@ pub(crate) fn media_aliases_section() -> Result<Box<dyn LayoutItem>, LayoutError
 
     let mut rows: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(fields.len().max(1));
     if fields.is_empty() {
-        rows.push(box_item(Text::new(
+        rows.push(box_item(Text::declaring(
             || telar::t!("settings.media.no_players"),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Caption, theme.muted),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
         )?));
     }
     for (key, value) in &fields {

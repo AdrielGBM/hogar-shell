@@ -378,10 +378,10 @@ pub(crate) fn dimmed_row(label: String, hint: String, act: impl Fn() + 'static) 
 fn dimmed_face(label: String, hint: String) -> Built {
     let theme = use_theme::<NordTheme>();
     let text = move |said: String| {
-        Text::new(
+        Text::declaring(
             move || said.clone(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Body, theme.muted),
+            move |inherited| theme.text_over(inherited, FontRole::Body, theme.muted),
         )
     };
     Ok(Box::new(Container::new(

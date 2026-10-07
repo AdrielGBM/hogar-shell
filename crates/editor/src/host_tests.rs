@@ -22,10 +22,10 @@ mod tests {
 
     fn marker(said: &'static str) -> Built {
         let theme = use_theme::<NordTheme>();
-        Ok(box_item(Text::new(
+        Ok(box_item(Text::declaring(
             move || said.to_string(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Body, theme.text),
+            move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
         )?))
     }
 

@@ -12,7 +12,7 @@ use surfaces::rects::{self, Node};
 
 use super::draft::AreaDraft;
 use super::rows::Range;
-use crate::modes::gesture::{self, HandleDragging, Hint};
+use crate::modes::gesture::{self, Hint};
 
 /// How thick a bar or dock may be made.
 pub const THICKNESS: Range = Range::whole(4.0, 256.0);
@@ -447,44 +447,42 @@ fn four_handle(
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let Four { values, most } = four;
     let grab: Rc<Cell<Option<Grab>>> = Rc::default();
-    let dragging = HandleDragging::new();
-    let (kept_end, dropped_end) = (dragging.on_end_fn(), dragging.on_end_fn());
-    let transaction = Transaction::new(values[own])
-        .on_commit({
-            let (grab, kept, stepped) = (
-                Rc::clone(&grab),
-                Rc::clone(&ends.kept),
-                Rc::clone(&ends.stepped),
-            );
-            move |_, _| {
-                kept_end();
-                match grab.take() {
-                    Some(_) => kept(),
-                    None => stepped(followed(values, own)),
-                }
+    let transaction = Transaction::new(values[own]).on_commit({
+        let (grab, stepped) = (Rc::clone(&grab), Rc::clone(&ends.stepped));
+        move |_, _| {
+            if grab.take().is_none() {
+                stepped(followed(values, own));
             }
-        })
-        .on_revert({
-            let (grab, dropped) = (Rc::clone(&grab), Rc::clone(&ends.dropped));
-            move |_| {
-                if let Some(held) = grab.take() {
-                    restore(values, own, held.prior);
-                }
-                dropped_end();
-                dropped();
-            }
-        });
-    let reading = node.clone();
-    let (to_value, limit, moved, grabbed) =
-        (geometry.to_value, geometry.limit, ends.moved, ends.grabbed);
-    let to_value = dragging.wrap_to_value(move |x, y| {
-        let mut held = grab.get().unwrap_or_else(|| {
+        }
+    });
+    let on_start = {
+        let grabbed = ends.grabbed;
+        move || {
             grabbed();
-            Grab {
-                prior: values.map(|value| value.peek()),
-                at: (x, y),
-                travelled: false,
+            gesture::started();
+        }
+    };
+    let on_end = {
+        let (grab, kept, dropped) = (Rc::clone(&grab), ends.kept, ends.dropped);
+        move |let_go: bool| {
+            gesture::ended();
+            if let_go {
+                kept();
+                return;
             }
+            if let Some(held) = grab.take() {
+                restore(values, own, held.prior);
+            }
+            dropped();
+        }
+    };
+    let reading = node.clone();
+    let (to_value, limit, moved) = (geometry.to_value, geometry.limit, ends.moved);
+    let to_value = move |x: f32, y: f32| {
+        let mut held = grab.get().unwrap_or(Grab {
+            prior: values.map(|value| value.peek()),
+            at: (x, y),
+            travelled: false,
         });
         held.travelled |= (x - held.at.0).hypot(y - held.at.1) >= gesture::THRESHOLD;
         grab.set(Some(held));
@@ -512,7 +510,7 @@ fn four_handle(
         say_limit((x, y), (asked > most).then(|| limit(most)));
         moved(now);
         asked
-    });
+    };
     let placing = node.clone();
     let to_point = geometry.to_point;
     let color = ends.color;
@@ -526,6 +524,8 @@ fn four_handle(
             .cursor(geometry.cursor)
             .clamped(clamped)
             .color(color)
+            .on_start(Rc::new(on_start))
+            .on_end(Rc::new(on_end))
             .build(),
         Children::default(),
     )
@@ -747,22 +747,17 @@ fn along_or_across(
     cursor: Cursor,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let grip = draft.grip();
-    let (keeping, dropping) = (grip.clone(), grip.clone());
-    let transaction = Transaction::new(value)
-        .on_commit(move |_, _| keeping.release())
-        .on_revert(move |_| dropping.put_back());
     telar::handle(
         telar::HandleProps::props()
-            .transaction(transaction)
-            .to_value(Rc::new(move |x, y| {
-                grip.hold();
-                to_value(x, y)
-            }))
+            .value(value)
+            .to_value(to_value)
             .to_point(to_point)
             .min(range.min)
             .max(range.max)
             .step(range.step)
             .cursor(cursor)
+            .on_start(gesture::holding(grip.clone()))
+            .on_end(gesture::letting_go(grip))
             .build(),
         Children::default(),
     )

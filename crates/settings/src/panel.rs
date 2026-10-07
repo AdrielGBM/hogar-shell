@@ -90,22 +90,22 @@ fn header(
     path: Arc<PathBuf>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("settings.title"),
         LayoutStyle::new().flex_grow(1.0),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
 
-    let input = Input::new(
+    let input = Input::declaring(
         query,
         LayoutStyle::new()
             .flex_grow(1.0)
             .height(theme.font(FontRole::Body) * 1.6),
-        move || theme.text_style(FontRole::Body, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
     )?
     .placeholder(telar::t!("settings.search"));
     let boxed = StyledContainer::new(
@@ -126,12 +126,12 @@ fn header(
             .flex_shrink(0.0)
             .justify_content(JustifyContent::CENTER),
         paint::md(theme.base),
-        vec![box_item(Text::new(
+        vec![box_item(Text::declaring(
             || telar::t!("settings.revert"),
             LayoutStyle::new(),
-            move || {
+            move |inherited| {
                 theme
-                    .text_style(FontRole::Caption, revert_ink)
+                    .text_over(inherited, FontRole::Caption, revert_ink)
                     .with_font_weight(700)
             },
         )?)],
@@ -195,10 +195,10 @@ fn nav_row(
         }
     };
     let label_ink = ink;
-    let label = Text::new(
+    let label = Text::declaring(
         move || crate::pages::label("settings.page", page.label),
         LayoutStyle::new().flex_grow(1.0),
-        move || theme.text_style(FontRole::Body, label_ink()),
+        move |inherited| theme.text_over(inherited, FontRole::Body, label_ink()),
     )?;
     let glyph = icon_view(
         move || page.icon.to_string(),

@@ -104,10 +104,10 @@ fn placeholder_chip(
         glyph
     } else {
         let id = id.to_string();
-        let label = Text::new(
+        let label = Text::declaring(
             move || id.clone(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Body, ink),
+            move |inherited| theme.text_over(inherited, FontRole::Body, ink),
         )?;
         Box::new(Container::new(
             LayoutStyle::new()
@@ -144,10 +144,10 @@ fn placeholder_box(
     let ink = ink(theme);
     let glyph = icon_view(|| GLYPH.to_string(), move || ink, 18.0)?;
     let text = |line: String, role: FontRole| {
-        Text::new(
+        Text::declaring(
             move || line.clone(),
             LayoutStyle::new(),
-            move || theme.text_style(role, ink),
+            move |inherited| theme.text_over(inherited, role, ink),
         )
         .map(box_item)
     };

@@ -19,7 +19,7 @@ mod tests {
     use crate::modes::palette::{self, Line, Pick};
     use crate::modes::widgets;
     use crate::rig::{
-        NONE, Page, Rig, SCREEN, cell_group, centre, close_within, draw, enter, face, frame,
+        NONE, Owner, Page, Rig, SCREEN, cell_group, centre, close_within, draw, enter, face, frame,
         rig_with, stored, tap, undoes_to, undraw, widget,
     };
     use crate::session::{self, Selection};
@@ -70,23 +70,11 @@ mod tests {
         module("workspaces", "Workspaces", Category::Windows, true, &[]),
     ];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        Owner::installing(PROBES).tearing_down(|| {
             undraw();
             palette::unpick();
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     /// The desktop grid holding a row, a grid and a free container, and one loose weather widget; nothing else on the desktop.
@@ -254,7 +242,7 @@ mod tests {
     #[test]
     fn each_mode_lists_what_its_layer_takes_with_the_sizes_each_module_draws() {
         let _rig = rig_with("palette-lines", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         assert_eq!(
             names(palette::lines(LayerKind::Desktop, "")),
             [
@@ -290,7 +278,7 @@ mod tests {
     #[test]
     fn an_entry_dropped_between_two_chips_of_a_bar_is_put_there_as_a_chip() {
         let rig = rig_with("palette-bar", two_chips_at_the_start);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         let before = stored(&rig);
@@ -352,7 +340,7 @@ mod tests {
     #[test]
     fn an_entry_picked_in_the_top_mode_is_put_where_the_bar_is_pressed() {
         let rig = rig_with("palette-bar-press", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         let before = stored(&rig);
@@ -381,7 +369,7 @@ mod tests {
     #[test]
     fn an_entry_dropped_into_an_open_panel_takes_the_cells_under_it() {
         let rig = rig_with("palette-panel", clock_panel);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         let pitch = AreaKind::CELL + AreaKind::GAP;
@@ -433,7 +421,7 @@ mod tests {
     #[test]
     fn the_size_chosen_on_an_entry_is_the_one_put() {
         let rig = rig_with("palette-size", three_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let mut page = palette_page("clock");
@@ -486,7 +474,7 @@ mod tests {
     #[test]
     fn an_entry_dropped_into_a_container_joins_it_at_the_slot_under_the_pointer() {
         let rig = rig_with("palette-into", three_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let before = stored(&rig);
 
@@ -536,7 +524,7 @@ mod tests {
     #[test]
     fn an_entry_dropped_on_a_loose_widgets_middle_makes_a_smart_stack() {
         let rig = rig_with("palette-stack", three_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let before = stored(&rig);
         let geometry = widgets::grids(SCREEN, LayerKind::Desktop)[0].0.clone();
@@ -575,7 +563,7 @@ mod tests {
     #[test]
     fn the_keys_put_the_first_match_at_the_size_stepped_to() {
         let rig = rig_with("palette-keys", three_containers);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let before = stored(&rig);
         assert!(tap(Key::Char('a'), NONE));
@@ -640,7 +628,7 @@ mod tests {
     #[test]
     fn the_overlay_without_a_grid_has_no_palette() {
         let _rig = rig_with("palette-overlay-none", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         assert_eq!(
             palette::open().map_err(|why| why.to_string()),
@@ -652,7 +640,7 @@ mod tests {
     #[test]
     fn the_overlay_has_the_palette_once_it_has_a_grid() {
         let rig = rig_with("palette-overlay", overlay_grid);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         let stacks = |rig: &Rig| {
             stored(rig).outputs[0]
@@ -675,7 +663,7 @@ mod tests {
     #[test]
     fn a_chip_carried_off_every_bar_says_so_at_the_pointer() {
         let _rig = rig_with("palette-taken-away", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         let clock = rects::instance(Some(SCREEN), &InstanceId::new("clock"))
@@ -705,7 +693,7 @@ mod tests {
     #[test]
     fn escape_while_an_entry_is_carried_puts_nothing_on_the_bar() {
         let rig = rig_with("palette-escape", two_chips_at_the_start);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         let before = stored(&rig);

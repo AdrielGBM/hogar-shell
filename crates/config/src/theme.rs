@@ -50,7 +50,7 @@ pub struct NordTheme {
     pub icon_size: f32,
     /// Stroke width (SVG userspace units) forced on stroke-based icon glyphs, e.g. `1.5` to thin Lucide's default `2`. `None` keeps each glyph's own stroke. `[theme] icon_stroke` overrides it.
     pub icon_stroke: Option<f32>,
-    /// Per-role size/weight/italic overrides from `[theme.fonts]`, applied by [`text_style`](Self::text_style).
+    /// Per-role size/weight/italic overrides from `[theme.fonts]`, applied by [`text_over`](Self::text_over).
     pub fonts: FontsConfig,
     pub base: Color,
     pub surface: Color,
@@ -740,22 +740,28 @@ impl NordTheme {
         self.fonts.spec(role).size_for(derived)
     }
 
-    /// A [`TextStyle`] carrying everything `[theme.fonts.<role>]` has to say — size, weight and slant.
+    /// The role's text over `inherited`, the style the tree above a text resolves to and what `Text::declaring` hands its amendment: the role sets size, ink, weight and slant, and the tree everything else — the family its surface is set in above all.
     ///
-    /// The one way to start a text style, so a per-role override reaches every label instead of only the ones that remembered to ask. A call site that chains `.with_font_weight(…)` afterwards still wins, which is what keeps a deliberately bold heading bold when the body weight is lowered: that is emphasis relative to the role, not the role itself.
-    pub fn text_style(&self, role: FontRole, paint: impl Into<telar::Paint>) -> TextStyle {
-        self.text_style_at(role, paint, self.font(role))
+    /// The one way to style a text, so a per-role override reaches every label instead of only the ones that remembered to ask. A call site that chains `.with_font_weight(…)` afterwards still wins, which is what keeps a deliberately bold heading bold when the body weight is lowered: that is emphasis relative to the role, not the role itself.
+    pub fn text_over(
+        &self,
+        inherited: TextStyle,
+        role: FontRole,
+        paint: impl Into<telar::Paint>,
+    ) -> TextStyle {
+        self.text_over_at(inherited, role, paint, self.font(role))
     }
 
-    /// [`text_style`](Self::text_style) at a size the caller decides: the role still supplies weight and slant, but not the size — a clock face scales with the surface it is drawn on, not with the body font.
-    pub fn text_style_at(
+    /// [`text_over`](Self::text_over) at a size the caller decides: the role still supplies weight and slant, but not the size — a clock face scales with the surface it is drawn on, not with the body font.
+    pub fn text_over_at(
         &self,
+        inherited: TextStyle,
         role: FontRole,
         paint: impl Into<telar::Paint>,
         size: f32,
     ) -> TextStyle {
         let spec = self.fonts.spec(role);
-        let mut style = TextStyle::new(size, paint);
+        let mut style = inherited.with_font_size(size).with_color(paint);
         if let Some(weight) = spec.weight {
             style = style.with_font_weight(
                 weight.clamp(*FONT_WEIGHT_RANGE.start(), *FONT_WEIGHT_RANGE.end()),

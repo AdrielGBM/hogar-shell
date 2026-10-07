@@ -666,14 +666,28 @@ pub fn rebuild_all(content: &Fingerprint, reload: Reload) {
     for entry in entries.iter().filter(|entry| entry.is_open()) {
         let needs = entry.stamp.borrow().needs(reload, content);
         entry.stamp.borrow_mut().record(content.clone());
-        if !needs {
-            continue;
+        if needs {
+            rebuild(entry);
         }
-        entry.rebuilt.set(entry.rebuilt.get() + 1);
-        let builds = *entry.builds.borrow();
-        if let Some(builds) = builds.filter(RwSignal::is_alive) {
-            builds.update(|n| *n = n.wrapping_add(1));
-        }
+    }
+}
+
+/// Builds every open transient again for a look that changed under the same config — the desktop's reduced motion, a derived palette — except one with a control inside it holding the focus, which is what the user is typing into or dragging: it keeps its tree, and takes the new look the next time it builds.
+pub fn restyle_all() {
+    let entries: Vec<Rc<Entry>> = REGISTRY.with(|registry| registry.borrow().entries.clone());
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.is_open() && !entry.holds_focus())
+    {
+        rebuild(entry);
+    }
+}
+
+fn rebuild(entry: &Entry) {
+    entry.rebuilt.set(entry.rebuilt.get() + 1);
+    let builds = *entry.builds.borrow();
+    if let Some(builds) = builds.filter(RwSignal::is_alive) {
+        builds.update(|n| *n = n.wrapping_add(1));
     }
 }
 
@@ -940,8 +954,9 @@ fn transition(motion: Motion, config: &Config) -> Transition {
             telar::motion::Easing::Linear,
         )),
         Motion::Fade => Transition::fade(tween),
-        Motion::Slide(_) if config.animation.is_reduced() => Transition::fade(tween),
-        Motion::Slide(edge) => Transition::slide(slide_from(edge), 24.0, tween),
+        Motion::Slide(edge) => config
+            .animation
+            .slide_or_fade(slide_from(edge), 24.0, tween),
     }
 }
 
@@ -1685,32 +1700,70 @@ mod tests {
         ]
     }
 
+    fn focusable_in(entry: Rc<Entry>) -> Contained {
+        let control = StyledContainer::new(
+            LayoutStyle::new().width(40.0).height(20.0),
+            |_| RectStyle::default(),
+            Vec::new(),
+        )
+        .expect("a control")
+        .control(telar::Role::Button)
+        .on_press(|| {});
+        let page = Container::new(
+            LayoutStyle::new().width(200.0).height(100.0),
+            vec![Box::new(control)],
+        )
+        .expect("a page");
+        let node = page.layout_node();
+        telar::compute_layout(
+            node,
+            telar::AvailableSpace::Definite(200.0),
+            telar::AvailableSpace::Definite(100.0),
+        )
+        .expect("it lays out");
+        Contained::new(Box::new(page), entry, || None)
+    }
+
+    #[test]
+    fn a_restyle_builds_every_open_transient_again_but_the_one_holding_the_focus() {
+        telar::reset_runtime();
+        close_all();
+        let scope = telar::owner_scope();
+        open(spec("typing", Slot::Free).keyboard(KeyboardMode::Exclusive));
+        open(spec("idle", Slot::Free));
+        let mut typing = focusable_in(entry_of("typing"));
+        for event in pressed_at((10.0, 10.0)) {
+            typing.on_event(&event);
+        }
+        assert!(focus::current().is_some(), "the press focused the control");
+
+        restyle_all();
+        assert_eq!(
+            rebuilds("idle"),
+            Some(1),
+            "an idle transient takes the new look"
+        );
+        assert_eq!(
+            rebuilds("typing"),
+            Some(0),
+            "the one being typed into keeps its tree, and the caret with it"
+        );
+
+        focus::clear();
+        restyle_all();
+        assert_eq!(
+            rebuilds("typing"),
+            Some(1),
+            "once nothing in it holds the focus, it takes the look too"
+        );
+
+        drop(typing);
+        close_all();
+        telar::dispose_owner(scope.id());
+    }
+
     #[test]
     fn one_on_demand_takes_the_keyboard_only_while_a_control_inside_it_holds_its_windows_focus() {
-        fn focusable_in(entry: Rc<Entry>) -> Contained {
-            let control = StyledContainer::new(
-                LayoutStyle::new().width(40.0).height(20.0),
-                |_| RectStyle::default(),
-                Vec::new(),
-            )
-            .expect("a control")
-            .control(telar::Role::Button)
-            .on_press(|| {});
-            let page = Container::new(
-                LayoutStyle::new().width(200.0).height(100.0),
-                vec![Box::new(control)],
-            )
-            .expect("a page");
-            let node = page.layout_node();
-            telar::compute_layout(
-                node,
-                telar::AvailableSpace::Definite(200.0),
-                telar::AvailableSpace::Definite(100.0),
-            )
-            .expect("it lays out");
-            Contained::new(Box::new(page), entry, || None)
-        }
-
         telar::reset_runtime();
         close_all();
         let scope = telar::owner_scope();

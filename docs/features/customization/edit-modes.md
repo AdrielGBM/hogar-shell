@@ -99,7 +99,8 @@ edit. `lock` is refused while the session is locked.
   No tool takes `h`, `j`, `k`, `l`, `g` or `G`, which `[keynav] vim` keeps for moving the selection.
   A focused control — a handle, a quick bar button — answers its own keys first, and the mode's keys get what it leaves.
 - **The command palette.** Ctrl+K opens one searchable list of everything the mode can do: every key of the mode's
-  key list with its chord — a key that goes four ways, or both ends, is one entry per way — every widget, container
+  key list that can run from a list (not the held Peek key, nor the palette's own) with its chord — a key that goes
+  four ways, or both ends, is one entry per way — every widget, container
   and komponent the add palette offers, the strip's actions (Theme…), each step of the history to jump to, the other
   modes and Done. Typing narrows it — the letters in order, word starts counting most, or a chord such as
   `Shift+←` — the arrows walk it, and Enter or a click runs the entry against the selection, as one undo entry; Esc

@@ -66,9 +66,11 @@ Placed in a `kind = "dock"` area, the strip becomes a dock, on whichever edge th
 | Drag a pin along the dock | moves the pin; the order is written to `[dock] pinned` |
 | Drag any other entry | moves the application, remembered as the taskbar remembers it |
 
-A pin is the desktop entry's id (`firefox`, `org.gnome.Nautilus`), matched to windows by that id, by the
-entry's `StartupWMClass`, or by the last part of a reverse-DNS name, without regard to case. Without the
-compositor listing its windows, the pins still show and launch.
+A pin is the desktop entry's id (`firefox`, `org.gnome.Nautilus`), found among the desktop entries and matched to
+windows without regard to case: by that id, by the entry's `StartupWMClass`, or by a bare name against the last
+part of a reverse-DNS one of at least three parts (`firefox` and `org.mozilla.firefox`, either way round). Two
+reverse-DNS ids are never matched by their last parts alone. Without the compositor listing its windows, the pins
+still show and launch.
 
 ## Configuring
 

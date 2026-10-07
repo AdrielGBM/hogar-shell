@@ -468,9 +468,9 @@ pub fn mark_painted() {
     PAINTED.with(|painted| *painted.borrow_mut() = Some(current()));
 }
 
-/// The driver-thread consumer for [`subscribe`]: rebuilds every surface when the palette actually moved.
+/// The driver-thread consumer for [`subscribe`]: draws every surface again when the palette actually moved.
 ///
-/// A reload is how a theme reaches the shell — the same path a `[theme]` edit takes — so a dynamic scheme needs no second mechanism. What is left for this to catch is the case nothing else can: a palette that finishes being extracted seconds after the surfaces were built, on a thread of its own.
+/// What is left for this to catch is the case nothing else can: a palette that finishes being extracted seconds after the surfaces were built, on a thread of its own. The files did not change, so this is a restyle from the running config rather than a reload — no file is read, no "config reloaded" toast says otherwise, and a panel being typed into is left as it is.
 pub fn on_change(scheme: Option<Scheme>) {
     let changed = PAINTED.with(|painted| {
         let mut painted = painted.borrow_mut();
@@ -479,7 +479,7 @@ pub fn on_change(scheme: Option<Scheme>) {
         changed
     });
     if changed {
-        crate::live::request_reload();
+        crate::live::request_restyle();
     }
 }
 
@@ -570,7 +570,7 @@ fn source_image(config: &Config) -> Option<PathBuf> {
 
 /// Re-derives the scheme for `config`'s current wallpaper off the UI thread. The one entry point for "the wallpaper changed" and "the mode changed" alike, so the two cannot drift into different behaviours.
 ///
-/// `settle` is how long to wait before publishing. Landing a palette *is* a reload, and a reload rebuilds every surface's content — including the wallpaper surface that is halfway through cross-fading to the very image the palette came from, whose fade lives in the tree being replaced. Waiting out the transition means the colours arrive once the picture has, which is both what the eye expects and the only way the fade survives. Zero everywhere a transition is not running. Re-derives the palette after *the shell itself* changed the wallpaper, reading the running config for both the dynamic check and the transition to wait out.
+/// `settle` is how long to wait before publishing. Landing a palette draws every surface again — including the wallpaper surface that is halfway through cross-fading to the very image the palette came from, whose fade lives in the tree being replaced. Waiting out the transition means the colours arrive once the picture has, which is both what the eye expects and the only way the fade survives. Zero everywhere a transition is not running. Re-derives the palette after *the shell itself* changed the wallpaper, reading the running config for both the dynamic check and the transition to wait out.
 ///
 /// Every path that sets a wallpaper has to call this, and there is more than one: the IPC commands, and the launcher's `@` grid — which shipped without it, so a dynamic theme kept the old picture's colours until the next reload. One helper rather than the two lines at each call site is what stops the third one forgetting too.
 pub fn refresh_current() {
@@ -1120,6 +1120,35 @@ mod tests {
             variant: Variant::Vibrant,
             colors: palette(seed, Mode::Dark, Variant::Vibrant),
         }
+    }
+
+    /// **A palette landing draws the shell again from the running config, and never reloads it.** The files did not change, so reading them again — and toasting "config reloaded" about it — would be a reload about nothing, and would rebuild a settings field mid-edit.
+    #[test]
+    fn a_palette_landing_restyles_without_reloading() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let (reloads, restyles) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+        crate::live::set_reload_hook({
+            let reloads = Rc::clone(&reloads);
+            move || reloads.set(reloads.get() + 1)
+        });
+        crate::live::set_restyle_hook({
+            let restyles = Rc::clone(&restyles);
+            move || restyles.set(restyles.get() + 1)
+        });
+
+        let first = seeded(Color::from_rgb_u8(40, 90, 200));
+        on_change(Some(first.clone()));
+        on_change(Some(first));
+        assert_eq!(
+            restyles.get(),
+            0,
+            "the palette already painted is no change"
+        );
+
+        on_change(Some(seeded(Color::from_rgb_u8(200, 60, 40))));
+        assert_eq!((reloads.get(), restyles.get()), (0, 1));
     }
 
     static WATCHED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();

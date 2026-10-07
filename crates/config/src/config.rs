@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use telar::Color;
 use toml_edit::{DocumentMut, Item};
 
+use crate::fingerprint::Fingerprint;
 use crate::load::{
     GLOBAL_ONLY_SECTIONS, LoadError, SaveError, keep_subtables_with_their_parent, merge_into,
     monitor_config_path, update_table,
@@ -398,7 +399,7 @@ impl Config {
         paths::config_dir().join("config.toml")
     }
 
-    /// Persists a single `[name]` section back to `config.toml`, updating that table key by key (changed keys are rewritten, keys the value no longer writes are removed, new ones are added) while preserving every other section, key order, and comment in the file, including those inside the table (format-preserving via `toml_edit`). `value` is a section struct such as [`ThemeConfig`]. Creates the file and its parent directory if missing. The running shell's config watcher then hot-reloads the change, so a save applies live.
+    /// Persists a single `[name]` section back to `config.toml`, updating that table key by key (changed keys are rewritten, keys the value no longer writes are removed, new ones are added) while preserving every other section, key order, and comment in the file, including those inside the table (format-preserving via `toml_edit`). `value` is a section struct such as [`ThemeConfig`]. Creates the file and its parent directory if missing. The running shell's config watcher then hot-reloads the change, so a save applies live — quietly, as the shell's own write ([`crate::fingerprint::wrote`]) rather than an edit to announce.
     ///
     /// The file itself is replaced by [`util::writer`], which stages a whole copy and renames it into place: the user's hand-written config is the one file in the shell that cannot be regenerated, and a truncating write that died half way through would take their comments and every section this function promises to preserve with it. The wait for the writer is what keeps the `Result` meaningful — a caller that reports a failed save has to be told about one, and the settings panel's forms do.
     ///
@@ -434,6 +435,7 @@ impl Config {
         keep_subtables_with_their_parent(&mut doc);
         let written = doc.to_string();
         writer::write(path, written.clone().into_bytes()).map_err(SaveError::Io)?;
+        crate::fingerprint::wrote(Fingerprint::with_config(path, Some(&written)));
         Ok(Saved { read, written })
     }
 }

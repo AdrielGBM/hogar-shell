@@ -1,65 +1,30 @@
 #[cfg(test)]
 mod tests {
-    use telar::{Key, ModifiersState, NamedKey};
+    use telar::{Key, NamedKey};
 
     use layout::{AreaId, GroupId, GroupKind, InstanceId, LayerKind, Layout};
     use surfaces::rects::Node;
     use surfaces::transient;
-    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::descriptor::ModuleDescriptor;
     use ui::host::WidgetSize;
 
     use crate::command_palette::{self, Entry};
     use crate::keys;
     use crate::mode;
     use crate::rig::{
-        NONE, Page, Rig, SCREEN, cell_group, enter, face, rig_with, stored, tap, undoes_to, widget,
+        CTRL, NONE, Owner, Page, Rig, SCREEN, cell_group, enter, module, rig_with, stored, tap,
+        undoes_to, widget,
     };
     use crate::session::{self, Selection};
 
-    const fn module(id: &'static str, name: &'static str) -> ModuleDescriptor {
-        ModuleDescriptor {
-            id,
-            name,
-            icon: "circle",
-            category: Category::Time,
-            options: &[],
-            representations: Representations {
-                chip: Some(ChipDef::new(face, Input::ReadOnly)),
-                widget: Some(WidgetDef {
-                    sizes: &WidgetSize::ALL,
-                    build: face,
-                    input: Input::ReadOnly,
-                }),
-                ..Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }
+    static PROBES: &[ModuleDescriptor] = &[
+        module("clock", "Clock", &WidgetSize::ALL),
+        module("weather", "Weather", &WidgetSize::ALL),
+    ];
+
+    fn owner() -> Owner {
+        Owner::installing(PROBES)
     }
-
-    static PROBES: &[ModuleDescriptor] = &[module("clock", "Clock"), module("weather", "Weather")];
-
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
-    }
-
-    const CTRL: ModifiersState = ModifiersState {
-        is_ctrl: true,
-        ..NONE
-    };
 
     /// The desktop grid alone, holding one loose weather widget.
     fn one_widget(layout: &mut Layout) {
@@ -102,6 +67,14 @@ mod tests {
         Page::of(command_palette::tree(SCREEN, layer))
     }
 
+    fn held_or_own(label: &str) -> bool {
+        [
+            telar::t!("editor.keys.op.peek"),
+            telar::t!("editor.keys.op.command-palette"),
+        ]
+        .contains(&label.to_string())
+    }
+
     fn typed(page: &mut Page, text: &str) {
         for ch in text.chars() {
             page.key(Key::Char(ch));
@@ -112,13 +85,16 @@ mod tests {
     #[test]
     fn every_line_of_the_key_list_is_an_entry() {
         let _rig = rig_with("command-every-key", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         for layer in LayerKind::ALL {
             let _host = enter(layer);
             let commands = command_palette::commands(layer);
             let lines = keys::help_rows(layer);
             assert!(!lines.is_empty());
             for line in lines {
+                if held_or_own(&line.what) {
+                    continue;
+                }
                 assert!(
                     !named(&commands, &line.what).is_empty(),
                     "{layer}: {:?} is not an entry",
@@ -134,10 +110,28 @@ mod tests {
         }
     }
 
+    /// The held Peek key and the key that opens the palette are not entries of it, in any mode.
+    #[test]
+    fn the_held_and_its_own_keys_are_not_entries() {
+        let _rig = rig_with("command-not-offered", |_| {});
+        let _owner = owner();
+        for layer in LayerKind::ALL {
+            let _host = enter(layer);
+            let commands = command_palette::commands(layer);
+            for label in [
+                telar::t!("editor.keys.op.peek"),
+                telar::t!("editor.keys.op.command-palette"),
+            ] {
+                assert!(named(&commands, &label).is_empty(), "{layer}: {label}");
+            }
+            mode::leave();
+        }
+    }
+
     /// Its chords are its own in every mode, with the vim keys on or off: under vim Ctrl+K stays what makes the selection taller.
     #[test]
     fn its_chords_take_no_other_rows_key() {
-        let _owner = Owner::new();
+        let _owner = owner();
         let _rig = rig_with("command-unshadowed", |_| {});
         for vim in [false, true] {
             for layer in LayerKind::ALL {
@@ -175,7 +169,7 @@ mod tests {
     #[test]
     fn esc_closes_it_and_hands_the_keyboard_back() {
         let _rig = rig_with("command-esc", one_widget);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::of(weather())));
         let _page = opened(LayerKind::Desktop);
@@ -197,7 +191,7 @@ mod tests {
     #[test]
     fn enter_runs_the_entry_against_the_selection_as_one_undo() {
         let rig = rig_with("command-enter", one_widget);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::of(weather())));
         let before = stored(&rig);
@@ -220,7 +214,7 @@ mod tests {
     #[test]
     fn a_step_chosen_by_its_chord_is_one_undo() {
         let rig = rig_with("command-step", one_widget);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::of(weather())));
         let before = stored(&rig);
@@ -236,7 +230,7 @@ mod tests {
     #[test]
     fn the_arrows_walk_the_entries() {
         let rig = rig_with("command-arrows", one_widget);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::of(weather())));
         let found =
@@ -260,7 +254,7 @@ mod tests {
     #[test]
     fn a_press_runs_an_entry_and_a_refused_one_stays_put() {
         let rig = rig_with("command-press", one_widget);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         session::clear_selection();
         let commands = command_palette::commands(LayerKind::Desktop);
@@ -302,7 +296,7 @@ mod tests {
     #[test]
     fn the_strip_the_history_and_the_other_modes_are_entries() {
         let _rig = rig_with("command-strip", one_widget);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Desktop);
         assert!(session::select(Selection::of(weather())));
         crate::duplicate::duplicate(&session::selected()).expect("a copy");

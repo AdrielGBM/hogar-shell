@@ -19,8 +19,33 @@ pub enum AppIcon {
 }
 
 thread_local! {
-    /// Memoizes each reference's resolution per surface thread and icon theme, so a snapshot-driven card rebuild doesn't re-walk the theme directories (or re-decode the file) on every render, and a theme picked since resolves afresh.
-    static CACHE: RefCell<HashMap<(String, String), Option<AppIcon>>> = RefCell::new(HashMap::new());
+    /// Each reference's resolution per surface thread, so a snapshot-driven card rebuild doesn't re-walk the theme directories (or re-decode the file) on every render.
+    static CACHE: RefCell<Generation> = RefCell::new(Generation::default());
+}
+
+/// What the icon theme last asked for resolved each reference to. Only one theme's answers are kept: a theme picked since resolves afresh, and the old one's go rather than piling up.
+#[derive(Default)]
+struct Generation {
+    theme: String,
+    icons: HashMap<String, Option<AppIcon>>,
+}
+
+impl Generation {
+    fn icon(
+        &mut self,
+        theme: &str,
+        reference: &str,
+        resolve: impl FnOnce() -> Option<AppIcon>,
+    ) -> Option<AppIcon> {
+        if self.theme != theme {
+            self.theme = theme.to_string();
+            self.icons.clear();
+        }
+        self.icons
+            .entry(reference.to_string())
+            .or_insert_with(resolve)
+            .clone()
+    }
 }
 
 /// Resolves a freedesktop notification icon `reference` — an absolute path, a `file://` URI, or an icon name per the [Icon Theme Specification](https://specifications.freedesktop.org/icon-theme-spec/latest/) — to a loaded icon, or `None` when it is empty, unresolvable, or of an undecodable format. Memoized per thread.
@@ -31,13 +56,11 @@ pub fn resolve_app_icon(reference: &str) -> Option<AppIcon> {
     let theme = Chrome::current()
         .map(|chrome| chrome.config.icons.app_icon_theme.clone())
         .unwrap_or_default();
-    let key = (theme, reference.to_string());
-    if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
-        return hit;
-    }
-    let icon = locate(reference, &key.0).and_then(|path| load(&path));
-    CACHE.with(|c| c.borrow_mut().insert(key, icon.clone()));
-    icon
+    CACHE.with(|cache| {
+        cache.borrow_mut().icon(&theme, reference, || {
+            locate(reference, &theme).and_then(|path| load(&path))
+        })
+    })
 }
 
 /// A filesystem path for `reference`: the file itself when it is a path or `file://` URI, otherwise the theme lookup for an icon name.
@@ -529,5 +552,36 @@ mod tests {
         );
         assert!(locate("/no/such/icon.png", "").is_none());
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_cache_keeps_only_the_theme_last_asked_for() {
+        let mut generation = Generation::default();
+        let resolved = std::cell::Cell::new(0);
+        let resolve = || {
+            resolved.set(resolved.get() + 1);
+            None
+        };
+        generation.icon("Papirus", "firefox", resolve);
+        generation.icon("Papirus", "gimp", resolve);
+        generation.icon("Papirus", "firefox", resolve);
+        assert_eq!(
+            resolved.get(),
+            2,
+            "a reference asked for again is answered from the cache"
+        );
+        assert_eq!(generation.icons.len(), 2);
+
+        generation.icon("Adwaita", "firefox", resolve);
+        assert_eq!(resolved.get(), 3, "another theme resolves afresh");
+        assert_eq!(
+            generation.icons.len(),
+            1,
+            "and the theme before it is forgotten"
+        );
+
+        generation.icon("Papirus", "gimp", resolve);
+        assert_eq!(resolved.get(), 4);
+        assert_eq!(generation.icons.len(), 1);
     }
 }

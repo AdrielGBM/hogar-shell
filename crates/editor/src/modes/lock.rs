@@ -372,15 +372,15 @@ pub(crate) fn contrast_row(draft: &AreaDraft) -> Built {
         }
     };
     let reading = style.clone();
-    Ok(box_item(Text::new(
+    Ok(box_item(Text::declaring(
         move || contrast_of(&reading(), &judged),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             let tint = match readable(&style(), &judged) {
                 true => theme.subtle,
                 false => theme.warning,
             };
-            theme.text_style(FontRole::Caption, tint)
+            theme.text_over(inherited, FontRole::Caption, tint)
         },
     )?))
 }
@@ -502,12 +502,12 @@ pub(crate) fn privacy_card(output: &str) -> Built {
             let _ = transaction.preview(|now| *now = Some(picked));
         }
     });
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("editor.lock.privacy_title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?;

@@ -7,7 +7,8 @@ use ui::scale::paint;
 use telar::{
     AlignItems, Color, Container, Declared, Image, ImageData, JustifyContent, LayoutError,
     LayoutItem, LayoutStyle, Memo, ObjectFit, Raster, ReactiveList, ReadSignal, RectStyle,
-    RwSignal, SizeDimension, Span, StyledContainer, Text, box_item, memo, signal, use_theme,
+    RwSignal, SizeDimension, Span, StyledContainer, Text, TextRun, box_item, memo, signal,
+    use_theme,
 };
 
 use config::theme::{FontRole, NordTheme};
@@ -23,8 +24,8 @@ use ui::scale::space;
 /// `link_color`), `<br>` a newline, and an `<img>`'s `alt` text. Unknown tags are dropped, keeping their
 /// inner text, and entities are decoded per segment.
 ///
-/// One string rather than a list of runs, which is what lets the body be *clamped*: an ellipsis has to cut
-/// across the text, and runs that each owned their slice could not be cut across. A stretch that says
+/// One paragraph rather than a text per run, which is what lets the body be *clamped*: an ellipsis has to cut
+/// across the text, and texts that each owned their slice could not be cut across. A stretch that says
 /// nothing about itself costs nothing — it is simply not a span.
 fn body_runs(markup: &str, text_color: Color, link_color: Color) -> (String, Vec<Span>) {
     let mut text = String::new();
@@ -94,6 +95,29 @@ fn body_runs(markup: &str, text_color: Color, link_color: Color) -> (String, Vec
         link_color,
     );
     (text, spans)
+}
+
+/// `body` as the runs a paragraph is built from: one per span, and one for each stretch between them that says nothing of its own.
+fn text_runs(body: &str, spans: &[Span]) -> Vec<TextRun> {
+    let plain = |stretch: &str| {
+        let stretch = stretch.to_string();
+        TextRun::new(move || stretch.clone())
+    };
+    let mut runs = Vec::with_capacity(spans.len() * 2 + 1);
+    let mut at = 0;
+    for span in spans {
+        let (start, end) = (span.range.start as usize, span.range.end as usize);
+        if start > at {
+            runs.push(plain(&body[at..start]));
+        }
+        let over = span.over.clone();
+        runs.push(plain(&body[start..end]).declaring(move || over.clone()));
+        at = end;
+    }
+    if at < body.len() {
+        runs.push(plain(&body[at..]));
+    }
+    runs
 }
 
 /// Appends the accumulated segment to the body, decoding entities, and records a span for it when it says
@@ -331,12 +355,12 @@ fn notification_card(
 
     let leading = leading_visual(notification, accent)?;
 
-    let summary_text = Text::new(
+    let summary_text = Text::declaring(
         move || summary.clone(),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
                 .with_clamp(1, true)
         },
@@ -346,12 +370,11 @@ fn notification_card(
     if !body.0.is_empty() {
         let body_lines = style.body_lines;
         let (body_text_content, body_spans) = body;
-        let body_text = Text::spanned(
-            move || body_text_content.clone(),
-            move || body_spans.clone(),
+        let body_text = Text::runs(
+            text_runs(&body_text_content, &body_spans),
             LayoutStyle::new(),
-            move || {
-                let base = theme.text_style(FontRole::Caption, theme.muted);
+            move |inherited| {
+                let base = theme.text_over(inherited, FontRole::Caption, theme.muted);
                 match body_lines {
                     Some(lines) => base.with_clamp(lines, true),
                     None => base,
@@ -501,10 +524,10 @@ fn action_pill(
     label: String,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(
+    let text = Text::declaring(
         move || label.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.text),
     )?;
     let pill = StyledContainer::new(
         LayoutStyle::new()
@@ -566,12 +589,12 @@ pub fn bell_module(host: &ui::host::Host) -> Result<Box<dyn LayoutItem>, LayoutE
         move || fg,
         host.live_icon_size(),
     )?;
-    let badge = Text::new(
+    let badge = Text::declaring(
         move || badge_text(unread_read.get()),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, fg)
+                .text_over(inherited, FontRole::Caption, fg)
                 .with_font_weight(700)
         },
     )?;
@@ -633,12 +656,12 @@ fn panel_header(
     read: ReadSignal<SharedSnapshot>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("notifications.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -684,8 +707,8 @@ fn pill_button(
     on_press: impl Fn() + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(label, LayoutStyle::new(), move || {
-        theme.text_style(FontRole::Caption, theme.text)
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
+        theme.text_over(inherited, FontRole::Caption, theme.text)
     })?;
     let pill = StyledContainer::new(
         LayoutStyle::new()
@@ -862,18 +885,18 @@ fn group_header(
     } else {
         app.clone()
     };
-    let label = Text::new(
+    let label = Text::declaring(
         move || name.clone(),
         LayoutStyle::new().flex_grow(1.0),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, theme.muted)
+                .text_over(inherited, FontRole::Caption, theme.muted)
                 .with_font_weight(700)
                 .with_clamp(1, true)
         },
     )?;
     // A count of one is what a header without a badge already says.
-    let badge = Text::new(
+    let badge = Text::declaring(
         move || {
             if count > 1 {
                 count.to_string()
@@ -882,7 +905,7 @@ fn group_header(
             }
         },
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
     let mute_app = app.clone();
     let mute = icon_button(
@@ -930,8 +953,8 @@ fn expander_row(
             telar::t!("notifications.show_more", count = hidden.to_string())
         }
     };
-    let text = Text::new(label, LayoutStyle::new(), move || {
-        theme.text_style(FontRole::Caption, theme.accent)
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
+        theme.text_over(inherited, FontRole::Caption, theme.accent)
     })?;
     let row = StyledContainer::new(
         LayoutStyle::new()

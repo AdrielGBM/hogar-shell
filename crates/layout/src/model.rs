@@ -939,6 +939,17 @@ pub enum Fit {
     Tile,
 }
 
+impl Fit {
+    pub fn id(self) -> &'static str {
+        match self {
+            Fit::Cover => "cover",
+            Fit::Contain => "contain",
+            Fit::Stretch => "stretch",
+            Fit::Tile => "tile",
+        }
+    }
+}
+
 /// A point of a picture, as fractions of its width and height from its top left.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -954,14 +965,61 @@ impl Focus {
 
     /// Both fractions held between 0 and 1, the middle standing in for one that is not a number.
     pub fn clamped(self) -> Focus {
-        let held = |value: f32| match value.is_nan() {
-            true => 0.5,
-            false => value.clamp(0.0, 1.0),
-        };
         Focus {
-            x: held(self.x),
-            y: held(self.y),
+            x: RegionRange::FOCUS_X.hold(self.x),
+            y: RegionRange::FOCUS_Y.hold(self.y),
         }
+    }
+}
+
+/// What a wallpaper region's ranged value may be: from 0 to `most`, and `unset` where it is left out or not a number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RegionRange {
+    most: f32,
+    unset: f32,
+}
+
+impl RegionRange {
+    pub const FOCUS_X: Self = Self {
+        most: 1.0,
+        unset: Focus::MIDDLE.x,
+    };
+    pub const FOCUS_Y: Self = Self {
+        most: 1.0,
+        unset: Focus::MIDDLE.y,
+    };
+    pub const DIM: Self = Self {
+        most: 1.0,
+        unset: 0.0,
+    };
+    pub const BLUR: Self = Self {
+        most: AreaKind::MOST_BLUR,
+        unset: 0.0,
+    };
+    pub const PARALLAX: Self = Self {
+        most: AreaKind::MOST_PARALLAX,
+        unset: 0.0,
+    };
+
+    pub fn most(self) -> f32 {
+        self.most
+    }
+
+    pub fn holds(self, value: f32) -> bool {
+        (0.0..=self.most).contains(&value)
+    }
+
+    /// `value` as it is drawn.
+    pub fn hold(self, value: f32) -> f32 {
+        match value.is_nan() {
+            true => self.unset,
+            false => value.clamp(0.0, self.most),
+        }
+    }
+
+    /// [`Self::hold`] for a value that may be left out.
+    pub fn of(self, value: Option<f32>) -> f32 {
+        value.map_or(self.unset, |value| self.hold(value))
     }
 }
 

@@ -462,10 +462,10 @@ fn drag_marks(hint: Hint, screen: (f32, f32), theme: NordTheme) -> Built {
 /// A small plate saying `said`, edged in `edge`, its top left corner wherever `place` puts it given the size it is laid out at.
 fn pointer_tag(said: String, edge: Color, place: impl Fn(Rect) -> (f32, f32) + 'static) -> Built {
     let theme = use_theme::<NordTheme>();
-    let text = box_item(Text::new(
+    let text = box_item(Text::declaring(
         move || said.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.text),
     )?);
     Ok(Box::new(
         StyledContainer::new(

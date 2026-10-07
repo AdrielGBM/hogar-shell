@@ -3,7 +3,7 @@
 use chrono::NaiveDate;
 use telar::{
     AlignItems, Color, Container, JustifyContent, LayoutError, LayoutItem, LayoutStyle,
-    ReactiveList, RwSignal, SizeDimension, StyledContainer, Text, TextStyle, box_item, signal,
+    ReactiveList, RwSignal, SizeDimension, StyledContainer, Text, box_item, signal,
 };
 use ui::scale::{paint, space};
 
@@ -88,10 +88,10 @@ fn headline(
                     .gap(space::xs()),
                 vec![
                     unit_toggle(temperature, unit, theme)?,
-                    box_item(Text::new(
+                    box_item(Text::declaring(
                         move || condition.get(),
                         LayoutStyle::new(),
-                        move || theme.text_style(FontRole::Body, theme.subtle),
+                        move |inherited| theme.text_over(inherited, FontRole::Body, theme.subtle),
                     )?),
                 ],
             )?),
@@ -105,12 +105,12 @@ fn unit_toggle(
     unit: RwSignal<TemperatureUnit>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(
+    let text = Text::declaring(
         move || reading.get(),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Display, theme.text)
+                .text_over(inherited, FontRole::Display, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -202,21 +202,26 @@ fn forecast_row(
     let caption = theme.font(FontRole::Caption);
 
     let cells: Vec<Box<dyn LayoutItem>> = vec![
-        box_item(Text::new(
+        box_item(Text::declaring(
             move || label.clone(),
             LayoutStyle::new().width(40.0).flex_shrink(0.0),
-            move || TextStyle::new(caption, theme.text).with_font_weight(700),
+            move |inherited| {
+                inherited
+                    .with_font_size(caption)
+                    .with_color(theme.text)
+                    .with_font_weight(700)
+            },
         )?),
         icon,
-        box_item(Text::new(
+        box_item(Text::declaring(
             move || rain.clone(),
             LayoutStyle::new().flex_grow(1.0),
-            move || TextStyle::new(caption, theme.info),
+            move |inherited| inherited.with_font_size(caption).with_color(theme.info),
         )?),
-        box_item(Text::new(
+        box_item(Text::declaring(
             move || range.clone(),
             LayoutStyle::new().flex_shrink(0.0),
-            move || TextStyle::new(caption, theme.subtle),
+            move |inherited| inherited.with_font_size(caption).with_color(theme.subtle),
         )?),
     ];
 

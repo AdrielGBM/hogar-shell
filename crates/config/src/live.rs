@@ -16,6 +16,7 @@ thread_local! {
     static RUNNING: RefCell<HashMap<String, Arc<Config>>> = RefCell::new(HashMap::new());
     // How to rebuild the shell. Owned by the startup path, which is the only place that knows how to reconcile surfaces; everything else — the config watcher, a monitor hotplug, `hogar-shell shell reload` — asks here.
     static RELOAD: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    static RESTYLE: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
     // Which image a dynamic palette is derived from. Installed by the startup path because answering it means asking the compositor which screen is focused and the wallpaper service what it is showing — neither of which the config can see from here.
     static WALLPAPER_SOURCE: RefCell<Option<WallpaperSource>> = const { RefCell::new(None) };
 }
@@ -40,6 +41,26 @@ pub fn request_reload() {
             reload();
         }
     });
+}
+
+/// Registers how the shell draws itself again from the config it already runs. Set once by the startup path, beside [`set_reload_hook`].
+pub fn set_restyle_hook(restyle: impl Fn() + 'static) {
+    RESTYLE.with(|hook| *hook.borrow_mut() = Some(Box::new(restyle)));
+}
+
+/// Draws every surface again from the running config, without reading a file or saying anything: for what changes how the config looks on screen while the config itself stays as it is — the desktop's reduced-motion setting, a palette derived from a wallpaper. Before the hook is installed there is nothing drawn to restyle, and the first build reads the change itself.
+pub fn request_restyle() {
+    RESTYLE.with(|hook| {
+        if let Some(restyle) = hook.borrow().as_ref() {
+            restyle();
+        }
+    });
+}
+
+/// Whether the config the shell runs, or any screen's merge of it, answers `wanted`.
+pub fn any_running(wanted: impl Fn(&Config) -> bool) -> bool {
+    config().is_some_and(|config| wanted(&config))
+        || RUNNING.with(|running| running.borrow().values().any(|config| wanted(config)))
 }
 
 /// Registers how to find the image a dynamic palette derives from. Set once by the startup path.

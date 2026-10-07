@@ -646,12 +646,12 @@ fn search_field(
     query: telar::RwSignal<String>,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let input = Input::new(
+    let input = Input::declaring(
         query,
         LayoutStyle::new()
             .flex_grow(1.0)
             .height(theme.font(FontRole::Title) * 1.8),
-        move || theme.text_style(FontRole::Title, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Title, theme.text),
     )?
     .placeholder(telar::t!("launcher.placeholder"))
     // A launcher exists *because* someone wants to type: it opens on a keybind and the next keystroke is already its first search character. Without this the field has to be clicked into first, which is the one thing a launcher must never ask for.
@@ -935,19 +935,19 @@ fn tile(
     )?;
 
     let selected_label = is_selected.clone();
-    let label = Text::new(
+    let label = Text::declaring(
         move || name.clone(),
         LayoutStyle::new()
             .width(SizeDimension::Percent(1.0))
             .height(caption_height),
-        move || {
+        move |inherited| {
             let colour = if selected_label() {
                 theme.text
             } else {
                 theme.subtle
             };
             theme
-                .text_style(FontRole::Caption, colour)
+                .text_over(inherited, FontRole::Caption, colour)
                 .with_clamp(1, true)
         },
     )?;
@@ -1052,13 +1052,15 @@ fn row(
     let dangerous = entry.is_dangerous();
 
     let armed_title = is_armed.clone();
-    let title = Text::new(
+    let title = Text::declaring(
         move || name.clone(),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             // An armed row reads in the warning colour, so the state is visible and not only implied by the caption underneath it.
             let colour = if armed_title() { theme.red } else { theme.text };
-            theme.text_style(FontRole::Body, colour).with_clamp(1, true)
+            theme
+                .text_over(inherited, FontRole::Body, colour)
+                .with_clamp(1, true)
         },
     )?;
 
@@ -1066,7 +1068,7 @@ fn row(
     let armed_caption_style = is_armed.clone();
     let mut lines: Vec<Box<dyn LayoutItem>> = vec![box_item(title)];
     if !description.is_empty() || dangerous {
-        let subtitle = Text::new(
+        let subtitle = Text::declaring(
             move || {
                 if armed_caption() {
                     telar::t!("launcher.confirm")
@@ -1075,14 +1077,14 @@ fn row(
                 }
             },
             LayoutStyle::new(),
-            move || {
+            move |inherited| {
                 let colour = if armed_caption_style() {
                     theme.red
                 } else {
                     theme.muted
                 };
                 theme
-                    .text_style(FontRole::Caption, colour)
+                    .text_over(inherited, FontRole::Caption, colour)
                     .with_clamp(1, true)
             },
         )?;

@@ -41,3 +41,13 @@ list = "una lista, cada elemento {each}"
 map = "una tabla, cada valor {each}"
 table = "una tabla"
 unknown = "un `{declared}`"
+[preset]
+bad_name = "'{name}' no es un nombre de preajuste: usa minúsculas, dígitos, '-' y '_'"
+missing = "no hay ningún preajuste llamado '{name}'"
+unreadable = "no se pudo leer ni escribir el preajuste: {why}"
+broken = "no se pudo leer el preajuste: {why}"
+unwritable = "no se pudo escribir el preajuste: {why}"
+[save]
+unwritable_section = "no se pudo escribir la sección: {why}"
+unreadable_config = "no se pudo leer config.toml: {why}"
+unwritable_config = "no se pudo escribir config.toml: {why}"

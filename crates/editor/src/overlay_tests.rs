@@ -22,24 +22,14 @@ mod tests {
     use crate::keys::Direction;
     use crate::mode::{self};
     use crate::modes::overlay::{self, Placed, stacks_of};
-    use crate::rig::{Card, Rig, SCREEN, enter, pointer_at, press_at, release_at, rig_with, tap};
+    use crate::rig::{
+        Card, Owner, Rig, SCREEN, enter, pointer_at, press_at, release_at, rig_with, tap,
+    };
     use crate::session::{self, Edit, Selection};
     use crate::{context, popover};
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+    fn owner() -> Owner {
+        Owner::new()
     }
 
     fn screen() -> reconcile::Desktop {
@@ -142,7 +132,7 @@ mod tests {
     #[test]
     fn a_stack_is_made_pinned_moved_and_widened_each_as_one_undo_entry() {
         let rig = rig_with("overlay-stack", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         assert!(tap(Key::Char('N'), SHIFT), "Shift+N makes a stack");
         let made = stack("stack-2").expect("a new stack");
@@ -220,7 +210,7 @@ mod tests {
     #[test]
     fn a_critical_notification_goes_to_a_centred_stack_while_toasts_stay_in_the_corner() {
         let rig = rig_with("overlay-routes", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         overlay::add_stack().expect("a stack in the middle");
         popover::open_area(node("stack-2")).expect("its popover opens");
@@ -271,7 +261,7 @@ mod tests {
     #[test]
     fn volume_and_brightness_and_the_launcher_are_placed_at_a_stack() {
         let rig = rig_with("overlay-placement", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         overlay::add_stack().expect("a stack in the middle");
         assert!(matches!(
@@ -339,7 +329,7 @@ mod tests {
     #[test]
     fn a_stacks_popover_and_menu_offer_what_the_overlay_mode_places() {
         let rig = rig_with("overlay-popover", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         popover::open_area(node("stack")).expect("its popover opens");
         let shown = texts(&laid());
@@ -387,7 +377,7 @@ mod tests {
     #[test]
     fn a_dragged_stack_follows_its_first_card_and_is_kept_or_put_back_whole() {
         let rig = rig_with("overlay-drag", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         let id = AreaId::new("stack");
         let before = stack("stack").expect("the corner stack");
@@ -443,7 +433,7 @@ mod tests {
     #[test]
     fn a_stack_carried_by_the_pointer_previews_where_it_is_carried() {
         let _rig = rig_with("overlay-pointer-drag", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         let card = stack("stack").expect("the corner stack").ghost();
         let mode = mode::current().expect("the mode is up");
@@ -623,7 +613,7 @@ mod tests {
     #[test]
     fn sample_cards_are_routed_into_the_stacks_expire_and_go_with_the_mode() {
         let _rig = rig_with("overlay-try", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         overlay::add_stack().expect("a stack in the middle");
         popover::open_area(node("stack-2")).expect("its popover opens");
@@ -687,7 +677,7 @@ mod tests {
     #[test]
     fn a_refused_sample_does_not_hold_up_the_ones_after_it() {
         let _rig = rig_with("overlay-try-past-refusals", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         only_volume_everywhere();
         for refused in ["notification", "critical", "toast"] {
@@ -753,7 +743,7 @@ mod tests {
     #[test]
     fn a_sample_no_stack_takes_is_refused() {
         let _rig = rig_with("overlay-try-nowhere", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         only_volume_everywhere();
         assert!(overlay::try_card(overlay::Try::Toast).is_err());
@@ -764,7 +754,7 @@ mod tests {
     #[test]
     fn a_stacks_flow_row_makes_it_a_row_and_escape_takes_it_back() {
         let rig = rig_with("overlay-flow", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         let flow = || stack("stack").map(|placed| placed.flow);
         assert_eq!(flow(), Some(StackFlow::Column));
@@ -795,7 +785,7 @@ mod tests {
     #[test]
     fn a_stacks_try_cards_menu_sends_a_sample_and_leaves_the_layout_alone() {
         let rig = rig_with("overlay-try-menu", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Overlay);
         let before = crate::rig::stored(&rig);
         context::open(surfaces::menu::Asked {
@@ -852,7 +842,7 @@ mod tests {
             });
             layout.outputs.push(screen);
         });
-        let _owner = Owner::new();
+        let _owner = owner();
         let lane = telar::Rect::new(1500.0, 40.0, 420.0, 1000.0);
         surfaces::rects::track_spanning(node("stack"), vec![telar::signal(lane)]);
         let before = crate::rig::stored(&rig);

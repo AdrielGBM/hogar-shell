@@ -1,4 +1,4 @@
-//! A wallpaper region's picture as its popover sets it (T-7.5): picked from the library by a press, its focus set by rows and by a dot on the region the pointer drags and the arrows step, how it answers windows and workspaces, and all of it for one workspace alone.
+//! A wallpaper region's picture as its popover sets it: picked from the library by a press, its focus set by rows and by a dot on the region the pointer drags and the arrows step, how it answers windows and workspaces, and all of it for one workspace alone.
 
 #[cfg(test)]
 mod tests {
@@ -13,7 +13,7 @@ mod tests {
     use services::wallpaper::Entry;
     use surfaces::rects::Node;
 
-    use crate::modes::picture::{self, FOCUS_STEP};
+    use crate::popover::picture::{self, FOCUS_STEP};
     use crate::rig::{
         Card, NONE, SCREEN, Scope, enter, pointer_at, press_at, release_at, rig_on, rig_with,
         stored,

@@ -1,6 +1,7 @@
 //! Starting layouts the shell ships as bundles. Using one copies its layout into the store under a name of the user's own, as a file nobody imported: what a shipped template runs is trusted like the user's own.
 
 use std::path::Path;
+use std::sync::LazyLock;
 
 use util::report::{Message, Report};
 
@@ -42,23 +43,39 @@ impl Template {
     }
 }
 
-pub fn shipped() -> Vec<(&'static str, Result<Template, Report>)> {
-    SHIPPED
-        .iter()
-        .map(|shipped| (shipped.name, read(shipped)))
-        .collect()
+pub fn shipped() -> &'static [(&'static str, Result<Template, Report>)] {
+    static READ: LazyLock<Vec<(&'static str, Result<Template, Report>)>> = LazyLock::new(|| {
+        SHIPPED
+            .iter()
+            .map(|shipped| (shipped.name, read(shipped)))
+            .collect()
+    });
+    &READ
 }
 
-pub fn all() -> Vec<Template> {
-    shipped()
-        .into_iter()
-        .filter_map(|(_, template)| template.ok())
-        .collect()
+/// Every shipped template that reads. One that does not is a build of the shell gone wrong rather than anything the user did, so it is logged and left out of what is offered.
+pub fn all() -> &'static [Template] {
+    static READABLE: LazyLock<Vec<Template>> = LazyLock::new(|| {
+        shipped()
+            .iter()
+            .filter_map(|(name, read)| match read {
+                Ok(template) => Some(template.clone()),
+                Err(report) => {
+                    tracing::error!(
+                        "the shipped template `{name}` does not read, so it is not offered:\n{}",
+                        report.render()
+                    );
+                    None
+                }
+            })
+            .collect()
+    });
+    &READABLE
 }
 
-pub fn named(name: &str) -> Result<Template, TemplateError> {
+pub fn named(name: &str) -> Result<&'static Template, TemplateError> {
     all()
-        .into_iter()
+        .iter()
         .find(|template| template.name() == name)
         .ok_or_else(|| TemplateError::Unknown(name.to_string()))
 }
@@ -106,7 +123,7 @@ impl TemplateError {
     }
 }
 
-/// Copies the layout of the template `name` into `store` as a new layout, called `called` or else the template's name, numbered where that is taken. A name a layout or a file of the store's directory already has is refused rather than written over, an unreadable file included. Nothing else in the store changes.
+/// Copies the layout of the template `name` into `store` as a new layout, called `called` or else the template's name, numbered where that is taken, and named after the id it lands under where that is not the template's own. A name a layout or a file of the store's directory already has is refused rather than written over, an unreadable file included. Nothing else in the store changes.
 pub fn put(
     store: &mut LayoutStore,
     name: &str,
@@ -121,29 +138,16 @@ pub fn put(
         Some(called) if !is_komponent_name(called) => {
             return Err(TemplateError::BadName(called.to_string()));
         }
-        Some(called) if taken(store, called) => {
+        Some(called) if store.is_taken(&LayoutId::new(called)) => {
             return Err(TemplateError::Taken(LayoutId::new(called)));
         }
-        Some(called) => {
-            layout.name = called.to_string();
-            LayoutId::new(called)
-        }
-        None => free_name(store, template.name()),
+        Some(called) => LayoutId::new(called),
+        None => store.free_id(template.name()),
     };
+    if id.as_str() != template.name() {
+        layout.name = id.to_string();
+    }
     layout.id = id.clone();
     store.put_layout(layout).map_err(TemplateError::Store)?;
     Ok(id)
-}
-
-fn taken(store: &LayoutStore, name: &str) -> bool {
-    let id = LayoutId::new(name);
-    store.get(&id).is_some() || store.path_of(&id).exists()
-}
-
-fn free_name(store: &LayoutStore, base: &str) -> LayoutId {
-    let name = std::iter::once(base.to_string())
-        .chain((2..).map(|nth| format!("{base}-{nth}")))
-        .find(|name| !taken(store, name))
-        .expect("the counting runs out long after the names do");
-    LayoutId::new(name)
 }

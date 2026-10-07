@@ -30,7 +30,9 @@ A role left unset keeps its own weight. A label the shell makes bold on purpose 
 stays bold whatever its role's weight, because that emphasis is relative to the role.
 
 `[theme] font_family` sets the one family every role is drawn in; the font has to be installed, and the weights
-it does not have are drawn at the nearest it does.
+it does not have are drawn at the nearest it does. A family this machine does not have is drawn in the platform's
+sans-serif instead, and the shell says so in its log. Every window takes a new family as it is reloaded or
+previewed, without being opened again.
 
 ## App icon theme
 
@@ -54,8 +56,9 @@ icon beside a menu entry, and a tray icon recoloured to the bar's ink with `[tra
 
 ## Live preview
 
-The Theme popover in edit mode has a row for each of these. Every change is shown on every window as it is
-made, written to `config.toml` when the popover closes, and put back by Esc or Cancel.
+The Theme popover in edit mode has a row for each of these, and a *Font family* row listing the families
+installed on this machine. Every change is shown on every window as it is made, written to `config.toml` when
+the popover closes, and put back by Esc or Cancel.
 
 ## What it needs
 

@@ -1572,15 +1572,15 @@ fn width_handle(draft: &AreaDraft, value: RwSignal<f32>) -> Built {
         pinned::sides(anchor)
     };
     let (reading, placing) = (draft.node.clone(), draft.node.clone());
-    let hd = crate::modes::gesture::HandleDragging::gripped(draft.grip());
-    let to_value = Rc::new(hd.wrap_to_value(move |x: f32, _y: f32| {
+    let grip = draft.grip();
+    let to_value = Rc::new(move |x: f32, _y: f32| {
         let lane = surfaces::rects::rect(&reading).unwrap_or_default();
         match across().0 {
             Side::Start => x - lane.x,
             Side::Middle => 2.0 * (x - (lane.x + lane.width / 2.0)).abs(),
             Side::End => lane.x + lane.width - x,
         }
-    }));
+    });
     let to_point = Rc::new(move |width: f32| {
         let lane = surfaces::rects::rect(&placing).unwrap_or_default();
         let (side, down) = across();
@@ -1595,7 +1595,8 @@ fn width_handle(draft: &AreaDraft, value: RwSignal<f32>) -> Built {
             .max(crate::steps::WIDTHS.1)
             .step(1.0)
             .cursor(Cursor::EwResize)
-            .transaction(hd.transaction(value))
+            .on_start(gesture::holding(grip.clone()))
+            .on_end(gesture::letting_go(grip))
             .build(),
         Children::default(),
     )

@@ -32,17 +32,23 @@ mod tests {
     fn every_shipped_template_reads_as_a_bundle_of_one_layout_named_after_it() {
         let shipped = templates::shipped();
         assert!(!shipped.is_empty());
+        assert_eq!(
+            templates::all().len(),
+            shipped.len(),
+            "every shipped template parses, so none is left out of what is offered"
+        );
         for (name, read) in shipped {
-            let template = read.unwrap_or_else(|report| panic!("{name}: {}", report.render()));
-            assert_eq!(template.name(), name);
+            let template = read
+                .as_ref()
+                .unwrap_or_else(|report| panic!("{name}: {}", report.render()));
+            assert_eq!(template.name(), *name);
             assert!(template.layout().is_some(), "{name} holds its own layout");
             assert_eq!(template.bundle.layouts.len(), 1, "{name}");
             assert!(template.bundle.komponents.is_empty(), "{name}");
             assert!(template.bundle.assets.is_empty(), "{name}");
             assert_eq!(
-                template.bundle.manifest.description.as_deref(),
-                Some(template.description.english().as_str()),
-                "{name}: the manifest says what the gallery says"
+                template.bundle.manifest.description, None,
+                "{name}: what the gallery says is the i18n description alone"
             );
             for said in [&template.title, &template.description] {
                 assert!(said.is_translated_in("es"), "{name}: {}", said.english());
@@ -124,6 +130,15 @@ mod tests {
         assert_eq!(made.as_str(), "showcase");
         let again = templates::put(&mut store, "showcase", None).expect("and again");
         assert_eq!(again.as_str(), "showcase-2", "a taken name is numbered");
+        assert_eq!(
+            store.get(&made).map(|it| it.name.as_str()),
+            Some("Showcase")
+        );
+        assert_eq!(
+            store.get(&again).map(|it| it.name.as_str()),
+            Some("showcase-2"),
+            "and named after it, not after the copy before it"
+        );
         let named = templates::put(&mut store, "showcase", Some("work")).expect("named");
         assert_eq!(named.as_str(), "work");
         assert_eq!(store.get(&named).map(|it| it.name.as_str()), Some("work"));

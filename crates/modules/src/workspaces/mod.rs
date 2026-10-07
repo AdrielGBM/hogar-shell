@@ -69,8 +69,8 @@ pub struct PillStyle {
     pub occupied_background: bool,
     /// Whether a sliding indicator paints the active pill. When it does, the pill must not paint its own accent fill: two accents in the same place is the indicator arriving on top of a pill that already recoloured, which reads as no animation at all.
     pub indicator: bool,
-    /// The spring the indicator chases its target with: `[animation] curve`, so one section governs every moving part.
-    pub spring: Spring,
+    /// The spring the indicator chases its target with, `[animation] curve`; `None` where motion is off or reduced, which paints it on its target.
+    pub spring: Option<Spring>,
     /// How far the indicator stretches while travelling, as a fraction of the distance left to cover. `0` is a square box the whole way.
     pub trail: f32,
 }
@@ -128,10 +128,10 @@ fn tracked_pill_view(
         None => {
             let label = pill.label.clone();
             let theme = style.theme;
-            content.push(box_item(Text::new(
+            content.push(box_item(Text::declaring(
                 move || label.clone(),
                 LayoutStyle::new(),
-                move || theme.text_style(FontRole::Caption, fg),
+                move |inherited| theme.text_over(inherited, FontRole::Caption, fg),
             )?));
         }
     }
@@ -252,11 +252,11 @@ fn with_trail(target: Rect, goal: Rect, trail: f32) -> Rect {
 
 /// The box that marks the active workspace, carried to it rather than repainted in place.
 fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let (trail, spring) = (style.trail, style.spring);
+    let trail = style.trail;
     // Built on the first target rather than at construction: an `Animated` seeded with a zero rect would travel out of the corner the first time the bar ever draws, which reads as a glitch rather than as the motion this exists for. A spring rather than a tween because it keeps velocity through a retarget — holding a workspace key down should bend the indicator's path, not restart it from a standstill.
     let motion: Rc<RefCell<Option<Animated<Rect>>>> = Rc::new(RefCell::new(None));
 
-    let follow = {
+    let follow = style.spring.map(|spring| {
         let motion = Rc::clone(&motion);
         let source = slot.read_only();
         telar::effect(move || {
@@ -284,7 +284,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
                 }
             }
         })
-    };
+    });
 
     // Where the row itself sits. The pill rects are absolute and a canvas paints in its own local space, so the row's origin is what converts between them. Filled in after construction, below.
     let origin = signal(ZERO_RECT);
@@ -303,7 +303,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
         }
         // Painted rather than transformed. Scaling one box down to a pill would squash its corner radius with it — the row is far wider than a pill, so the rounding came out flattened on one axis — and drawing the rect where it belongs costs one command either way.
         //
-        // The raw goal until the animation exists, so the first paint lands in the right place rather than waiting a frame for the spring to be built.
+        // The raw goal until the animation exists, so the first paint lands in the right place rather than waiting a frame for the spring to be built — and always, where there is no spring to chase it with.
         let target = (*motion.borrow())
             .map(|animated| animated.get())
             .unwrap_or(goal);
@@ -323,7 +323,7 @@ fn indicator(slot: RwSignal<Rect>, style: PillStyle) -> Result<Box<dyn LayoutIte
     })?;
 
     // The canvas has to outlive both: a handle that drops deregisters its effect.
-    let mut held = vec![follow];
+    let mut held: Vec<_> = follow.into_iter().collect();
     if let Some(rect) = track_layout(canvas.layout_node()) {
         held.push(telar::effect(move || origin.set(rect.get())));
     }
@@ -694,7 +694,7 @@ mod tests {
             vertical,
             occupied_background: true,
             indicator: false,
-            spring: Spring::gentle(),
+            spring: Some(Spring::gentle()),
             trail: 0.0,
         };
         let bare = Pill {
@@ -767,7 +767,7 @@ mod tests {
                 vertical,
                 occupied_background: true,
                 indicator: true,
-                spring: Spring::gentle(),
+                spring: Some(Spring::gentle()),
                 trail: 0.0,
             };
             let grid = pill_grid(
@@ -847,7 +847,7 @@ mod tests {
                     vertical,
                     occupied_background: true,
                     indicator,
-                    spring: Spring::gentle(),
+                    spring: Some(Spring::gentle()),
                     trail: 0.0,
                 };
                 assert!(
@@ -884,7 +884,7 @@ mod tests {
             vertical: false,
             occupied_background: true,
             indicator,
-            spring: Spring::gentle(),
+            spring: Some(Spring::gentle()),
             trail: 0.0,
         };
         let theme = NordTheme::new();
@@ -1030,7 +1030,7 @@ mod tests {
             vertical: false,
             occupied_background: true,
             indicator: true,
-            spring: Spring::gentle(),
+            spring: Some(Spring::gentle()),
             trail: 0.0,
         };
         let built = pill_grid(
@@ -1091,6 +1091,95 @@ mod tests {
             }
         }
         panic!("the indicator never painted: half a second of frames with no accent rect anywhere");
+    }
+
+    /// Where the indicator is painted, in the row's own space, once the active workspace moves from the first pill to the second and no frame of motion has run.
+    fn indicator_after_a_switch(spring: Option<Spring>) -> f32 {
+        use telar::{AvailableSpace, ComponentList, DrawCommand, compute_layout};
+
+        telar::reset_layout_runtime();
+        let theme = NordTheme::new();
+        telar::set_theme(theme);
+        let pill = |id: i32, active: bool| Pill {
+            id,
+            label: id.to_string(),
+            occupied: true,
+            active,
+            special: false,
+            clients: Vec::new(),
+            icon: None,
+        };
+        let rows = telar::signal(vec![pill(1, true), pill(2, false)]);
+        let style = PillStyle {
+            theme,
+            radius: 8.0,
+            side: 32.0,
+            vertical: false,
+            occupied_background: true,
+            indicator: true,
+            spring,
+            trail: 0.0,
+        };
+        let built = pill_grid(
+            PillGridProps::props()
+                .items(rows.read_only())
+                .style(style)
+                .on_press(|_| {})
+                .build(),
+            telar::Children::default(),
+        )
+        .expect("the grid builds");
+        let root = Container::new(
+            LayoutStyle::new().flex_row().width(400.0).height(400.0),
+            vec![built],
+        )
+        .expect("root");
+        let root_node = root.layout_node();
+        let tree = ComponentList::new(root);
+        let settle = || {
+            compute_layout(
+                root_node,
+                AvailableSpace::Definite(400.0),
+                AvailableSpace::Definite(400.0),
+            )
+            .expect("layout");
+            let _ = tree.commands();
+            telar::relayout_if_dirty();
+        };
+        settle();
+        let start = std::time::Instant::now();
+        for frame in 1..=120 {
+            telar::motion::tick(start + std::time::Duration::from_millis(16 * frame));
+        }
+
+        rows.set(vec![pill(1, false), pill(2, true)]);
+        settle();
+        tree.commands()
+            .iter()
+            .find_map(|cmd| match cmd {
+                DrawCommand::Rect { rect, style }
+                    if style.fill == Some(telar::Paint::Solid(theme.accent)) =>
+                {
+                    Some(rect.x)
+                }
+                _ => None,
+            })
+            .expect("the indicator is painted")
+    }
+
+    #[test]
+    fn with_motion_off_or_reduced_the_indicator_lands_on_the_new_workspace_at_once() {
+        let second = 32.0 + PILL_GAP;
+        assert_eq!(
+            indicator_after_a_switch(None),
+            second,
+            "with no spring there is nothing to travel on, so the first frame paints the goal"
+        );
+        assert_ne!(
+            indicator_after_a_switch(Some(Spring::gentle())),
+            second,
+            "a spring is still on its way after no frames at all"
+        );
     }
 
     #[test]

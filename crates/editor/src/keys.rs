@@ -720,7 +720,6 @@ fn watch_peek(serial: u64) {
     });
 }
 
-/// Puts the draft back once the peek key is no longer down, answering whether it did.
 pub(crate) fn settle_peek() -> bool {
     let released = PEEK.with(|peek| {
         peek.borrow()
@@ -1221,6 +1220,11 @@ pub(crate) fn listed(layer: LayerKind) -> Vec<Row> {
 }
 
 impl Row {
+    /// Whether the command palette lists the row: not the held key that peeks, which running it from a list would let go at once, nor the key that opens the palette.
+    pub(crate) fn runnable_from_palette(&self) -> bool {
+        !matches!(self.does, Does::Peek | Does::Palette)
+    }
+
     /// One chord for each different thing the row does: an arrow each for a row that goes the way its key points, both ends, both ways round the areas, every step of the stacking order, and the first chord of any other row, whose other chords do the same.
     pub(crate) fn ways(&self) -> Vec<Chord> {
         let named = |chord: &&Chord| matches!(chord.key, Key::Named(_));

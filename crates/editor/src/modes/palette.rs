@@ -10,9 +10,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use telar::{
-    Border, DismissRegistration, Key, LayoutError, LayoutItem, LayoutStyle, NamedKey, NodeId,
-    ReactiveList, Rect, RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item,
-    detached, effect, signal, use_theme,
+    Border, DismissRegistration, Key, LayoutError, LayoutItem, LayoutStyle, NamedKey, NodeId, Rect,
+    RectStyle, RwSignal, SizeDimension, StyledContainer, Text, box_item, detached, effect, signal,
+    use_theme,
 };
 
 use config::theme::{FontRole, NordTheme};
@@ -27,10 +27,10 @@ use surfaces::transient::{self, Place, Spec};
 use ui::chrome::Chrome;
 use ui::descriptor::{Built, Category, ModuleDescriptor};
 
-use crate::host::{passthrough, whole};
 use crate::keys::{self, Chord, KeyOp, Run};
 use crate::mode::said;
-use crate::popover::rows::{self, label};
+use crate::popover::rows;
+use crate::popover::{self, Inset, Search, search_card};
 use crate::session::{self, Edit, EditError, Selection};
 use crate::written::Work;
 
@@ -336,15 +336,11 @@ pub(crate) fn open() -> Result<(), EditError> {
 
 type Chosen = RwSignal<Vec<(String, Representation)>>;
 
-/// The palette's card: a title, the search field and the lines it lists, at the left of what the reserving areas leave. The card is capped to the screen, and the lines fill what the title and the search field leave of it, scrolling past it ([`crate::popover::capped_rows`]); the entry the arrows point at is kept in view.
+/// The palette's card: a title, the search field and the lines it lists, at the left of what the reserving areas leave.
 pub(crate) fn tree(output: &str, layer: LayerKind) -> Built {
-    let theme = use_theme::<NordTheme>();
-    let pad = ui::scale::space::lg();
-    let gap = ui::scale::space::md();
     let query = signal(String::new());
     let pointed = signal(0usize);
     let chosen: Chosen = signal(Vec::new());
-    let pointed_row: RwSignal<Option<NodeId>> = signal(None);
     let listed = move || {
         let chosen = chosen.get();
         lines(layer, &query.get())
@@ -375,111 +371,38 @@ pub(crate) fn tree(output: &str, layer: LayerKind) -> Built {
             .collect()
     };
     let building = output.to_string();
-    let list = ReactiveList::with_style(
-        LayoutStyle::new()
-            .flex_column()
-            .gap(ui::scale::space::xs())
-            .width(SizeDimension::Percent(1.0)),
+    search_card(
+        Search {
+            output,
+            width: WIDTH,
+            inset: Inset::Left,
+            title: Box::new(move || match layer {
+                LayerKind::Top => telar::t!("editor.palette.title_top"),
+                _ => telar::t!("editor.palette.title"),
+            }),
+            query,
+        },
         move || vec![(query.get(), pointed.get(), format!("{:?}", chosen.get()))],
-        |shown: &(String, usize, String)| shown.clone(),
-        move |(_, at, _): (String, usize, String)| {
+        move |(_, at, _): (String, usize, String), pointed_row| {
             lines_of(&building, layer, listed(), (at, pointed_row), chosen)
         },
-    )?;
-    let title = Text::new(
-        move || match layer {
-            LayerKind::Top => telar::t!("editor.palette.title_top"),
-            _ => telar::t!("editor.palette.title"),
+        move |key: &Key| {
+            popover::answer(key, (query, pointed), &|| entries().len(), &|key| {
+                own_key(key, pointed, chosen, &entries, layer)
+            })
         },
-        LayoutStyle::new(),
-        move || {
-            theme
-                .text_style(FontRole::Body, theme.text)
-                .with_font_weight(700)
-        },
-    )?;
-    let search = rows::text(label!("editor.palette.search"), None, query)?;
-    let tracked = |item: &dyn LayoutItem, what: &str| {
-        telar::track_layout(item.layout_node())
-            .ok_or_else(|| LayoutError::Engine(format!("the palette's {what} has no layout node")))
-    };
-    let (title_height, search_height) = (tracked(&title, "title")?, tracked(&*search, "search")?);
-    let capped = output.to_string();
-    let room = move || {
-        let usable = crate::host::usable(Some(&capped));
-        let card = (usable.height - 8.0 * pad).max(120.0);
-        (card - title_height.get().height - search_height.get().height - 2.0 * gap - 2.0 * pad)
-            .max(0.0)
-    };
-    let (lines, viewport) = crate::popover::capped_rows(box_item(list), WIDTH - 2.0 * pad, room)?;
-    effect(move || {
-        if let Some(row) = pointed_row.get() {
-            viewport.reveal(row, gap);
-        }
-    });
-    let placed = output.to_string();
-    let style = move || {
-        let usable = crate::host::usable(Some(&placed));
-        LayoutStyle::new()
-            .absolute()
-            .inset_start(usable.x + pad)
-            .inset_top(usable.y + 4.0 * pad)
-            .width(WIDTH)
-            .flex_column()
-            .gap(gap)
-            .padding_all(pad)
-    };
-    let card = StyledContainer::new(
-        style(),
-        move |_| RectStyle::filled(theme.surface, ui::scale::corner::xl()),
-        vec![box_item(title), search, lines],
-    )?
-    .styled_by(style)
-    .input_opaque()
-    .on_key(move |key: &Key| {
-        answer(
-            key,
-            Asked {
-                query,
-                pointed,
-                chosen,
-            },
-            &entries,
-            layer,
-        )
-    });
-    Ok(Box::new(passthrough(whole(), vec![Box::new(card)])?))
+    )
 }
 
-#[derive(Clone, Copy)]
-struct Asked {
-    query: RwSignal<String>,
+/// What the palette answers besides moving and typing: ←/→ step the size of the entry pointed at, and Enter puts it near the selection.
+fn own_key(
+    key: &Key,
     pointed: RwSignal<usize>,
     chosen: Chosen,
-}
-
-/// What a key does on the open palette: ↑/↓ move the entry pointed at, ←/→ step its size, Enter puts it near the selection, and typing narrows the list.
-fn answer(
-    key: &Key,
-    asked: Asked,
     entries: &dyn Fn() -> Vec<(Pick, Vec<Representation>)>,
     layer: LayerKind,
 ) -> bool {
-    let Asked {
-        query,
-        pointed,
-        chosen,
-    } = asked;
-    let modifiers = telar::modifiers();
-    if modifiers.is_ctrl || modifiers.is_alt || modifiers.is_meta {
-        return false;
-    }
     match key {
-        Key::Named(NamedKey::ArrowDown) => {
-            let count = entries().len();
-            pointed.update(|at| *at = (*at + 1).min(count.saturating_sub(1)));
-        }
-        Key::Named(NamedKey::ArrowUp) => pointed.update(|at| *at = at.saturating_sub(1)),
         Key::Named(step @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) => {
             if let Some((Pick::Module(module, Some(now)), sizes)) =
                 entries().into_iter().nth(pointed.peek())
@@ -491,27 +414,17 @@ fn answer(
                 };
                 choose(chosen, &module, sizes[to]);
             }
+            true
         }
         Key::Named(NamedKey::Enter) => {
-            let Some((chosen, _)) = entries().into_iter().nth(pointed.peek()) else {
-                return true;
-            };
-            transient::close(ID);
-            said(put_near(&chosen, layer));
+            if let Some((picked, _)) = entries().into_iter().nth(pointed.peek()) {
+                transient::close(ID);
+                said(put_near(&picked, layer));
+            }
+            true
         }
-        Key::Named(NamedKey::Backspace) => {
-            query.update(|text| {
-                text.pop();
-            });
-            pointed.set(0);
-        }
-        Key::Char(ch) if !ch.is_control() => {
-            query.update(|text| text.push(*ch));
-            pointed.set(0);
-        }
-        _ => return false,
+        _ => false,
     }
-    true
 }
 
 fn choose(chosen: Chosen, module: &str, size: Representation) {
@@ -556,19 +469,7 @@ fn lines_of(
             }
         }
     }
-    if rows.is_empty() {
-        rows.push(rows::note(|| telar::t!("editor.palette.nothing"))?);
-    }
-    if pointed_row.peek() != pointed {
-        pointed_row.set(pointed);
-    }
-    Ok(box_item(telar::Container::new(
-        LayoutStyle::new()
-            .flex_column()
-            .gap(ui::scale::space::xs())
-            .width(SizeDimension::Percent(1.0)),
-        rows,
-    )?))
+    crate::popover::listing(rows, pointed, pointed_row)
 }
 
 struct Shown {
@@ -589,10 +490,10 @@ fn entry_row(output: &str, layer: LayerKind, chosen: Pick, shown: Shown, sizes: 
     } = shown;
     let glyph = ui::icon::icon_view(move || icon.to_string(), move || theme.text, 18.0)?;
     let said_name = name.clone();
-    let label = Text::new(
+    let label = Text::declaring(
         move || said_name.clone(),
         LayoutStyle::new().flex_grow(1.0),
-        move || theme.text_style(FontRole::Body, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
     )?;
     let fill = match pointed {
         true => theme.overlay,
@@ -663,12 +564,12 @@ fn size_button(
         true => theme.accent,
         false => theme.subtle,
     };
-    let letter = Text::new(
+    let letter = Text::declaring(
         move || desktop::size_letter(size).to_string(),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, ink)
+                .text_over(inherited, FontRole::Caption, ink)
                 .with_font_weight(700)
         },
     )?;

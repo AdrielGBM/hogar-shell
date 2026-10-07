@@ -32,9 +32,9 @@ use crate::snap;
 use crate::written::Work;
 
 use super::gesture;
-use super::picture;
 use super::regions::{self, Cut, Plan, Tile};
 use super::texture;
+use crate::popover::picture;
 
 /// How far a join button sits along its edge from the grip in the middle of it.
 const APART: f32 = 36.0;
@@ -423,32 +423,22 @@ fn edge_grip(
     };
     let settling = plan_to.clone();
     let (committing, reverting) = (edit.clone(), edit.clone());
-    let hd = gesture::HandleDragging::new();
-    let (on_end_commit, on_end_revert) = (hd.on_end_fn(), hd.on_end_fn());
-    let transaction = Transaction::new(value)
-        .on_commit(move |_, after| {
-            on_end_commit();
-            if !committing.is_open() && committing.begin().is_err() {
-                return;
+    let transaction = Transaction::new(value).on_commit(move |_, after| {
+        if !committing.is_open() && committing.begin().is_err() {
+            return;
+        }
+        let Some(before) = committing.transaction().before() else {
+            return;
+        };
+        let previewed = settling(&before, *after).and_then(|ops| committing.preview(ops));
+        match previewed {
+            Ok(()) => said(committing.commit()),
+            Err(why) => {
+                tracing::info!("{why}");
+                let _ = committing.revert();
             }
-            let Some(before) = committing.transaction().before() else {
-                return;
-            };
-            let previewed = settling(&before, *after).and_then(|ops| committing.preview(ops));
-            match previewed {
-                Ok(()) => said(committing.commit()),
-                Err(why) => {
-                    tracing::info!("{why}");
-                    let _ = committing.revert();
-                }
-            }
-        })
-        .on_revert(move |_| {
-            on_end_revert();
-            if reverting.is_open() {
-                let _ = reverting.revert();
-            }
-        });
+        }
+    });
     let previewing = edit.clone();
     effect(move || {
         let to = value.get();
@@ -489,7 +479,7 @@ fn edge_grip(
     telar::handle(
         telar::HandleProps::props()
             .transaction(transaction)
-            .to_value(Rc::new(hd.wrap_to_value(move |x: f32, y: f32| {
+            .to_value(Rc::new(move |x: f32, y: f32| {
                 let (output, key) = &reading;
                 let Some((_, _, bounds)) = edge_now(output, layer, key) else {
                     return 0.0;
@@ -504,7 +494,7 @@ fn edge_grip(
                     snap::EDGE_TOLERANCE,
                     snap::free(),
                 )
-            })))
+            }))
             .to_point(Rc::new(move |to: f32| {
                 let (output, key) = &placing;
                 let Some((_, (from, until), bounds)) = edge_now(output, layer, key) else {
@@ -530,12 +520,19 @@ fn edge_grip(
                 Cut::SideBySide => Cursor::EwResize,
                 Cut::Stacked => Cursor::NsResize,
             })
+            .on_start(Rc::new(gesture::started))
+            .on_end(Rc::new(move |let_go| {
+                gesture::ended();
+                if !let_go && reverting.is_open() {
+                    let _ = reverting.revert();
+                }
+            }))
             .build(),
         Children::default(),
     )
 }
 
-/// A wallpaper region's popover: its picture — one from the wallpaper library, a path, or whatever `[background]` says (F-10.22) — its fit, the point `cover` keeps in view, its transition, how it answers windows and workspaces, and its rectangle; with a dot on the region for the focus.
+/// A wallpaper region's popover: its picture — one from the wallpaper library, a path, or whatever `[background]` says — its fit, the point `cover` keeps in view, its transition, how it answers windows and workspaces, and its rectangle; with a dot on the region for the focus.
 fn region_tool(draft: &AreaDraft) -> Result<Inspector, LayoutError> {
     let ResolvedAreaKind::WallpaperRegion {
         rect,

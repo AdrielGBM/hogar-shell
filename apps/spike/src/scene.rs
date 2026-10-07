@@ -13,8 +13,8 @@ use telar::motion::{Animated, Easing, tween};
 use telar::{
     AlignItems, App, Border, BorderRadius, Clip, ClippedItem, Color, Component, Container, Event,
     EventResult, JustifyContent, LayoutError, LayoutItem, LayoutStyle, ReactiveList, Rect,
-    RectStyle, RenderNode, RwSignal, SizeDimension, StyledContainer, Text, TextStyle, Transform,
-    WindowConfig, WindowRoot, box_item, signal, track_layout,
+    RectStyle, RenderNode, RwSignal, SizeDimension, StyledContainer, Text, Transform, WindowConfig,
+    WindowRoot, box_item, signal, track_layout,
 };
 
 use crate::timeline::LogicalRect;
@@ -257,9 +257,11 @@ fn logical(r: Rect) -> LogicalRect {
 type Built = Result<Box<dyn LayoutItem>, LayoutError>;
 
 fn label(text: impl Fn() -> String + 'static, size: f32, color: Color) -> Built {
-    Ok(box_item(Text::new(text, LayoutStyle::new(), move || {
-        TextStyle::new(size, color)
-    })?))
+    Ok(box_item(Text::declaring(
+        text,
+        LayoutStyle::new(),
+        move |inherited| inherited.with_font_size(size).with_color(color),
+    )?))
 }
 
 fn chip(index: usize) -> Built {

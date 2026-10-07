@@ -15,14 +15,13 @@ mod tests {
     };
     use surfaces::menu::Pointed;
     use surfaces::rects::{self, Node};
-    use surfaces::transient;
 
     use crate::mode::{self};
     use crate::modes::grid::Room;
     use crate::modes::regions::{self, Cut, Plan};
     use crate::modes::widgets::{self, Geometry};
     use crate::modes::{background, lock as lock_mode};
-    use crate::rig::{Rig, SCREEN, close, enter, hold_alt, rig_with, stored};
+    use crate::rig::{Owner, Rig, SCREEN, close, enter, hold_alt, rig_with, stored};
     use crate::session;
     use crate::snap::{self, Axis, Guide, Motion, Moving, Snapped};
     use crate::{host, select};
@@ -332,22 +331,10 @@ mod tests {
         assert_eq!(siblings[0], rect(0.5, 0.5, 0.25, 0.25));
     }
 
-    /// An owner for what a test builds, disposed when it ends.
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        Owner::new().tearing_down(|| {
             hold_alt(false);
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     /// The selection tool, which draws what a drag shows, under `tools`, over the whole screen, inside the root every window has.
@@ -480,7 +467,7 @@ mod tests {
 
     fn edge_dragged(alt: bool) {
         let rig = rig_with(&format!("snap-edge-{alt}"), columns);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         let lines = desktop_lines();
         let line = nearest(&lines, 0.4);
@@ -526,7 +513,7 @@ mod tests {
 
     fn split_dragged(alt: bool) {
         let rig = rig_with(&format!("snap-cut-{alt}"), columns);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         let line = nearest(&desktop_lines(), 0.6);
         let current = mode::current().expect("the mode is up");
@@ -560,7 +547,7 @@ mod tests {
     #[test]
     fn s_splits_on_the_cell_line_nearest_the_middle() {
         let rig = rig_with("snap-split-key", columns);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Background);
         let before = stored(&rig);
         let line = nearest(&desktop_lines(), 0.5);
@@ -633,7 +620,7 @@ mod tests {
 
     fn prompt_nudged(alt: bool) {
         let rig = rig_with(&format!("snap-prompt-{alt}"), |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let (mut screen, at, middle) = prompt_screen(&rig);
         assert!(close(at.x + at.w / 2.0, 0.5), "{at:?}");
@@ -668,7 +655,7 @@ mod tests {
     #[test]
     fn the_prompt_moves_by_the_whole_travel_from_the_press() {
         let rig = rig_with("snap-prompt-travel", |_| {});
-        let _owner = Owner::new();
+        let _owner = owner();
         let _host = enter(LayerKind::Lock);
         let (mut screen, at, middle) = prompt_screen(&rig);
         let to = (middle.0 + 100.0, middle.1 + 30.0);

@@ -98,12 +98,12 @@ pub fn mixer_view(
 }
 
 fn title(theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(
+    let text = Text::declaring(
         || telar::t!("mixer.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -139,7 +139,7 @@ fn group_list(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let heading_source = graph.read_only();
-    let heading = Text::new(
+    let heading = Text::declaring(
         move || {
             if listed(&heading_source.get(), group).is_empty() {
                 String::new()
@@ -152,9 +152,9 @@ fn group_list(
             }
         },
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, theme.muted)
+                .text_over(inherited, FontRole::Caption, theme.muted)
                 .with_font_weight(700)
         },
     )?;
@@ -235,18 +235,18 @@ fn node_row(
     .on_press(move || volume::toggle_node_mute(id));
 
     let label = row.node.label();
-    let name = Text::new(
+    let name = Text::declaring(
         move || label.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Body, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
     )?;
     let detail = {
         let node = row.node.clone();
         let default = row.default;
-        Text::new(
+        Text::declaring(
             move || detail_line(&node, default),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Caption, theme.subtle),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
         )?
     };
     let labels = Container::new(
@@ -271,13 +271,13 @@ fn node_row(
     };
 
     let percent_reading = reading;
-    let percent = Text::new(
+    let percent = Text::declaring(
         move || match percent_reading() {
             Some(v) => format!("{}%", v.level),
             None => String::new(),
         },
         LayoutStyle::new().flex_shrink(0.0),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
 
     let head = Container::new(
@@ -336,7 +336,7 @@ fn empty_line(
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let source = graph.read_only();
-    let text = Text::new(
+    let text = Text::declaring(
         move || {
             if source.get().nodes.is_empty() {
                 telar::t!("mixer.unavailable")
@@ -345,7 +345,7 @@ fn empty_line(
             }
         },
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
     Ok(box_item(text))
 }

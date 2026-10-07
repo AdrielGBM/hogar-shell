@@ -673,3 +673,76 @@ impl Card {
         }
     }
 }
+
+/// Ctrl held.
+pub(crate) const CTRL: telar::ModifiersState = telar::ModifiersState {
+    is_ctrl: true,
+    ..NONE
+};
+
+/// A module drawn as a chip, and as a widget at each of `sizes` unless there are none.
+pub(crate) const fn module(
+    id: &'static str,
+    name: &'static str,
+    sizes: &'static [ui::host::WidgetSize],
+) -> ui::descriptor::ModuleDescriptor {
+    use ui::descriptor::{Category, ChipDef, Input, Representations, WidgetDef};
+    ui::descriptor::ModuleDescriptor {
+        id,
+        name,
+        icon: "circle",
+        category: Category::Time,
+        options: &[],
+        representations: Representations {
+            chip: Some(ChipDef::new(face, Input::ReadOnly)),
+            widget: match sizes.is_empty() {
+                true => None,
+                false => Some(WidgetDef {
+                    sizes,
+                    build: face,
+                    input: Input::ReadOnly,
+                }),
+            },
+            ..Representations::NONE
+        },
+        actions: &[],
+        sources: &[],
+    }
+}
+
+/// An owner for what a test builds, disposed with the mode and the transients when it ends.
+pub(crate) struct Owner {
+    scope: telar::OwnerGuard,
+    teardown: Vec<fn()>,
+}
+
+impl Owner {
+    pub(crate) fn new() -> Self {
+        Self {
+            scope: telar::owner_scope(),
+            teardown: Vec::new(),
+        }
+    }
+
+    pub(crate) fn installing(probes: &'static [ui::descriptor::ModuleDescriptor]) -> Self {
+        ui::descriptor::install(probes);
+        Self::new()
+    }
+
+    /// Runs `step` when it is dropped, before the mode is left.
+    pub(crate) fn tearing_down(mut self, step: fn()) -> Self {
+        self.teardown.push(step);
+        self
+    }
+}
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        for step in &self.teardown {
+            step();
+        }
+        mode::leave();
+        transient::close_all();
+        telar::dispose_owner(self.scope.id());
+    }
+}

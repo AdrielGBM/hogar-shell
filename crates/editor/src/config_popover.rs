@@ -5,8 +5,8 @@ use std::path::Path;
 
 use serde::Serialize;
 use telar::{
-    Container, LayoutError, LayoutItem, LayoutStyle, RectStyle, RwSignal, StyledContainer,
-    Transaction, box_item, effect, register_transaction, signal, use_theme,
+    Container, LayoutItem, LayoutStyle, RectStyle, RwSignal, StyledContainer, Transaction,
+    box_item, effect, register_transaction, signal, use_theme,
 };
 
 use config::Config;
@@ -75,20 +75,16 @@ pub(crate) fn framed(
         false => Some(column(footer)?),
     };
     let footer_tall = match &footer {
-        Some(footer) => Some(telar::track_layout(footer.layout_node()).ok_or_else(|| {
-            LayoutError::Engine("a popover's footer has no layout node".to_string())
-        })?),
+        Some(footer) => Some(crate::popover::tracked_height(footer, "footer")?),
         None => None,
     };
-    let room = {
-        let output = output.to_string();
-        move || {
-            let usable = host::usable(Some(&output));
-            let below = footer_tall.map_or(0.0, |tall| tall.get().height + gap);
-            (usable.height * crate::popover::TALLEST - below - 2.0 * pad).max(0.0)
-        }
-    };
-    let (rows, _) = crate::popover::capped_rows(box_item(column(rows)?), inner, room)?;
+    let (rows, _) = crate::popover::capped_card_rows(
+        box_item(column(rows)?),
+        inner,
+        Some(output.to_string()),
+        |usable| usable.height * crate::popover::TALLEST,
+        move || footer_tall.map_or(0.0, |tall| tall.get().height + gap) + 2.0 * pad,
+    )?;
     let mut children = vec![rows];
     children.extend(footer.map(box_item));
     let placed = output.to_string();
@@ -120,7 +116,7 @@ pub(crate) fn save<T: Serialize>(
 ) -> Result<(), String> {
     Config::save_section(path, section, &change(Config::load_or_default(path)))
         .map(|_| ())
-        .map_err(|why| why.to_string())
+        .map_err(|why| why.message().render())
 }
 
 /// The documentation of `[section] key`, which explains its row.

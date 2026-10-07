@@ -258,19 +258,19 @@ fn tree(chrome: &Chrome) -> Built {
         nodes: Rc::new(RefCell::new(HashMap::new())),
     };
 
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("trust.title"),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
-    let intro = Text::new(
+    let intro = Text::declaring(
         || telar::t!("trust.intro"),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || theme.text_style(FontRole::Body, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.subtle),
     )?;
     let header = Container::new(
         LayoutStyle::new()
@@ -416,15 +416,15 @@ fn row_of(row: Row, held: &Held, theme: NordTheme) -> Built {
 }
 
 fn bundle_row(bundle: String, items: Vec<Item>, key: &str, held: &Held, theme: NordTheme) -> Built {
-    let heading = Text::new(
+    let heading = Text::declaring(
         {
             let (named, count) = (bundle.clone(), items.len());
             move || telar::t!("trust.bundle", bundle = named.clone(), count = count)
         },
         LayoutStyle::new().flex_grow(1.0).flex_shrink(1.0),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Body, theme.text)
+                .text_over(inherited, FontRole::Body, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -458,29 +458,29 @@ pub(crate) fn shown_command(item: &Item) -> String {
 fn item_row(bundle: String, item: Item, key: &str, held: &Held, theme: NordTheme) -> Built {
     let kind = item.kind;
     let mut column: Vec<Box<dyn LayoutItem>> = vec![
-        box_item(Text::new(
+        box_item(Text::declaring(
             move || kind_label(kind),
             LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-            move || {
+            move |inherited| {
                 theme
-                    .text_style(FontRole::Body, theme.text)
+                    .text_over(inherited, FontRole::Body, theme.text)
                     .with_font_weight(700)
             },
         )?),
-        box_item(Text::new(
+        box_item(Text::declaring(
             {
                 let (file, at) = (util::text::shown(&item.file), util::text::shown(&item.key));
                 move || telar::t!("trust.where", file = file.clone(), key = at.clone())
             },
             LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-            move || theme.text_style(FontRole::Caption, theme.subtle),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
         )?),
     ];
     if item.lock_safe {
-        column.push(box_item(Text::new(
+        column.push(box_item(Text::declaring(
             || telar::t!("trust.lock_safe"),
             LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-            move || theme.text_style(FontRole::Caption, theme.warning),
+            move |inherited| theme.text_over(inherited, FontRole::Caption, theme.warning),
         )?));
     }
     let text = shown_command(&item);
@@ -490,12 +490,12 @@ fn item_row(bundle: String, item: Item, key: &str, held: &Held, theme: NordTheme
             .padding_horizontal(space::md())
             .padding_vertical(space::sm()),
         paint::xs(theme.base),
-        vec![box_item(Text::new(
+        vec![box_item(Text::declaring(
             move || text.clone(),
             LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-            move || {
+            move |inherited| {
                 theme
-                    .text_style(FontRole::Body, theme.text)
+                    .text_over(inherited, FontRole::Body, theme.text)
                     .with_font_family(telar::FontFamily::Monospace)
             },
         )?)],
@@ -575,15 +575,15 @@ fn answers(
 /// The keys, why the last answer was refused, and the way out that answers nothing.
 fn footer(held: &Held, theme: NordTheme) -> Result<Container, LayoutError> {
     let said = held.said;
-    let refusal = Text::new(
+    let refusal = Text::declaring(
         move || said.get().unwrap_or_default(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || theme.text_style(FontRole::Caption, theme.error),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.error),
     )?;
-    let keys = Text::new(
+    let keys = Text::declaring(
         || telar::t!("trust.keys"),
         LayoutStyle::new().flex_grow(1.0).flex_shrink(1.0),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     let later = telar::button(
         telar::ButtonProps::props()

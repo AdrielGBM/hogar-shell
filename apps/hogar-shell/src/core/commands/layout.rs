@@ -1304,6 +1304,7 @@ pub(crate) fn catalogue() -> Descriptors {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::shell_holding;
 
     /// A gesture can never be bound to `layout trust`: over IPC as at load, whoever asks, so no action planted by anything — a bundle's accepted line included — can grant trust when pressed.
     #[test]
@@ -1542,41 +1543,6 @@ mod tests {
     /// Its own directory rather than the user's, so these run beside the verbs that read the real one without either seeing the other's files.
     fn shell_with(test: &str, active: &str) -> std::rc::Rc<std::cell::RefCell<LayoutStore>> {
         shell_holding(test, active, &layout::built_in(), &[])
-    }
-
-    fn shell_holding(
-        test: &str,
-        active: &str,
-        mine: &Layout,
-        parents: &[&Layout],
-    ) -> std::rc::Rc<std::cell::RefCell<LayoutStore>> {
-        ui::descriptor::install(crate::core::modules::MODULES);
-        let dir = util::paths::isolated_root()
-            .expect("a test process resolves under its scratch root")
-            .join(format!("layout-verbs-{test}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a layouts directory");
-        std::fs::write(
-            dir.join("mine.toml"),
-            toml::to_string_pretty(mine).expect("the layout serializes"),
-        )
-        .expect("a layout to edit");
-        for parent in parents {
-            std::fs::write(
-                dir.join(format!("{}.toml", parent.id)),
-                toml::to_string_pretty(parent).expect("the layout serializes"),
-            )
-            .expect("a layout it extends");
-        }
-
-        let (mut store, report) = LayoutStore::load(&dir);
-        assert!(report.is_clean(), "{}", report.render());
-        store
-            .use_layout(&LayoutId::new(active))
-            .expect("the store holds it");
-        let store = std::rc::Rc::new(std::cell::RefCell::new(store));
-        layouts::install(std::rc::Rc::clone(&store), std::rc::Rc::new(|| {}));
-        store
     }
 
     /// What is in one of the bar's runs, which is what every verb below moves around.

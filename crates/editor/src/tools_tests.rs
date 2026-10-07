@@ -18,8 +18,7 @@ mod tests {
     use surfaces::menu::Pointed;
 
     use surfaces::rects::{self, Node};
-    use surfaces::transient;
-    use ui::descriptor::{Category, ChipDef, Input, ModuleDescriptor, Representations, WidgetDef};
+    use ui::descriptor::ModuleDescriptor;
     use ui::host::WidgetSize;
 
     use crate::host::{self, Under};
@@ -30,7 +29,7 @@ mod tests {
         CORNERS, Corner, NEAREST, Side, handle_point, most_padding_in, most_radius_in,
     };
     use crate::rig::{
-        Rig, SCREEN, bar, desktop, draw, enter, face, rig, rig_with, stored, tap, undraw,
+        Owner, Rig, SCREEN, bar, desktop, draw, enter, module, rig, rig_with, stored, tap, undraw,
     };
     use crate::session::{self, Selection};
     use crate::tools::{self, Tool};
@@ -43,53 +42,20 @@ mod tests {
         is_meta: false,
     };
 
-    const fn module(id: &'static str, name: &'static str) -> ModuleDescriptor {
-        ModuleDescriptor {
-            id,
-            name,
-            icon: "circle",
-            category: Category::Info,
-            options: &[],
-            representations: Representations {
-                chip: Some(ChipDef::new(face, Input::ReadOnly)),
-                widget: Some(WidgetDef {
-                    sizes: &WidgetSize::ALL,
-                    build: face,
-                    input: Input::ReadOnly,
-                }),
-                ..Representations::NONE
-            },
-            actions: &[],
-            sources: &[],
-        }
-    }
-
     static PROBES: &[ModuleDescriptor] = &[
-        module("workspaces", "Workspaces"),
-        module("clock", "Clock"),
-        module("notes", "Notes"),
+        module("workspaces", "Workspaces", &WidgetSize::ALL),
+        module("clock", "Clock", &WidgetSize::ALL),
+        module("notes", "Notes", &WidgetSize::ALL),
     ];
 
-    struct Owner(telar::OwnerGuard);
-
-    impl Owner {
-        fn new() -> Self {
-            ui::descriptor::install(PROBES);
-            Self(telar::owner_scope())
-        }
-    }
-
-    impl Drop for Owner {
-        fn drop(&mut self) {
+    fn owner() -> Owner {
+        Owner::installing(PROBES).tearing_down(|| {
             tools::put_away();
             if !tools::linked_now() {
                 tools::toggle_linked();
             }
             undraw();
-            mode::leave();
-            transient::close_all();
-            telar::dispose_owner(self.0.id());
-        }
+        })
     }
 
     /// The mode's host as its window builds it, over the whole screen.
@@ -266,7 +232,7 @@ mod tests {
     #[test]
     fn a_linked_radius_drag_writes_one_number_and_an_unlinked_one_four() {
         let rig = rig("tools-radius-linked");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Radius);
         let rect = rect_of(&bar());
@@ -310,7 +276,7 @@ mod tests {
     #[test]
     fn the_handles_of_a_thin_bar_stay_apart_and_each_is_reachable() {
         let rig = rig("tools-radius-apart");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Radius);
         let rect = rect_of(&bar());
@@ -351,7 +317,7 @@ mod tests {
     #[test]
     fn alt_isolates_one_corner_while_linked_and_escape_puts_all_four_back() {
         let rig = rig("tools-radius-alt");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Radius);
         let rect = rect_of(&bar());
@@ -391,7 +357,7 @@ mod tests {
     fn a_corner_let_go_near_its_corner_is_squared_off_and_one_pulled_too_far_stops_at_half_the_short_side()
      {
         let rig = rig("tools-radius-square");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Radius);
         let rect = rect_of(&bar());
@@ -426,7 +392,7 @@ mod tests {
     #[test]
     fn arrows_on_a_focused_handle_move_all_four_while_linked_and_alt_isolates_its_own() {
         let rig = rig("tools-radius-keys");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Radius);
         let before = drawn_corners();
@@ -498,7 +464,7 @@ mod tests {
     #[test]
     fn a_held_arrow_on_a_focused_handle_is_one_undo_entry() {
         let rig = rig("tools-radius-held");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Padding);
         assert!(tap(Key::Char('u'), NONE), "the link key answers");
@@ -573,7 +539,7 @@ mod tests {
     #[test]
     fn an_owned_panel_is_read_at_the_radius_it_rests_at() {
         let _rig = rig_with("tools-panel-radius", with_panels);
-        let _owner = Owner::new();
+        let _owner = owner();
         let mut rounded = desktop();
         let mut config = (*rounded.config).clone();
         config.theme.radius = Some(14);
@@ -596,7 +562,7 @@ mod tests {
     #[test]
     fn the_tool_is_put_away_by_another_selection_and_by_a_popover() {
         let _rig = rig("tools-put-away");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let _screen = bar_with(Tool::Radius);
         session::clear_selection();
@@ -613,7 +579,7 @@ mod tests {
     #[test]
     fn the_padding_tool_writes_one_number_linked_and_four_unlinked() {
         let rig = rig("tools-padding");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Padding);
         let rect = rect_of(&bar());
@@ -655,7 +621,7 @@ mod tests {
     #[test]
     fn an_instance_has_no_padding_tool() {
         let _rig = rig("tools-padding-refused");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         draw(LayerKind::Top);
         let (chip, _) = rects::instance(Some(SCREEN), &InstanceId::new("clock")).expect("drawn");
@@ -671,7 +637,7 @@ mod tests {
     #[test]
     fn a_bars_padding_relays_out_its_zones_only() {
         let rig = rig("tools-padding-zones");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Padding);
         let rect = rect_of(&bar());
@@ -778,7 +744,7 @@ mod tests {
     #[test]
     fn groups_and_instances_are_rounded_and_containers_padded_through_their_own_style() {
         let rig = rig_with("tools-group", with_container);
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let shelf = grid().group(&GroupId::new("shelf"));
         let clock = grid().instance(&GroupId::new("shelf"), &InstanceId::new("shelf-clock"));
@@ -832,7 +798,7 @@ mod tests {
     #[test]
     fn a_padding_drag_is_put_back_by_escape_and_alt_isolates_one_side() {
         let rig = rig("tools-padding-esc");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Top);
         let mut screen = bar_with(Tool::Padding);
         let rect = rect_of(&bar());
@@ -889,7 +855,7 @@ mod tests {
     #[test]
     fn the_desktop_grid_is_rounded_and_padded_through_its_own_style() {
         let rig = rig("tools-grid-style");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         draw(LayerKind::Desktop);
         assert!(session::select(Selection::Area(grid())));
@@ -932,7 +898,7 @@ mod tests {
     #[test]
     fn the_tools_are_offered_where_they_have_something_to_change() {
         let _rig = rig("tools-offers");
-        let _owner = Owner::new();
+        let _owner = owner();
         let _mode = enter(LayerKind::Desktop);
         let area =
             |layer, id: &str| Selection::Area(Node::area(Some(SCREEN), layer, &AreaId::new(id)));
@@ -991,7 +957,7 @@ mod tests {
                     &format!("tools-edges-{mode:?}-{edge:?}"),
                     bar_set(edge, mode),
                 );
-                let _owner = Owner::new();
+                let _owner = owner();
                 let _mode = enter(LayerKind::Top);
                 let mut screen = bar_with(Tool::Radius);
                 let rect = rect_of(&bar());

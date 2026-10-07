@@ -1,11 +1,10 @@
 //! What the pointer targets of every mode share: a press that selects, a secondary press that opens a menu, a drag that previews one edit from its first move to its end and says at the pointer what it would do, and the targets a drag started on held still under its own preview.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use telar::{
-    Component, Event, EventResult, LayoutItem, NodeId, PointerButton, Rect, RenderNode, RwSignal,
-    StyledContainer, Transaction, detached, signal,
+    PointerButton, Rect, RwSignal, StyledContainer, Transaction, detached, drag_start, signal,
 };
 
 use layout::LayoutOp;
@@ -53,7 +52,7 @@ pub(crate) fn show_guides(pointer: (f32, f32), guides: &[crate::snap::Guide], bo
     }));
 }
 
-fn started() {
+pub(crate) fn started() {
     DRAGGING.with(|dragging| {
         if !dragging.peek() {
             dragging.set(true);
@@ -61,7 +60,7 @@ fn started() {
     });
 }
 
-fn ended() {
+pub(crate) fn ended() {
     DRAGGING.with(|dragging| {
         if dragging.peek() {
             dragging.set(false);
@@ -72,71 +71,21 @@ fn ended() {
     }
 }
 
-/// The drag state of one handle: [`dragging`] is set by its first move and cleared as its transaction ends, whichever way, so the handle drags again without being rebuilt.
-pub(crate) struct HandleDragging {
-    moving: Rc<Cell<bool>>,
-    grip: Option<Grip>,
+pub(crate) fn holding(grip: Grip) -> Rc<dyn Fn()> {
+    Rc::new(move || {
+        grip.hold();
+        started();
+    })
 }
 
-impl HandleDragging {
-    pub(crate) fn new() -> Self {
-        Self {
-            moving: Rc::new(Cell::new(false)),
-            grip: None,
+pub(crate) fn letting_go(grip: Grip) -> Rc<dyn Fn(bool)> {
+    Rc::new(move |let_go| {
+        ended();
+        match let_go {
+            true => grip.release(),
+            false => grip.put_back(),
         }
-    }
-
-    /// A handle of an area's popover: its drag takes hold of the draft with its first move and, cancelled, puts the draft back whole rather than writing each value back.
-    pub(crate) fn gripped(grip: Grip) -> Self {
-        Self {
-            grip: Some(grip),
-            ..Self::new()
-        }
-    }
-
-    pub(crate) fn wrap_to_value<F, X>(&self, f: F) -> impl Fn(f32, f32) -> X + 'static
-    where
-        F: Fn(f32, f32) -> X + 'static,
-        X: 'static,
-    {
-        let moving = self.moving.clone();
-        let grip = self.grip.clone();
-        move |x, y| {
-            if let Some(grip) = &grip {
-                grip.hold();
-            }
-            if !moving.replace(true) {
-                started();
-            }
-            f(x, y)
-        }
-    }
-
-    pub(crate) fn on_end_fn(&self) -> Rc<dyn Fn() + 'static> {
-        let moving = self.moving.clone();
-        Rc::new(move || {
-            moving.set(false);
-            ended();
-        })
-    }
-
-    pub(crate) fn transaction(&self, value: RwSignal<f32>) -> Transaction<f32> {
-        let (committed, reverted) = (self.on_end_fn(), self.on_end_fn());
-        let (keeping, dropping) = (self.grip.clone(), self.grip.clone());
-        Transaction::new(value)
-            .on_commit(move |_, _| {
-                committed();
-                if let Some(grip) = &keeping {
-                    grip.release();
-                }
-            })
-            .on_revert(move |_| {
-                reverted();
-                if let Some(grip) = &dropping {
-                    grip.put_back();
-                }
-            })
-    }
+    })
 }
 
 /// A list that answers `now` until `frozen` is set and then keeps answering what it answered last, so the targets a gesture started on are not rebuilt under it by its own preview.
@@ -184,23 +133,20 @@ pub(crate) fn drag<T: 'static, X: Clone + 'static>(
     take: impl Fn((f32, f32)) -> Option<T> + 'static,
     follow: impl Fn(&T, (f32, f32)) + 'static,
     release: impl Fn(Option<T>, bool) + 'static,
-) -> Pressed {
-    let pressed: Rc<Cell<Option<(f32, f32)>>> = Rc::default();
-    let pressed_at = Rc::clone(&pressed);
+) -> StyledContainer {
     let holding: Rc<RefCell<Option<T>>> = Rc::default();
     let (ending, cancelling) = (Rc::clone(&holding), Rc::clone(&holding));
     let release = Rc::new(release);
     let cancelled = Rc::clone(&release);
-    let target = target
+    target
         .drag_threshold(THRESHOLD)
         .drag_transaction(transaction)
         .on_drag(move |x, y| {
             started();
-            if holding.borrow().is_none() {
-                let Some(at) = pressed_at.get() else {
-                    return;
-                };
-                let taken = take(at);
+            if holding.borrow().is_none()
+                && let Some(start) = drag_start()
+            {
+                let taken = take(start.at_surface);
                 *holding.borrow_mut() = taken;
             }
             if let Some(held) = holding.borrow().as_ref() {
@@ -214,47 +160,7 @@ pub(crate) fn drag<T: 'static, X: Clone + 'static>(
         .on_drag_cancel(move || {
             ended();
             cancelled(cancelling.borrow_mut().take(), false);
-        });
-    Pressed { target, pressed }
-}
-
-/// A dragged target that notes where each primary press on it lands before the target hears it, since telar tells a drag only where the pointer is once it has travelled past its threshold.
-pub(crate) struct Pressed {
-    target: StyledContainer,
-    pressed: Rc<Cell<Option<(f32, f32)>>>,
-}
-
-impl Component for Pressed {
-    fn view(&self) -> RenderNode {
-        self.target.view()
-    }
-
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        if let Event::PointerPressed {
-            x,
-            y,
-            button: PointerButton::Primary,
-            ..
-        } = event
-        {
-            self.pressed.set(Some((*x as f32, *y as f32)));
-        }
-        self.target.on_event(event)
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "Pressed"
-    }
-}
-
-impl LayoutItem for Pressed {
-    fn layout_node(&self) -> NodeId {
-        self.target.layout_node()
-    }
-
-    fn occludes(&self) -> bool {
-        self.target.occludes()
-    }
+        })
 }
 
 /// Previews what a drag would do where the pointer is now, and marks it in `aim`: `planned` and what marks it, or — where nothing is planned there, or the layout refuses it — the layout as it was before the drag, marked nowhere.

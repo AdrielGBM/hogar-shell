@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use telar::{ReadSignal, RwSignal, signal};
 
+use config::fingerprint::Fingerprint;
 use layout::{
     BUILT_IN, Komponent, KomponentId, Layout, LayoutId, LayoutOp, LayoutStore, Placed, SETTLE,
     StoreError, Transaction,
@@ -137,8 +138,7 @@ pub fn start(
 ) -> Result<LayoutId, Message> {
     change(|store| {
         let id = made(store)?;
-        store.use_layout(&id).map_err(|why| why.message())?;
-        services::state::update(|state| state.layout = Some(id.to_string()));
+        use_and_remember(store, &id)?;
         Ok(id)
     })
 }
@@ -195,6 +195,7 @@ pub fn flush() {
         return;
     }
     report_problems(&store.borrow_mut().flush());
+    stamp_layout_write();
 }
 
 /// Makes the store draw the layout this installation chose, or say why it cannot.
@@ -303,38 +304,26 @@ pub(crate) fn forget_gone(gone: &Placed) {
     crate::area::forget_gone(gone);
 }
 
-/// The layout an edit lands in: the one being drawn, or a copy of the built-in one under a name of the user's own.
-///
-/// The shipped layout is read-only (TA-7), so the first edit to it forks. The copy becomes the active layout in the same breath, `state.json` included — which layout is drawn is a decision about this installation rather than a description of one, and `layout use` writes it the same way.
+/// The layout an edit lands in: the one being drawn, or, the shipped one being read-only (TA-7), a copy of it under a name of the user's own that is drawn from then on.
 fn editable(store: &mut LayoutStore) -> Result<LayoutId, Message> {
     let active = store.active_id().clone();
     if active.as_str() != BUILT_IN {
         return Ok(active);
     }
-    let name = free_name(store);
+    let name = store.free_id(FORKED);
     store
         .fork(&active, name.clone())
         .map_err(|why| why.message())?;
-    store.use_layout(&name).map_err(|why| why.message())?;
-    services::state::update(|state| state.layout = Some(name.to_string()));
+    use_and_remember(store, &name)?;
     tracing::info!("the built-in layout is read-only, so this edit forked it to `{name}`");
     Ok(name)
 }
 
-/// A name no layout has yet, for the copy the first edit forks. The store knows every layout file in the directory, so a free name here is a free file there.
-fn free_name(store: &LayoutStore) -> LayoutId {
-    let taken = |name: &str| store.get(&LayoutId::new(name)).is_some();
-    if !taken(FORKED) {
-        return LayoutId::new(FORKED);
-    }
-    let mut nth = 2;
-    loop {
-        let name = format!("{FORKED}-{nth}");
-        if !taken(&name) {
-            return LayoutId::new(name);
-        }
-        nth += 1;
-    }
+/// Draws `id` from now on, `state.json` included: which layout is drawn is a decision about this installation rather than a description of one, and `layout use` writes it the same way.
+fn use_and_remember(store: &mut LayoutStore, id: &LayoutId) -> Result<(), Message> {
+    store.use_layout(id).map_err(|why| why.message())?;
+    services::state::update(|state| state.layout = Some(id.to_string()));
+    Ok(())
 }
 
 /// Asks for the store to be written once the edits have stopped for [`SETTLE`].
@@ -361,6 +350,12 @@ fn on_settled() {
         return;
     }
     report_problems(&store.borrow_mut().flush());
+    stamp_layout_write();
+}
+
+fn stamp_layout_write() {
+    let config_path = util::paths::config_dir().join("config.toml");
+    config::fingerprint::wrote(Fingerprint::read(&config_path));
 }
 
 #[cfg(test)]
@@ -374,14 +369,21 @@ mod tests {
         let dir = util::paths::isolated_root()
             .expect("a test process resolves under its scratch root")
             .join(format!("live-layouts-{test}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a layouts directory");
+        shell_in(&dir, active)
+    }
+
+    fn shell_in(
+        dir: &std::path::Path,
+        active: &str,
+    ) -> (Rc<RefCell<LayoutStore>>, Rc<Cell<usize>>) {
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).expect("a layouts directory");
         std::fs::write(
             dir.join("mine.toml"),
             toml::to_string_pretty(&layout::built_in()).expect("the layout serializes"),
         )
         .expect("a layout to edit");
-        let (mut store, report) = LayoutStore::load(&dir);
+        let (mut store, report) = LayoutStore::load(dir);
         assert!(report.is_clean(), "{}", report.render());
         store
             .use_layout(&LayoutId::new(active))
@@ -525,5 +527,39 @@ mod tests {
 
         redo().expect("it redoes");
         assert_eq!(TAPS.get(&clock), 0, "the redo took it out again");
+    }
+
+    #[test]
+    fn the_shells_own_layout_writes_reload_quietly_and_an_edit_by_hand_is_announced() {
+        let config_path = util::paths::config_dir().join("config.toml");
+        config::Config::load(&config_path).expect("the starter config");
+        let _shell = shell_in(&dir(), "mine");
+        let announced = |before: &Fingerprint| {
+            let seen = Fingerprint::read(&config_path);
+            assert_ne!(&seen, before, "the files changed");
+            !config::fingerprint::written_by_shell(&seen)
+        };
+
+        let before = Fingerprint::read(&config_path);
+        commit(Transaction::new(
+            "add a grid",
+            LayoutId::new("mine"),
+            vec![empty_grid("grid")],
+        ))
+        .expect("it commits");
+        flush();
+        assert!(!announced(&before), "an editor's commit reloads quietly");
+
+        let before = Fingerprint::read(&config_path);
+        edit("add another", |_, _| Ok((vec![empty_grid("grid-2")], ()))).expect("it edits");
+        flush();
+        assert!(!announced(&before), "a verb's edit reloads quietly");
+
+        let before = Fingerprint::read(&config_path);
+        let file = dir().join("mine.toml");
+        let mut by_hand = std::fs::read_to_string(&file).expect("the written layout");
+        by_hand.push_str("\n# moved by hand\n");
+        std::fs::write(&file, by_hand).expect("an edit by hand");
+        assert!(announced(&before), "an edit by hand is announced");
     }
 }

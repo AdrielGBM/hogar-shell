@@ -197,7 +197,7 @@ impl TokenOverrides {
 
 /// One text role's overrides (`[theme.fonts.<role>]`), each unset by default so a role keeps the size the theme derives for it.
 ///
-/// No `family`: rsx's `TextStyle` carries no font family — the family is process-wide, applied through `telar::set_default_font_family` from `[theme] font_family`. Per-role families need `TextStyle` to carry one and the renderer to select on it, which is an upstream change rather than a config key.
+/// No `family`: every role shapes in `[theme] font_family`, the family each of the shell's surfaces is set in and every text on it inherits.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct FontSpec {
@@ -253,7 +253,7 @@ impl FontsConfig {
 ///
 /// `duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, for a user on a remote desktop who wants no motion at all.
 ///
-/// `reduced` is the accessibility answer: while motion is reduced, a panel, drawer or popout that would slide in fades instead, a bar that hides itself moves at once, and no transition runs longer than 100 ms. `auto` follows the desktop's own reduced-motion setting, read from the desktop portal; with no portal, motion is as configured here.
+/// `reduced` is the accessibility answer: while motion is reduced, a panel, drawer or popout that would slide in fades instead, a bar that hides itself moves at once, the workspace indicator and the dock's magnification land where they are going without travelling, and no transition runs longer than 100 ms. `auto` follows the desktop's own reduced-motion setting, read from the desktop portal; with no portal, motion is as configured here.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct AnimationConfig {
@@ -356,8 +356,35 @@ impl AnimationConfig {
         }
     }
 
-    /// The spring every chase-a-moving-target animation uses.
-    pub fn spring(&self) -> telar::motion::Spring {
+    /// Whether the desktop's reduced-motion setting changes anything here: only under `reduced = "auto"`, and only while there is motion to reduce.
+    pub fn follows_desktop(&self) -> bool {
+        self.enabled && self.reduced == ReducedMotion::Auto
+    }
+
+    /// Whether something may travel across the screen: not while animation is off, and not while motion is reduced.
+    pub fn travels(&self) -> bool {
+        self.enabled && !self.is_reduced()
+    }
+
+    /// The spring a chase-a-moving-target animation follows, or `None` where nothing may travel, which paints the target where it is.
+    pub fn chase(&self) -> Option<telar::motion::Spring> {
+        self.travels().then(|| self.spring())
+    }
+
+    /// How something arrives from `from`: sliding `distance` on `tween`, or fading in place on the same tween where nothing may travel.
+    pub fn slide_or_fade(
+        &self,
+        from: telar::Edge,
+        distance: f32,
+        tween: telar::motion::Tween,
+    ) -> telar::Transition {
+        match self.travels() {
+            true => telar::Transition::slide(from, distance, tween),
+            false => telar::Transition::fade(tween),
+        }
+    }
+
+    pub(crate) fn spring(&self) -> telar::motion::Spring {
         match self.curve.trim().to_ascii_lowercase().as_str() {
             "snappy" => telar::motion::Spring::snappy(),
             "bouncy" => telar::motion::Spring::bouncy(),
@@ -395,9 +422,9 @@ impl AnimationConfig {
 
     /// [`Self::tween_ms`] for something that travels across the screen rather than fading in place, which reduced motion makes instant.
     pub fn travel_tween_ms(&self, base_ms: u64, max_ms: u64) -> telar::motion::Tween {
-        match self.is_reduced() {
-            true => telar::motion::tween(Duration::ZERO, self.easing()),
-            false => self.tween_ms(base_ms, max_ms),
+        match self.travels() {
+            true => self.tween_ms(base_ms, max_ms),
+            false => telar::motion::tween(Duration::ZERO, self.easing()),
         }
     }
 }
@@ -463,7 +490,7 @@ pub struct ThemeConfig {
     pub spacing: Option<u32>,
     pub font_size: Option<f32>,
     pub icon_size: Option<f32>,
-    /// Font family the whole shell renders in (must be installed). Unset keeps the renderer's default. Applied process-wide via [`telar::set_default_font_family`], not carried in the (`Copy`) theme struct.
+    /// Font family the whole shell renders in (must be installed). Unset keeps the platform's sans-serif. Every surface the shell opens is set in it and every text on one inherits it, so a reload or a theme preview changes it on every window without reopening any.
     pub font_family: Option<String>,
     /// Stroke width forced on stroke-based icon glyphs (e.g. `1.5`). Unset keeps each glyph's own stroke.
     pub icon_stroke: Option<f32>,
@@ -541,6 +568,15 @@ impl Default for ThemeConfig {
 }
 
 impl ThemeConfig {
+    /// The family [`font_family`](Self::font_family) names, `None` where it names none and the platform's own is kept.
+    pub fn family(&self) -> Option<telar::FontFamily> {
+        self.font_family
+            .as_deref()
+            .map(str::trim)
+            .filter(|family| !family.is_empty())
+            .map(telar::FontFamily::from)
+    }
+
     /// Whether this config asks for a wallpaper-derived palette rather than a built-in one.
     pub fn is_dynamic(&self) -> bool {
         self.name.trim().eq_ignore_ascii_case(scheme::DYNAMIC)

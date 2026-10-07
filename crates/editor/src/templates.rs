@@ -33,7 +33,7 @@ pub(crate) fn open() -> Result<(), EditError> {
 
 pub fn gallery() -> Vec<MenuEntry> {
     templates::all()
-        .into_iter()
+        .iter()
         .map(|template| {
             let name = template.name().to_string();
             let (title, description) = (template.title.render(), template.description.render());
@@ -62,15 +62,15 @@ pub fn use_template(name: &str) -> Result<LayoutId, EditError> {
 fn face(title: String, description: String) -> Built {
     let theme = use_theme::<NordTheme>();
     let line = |said: String, role: FontRole, muted: bool| {
-        Text::new(
+        Text::declaring(
             move || said.clone(),
             LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-            move || {
+            move |inherited| {
                 let ink = match muted {
                     true => theme.muted,
                     false => theme.text,
                 };
-                theme.text_style(role, ink)
+                theme.text_over(inherited, role, ink)
             },
         )
     };

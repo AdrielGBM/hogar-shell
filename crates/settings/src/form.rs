@@ -176,7 +176,10 @@ pub(crate) fn revert_to_opened(path: &Path) {
     // Through the writer like every save, and for the sharper reason: this replaces the whole file rather than one table, so a truncating write that died half way through would cost the user the config it exists to give them back.
     match util::writer::write(path, text.into_bytes()) {
         // Unlike a save, whatever the window showed before: the panel re-seeds every form from the file this has just put back.
-        Ok(()) => shows(restored),
+        Ok(()) => {
+            config::fingerprint::wrote(restored.clone());
+            shows(restored);
+        }
         Err(e) => tracing::warn!("settings: could not revert {}: {e}", path.display()),
     }
 }
@@ -235,9 +238,9 @@ pub(crate) fn section_label(
     label: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(label, LayoutStyle::new(), move || {
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
         theme
-            .text_style(FontRole::Body, theme.text)
+            .text_over(inherited, FontRole::Body, theme.text)
             .with_font_weight(700)
     })?;
     Ok(Box::new(text))
@@ -247,9 +250,9 @@ pub(crate) fn subheader(
     label: impl Fn() -> String + 'static,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let text = Text::new(label, LayoutStyle::new(), move || {
+    let text = Text::declaring(label, LayoutStyle::new(), move |inherited| {
         theme
-            .text_style(FontRole::Caption, theme.muted)
+            .text_over(inherited, FontRole::Caption, theme.muted)
             .with_font_weight(700)
     })?;
     Ok(Box::new(text))

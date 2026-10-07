@@ -243,21 +243,21 @@ impl Part {
         let theme = parts.theme;
         match self {
             Part::Meter(fraction, tint) => parts.meter(fraction, tint),
-            Part::Figure(value, tint) => Ok(box_item(Text::new(
+            Part::Figure(value, tint) => Ok(box_item(Text::declaring(
                 move || value.get(),
                 LayoutStyle::new(),
-                move || {
+                move |inherited| {
                     let color = tint.as_ref().map_or(theme.text, |tint| tint.get());
                     theme
-                        .text_style(FontRole::Display, color)
+                        .text_over(inherited, FontRole::Display, color)
                         .with_font_weight(600)
                 },
             )?)),
             Part::Row(label, value) => parts.row(label, value),
-            Part::Detail(text) => Ok(box_item(Text::new(
+            Part::Detail(text) => Ok(box_item(Text::declaring(
                 move || text.get(),
                 LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-                move || theme.text_style(FontRole::Caption, theme.subtle),
+                move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
             )?)),
             Part::Item(build) => build(parts),
         }
@@ -335,8 +335,8 @@ fn heading(
     theme: NordTheme,
     parts: Heading,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let weighted = move |role: FontRole, color: Color| {
-        let style = theme.text_style(role, color);
+    let weighted = move |inherited: telar::TextStyle, role: FontRole, color: Color| {
+        let style = theme.text_over(inherited, role, color);
         match density.title_weight() {
             Some(weight) => style.with_font_weight(weight),
             None => style,
@@ -356,17 +356,17 @@ fn heading(
 
     let mut label: Vec<Box<dyn LayoutItem>> = Vec::with_capacity(2);
     if let Some(title) = parts.title {
-        label.push(box_item(Text::new(
+        label.push(box_item(Text::declaring(
             move || title.get(),
             LayoutStyle::new(),
-            move || weighted(FontRole::Title, theme.text),
+            move |inherited| weighted(inherited, FontRole::Title, theme.text),
         )?));
     }
     if let Some(line) = parts.subtitle {
-        label.push(box_item(Text::new(
+        label.push(box_item(Text::declaring(
             move || line.get(),
             LayoutStyle::new(),
-            move || theme.text_style(FontRole::Body, theme.subtle),
+            move |inherited| theme.text_over(inherited, FontRole::Body, theme.subtle),
         )?));
     }
     row.push(Box::new(Container::new(
@@ -378,10 +378,10 @@ fn heading(
     )?));
 
     if let Some(value) = parts.trailing {
-        row.push(box_item(Text::new(
+        row.push(box_item(Text::declaring(
             move || value.get(),
             LayoutStyle::new().flex_shrink(0.0),
-            move || weighted(FontRole::Title, theme.accent),
+            move |inherited| weighted(inherited, FontRole::Title, theme.accent),
         )?));
     }
 

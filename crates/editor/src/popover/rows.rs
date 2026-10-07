@@ -199,10 +199,10 @@ pub fn captioned(
 ) -> Built {
     let theme = use_theme::<NordTheme>();
     let shown = label.clone();
-    let caption = Text::new(
+    let caption = Text::declaring(
         move || shown.get(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Body, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.subtle),
     )?;
     let column = telar::Container::new(
         LayoutStyle::new()
@@ -228,19 +228,25 @@ pub fn together(items: Vec<Box<dyn LayoutItem>>) -> Built {
 /// A line of quiet text under the rows it is about.
 pub fn note(said: impl Fn() -> String + 'static) -> Built {
     let theme = use_theme::<NordTheme>();
-    Ok(box_item(Text::new(said, LayoutStyle::new(), move || {
-        theme.text_style(FontRole::Caption, theme.subtle)
-    })?))
+    Ok(box_item(Text::declaring(
+        said,
+        LayoutStyle::new(),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
+    )?))
 }
 
 /// The heading of a run of rows.
 pub fn heading(said: impl Fn() -> String + 'static) -> Built {
     let theme = use_theme::<NordTheme>();
-    Ok(box_item(Text::new(said, LayoutStyle::new(), move || {
-        theme
-            .text_style(FontRole::Caption, theme.muted)
-            .with_font_weight(700)
-    })?))
+    Ok(box_item(Text::declaring(
+        said,
+        LayoutStyle::new(),
+        move |inherited| {
+            theme
+                .text_over(inherited, FontRole::Caption, theme.muted)
+                .with_font_weight(700)
+        },
+    )?))
 }
 
 /// A row's label: the catalogue's `$key`, in whatever locale is active as it is drawn.

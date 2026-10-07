@@ -50,34 +50,10 @@ fn use_template(words: &[&str]) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use layout::{LayoutId, LayoutStore};
 
     use super::*;
-
-    fn shell_holding_mine(test: &str) -> Rc<RefCell<LayoutStore>> {
-        ui::descriptor::install(crate::core::modules::MODULES);
-        let dir = util::paths::isolated_root()
-            .expect("a test process resolves under its scratch root")
-            .join(format!("layout-templates-{test}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a layouts directory");
-        let mut mine = layout::built_in();
-        mine.id = LayoutId::new("mine");
-        std::fs::write(
-            dir.join("mine.toml"),
-            toml::to_string_pretty(&mine).expect("the layout serializes"),
-        )
-        .expect("a layout of the user's own");
-        let (mut store, report) = LayoutStore::load(&dir);
-        assert!(report.is_clean(), "{}", report.render());
-        store.use_layout(&LayoutId::new("mine")).expect("mine");
-        let store = Rc::new(RefCell::new(store));
-        layouts::install(Rc::clone(&store), Rc::new(|| {}));
-        store
-    }
+    use crate::test_support::shell_holding;
 
     fn run(line: &str) -> Result<String, String> {
         crate::core::commands::dispatch_locally(
@@ -99,7 +75,9 @@ mod tests {
 
     #[test]
     fn template_use_makes_and_draws_a_new_layout_and_leaves_the_one_drawn_before() {
-        let store = shell_holding_mine("use");
+        let mut mine = layout::built_in();
+        mine.id = LayoutId::new("mine");
+        let store = shell_holding("templates-use", "mine", &mine, &[]);
         let mine = store.borrow().get(&LayoutId::new("mine")).cloned();
 
         let said = run("layout template use showcase").expect("it is made");

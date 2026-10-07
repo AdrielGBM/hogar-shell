@@ -410,9 +410,7 @@ pub struct Desk {
     pub along: Option<f32>,
 }
 
-/// The desk of `output` (any screen, for `None`) from what the compositor says.
-///
-/// `workspaces` is the protocol's list, ordered by the coordinates the compositor gives them where every one has some. A window covers the screen where `windows_on` knows how many windows the workspace up holds and it holds one; where it does not know, which is every compositor without an IPC that counts them, a maximized or fullscreen window of `toplevels` on the screen does, since the toplevel protocol says nothing of workspaces.
+/// The desk of `output` (any screen, for `None`): covered where `windows_on` counts a window on the workspace up, or, where nothing counts them, where a maximized or fullscreen window of `toplevels` is on the screen, since the toplevel protocol says nothing of workspaces.
 pub fn desk(
     output: Option<&str>,
     workspaces: &[platform_wayland::Workspace],

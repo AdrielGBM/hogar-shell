@@ -710,11 +710,11 @@ impl Parts {
             .into_iter()
             .map(|(side, max, cursor)| {
                 let (reading, placing) = (self.draft.clone(), self.draft.clone());
-                let hd = crate::modes::gesture::HandleDragging::gripped(self.draft.grip());
+                let grip = self.draft.grip();
                 telar::handle(
                     telar::HandleProps::props()
                         .value(self.insets[side])
-                        .to_value(Rc::new(hd.wrap_to_value(move |x: f32, y: f32| {
+                        .to_value(Rc::new(move |x: f32, y: f32| {
                             let rect = reading.rect().unwrap_or_default();
                             match side {
                                 0 => y - rect.y,
@@ -722,7 +722,7 @@ impl Parts {
                                 2 => rect.y + rect.height - y,
                                 _ => x - rect.x,
                             }
-                        })))
+                        }))
                         .to_point(Rc::new(move |inset: f32| {
                             let rect = placing.rect().unwrap_or_default();
                             let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
@@ -737,7 +737,8 @@ impl Parts {
                         .max(max)
                         .step(1.0)
                         .cursor(cursor)
-                        .transaction(hd.transaction(self.insets[side]))
+                        .on_start(gesture::holding(grip.clone()))
+                        .on_end(gesture::letting_go(grip))
                         .build(),
                     Children::default(),
                 )
@@ -823,14 +824,14 @@ impl Parts {
     /// The handle at the end of the axis that turns it, snapping to 45° while Shift is held.
     fn angle_handle(&self) -> Result<Box<dyn LayoutItem>, LayoutError> {
         let (reading, placing) = (self.clone(), self.clone());
-        let hd = crate::modes::gesture::HandleDragging::gripped(self.draft.grip());
+        let grip = self.draft.grip();
         telar::handle(
             telar::HandleProps::props()
                 .value(self.angle)
-                .to_value(Rc::new(hd.wrap_to_value(move |x: f32, y: f32| {
+                .to_value(Rc::new(move |x: f32, y: f32| {
                     let centre = reading.axis().centre();
                     angle_at(centre, (x, y), telar::modifiers().is_shift)
-                })))
+                }))
                 .to_point(Rc::new(move |angle: f32| {
                     Axis::of(placing.texture_rect(), angle).end
                 }))
@@ -838,7 +839,8 @@ impl Parts {
                 .max(360.0)
                 .step(1.0)
                 .cursor(Cursor::Grab)
-                .transaction(hd.transaction(self.angle))
+                .on_start(gesture::holding(grip.clone()))
+                .on_end(gesture::letting_go(grip))
                 .build(),
             Children::default(),
         )
@@ -858,10 +860,8 @@ impl Parts {
         let painted = where_now.clone();
         let dragged = self.clone();
         let grip = self.draft.grip();
-        let (keeping, dropping, holding) = (grip.clone(), grip.clone(), grip);
-        let transaction = Transaction::new(gradient)
-            .on_commit(move |_, _| keeping.release())
-            .on_revert(move |_| dropping.put_back());
+        let holding = grip.clone();
+        let transaction = Transaction::new(gradient);
         let face = StyledContainer::new(
             LayoutStyle::new()
                 .absolute()
@@ -913,11 +913,11 @@ impl Parts {
             handle,
             transaction,
             move |_| {
+                holding.hold();
                 let (x, y) = where_now();
                 Some((x - STOP / 2.0, y - STOP / 2.0))
             },
             move |origin: &(f32, f32), (x, y)| {
-                holding.hold();
                 if chosen.peek() != index {
                     chosen.set(index);
                 }
@@ -932,6 +932,10 @@ impl Parts {
                 }
             },
             move |_, let_go| {
+                match let_go {
+                    true => grip.release(),
+                    false => grip.put_back(),
+                }
                 if leaving.peek() {
                     leaving.set(false);
                     if let_go {

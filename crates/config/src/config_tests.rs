@@ -388,7 +388,7 @@ mod tests {
         let cfg: Config =
             toml::from_str("[theme]\nfont_family = \"JetBrains Mono\"\nicon_stroke = 1.5\n")
                 .unwrap();
-        // font_family stays in config (applied process-wide, not carried in the Copy theme struct).
+        // Not carried in the Copy theme struct: each surface is set in it instead.
         assert_eq!(cfg.theme.font_family.as_deref(), Some("JetBrains Mono"));
         // icon_stroke flows into the resolved theme so icon_view can read it.
         assert_eq!(cfg.resolve_theme().icon_stroke, Some(1.5));
@@ -406,14 +406,23 @@ mod tests {
         )
         .unwrap();
         let theme = cfg.resolve_theme();
-        let weight = |role| theme.text_style(role, Color::WHITE).font_weight;
+        let weight = |role| {
+            theme
+                .text_over(telar::TextStyle::new(0.0, Color::WHITE), role, Color::WHITE)
+                .font_weight
+        };
         assert_eq!(cfg.theme.fonts.spec(FontRole::Title).weight, Some(650));
         assert_eq!(weight(FontRole::Title), 650);
         assert_eq!(weight(FontRole::Caption), *FONT_WEIGHT_RANGE.end());
         let bare = Config::default().resolve_theme();
         assert_eq!(
             weight(FontRole::Body),
-            bare.text_style(FontRole::Body, Color::WHITE).font_weight
+            bare.text_over(
+                telar::TextStyle::new(0.0, Color::WHITE),
+                FontRole::Body,
+                Color::WHITE
+            )
+            .font_weight
         );
         let mut fonts = FontsConfig::default();
         fonts.spec_mut(FontRole::Display).weight = Some(300);
@@ -1080,6 +1089,39 @@ accent = "orange"
     }
 
     #[test]
+    fn nothing_chases_or_slides_while_motion_is_off_or_reduced() {
+        let tween = telar::motion::tween(Duration::from_millis(80), telar::motion::Easing::Linear);
+        let moving = AnimationConfig {
+            reduced: ReducedMotion::Off,
+            curve: "snappy".to_string(),
+            ..AnimationConfig::default()
+        };
+        assert_eq!(moving.chase(), Some(telar::motion::Spring::snappy()));
+        assert_eq!(
+            moving.slide_or_fade(telar::Edge::Top, 24.0, tween),
+            telar::Transition::slide(telar::Edge::Top, 24.0, tween)
+        );
+
+        let reduced = AnimationConfig {
+            reduced: ReducedMotion::On,
+            ..moving.clone()
+        };
+        let off = AnimationConfig {
+            enabled: false,
+            ..moving
+        };
+        for still in [reduced, off] {
+            assert_eq!(still.chase(), None, "{still:?}");
+            assert_eq!(
+                still.slide_or_fade(telar::Edge::Top, 24.0, tween),
+                telar::Transition::fade(tween),
+                "{still:?}"
+            );
+            assert_eq!(still.travel_tween_ms(200, 2_000).duration, Duration::ZERO);
+        }
+    }
+
+    #[test]
     fn auto_follows_the_desktop_and_an_override_does_not() {
         for desktop in [false, true] {
             assert_eq!(ReducedMotion::Auto.applies(desktop), desktop);
@@ -1139,10 +1181,18 @@ accent = "orange"
             "and every other role is untouched"
         );
 
-        let styled = theme.text_style(FontRole::Caption, theme.text);
+        let styled = theme.text_over(
+            telar::TextStyle::new(0.0, theme.text),
+            FontRole::Caption,
+            theme.text,
+        );
         assert_eq!(styled.font_weight, 700);
         assert_eq!(styled.font_style, telar::FontStyle::Italic);
-        let plain = theme.text_style(FontRole::Body, theme.text);
+        let plain = theme.text_over(
+            telar::TextStyle::new(0.0, theme.text),
+            FontRole::Body,
+            theme.text,
+        );
         assert_eq!(
             plain.font_weight, 400,
             "a role with no override keeps the default weight"

@@ -92,7 +92,7 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
 
     let count_apps = installed.read_only();
     let count_query = query.read_only();
-    let count = Text::new(
+    let count = Text::declaring(
         move || {
             let apps = count_apps.get();
             let query = count_query.get();
@@ -104,7 +104,7 @@ pub(crate) fn apps_section() -> Result<Box<dyn LayoutItem>, LayoutError> {
             )
         },
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.muted),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.muted),
     )?;
 
     let path = path.to_path_buf();
@@ -178,16 +178,16 @@ fn app_row(
     )?);
 
     let name = row.app.name.clone();
-    let name_text = Text::new(
+    let name_text = Text::declaring(
         move || name.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Body, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Body, theme.text),
     )?;
     let subtitle = id.clone();
-    let id_text = Text::new(
+    let id_text = Text::declaring(
         move || subtitle.clone(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     let labels = Container::new(
         LayoutStyle::new()
@@ -226,12 +226,12 @@ fn app_row(
             .padding_vertical(space::sm()),
         paint::md(theme.base),
         vec![box_item(
-            Input::new(
+            Input::declaring(
                 icon_field,
                 LayoutStyle::new()
                     .flex_grow(1.0)
                     .height(theme.font(FontRole::Body) * 1.6),
-                move || theme.text_style(FontRole::Caption, theme.text),
+                move |inherited| theme.text_over(inherited, FontRole::Caption, theme.text),
             )?
             .placeholder(placeholder),
         )],

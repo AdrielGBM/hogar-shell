@@ -31,7 +31,7 @@ Two curve families rather than one, because rsx has two motion models and they a
 
 `duration_scale` multiplies every duration at once, so "make it all a bit quicker" is one number; `enabled = false` collapses every duration to zero, for a user on a remote desktop who wants no motion at all.
 
-`reduced` is the accessibility answer: while motion is reduced, a panel, drawer or popout that would slide in fades instead, a bar that hides itself moves at once, and no transition runs longer than 100 ms. `auto` follows the desktop's own reduced-motion setting, read from the desktop portal; with no portal, motion is as configured here.
+`reduced` is the accessibility answer: while motion is reduced, a panel, drawer or popout that would slide in fades instead, a bar that hides itself moves at once, the workspace indicator and the dock's magnification land where they are going without travelling, and no transition runs longer than 100 ms. `auto` follows the desktop's own reduced-motion setting, read from the desktop portal; with no portal, motion is as configured here.
 
 - **`autohide_duration_ms`** · default `160`
 
@@ -821,7 +821,7 @@ Theme selection and overrides. `name` picks a built-in palette, `custom`, or `dy
 - **`icon_size`** · unset by default
 - **`font_family`** · unset by default
 
-  Font family the whole shell renders in (must be installed). Unset keeps the renderer's default. Applied process-wide via [`telar::set_default_font_family`], not carried in the (`Copy`) theme struct.
+  Font family the whole shell renders in (must be installed). Unset keeps the platform's sans-serif. Every surface the shell opens is set in it and every text on one inherits it, so a reload or a theme preview changes it on every window without reopening any.
 
 - **`icon_stroke`** · unset by default
 

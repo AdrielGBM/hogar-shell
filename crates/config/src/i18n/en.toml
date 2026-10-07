@@ -41,3 +41,13 @@ list = "a list, each {each}"
 map = "a table, each value {each}"
 table = "a table"
 unknown = "a `{declared}`"
+[preset]
+bad_name = "'{name}' is not a preset name: use lowercase letters, digits, '-' and '_'"
+missing = "there is no preset named '{name}'"
+unreadable = "the preset could not be read or written: {why}"
+broken = "the preset could not be read: {why}"
+unwritable = "the preset could not be written: {why}"
+[save]
+unwritable_section = "the section could not be written: {why}"
+unreadable_config = "config.toml could not be read: {why}"
+unwritable_config = "config.toml could not be written: {why}"

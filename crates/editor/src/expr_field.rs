@@ -675,16 +675,16 @@ fn live_line(
                     });
                 }
             }
-            Ok(box_item(Text::new(
+            Ok(box_item(Text::declaring(
                 move || said(gives.get(), wrong.get()),
                 LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-                move || {
+                move |inherited| {
                     let ink = match (failing.get(), waiting.get()) {
                         (true, _) => theme.error,
                         (false, true) => theme.warning,
                         (false, false) => theme.subtle,
                     };
-                    theme.text_style(FontRole::Caption, ink)
+                    theme.text_over(inherited, FontRole::Caption, ink)
                 },
             )?))
         },
@@ -818,15 +818,15 @@ fn row(
         true => candidate.detail.clone(),
         false => format!("{} — {}", candidate.detail, candidate.summary),
     };
-    let title = Text::new(
+    let title = Text::declaring(
         move || name.clone(),
         LayoutStyle::new().flex_grow(1.0),
-        move || theme.text_style(FontRole::Caption, theme.text),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.text),
     )?;
-    let reading = Text::new(
+    let reading = Text::declaring(
         move || now.get(),
         LayoutStyle::new(),
-        move || theme.text_style(FontRole::Caption, theme.accent),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.accent),
     )?;
     let head = Container::new(
         LayoutStyle::new()
@@ -836,10 +836,10 @@ fn row(
             .width(SizeDimension::Percent(1.0)),
         vec![box_item(title), box_item(reading)],
     )?;
-    let about = Text::new(
+    let about = Text::declaring(
         move || detail.clone(),
         LayoutStyle::new().width(SizeDimension::Percent(1.0)),
-        move || theme.text_style(FontRole::Caption, theme.subtle),
+        move |inherited| theme.text_over(inherited, FontRole::Caption, theme.subtle),
     )?;
     let radius = ui::scale::corner::xs();
     Ok(box_item(

@@ -242,12 +242,12 @@ fn utilities_view(
     recordings: Recordings,
     theme: NordTheme,
 ) -> Result<Box<dyn LayoutItem>, LayoutError> {
-    let title = Text::new(
+    let title = Text::declaring(
         || telar::t!("utilities.title"),
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Title, theme.text)
+                .text_over(inherited, FontRole::Title, theme.text)
                 .with_font_weight(700)
         },
     )?;
@@ -362,11 +362,11 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
         TILE_ICON,
     )?;
 
-    let label = Text::new(
+    let label = Text::declaring(
         move || quick.label(),
         LayoutStyle::new(),
-        move || {
-            // The state is read out before `text_style`, which reads the theme's own signals: a nested read inside a `with` is a re-entrant borrow of the reactive runtime and panics at build time.
+        move |inherited| {
+            // The state is read out before `text_over`, which reads the theme's own signals: a nested read inside a `with` is a re-entrant borrow of the reactive runtime and panics at build time.
             let state = label_state.get();
             let tint = if !state.available {
                 theme.muted
@@ -376,17 +376,17 @@ fn tile(quick: Quick, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutErr
                 theme.text
             };
             theme
-                .text_style(FontRole::Caption, tint)
+                .text_over(inherited, FontRole::Caption, tint)
                 .with_clamp(1, true)
         },
     )?;
 
-    let detail = Text::new(
+    let detail = Text::declaring(
         move || detail_state.get().detail,
         LayoutStyle::new(),
-        move || {
+        move |inherited| {
             theme
-                .text_style(FontRole::Caption, theme.subtle)
+                .text_over(inherited, FontRole::Caption, theme.subtle)
                 .with_clamp(1, true)
         },
     )?;
@@ -450,11 +450,15 @@ fn tile_column() -> LayoutStyle {
 fn unknown_tile(id: &str, theme: NordTheme) -> Result<Box<dyn LayoutItem>, LayoutError> {
     let ink = placeholder::ink(theme);
     let fill = placeholder::fill(theme);
-    let caption = move || theme.text_style(FontRole::Caption, ink).with_clamp(1, true);
+    let caption = move |inherited| {
+        theme
+            .text_over(inherited, FontRole::Caption, ink)
+            .with_clamp(1, true)
+    };
     let icon = icon_view(|| placeholder::GLYPH.to_string(), move || ink, TILE_ICON)?;
     let name = id.to_string();
-    let label = Text::new(move || name.clone(), LayoutStyle::new(), caption)?;
-    let detail = Text::new(
+    let label = Text::declaring(move || name.clone(), LayoutStyle::new(), caption)?;
+    let detail = Text::declaring(
         || telar::t!("utilities.unknown"),
         LayoutStyle::new(),
         caption,

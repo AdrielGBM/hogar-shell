@@ -30,9 +30,10 @@ into a config as it is.
 
 ## Saving, picking, deleting
 
-- **Theme popover** (edit mode): the Presets rows list every preset; *Use* previews it on every window, and the
-  popover's own rows then adjust it further. Done writes it into `config.toml`; Esc or Cancel puts back the
-  theme the popover opened with. *Save as preset* keeps what the popover shows now, *Delete* removes a preset.
+- **Theme popover** (edit mode): the Presets rows list every preset; *Use* previews the whole of it on every
+  window, its font family included, and the popover's own rows then adjust it further. Done writes it into
+  `config.toml`; Esc or Cancel puts back the theme the popover opened with. *Save as preset* keeps what the
+  popover shows now, *Delete* removes a preset.
 - **Settings → Appearance → Theme presets**: *Apply* writes a preset into `config.toml` at once, *Save the
   theme as a preset* keeps the theme the file says now, *Delete* removes one.
 
